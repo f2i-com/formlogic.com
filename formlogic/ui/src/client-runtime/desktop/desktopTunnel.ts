@@ -43,10 +43,12 @@ export const TUNNEL_DIRECTION_REQUEST = 0x00;
 export const TUNNEL_DIRECTION_RESPONSE = 0x01;
 
 const PINS_STORAGE_KEY = 'formlogic-desktop-e2e-pins';
-/** Overall deadline for one tunnel request; the AI lane TTL is 5 minutes (plan §5.2). */
+/** How long one tunnel request may stay silent: the relay reaps a request after 5 minutes of silence (plan §5.2). */
 export const DEFAULT_STREAM_TIMEOUT_MS = 300_000;
 const MIN_STREAM_TIMEOUT_MS = 5_000;
 const MAX_STREAM_TIMEOUT_MS = 600_000;
+/** A reply that keeps arriving is followed, up to this. */
+const STREAM_CEILING_MS = 30 * 60_000;
 /** Frames cap at 4 MiB (plan §5.2); SSE data lines carry base64 so allow headroom. */
 const MAX_SSE_EVENT_CHARS = 8 * 1024 * 1024;
 const MAX_STREAM_ERROR_BODY_BYTES = 64 * 1024;
@@ -763,6 +765,8 @@ async function executeTunnelRequest(params: TunnelRunParams): Promise<DesktopTun
     envelope: encodeTunnelEnvelope(envelope),
     idempotencyKey: generateId(),
   };
+  // Stopped while the key was read: nothing has gone out yet, and once queued it runs.
+  if (params.signal?.aborted) return fail({ code: 'stopped', message: 'Stopped before it was sent.' });
   const enqueueRes = await api.enqueueDesktopAiRequest(enqueueBody);
   if (enqueueRes.error) {
     if (!enqueueRes.status) {
@@ -869,11 +873,14 @@ async function streamTunnelResponses(
   };
   if (params.signal?.aborted) onExternalAbort();
   else params.signal?.addEventListener('abort', onExternalAbort, { once: true });
-  const timeout = setTimeout(() => {
+  const giveUp = () => {
     if (abortKind !== null) return;
     abortKind = 'timeout';
     controller.abort();
-  }, timeoutMs);
+  };
+  // Silence, not length: a long turn that keeps sending frames is still working.
+  let timeout = setTimeout(giveUp, timeoutMs);
+  const ceiling = setTimeout(giveUp, STREAM_CEILING_MS);
 
   // The relay's own `done` isn't the end of the reply. It reads frames, then the status, so the
   // desktop can post its last frames and complete in between, and once the status is terminal it
@@ -933,6 +940,8 @@ async function streamTunnelResponses(
       /** Handle one SSE data payload; returns a Terminal when the request is settled. */
       const dispatchData = async (data: string): Promise<Terminal | null> => {
         if (!data) return null;
+        clearTimeout(timeout);
+        timeout = setTimeout(giveUp, timeoutMs);
         let parsed: unknown;
         try {
           parsed = JSON.parse(data);
@@ -1103,6 +1112,7 @@ async function streamTunnelResponses(
     return { kind: 'uncertain', message: 'The desktop stream dropped mid-request; the request may still complete.' };
   } finally {
     clearTimeout(timeout);
+    clearTimeout(ceiling);
     params.signal?.removeEventListener('abort', onExternalAbort);
   }
 }

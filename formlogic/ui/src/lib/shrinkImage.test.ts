@@ -41,6 +41,25 @@ function fakeCanvas() {
 const file = () => new File(['x'], 'logo.png', { type: 'image/png' });
 const limits = { maxPx: 1024, maxChars: 200 * 1024 };
 
+/** A real GIF's block structure, with `frames` images in it. */
+function gif(frames: number, { colourTable = false, localTable = false, comment = false } = {}): File {
+  const table = (size: number) => new Array(3 * 2 ** (size + 1)).fill(0);
+  const bytes = [
+    ...[0x47, 0x49, 0x46, 0x38, 0x39, 0x61], // GIF89a
+    1, 0, 1, 0, colourTable ? 0x81 : 0, 0, 0, // screen: 1 by 1, packed, background, aspect
+    ...(colourTable ? table(1) : []),
+    ...(comment ? [0x21, 0xfe, 3, 0x2c, 0x2c, 0x2c, 0] : []), // a comment that spells 0x2c
+  ];
+  for (let frame = 0; frame < frames; frame += 1) {
+    bytes.push(0x21, 0xf9, 4, 4, 10, 0, 0, 0); // graphic control: the delay between frames
+    bytes.push(0x2c, 0, 0, 0, 0, 1, 0, 1, 0, localTable ? 0x80 : 0); // image descriptor
+    if (localTable) bytes.push(...table(0));
+    bytes.push(2, 2, 0x44, 0x01, 0); // code size, one sub-block of pixels, end
+  }
+  bytes.push(0x3b);
+  return new File([new Uint8Array(bytes)], 'logo.gif', { type: 'image/gif' });
+}
+
 beforeEach(() => {
   encoded = [];
   density = 0.1;
@@ -120,5 +139,65 @@ describe('shrinkImageToDataUrl', () => {
     picture = { width: 0, height: 0 };
     expect(await shrinkImageToDataUrl(file(), limits)).toEqual({ ok: false, reason: 'unreadable' });
     expect(encoded).toHaveLength(0);
+  });
+
+  // Frozen at its nominal 48 pixels, a logo goes soft on any sharp screen.
+  describe('an SVG', () => {
+    const svg = () => new File(['<svg/>'], 'logo.svg', { type: 'image/svg+xml' });
+
+    it('is drawn as large as it may be stored, however small it says it is', async () => {
+      picture = { width: 48, height: 48 };
+      await shrinkImageToDataUrl(svg(), { maxPx: 512, maxChars: 64 * 1024 });
+      expect(encoded[0]).toMatchObject({ width: 512, height: 512 });
+    });
+
+    it('keeps its shape, and gets the room a background has', async () => {
+      picture = { width: 48, height: 24 };
+      density = 0.01;
+      await shrinkImageToDataUrl(svg(), { maxPx: 1280, maxChars: 150 * 1024 });
+      expect(encoded[0]).toMatchObject({ width: 1280, height: 640 });
+    });
+
+    it('comes down to fit, as anything else does', async () => {
+      picture = { width: 4000, height: 2000 };
+      density = 0.01;
+      await shrinkImageToDataUrl(svg(), { maxPx: 512, maxChars: 64 * 1024 });
+      expect(encoded[0]).toMatchObject({ width: 512, height: 256 });
+    });
+
+    it('takes fewer pixels when it won\'t fit at that size', async () => {
+      picture = { width: 48, height: 48 };
+      density = 1;
+      const shrunk = await shrinkImageToDataUrl(svg(), { maxPx: 512, maxChars: 64 * 1024 });
+      expect(shrunk.ok).toBe(true);
+      expect(encoded.at(-1)?.width).toBeLessThan(512);
+    });
+  });
+
+  describe('a GIF', () => {
+    const shrink = (picked: File) => shrinkImageToDataUrl(picked, limits);
+
+    it('is marked when it has more than one frame', async () => {
+      expect(await shrink(gif(3))).toMatchObject({ ok: true, firstFrameOnly: true });
+    });
+
+    it('is not marked when it has one', async () => {
+      expect(await shrink(gif(1))).not.toHaveProperty('firstFrameOnly');
+    });
+
+    it.each([
+      ['a global colour table', { colourTable: true }],
+      ['local colour tables', { localTable: true }],
+      ['a comment holding the byte of an image', { comment: true }],
+    ])('reads its way past %s', async (_label, shape) => {
+      expect(await shrink(gif(2, shape))).toMatchObject({ firstFrameOnly: true });
+      expect(await shrink(gif(1, shape))).not.toHaveProperty('firstFrameOnly');
+    });
+
+    it('takes a file it can\'t follow for a still', async () => {
+      const broken = new File([new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0xff])], 'logo.gif', { type: 'image/gif' });
+      expect(await shrink(broken)).toMatchObject({ ok: true });
+      expect(await shrink(broken)).not.toHaveProperty('firstFrameOnly');
+    });
   });
 });

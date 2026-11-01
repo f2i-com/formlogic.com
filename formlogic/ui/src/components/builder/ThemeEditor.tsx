@@ -18,12 +18,15 @@ interface ThemeEditorProps {
 
 type ThemeImage = 'logo' | 'backgroundImage';
 
-// Each image travels inside the theme as a data URL, and the server takes 512KB of theme
-// (FormService::MAX_THEME_BYTES), so two images of this size leave room for the rest of it.
+// Each image travels inside the theme as a data URL, and the theme goes out with every list of
+// forms and every app's load, so these are kept small. The server takes 256KB of theme
+// (FormService::MAX_THEME_BYTES): both images together leave well over 30KB of that for the rest.
 // It counts a little more than JSON.stringify does: PHP writes every / in the base64 as \/.
-const THEME_IMAGE_MAX_PX = 1024;
-const THEME_IMAGE_MAX_CHARS = 200 * 1024;
-const THEME_MAX_CHARS = 500 * 1024;
+const THEME_IMAGE_LIMITS: Record<ThemeImage, { maxPx: number; maxChars: number }> = {
+  logo: { maxPx: 512, maxChars: 64 * 1024 },
+  backgroundImage: { maxPx: 1280, maxChars: 150 * 1024 },
+};
+const THEME_MAX_CHARS = 250 * 1024;
 
 interface ThemePreset {
   id: string;
@@ -266,10 +269,11 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
     }
 
     setImagesShrinking((n) => n + 1);
-    const shrunk = await shrinkImageToDataUrl(file, { maxPx: THEME_IMAGE_MAX_PX, maxChars: THEME_IMAGE_MAX_CHARS });
+    const shrunk = await shrinkImageToDataUrl(file, THEME_IMAGE_LIMITS[type]);
     setImagesShrinking((n) => n - 1);
     if (shrunk.ok) {
       updateTheme({ [type]: shrunk.dataUrl });
+      if (shrunk.firstFrameOnly) toast.warning('This GIF will not move', 'A theme image is a still picture, so only its first frame is kept.');
     } else {
       setImageError(type, shrunk.reason === 'unreadable'
         ? 'That image could not be read. Try a PNG or JPG.'

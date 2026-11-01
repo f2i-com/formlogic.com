@@ -603,6 +603,89 @@ describe('a turn that never answers', () => {
     expect(stopButton()).toBeNull();
   });
 
+  // Moving away lets Send go without stopping the turn, so a delete had no way to reach it: the
+  // reply was saved as a row nothing shows or removes, and its tools ran on.
+  describe('a thread deleted after moving away from its turn', () => {
+    /** A turn in a thread of its own, left running, with the panel on another thread. */
+    async function turnLeftRunning() {
+      const store = getChatStore('u1');
+      const other = await store.createThread('other thread');
+      await store.appendMessage(other.id, 'user', 'kept');
+      await renderWidget();
+      await openPanel();
+      await act(async () => panel()!.querySelector<HTMLButtonElement>('button[aria-label="Chat history"]')!.click());
+      const newChat = Array.from(panel()!.querySelectorAll('button')).find((b) => b.textContent?.includes('New chat'))!;
+      await act(async () => newChat.click());
+      const finish = hangingTurn();
+      await send('leave me');
+      const left = (await store.listThreads()).find((t) => t.title === 'leave me')!;
+
+      await act(async () => panel()!.querySelector<HTMLButtonElement>('button[aria-label="Chat history"]')!.click());
+      const row = Array.from(panel()!.querySelectorAll('button')).find((b) => b.textContent === 'other thread')!;
+      await act(async () => row.click());
+      await flush();
+      expect(stopButton()).toBeNull();
+      return { store, left, finish, opts: h.sendChatTurn.mock.calls.at(-1)![0] as SendChatTurnOptions };
+    }
+    async function deleteFromHistory() {
+      await act(async () => panel()!.querySelector<HTMLButtonElement>('button[aria-label="Chat history"]')!.click());
+      const remove = () => panel()!.querySelector<HTMLButtonElement>('button[aria-label="Delete leave me"], button[aria-label="Confirm delete leave me"]')!;
+      await act(async () => remove().click());
+      await act(async () => remove().click());
+      await flush();
+    }
+
+    it('stops the turn', async () => {
+      const { opts } = await turnLeftRunning();
+      await deleteFromHistory();
+      expect(opts.signal?.aborted).toBe(true);
+    });
+
+    it('stops it from a mount of the widget that did not start it', async () => {
+      const { opts } = await turnLeftRunning();
+      await act(async () => root.unmount());
+      container.remove();
+      await renderWidget(); // chat stays open across a remount
+      await flush();
+
+      await deleteFromHistory();
+
+      expect(opts.signal?.aborted).toBe(true);
+    });
+
+    it('saves nothing that comes in afterwards', async () => {
+      const { store, left, finish } = await turnLeftRunning();
+      await deleteFromHistory();
+
+      await act(async () => finish({ ok: true, source: 'site', content: 'too late' }));
+      await flush();
+
+      expect((await store.listMessages(left.id)).messages).toEqual([]);
+      expect((await store.listThreads()).map((t) => t.title)).toEqual(['other thread']);
+    });
+
+    it('leaves a turn running in another thread alone', async () => {
+      const { opts } = await turnLeftRunning();
+      await act(async () => panel()!.querySelector<HTMLButtonElement>('button[aria-label="Chat history"]')!.click());
+      const remove = () => panel()!.querySelector<HTMLButtonElement>('button[aria-label="Delete other thread"], button[aria-label="Confirm delete other thread"]')!;
+      await act(async () => remove().click());
+      await act(async () => remove().click());
+      await flush();
+
+      expect(opts.signal?.aborted).toBe(false);
+    });
+
+    it('forgets a turn that has ended', async () => {
+      const { opts, finish } = await turnLeftRunning();
+      await act(async () => finish({ ok: true, source: 'site', content: 'in time' }));
+      await flush();
+
+      await deleteFromHistory();
+
+      expect(opts.signal?.aborted).toBe(false);
+    });
+  });
+
   it('holds Send during a compact too, and Stop ends it without an error', async () => {
     const store = getChatStore('u1');
     const thread = await store.createThread('long');

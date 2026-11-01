@@ -118,6 +118,55 @@ describe('createDesktopBackedConnector — OAIY-first routing', () => {
     });
   });
 
+  // A refresh changes nothing, so a lost answer is just a desktop that can't be reached, and that
+  // is what the screen's banner tells people how to fix. "May have run" tells them nothing.
+  describe('a read that gets no answer', () => {
+    const lost = { ok: false as const, error: { code: 'connector_uncertain' as const, message: 'the command may have run' } };
+    const reads = ['dongle.list', 'dongle.getPreferred', 'phone.listPaired', 'phone.status', 'call.current', 'sms.threads', 'sms.thread', 'settings.get'];
+
+    it.each(reads)('says %s could not reach OAIY Desktop', async (command) => {
+      oaiyAvailable.mockReturnValue(true);
+      oaiyRequest.mockResolvedValue(lost);
+      const c = createDesktopBackedConnector(manifest as never, null);
+
+      await expect(c.request(command)).rejects.toMatchObject({ code: 'connector_unavailable', message: expect.not.stringContaining('may have run') });
+    });
+
+    it.each(reads)('says %s could not reach FormLogic Desktop', async (command) => {
+      desktopInfo.mockReturnValue({ available: true } as never);
+      paired.mockReturnValue(true);
+      desktopRequest.mockResolvedValue({ ...lost, transportFailure: true });
+      const c = createDesktopBackedConnector(manifest as never, null);
+
+      await expect(c.request(command)).rejects.toMatchObject({ code: 'connector_unavailable', message: expect.not.stringContaining('may have run') });
+    });
+
+    it('keeps OAIY\'s own refusal of a read as it came', async () => {
+      oaiyAvailable.mockReturnValue(true);
+      oaiyRequest.mockResolvedValue({ ok: false, error: { code: 'capability_denied', message: 'not declared' } });
+      const c = createDesktopBackedConnector(manifest as never, null);
+
+      await expect(c.request('phone.status')).rejects.toMatchObject({ code: 'capability_denied' });
+    });
+
+    // A wrong "couldn't reach it" is what invites the second call or SMS.
+    it.each(['sms.send', 'call.dial', 'dongle.reset', 'dongle.installDriver', 'dongle.setPreferred', 'settings.set', 'dongle.diagnostics'])('still says %s may have run', async (command) => {
+      oaiyAvailable.mockReturnValue(true);
+      oaiyRequest.mockResolvedValue(lost);
+      const c = createDesktopBackedConnector(manifest as never, null);
+
+      await expect(c.request(command)).rejects.toMatchObject({ code: 'connector_uncertain' });
+    });
+
+    it('does not take a journalled command for a read, whatever its name', async () => {
+      oaiyAvailable.mockReturnValue(true);
+      oaiyRequest.mockResolvedValue(lost);
+      const c = createDesktopBackedConnector({ ...manifest, journalledCommands: ['ticket.getNext'] } as never, null);
+
+      await expect(c.request('ticket.getNext')).rejects.toMatchObject({ code: 'connector_uncertain' });
+    });
+  });
+
   it('does NOT fall back on a real per-command refusal from OAIY', async () => {
     // A command that reached OAIY and was refused must not be retried on
     // FormLogic Desktop — that could double a side effect.

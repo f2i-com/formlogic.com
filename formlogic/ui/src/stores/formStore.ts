@@ -160,7 +160,9 @@ interface FormState {
   deleteForm: (id: string) => Promise<void>;
   duplicateForm: (id: string) => Promise<Form | null>;
   getForm: (id: string) => Form | undefined;
-  loadFullForm: (id: string, opts?: { force?: boolean }) => Promise<Form | undefined>;
+  // `force` reads the server's copy whatever is held. `onlyIf` decides, with the answer in hand,
+  // whether to apply it. `fieldsOnly` takes the fields from it and leaves the rest of the copy.
+  loadFullForm: (id: string, opts?: { force?: boolean; onlyIf?: () => boolean; fieldsOnly?: boolean }) => Promise<Form | undefined>;
   // Load the fields of every form in the store. False when any could not be loaded.
   loadAllFullForms: () => Promise<boolean>;
   setActiveForm: (id: string | null) => void;
@@ -918,6 +920,7 @@ export const useFormStore = create<FormState>()(
         try {
           const result = await api.getForm(id);
           if (!result.error && result.data?.form) {
+            if (opts?.onlyIf && !opts.onlyIf()) return get().forms.find((f) => f.id === id);
             const fullForm = {
               ...(result.data.form as Form),
               _fieldsLoaded: true,
@@ -925,15 +928,21 @@ export const useFormStore = create<FormState>()(
             } as Form;
             // Fields are wholesale-replaced from the server (incl. version restore), so
             // any in-session undo history is now incoherent — drop it (else Ctrl+Z would
-            // restore pre-load fields and sync that stale state back to the server).
+            // restore pre-load fields and sync that stale state back to the server). If they
+            // came back as they were, it still fits them.
             set((s) => {
               const fieldHistory = { ...s.fieldHistory };
-              delete fieldHistory[id];
+              const heldRevision = s.forms.find((f) => f.id === id)?.fieldsRevision;
+              if (!heldRevision || heldRevision !== fullForm.fieldsRevision) delete fieldHistory[id];
               // Upsert: a foreign form (or a deep-linked one) isn't in the list yet —
               // .map() alone would silently drop it and the builder would 404.
               const exists = s.forms.some((f) => f.id === id);
-              // On this device the fields are all a row lacks: what the owner changed here stays.
-              const merged = (f: Form) => (keepsLocalEdits ? { ...f, fields: fullForm.fields, _fieldsLoaded: true } as Form : { ...f, ...fullForm });
+              const merged = (f: Form) => {
+                // On this device the fields are all a row lacks: what the owner changed here stays.
+                if (keepsLocalEdits) return { ...f, fields: fullForm.fields, _fieldsLoaded: true } as Form;
+                if (opts?.fieldsOnly) return { ...f, fields: fullForm.fields, fieldsRevision: fullForm.fieldsRevision, _fieldsLoaded: true } as Form;
+                return { ...f, ...fullForm };
+              };
               return {
                 forms: exists
                   ? s.forms.map((f) => (f.id === id ? merged(f) : f))

@@ -3,20 +3,22 @@
 // opens full screen at the domain's own address, on every path but the legal pages. Other apps show
 // their launch page at the root, and deeper paths (/app/:slug, /form/:id) render the normal app.
 // Anything that takes a password happens on FormLogic itself, whose address the server gives
-// (see domainSignIn). A host the server doesn't know renders the normal app too: it may be a
-// self-hosted FormLogic this build wasn't told the name of, and only its root says so.
+// (see domainSignIn). The site's own address, which the server names as such, renders the normal
+// app. So does a host the server doesn't know, past its root, which says so.
 //
-// That makes every page of a self-hosted site a question for the server, and the wait is the
-// price of the two rules a real domain has: no sign-in form on it, and its app or launch page on a
-// first visit. So only the pages those rules are about wait for the answer. The platform's own
-// pages show at once, and the answer is applied when it comes, unless this browser remembers the
-// host as a customer's domain. A host with no answer counts as no customer's domain.
+// That makes every page of a self-hosted site a question for the server, and a real domain has two
+// rules: no sign-in form on it, and its app or launch page on a first visit. A slow network must
+// break neither, so only a real answer decides anything. No answer is asked for again for as long
+// as the page is open, and when one comes it applies, over whatever is showing. Until then a page
+// goes by what this browser last heard. A domain draws from its stored config, as if that had just
+// been answered. A host remembered as none shows its pages, after a short wait where a password
+// could be typed. A host it knows nothing of shows only the platform's own pages.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { DomainNativeApp } from '../components/app-runtime/AppEntryRouter';
 import { api } from '../lib/api';
 import { signInDestination } from '../lib/authRedirect';
-import { lookUpHost, rememberedHost, type LaunchConfig } from '../lib/domainLaunchApi';
+import { lookUpHost, rememberedHost, rememberHost, type LaunchConfig, type SoftnAccess } from '../lib/domainLaunchApi';
 import { DomainSignInContext, finishDomainSignIn, startDomainSignIn } from '../lib/domainSignIn';
 import { AppLaunchPage } from './AppLaunchPage';
 
@@ -26,10 +28,49 @@ const LEGAL_PATHS = ['/privacy', '/terms'];
 const SIGN_IN_RETURN_PATH = '/sign-in/complete';
 /**
  * The platform's own pages, which were never a domain's. A path that isn't here may be a SoftN
- * app's, so it waits, once: a route left out of this list costs no more than that. /app/:slug is
- * left out on purpose: its guard draws a sign-in form in place until it knows the domain's address.
+ * app's, so on a host nothing is known of it waits for the answer: a route left out of this list
+ * costs no more than that. /app/:slug is left out on purpose: its guard draws a sign-in form in
+ * place until it knows the domain's address.
  */
 const PLATFORM_PAGE = /^\/(admin|ai-setup|analytics|aokie|apps|billing|blueprints|builder|connect-ai|dashboard|device-check|diagrams|docs|doctor|download|flows|form|forms|oauth|open|packs|preview|privacy|responses|settings|sign-in\/domain|terms|trash)(\/|$)/;
+/** The longest a page that takes a password waits, on a host remembered as no domain, for news that it has become one. */
+const BRIEF_WAIT_MS = 2_500;
+/** How long a page on a host nothing is known of waits before saying it can't reach the site. */
+const LONG_WAIT_MS = 8_000;
+/** Pauses between tries, the last repeating. */
+const ASK_AGAIN_AFTER_MS = [3_000, 6_000, 12_000, 15_000];
+/** As long as a host lookup may take: this request has no limit of its own. */
+const ENTRY_TIMEOUT_MS = 15_000;
+
+/** What a page goes by: the server's answer, or the last one this browser kept. */
+interface HostAnswer {
+  config?: LaunchConfig | null;
+  softnAccess?: SoftnAccess;
+  platform?: boolean;
+}
+
+/**
+ * What the host is, and what its app is if it has one, or null while either has no real answer.
+ * `isDomain` hears as soon as the host is known to be a customer's, before its app is.
+ */
+async function askServer(host: string, isDomain: () => void): Promise<HostAnswer | null> {
+  const { config, answered, platform } = await lookUpHost(host);
+  if (!answered) return null;
+  if (!config) return { config, platform };
+  const entry = await Promise.race([
+    api.getNativeEntry(config.app.slug),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ENTRY_TIMEOUT_MS)),
+  ]);
+  // This says no more about the app than a failed lookup does about the host, and taken for "no
+  // SoftN app" it would show a SoftN app's domain the platform's pages.
+  if (!entry || (entry.error && (entry.status === undefined || entry.status === 429 || entry.status >= 500))) {
+    isDomain();
+    return null;
+  }
+  const softnAccess = entry.data?.native ? entry.data.access : undefined;
+  rememberHost(host, config, softnAccess);
+  return { config, softnAccess };
+}
 
 function Spinner() {
   return (
@@ -39,13 +80,16 @@ function Spinner() {
   );
 }
 
-/** A customer's domain with no answer from the server: what it shows comes from there, and a sign-in form never shows here. */
-function DomainUnreachable() {
+/**
+ * A host nothing is known of, with no answer from the server: it may be a customer's domain, so a
+ * sign-in form never shows here. The page goes on asking, and an answer replaces this.
+ */
+function DomainUnreachable({ onTryAgain }: { onTryAgain: () => void }) {
   return (
     <div className="flex min-h-[100dvh] flex-col items-center justify-center gap-3 bg-white px-6 text-center dark:bg-slate-950">
       <h1 className="text-lg font-semibold text-gray-900 dark:text-white">Can't reach this site right now</h1>
       <p role="alert" className="max-w-sm text-sm text-gray-500 dark:text-slate-400">Check your connection and try again.</p>
-      <button type="button" className="min-h-11 text-sm text-primary-600 dark:text-primary-400" onClick={() => window.location.reload()}>Try again</button>
+      <button type="button" className="min-h-11 text-sm text-primary-600 dark:text-primary-400" onClick={onTryAgain}>Try again</button>
     </div>
   );
 }
@@ -97,24 +141,58 @@ function useDomainManifest(active: boolean) {
 
 export function DomainLaunchRouter({ host, children }: { host: string; children: ReactNode }) {
   const { pathname, search } = useLocation();
-  const [resolved, setResolved] = useState<{ config: LaunchConfig | null; answered: boolean; softnAccess?: 'application' | 'members' } | null>(null);
-  // What the last visit learned. It stays as it was for this page: the answer on its way is `resolved`.
+  const [heard, setHeard] = useState<HostAnswer | null>(null);
+  // What the last visit learned. It stays as it was for this page: the answer on its way is `heard`.
   const [remembered] = useState(() => rememberedHost(host));
+  // The server has said this is a customer's domain, and hasn't yet said what its app is.
+  const [domainApp, setDomainApp] = useState(false);
+  const [waited, setWaited] = useState(0);
+  const askAgain = useRef(() => {});
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const { config, answered } = await lookUpHost(host);
-      const entry = config ? await api.getNativeEntry(config.app.slug) : null;
-      if (!cancelled) setResolved({ config, answered, softnAccess: entry?.data?.native ? entry.data.access : undefined });
-    })();
+    let over = false;
+    let asking = false;
+    let failures = 0;
+    let nextTry: ReturnType<typeof setTimeout> | undefined;
+    const ask = async () => {
+      if (over || asking) return;
+      asking = true;
+      clearTimeout(nextTry);
+      const answer = await askServer(host, () => setDomainApp(true));
+      asking = false;
+      if (over) return;
+      if (answer) {
+        over = true;
+        setHeard(answer);
+        return;
+      }
+      nextTry = setTimeout(() => void ask(), ASK_AGAIN_AFTER_MS[Math.min(failures, ASK_AGAIN_AFTER_MS.length - 1)]);
+      failures += 1;
+    };
+    const askNow = () => {
+      failures = 0;
+      void ask();
+    };
+    askAgain.current = askNow;
+    window.addEventListener('online', askNow);
+    void ask();
     return () => {
-      cancelled = true;
+      over = true;
+      clearTimeout(nextTry);
+      window.removeEventListener('online', askNow);
     };
   }, [host]);
 
-  const config = resolved?.config ?? null;
-  const softnAccess = resolved?.softnAccess;
+  const answer: HostAnswer | null = heard ?? (remembered?.kind === 'domain' && remembered.config ? remembered : null);
+  const hasAnswer = answer !== null;
+  useEffect(() => {
+    if (hasAnswer) return;
+    const timers = [BRIEF_WAIT_MS, LONG_WAIT_MS].map((ms) => setTimeout(() => setWaited(ms), ms));
+    return () => timers.forEach(clearTimeout);
+  }, [hasAnswer]);
+
+  const config = answer?.config ?? null;
+  const softnAccess = answer?.softnAccess;
   const direct = config?.domain.mode === 'runtime_direct';
   // As the router matches: `/LOGIN/` is the login page too.
   const path = pathname.toLowerCase().replace(/\/+$/, '');
@@ -147,18 +225,21 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
     if (redirects && config) window.location.replace(`/app/${config.app.slug}`);
   }, [redirects, config]);
 
-  const sensitive = takesPassword || path === SIGN_IN_RETURN_PATH;
-  const noAnswer = resolved?.answered === false;
-  const waits = sensitive || remembered === 'domain' || (remembered === null && !PLATFORM_PAGE.test(path));
-
-  if ((!resolved && waits) || redirects || leaves) return <Spinner />;
-  // Past the wait, any page but these could be a platform page or a sign-in form on a real domain.
-  if (noAnswer && remembered === 'domain' && !formPage && !LEGAL_PATHS.includes(path)) return <DomainUnreachable />;
+  if (redirects || leaves) return <Spinner />;
+  if (!answer) {
+    const showsAnyway = domainApp ? formPage || LEGAL_PATHS.includes(path) : PLATFORM_PAGE.test(path);
+    if (!domainApp && remembered?.kind === 'not-domain') {
+      const asksToSignIn = takesPassword || path === SIGN_IN_RETURN_PATH || /^\/app(\/|$)/.test(path);
+      if (asksToSignIn && waited < BRIEF_WAIT_MS) return <Spinner />;
+    } else if (!showsAnyway) {
+      return waited < LONG_WAIT_MS ? <Spinner /> : <DomainUnreachable onTryAgain={() => askAgain.current()} />;
+    }
+  }
   if (finishing && platformUrl) return <DomainSignInComplete platformUrl={platformUrl} />;
   if (showsApp && config && softnAccess) {
     return <DomainSignInContext.Provider value={platformUrl}><DomainNativeApp slug={config.app.slug} access={softnAccess} /></DomainSignInContext.Provider>;
   }
-  if (pathname !== '/' || noAnswer || (config && softnAccess && accountPage)) {
+  if (!answer || answer.platform || pathname !== '/' || (config && softnAccess && accountPage)) {
     return <DomainSignInContext.Provider value={platformUrl}>{children}</DomainSignInContext.Provider>;
   }
   if (config) return <AppLaunchPage config={config} />;

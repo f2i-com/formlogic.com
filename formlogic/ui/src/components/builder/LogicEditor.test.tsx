@@ -120,6 +120,88 @@ describe('a condition on a choice question', () => {
   });
 });
 
+describe('a condition on a Checkboxes field', () => {
+  const pick = field('toppings', 'checkboxes', 'Toppings', {
+    properties: { options: [{ id: 'o1', label: 'Ham', value: 'option_1' }, { id: 'o2', label: 'Egg', value: 'option_2' }] },
+  });
+  const offered = () => {
+    act(() => operatorBox().click());
+    const labels = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).map((o) => o.textContent?.trim());
+    act(() => operatorBox().click());
+    return labels;
+  };
+
+  it('offers what a list can answer, and no equals', () => {
+    render([pick]);
+    act(() => buttonNamed('Add Condition').click());
+
+    expect(offered()).toEqual(['contains', 'does not contain', 'is not empty', 'is empty']);
+  });
+
+  it('starts on contains, with the options to pick from', () => {
+    render([pick]);
+    act(() => buttonNamed('Add Condition').click());
+
+    choose(valueBox()!.querySelector<HTMLButtonElement>('[role="combobox"]')!, 'Ham');
+
+    expect(expression()).toBe('isNotEmpty(toppings) && toppings.includes("option_1")');
+  });
+
+  it('writes does not contain', () => {
+    render([pick]);
+    act(() => buttonNamed('Add Condition').click());
+    choose(valueBox()!.querySelector<HTMLButtonElement>('[role="combobox"]')!, 'Egg');
+
+    choose(operatorBox(), 'does not contain');
+
+    expect(expression()).toBe('!(isNotEmpty(toppings) && toppings.includes("option_2"))');
+    // Still the picker: what is stored is the option's value, which a typed box would hide.
+    expect(valueBox()?.querySelector('[role="combobox"]')?.textContent).toContain('Egg');
+  });
+
+  it('moves off equals when the condition moves to one, and back when it leaves', () => {
+    render([notes, pick]);
+    act(() => buttonNamed('Add Condition').click());
+    expect(operatorBox().textContent).toContain('equals');
+
+    choose(comboboxes()[1], 'Toppings');
+    expect(operatorBox().textContent).toContain('contains');
+
+    choose(operatorBox(), 'does not contain');
+    choose(comboboxes()[1], 'Notes');
+    expect(operatorBox().textContent).toContain('equals');
+  });
+
+  it('keeps what it can: is empty still means that on another field', () => {
+    render([notes, pick]);
+    act(() => buttonNamed('Add Condition').click());
+    choose(comboboxes()[1], 'Toppings');
+    choose(operatorBox(), 'is empty');
+
+    choose(comboboxes()[1], 'Notes');
+
+    expect(expression()).toBe('isEmpty(notes)');
+  });
+
+  it('still offers every comparison for a field that holds one answer', () => {
+    render([dropdown]);
+    act(() => buttonNamed('Add Condition').click());
+    expect(offered()).toContain('equals');
+    expect(offered()).not.toContain('does not contain');
+  });
+
+  it('leaves a stored rule that says equals as it is, to open and to save', () => {
+    const onSave = vi.fn();
+    const stored = { expression: 'toppings === "option_1"', action: 'show' as const };
+    render([pick], onSave, field('follow_up', 'short_text', 'Follow up', { conditionalLogic: stored }));
+    expect(document.body.querySelector('textarea')?.value).toBe('toppings === "option_1"');
+
+    act(() => buttonNamed('Save Condition').click());
+
+    expect(onSave).toHaveBeenCalledWith(stored);
+  });
+});
+
 describe('a condition on a date', () => {
   it('asks for a date, so the value has the shape the answer does', () => {
     render([when]);

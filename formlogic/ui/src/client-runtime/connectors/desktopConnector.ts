@@ -54,6 +54,18 @@ export function createJournalledRequestId(
 }
 
 /**
+ * Whether a command only reads, so that a lost answer leaves nothing to check on the device. A
+ * manifest names what has a lasting effect, not what has none, and an installed one can't gain a
+ * list, so this goes by the name. A name that doesn't plainly read stays uncertain: telling someone
+ * a command didn't run when it did invites a second call or SMS.
+ */
+const READ_COMMAND = /\.(list\w*|get\w*|status|current|threads?)$/;
+
+function onlyReads(manifest: Pick<ConnectorDriverManifest, 'journalledCommands'>, command: string): boolean {
+  return READ_COMMAND.test(command) && !manifest.journalledCommands?.includes(command);
+}
+
+/**
  * Desktop is a candidate route only when detected AND this origin holds a pairing token —
  * and NEVER for the shared Demo account. A demo session on a machine that happens to run
  * a paired FormLogic Desktop (the operator's own box, or any visitor who also uses the
@@ -173,6 +185,9 @@ export function createDesktopBackedConnector(
           requestId ? { idempotencyKey: requestId } : undefined
         );
         if (oaiyRes.ok) return oaiyRes.data;
+        if ((oaiyRes.transportFailure || oaiyRes.error.code === 'connector_uncertain') && onlyReads(manifest, command)) {
+          throw new ConnectorError('connector_unavailable', 'OAIY Desktop could not be reached.');
+        }
         throw new ConnectorError(
           oaiyRes.transportFailure ? 'connector_uncertain' : oaiyRes.error.code as ConnectorErrorCode,
           oaiyRes.transportFailure
@@ -188,6 +203,9 @@ export function createDesktopBackedConnector(
         requestId ? { requestId } : undefined
       );
       if (res.ok) return res.data;
+      if (res.error.code === 'connector_uncertain' && onlyReads(manifest, command)) {
+        throw new ConnectorError('connector_unavailable', 'FormLogic Desktop could not be reached.');
+      }
 
       // FL-CONN-001: once a REAL desktop route was attempted, NOTHING falls back to the
       // simulator — not on transport failure, not on auth_required, not on the old

@@ -26,7 +26,7 @@ import { resolveBackendApiUrl } from '../../lib/apiBase';
 import { logger } from '../../lib/logger';
 import { generateId } from '../../lib/utils';
 import { useAuthStore } from '../../stores/authStore';
-import { CODEX_PROVIDER_ID, DEFAULT_STREAM_TIMEOUT_MS, chatViaTunnel,
+import { CODEX_PROVIDER_ID, chatViaTunnel,
   postInput,
   type ChatViaTunnelOptions,
   type DesktopTunnelState, } from '../../client-runtime/desktop/desktopTunnel';
@@ -158,6 +158,11 @@ function imagesOf(content: string | ChatContentPart[]): string[] {
   return content.flatMap((part) => (part.type === 'image_url' ? [part.image_url.url] : []));
 }
 
+/** The server refuses a whole request over one of these, and a thread can already hold one. */
+function isEmptyMessage(message: ChatEngineMessage): boolean {
+  return chatTextOf(message.content).trim() === '' && imagesOf(message.content).length === 0;
+}
+
 function clipText(text: string, maxBytes: number): string {
   if (utf8Bytes(text) <= maxBytes) return text;
   // A character cut in two decodes to U+FFFD.
@@ -179,12 +184,14 @@ function withinLimits(messages: ChatEngineMessage[], limits: ChatRequestLimits):
 
 /**
  * The messages cut down to what one request may carry. The thread keeps everything: this is only
- * what goes on the wire. The system context and the person's newest message go first, images and
- * all. Then the words of older turns, newest first, down to the first that doesn't fit. Older
- * images are the first thing to go: they get the room left after that, newest first, and a note
- * says where one was left out. Null when the newest message can't go even on its own.
+ * what goes on the wire. An empty message never goes. The system context and the person's newest
+ * message go first, images and all. Then the words of older turns, newest first, down to the first
+ * that doesn't fit. Older images are the first thing to go: they get the room left after that,
+ * newest first, and a note says where one was left out. Null when the newest message can't go even
+ * on its own.
  */
-export function fitChatRequest(messages: ChatEngineMessage[], limits: ChatRequestLimits): ChatEngineMessage[] | null {
+export function fitChatRequest(all: ChatEngineMessage[], limits: ChatRequestLimits): ChatEngineMessage[] | null {
+  const messages = all.some(isEmptyMessage) ? all.filter((m) => !isEmptyMessage(m)) : all;
   if (withinLimits(messages, limits)) return messages;
 
   const slots = messages.map((m) => ({
@@ -281,8 +288,17 @@ const TURN_STOPPED: ChatTurnError = {
 };
 const TURN_TIMED_OUT: ChatTurnError = {
   code: 'timeout',
-  message: 'No reply after 5 minutes, so this turn was stopped. Anything it already did stays done, and it may still be finishing, so check that before you retry.',
+  message: 'No reply came in time, so this chat stopped waiting. The turn may still be finishing, and anything it already did stays done, so check that before you retry.',
 };
+const TURN_EMPTY: ChatTurnError = {
+  code: 'empty_reply',
+  message: 'The AI finished without saying anything. Anything it already did stays done, so check that before you retry.',
+};
+
+/** A tool round can take the server 2 minutes with nothing to send, so this much silence means it stalled. */
+const TURN_SILENCE_MS = 300_000;
+/** The server gives a turn 10 minutes (set_time_limit in AIController), so past this it is over. */
+const TURN_CEILING_MS = 660_000;
 
 export type ChatTurnOutcome =
   | { ok: true; source: ChatSource; content: string; note?: string }
@@ -368,6 +384,14 @@ export interface ChatEngineDeps {
 interface TunnelToolOptions {
   toolMode?: 'auto' | 'confirm';
   toolGrant?: string;
+}
+
+/** What a source tells the turn's deadline. */
+interface TurnDeadline {
+  /** Something came from the server: the silence starts again. */
+  heard: () => void;
+  /** From here another timer holds the turn. */
+  handOver: () => void;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -726,7 +750,8 @@ export function createSiteChatSseParser(sink: SiteChatSseSink): { push(chunk: st
 
 async function runSiteSource(
   opts: SendChatTurnOptions,
-  deps: ChatEngineDeps
+  deps: ChatEngineDeps,
+  deadline: TurnDeadline
 ): Promise<ChatTurnOutcome> {
   const doFetch = deps.fetchFn ?? fetch;
   const base = deps.apiBase ?? resolveBackendApiUrl;
@@ -785,6 +810,7 @@ async function runSiteSource(
     return { ok: false, source: 'site', error: { code: 'request_failed', message: 'Site AI returned no content.' } };
   }
 
+  deadline.heard();
   opts.events?.onState?.({ state: 'streaming' });
   let failed: ChatTurnError | null = null;
   let finished = false;
@@ -811,6 +837,7 @@ async function runSiteSource(
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      deadline.heard();
       parser.push(decoder.decode(value, { stream: true }));
     }
     parser.push(decoder.decode());
@@ -844,7 +871,8 @@ async function runSiteSource(
 async function runDesktopSource(
   prefs: AiPreferences,
   opts: SendChatTurnOptions,
-  deps: ChatEngineDeps
+  deps: ChatEngineDeps,
+  deadline: TurnDeadline
 ): Promise<ChatTurnOutcome> {
   const providerId = prefs.desktopProviderId?.trim() ?? '';
   if (!providerId) {
@@ -873,6 +901,8 @@ async function runDesktopSource(
     } else {
       note = `Record actions are unavailable this turn — the tool grant could not be minted (${grant.error ?? 'unknown error'}).`;
     }
+    // Nothing has gone out yet. Stopped here and queued all the same, its tools would run in Auto.
+    if (opts.signal?.aborted) return { ok: false, source: 'desktop', error: TURN_STOPPED };
   }
 
   const tunnel = deps.tunnelChat ?? chatViaTunnel;
@@ -890,7 +920,11 @@ async function runDesktopSource(
     clientSeq: opts.clientSeq ?? 1,
     signal: opts.signal,
     onDelta: opts.events?.onDelta,
-    onState: opts.events?.onState,
+    onState: (state) => {
+      // The tunnel's first word: the request is queued, or refused, and it has a limit of its own.
+      deadline.handOver();
+      opts.events?.onState?.(state);
+    },
     onFrame: (frame) => {
       const proposal = normalizeToolProposal(frame);
       if (proposal) {
@@ -1021,17 +1055,29 @@ async function runCustomSource(
 // ---------------------------------------------------------------------------
 
 /**
- * One turn, which ends as soon as it is stopped (opts.signal) or its 5 minutes are up, whatever it
- * is waiting on: the preferences and the tool grant can't be aborted. A Desktop turn has the same
- * limit in the tunnel, which also knows what to say about it.
+ * One turn, which ends as soon as it is stopped (opts.signal) or times out, whatever it is waiting
+ * on: the preferences and the tool grant can't be aborted. It times out on 5 minutes of silence or
+ * at the ceiling, so one that keeps sending is left to finish, as a cut connection stops it half
+ * done. Once queued, a Desktop turn is held by the tunnel's limit, which knows what to say about it.
+ * A reply with nothing in it is a failure: stored, it would break every later turn in the thread.
  */
 export async function sendChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDeps = {}): Promise<ChatTurnOutcome> {
   const controller = new AbortController();
   let timedOut = false;
-  const deadline = setTimeout(() => {
+  const giveUp = () => {
     timedOut = true;
     controller.abort();
-  }, DEFAULT_STREAM_TIMEOUT_MS);
+  };
+  let silence = setTimeout(giveUp, TURN_SILENCE_MS);
+  const ceiling = setTimeout(giveUp, TURN_CEILING_MS);
+  const handOver = () => {
+    clearTimeout(silence);
+    clearTimeout(ceiling);
+  };
+  const heard = () => {
+    clearTimeout(silence);
+    silence = setTimeout(giveUp, TURN_SILENCE_MS);
+  };
   const ended = new Promise<ChatTurnOutcome>((resolve) => {
     controller.signal.addEventListener(
       'abort',
@@ -1043,14 +1089,15 @@ export async function sendChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDe
   if (opts.signal?.aborted) stop();
   else opts.signal?.addEventListener('abort', stop, { once: true });
   try {
-    return await Promise.race([routeChatTurn({ ...opts, signal: controller.signal }, deps, () => clearTimeout(deadline)), ended]);
+    const outcome = await Promise.race([routeChatTurn({ ...opts, signal: controller.signal }, deps, { heard, handOver }), ended]);
+    return outcome.ok && outcome.content.trim() === '' ? { ok: false, source: outcome.source, error: TURN_EMPTY } : outcome;
   } finally {
-    clearTimeout(deadline);
+    handOver();
     opts.signal?.removeEventListener('abort', stop);
   }
 }
 
-async function routeChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDeps, onDesktopTurn: () => void): Promise<ChatTurnOutcome> {
+async function routeChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDeps, deadline: TurnDeadline): Promise<ChatTurnOutcome> {
   // Page context rides the message list as a trailing system hint — identical for all
   // three sources, so "this form" means the same thing everywhere.
   if (opts.pageContext && /^[A-Za-z0-9-]{1,64}$/.test(opts.pageContext.id)) {
@@ -1116,10 +1163,9 @@ async function routeChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDeps, on
 
   switch (prefs.aiSource) {
     case 'site':
-      return runSiteSource(opts, deps);
+      return runSiteSource(opts, deps, deadline);
     case 'desktop':
-      onDesktopTurn();
-      return runDesktopSource(prefs, opts, deps);
+      return runDesktopSource(prefs, opts, deps, deadline);
     case 'custom':
       return runCustomSource(prefs, opts, deps);
   }

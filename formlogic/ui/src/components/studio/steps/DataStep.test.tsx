@@ -179,6 +179,15 @@ describe('renaming a data type', () => {
     await act(async () => box.blur());
   }
 
+  it('saves nothing for a box left without typing', async () => {
+    await render();
+    await act(async () => nameBox().focus());
+    await act(async () => nameBox().blur());
+
+    expect(h.updateAppForm).not.toHaveBeenCalled();
+    expect(h.updateForm).not.toHaveBeenCalled();
+  });
+
   it('renames the form too when no other app shows it, and the builder\'s copy with it', async () => {
     useFormStore.setState({ forms: [form({ title: 'Customers' })] });
     await render();

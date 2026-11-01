@@ -138,7 +138,94 @@ describe('quoted text in an expression', () => {
   });
 
   it('does not run on past the line when a quote is never closed', () => {
-    expect(replaceVariablesWithIds(`/it's/.test(role)\n&& manager`, toId)).toBe(`/it's/.test(role)\n&& mgr_1`);
+    expect(replaceVariablesWithIds(`role == 'open\n&& manager`, toId)).toBe(`role_1 == 'open\n&& mgr_1`);
+  });
+
+  // A quote in a regex read as the start of text, so the code after it was left as typed, and the
+  // rule failed at run time on a name that was no field's id.
+  describe('a regex', () => {
+    const saved = (typed: string) => replaceVariablesWithIds(typed, toId);
+
+    it('is not where text starts', () => {
+      expect(saved('role.replace(/"/g, "") + manager')).toBe('role_1.replace(/"/g, "") + mgr_1');
+      expect(saved(`/'/.test(role) && manager`)).toBe(`/'/.test(role_1) && mgr_1`);
+    });
+
+    it.each(['(', ',', '=', ':', '!', '&', '|', '?', '{', '}', ';'])('opens after %s', (before) => {
+      expect(saved(`${before} /"/ + manager`)).toBe(`${before} /"/ + mgr_1`);
+    });
+
+    it('is left as typed, a field\'s name in it included', () => {
+      expect(saved('/manager/i.test(role)')).toBe('/manager/i.test(role_1)');
+    });
+
+    it('reads through an escaped slash and a class holding one', () => {
+      expect(saved(String.raw`/a\/"/.test(role) && manager`)).toBe(String.raw`/a\/"/.test(role_1) && mgr_1`);
+      expect(saved(`/[/"]/.test(role) && manager`)).toBe(`/[/"]/.test(role_1) && mgr_1`);
+    });
+
+    it('takes its flags with it, even where a field has the same name', () => {
+      expect(saved('role.replace(/"/gi, "") + manager')).toBe('role_1.replace(/"/gi, "") + mgr_1');
+      expect(replaceVariablesWithIds('/a/i.test(role) && i', { i: 'field_i', role: 'role_1' })).toBe('/a/i.test(role_1) && field_i');
+    });
+
+    it('is read as code in a template\'s ${ }', () => {
+      expect(saved('`${/"/.test(role)} ${manager}`')).toBe('`${/"/.test(role_1)} ${mgr_1}`');
+    });
+
+    it('does not count its braces as the code\'s', () => {
+      expect(saved('`${/}/.test(role)} manager ${manager}`')).toBe('`${/}/.test(role_1)} manager ${mgr_1}`');
+    });
+  });
+
+  describe('a division', () => {
+    const saved = (typed: string) => replaceVariablesWithIds(typed, toId);
+
+    it('is no regex after a name, a number, a bracket or a quote', () => {
+      expect(saved('role / 2 / manager')).toBe('role_1 / 2 / mgr_1');
+      expect(saved('(role) / 2 + manager / 3')).toBe('(role_1) / 2 + mgr_1 / 3');
+      expect(saved('items[0] / role / manager')).toBe('items[0] / role_1 / mgr_1');
+      expect(saved('"6" / role / manager')).toBe('"6" / role_1 / mgr_1');
+      expect(saved('`6` / role / manager')).toBe('`6` / role_1 / mgr_1');
+    });
+
+    it('stays code when a / that could open a regex never closes', () => {
+      expect(saved('(/ role && manager')).toBe('(/ role_1 && mgr_1');
+    });
+
+    it('reads a regex after one as a regex', () => {
+      expect(saved('role / 2 > 1 && /"/.test(manager)')).toBe('role_1 / 2 > 1 && /"/.test(mgr_1)');
+    });
+  });
+
+  describe('a comment', () => {
+    const saved = (typed: string) => replaceVariablesWithIds(typed, toId);
+
+    it('is not where text starts', () => {
+      expect(saved(`role /* don't */ && manager`)).toBe(`role_1 /* don't */ && mgr_1`);
+      expect(saved(`role // don't\n&& manager`)).toBe(`role_1 // don't\n&& mgr_1`);
+    });
+
+    it('is left as typed, a field\'s name in it included', () => {
+      expect(saved('role // the manager\n&& manager')).toBe('role_1 // the manager\n&& mgr_1');
+      expect(saved('role /* the manager */ && manager')).toBe('role_1 /* the manager */ && mgr_1');
+    });
+
+    it('is not a regex', () => {
+      expect(saved(`(/* a " */ role) && manager`)).toBe(`(/* a " */ role_1) && mgr_1`);
+    });
+
+    it('lets what stood before it decide what a / after it is', () => {
+      expect(saved('role /* half */ / 2 / manager')).toBe('role_1 /* half */ / 2 / mgr_1');
+    });
+  });
+
+  it.each([
+    'field_x.replace(/"/g, "") + role_1',
+    '/mgr_1/.test(role_1) && mgr_1 / 2 > 1',
+    'role_1 === "mgr_1" /* it\'s */ && /[/"]/.test(mgr_1)',
+  ])('shows and saves %s to what is stored', (stored) => {
+    expect(replaceVariablesWithIds(replaceIdsWithVariables(stored, toVar), toId)).toBe(stored);
   });
 
   // A rule saved before this reads as it is stored: it could never have matched "manager".

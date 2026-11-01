@@ -60,6 +60,52 @@ describe('a calculated field compared in Simple Mode', () => {
   }, CASE_TIMEOUT_MS);
 });
 
+describe('a Checkboxes answer, which is a list', () => {
+  const both = ['option_1', 'option_2'];
+
+  it('does not contain what it does not hold', async () => {
+    expect(await verdict('checkboxes', 'notContains', 'option_3', both)).toBe(true);
+    expect(await verdict('checkboxes', 'notContains', 'option_2', both)).toBe(false);
+  }, CASE_TIMEOUT_MS);
+
+  it('contains nothing while it is unanswered', async () => {
+    for (const answer of [[], null, '']) {
+      expect(await verdict('checkboxes', 'notContains', 'option_1', answer)).toBe(true);
+      expect(await verdict('checkboxes', 'contains', 'option_1', answer)).toBe(false);
+    }
+  }, CASE_TIMEOUT_MS);
+
+  it('keeps to itself when joined to other conditions, either way', async () => {
+    const conditions = [
+      { id: '1', fieldId: 'a', operator: 'notContains', value: 'option_1' },
+      { id: '2', fieldId: 'b', operator: '===', value: 'yes' },
+    ];
+    const types = new Map<string, FieldType>([['a', 'checkboxes'], ['b', 'short_text']]);
+    const run = (combinator: 'and' | 'or', answers: Record<string, unknown>) =>
+      runEval('condition', simpleConditionToExpression(conditions, combinator, { a: 'a', b: 'b' }, types), answers);
+
+    expect(await run('and', { a: ['option_2'], b: 'no' })).toBe(false);
+    expect(await run('and', { a: ['option_2'], b: 'yes' })).toBe(true);
+    expect(await run('and', { a: ['option_1'], b: 'yes' })).toBe(false);
+    expect(await run('or', { a: ['option_1'], b: 'yes' })).toBe(true);
+    expect(await run('or', { a: ['option_1'], b: 'no' })).toBe(false);
+    // Unanswered is where an unbracketed || would take the whole rule with it.
+    expect(await run('and', { a: [], b: 'no' })).toBe(false);
+  }, CASE_TIMEOUT_MS);
+
+  it('keeps to itself as the last condition too', async () => {
+    const conditions = [
+      { id: '1', fieldId: 'b', operator: '===', value: 'yes' },
+      { id: '2', fieldId: 'a', operator: 'notContains', value: 'option_1' },
+    ];
+    const types = new Map<string, FieldType>([['a', 'checkboxes'], ['b', 'short_text']]);
+    const expression = simpleConditionToExpression(conditions, 'and', { a: 'a', b: 'b' }, types);
+
+    expect(await runEval('condition', expression, { a: ['option_2'], b: 'no' })).toBe(false);
+    expect(await runEval('condition', expression, { a: ['option_2'], b: 'yes' })).toBe(true);
+  }, CASE_TIMEOUT_MS);
+});
+
 describe('what did not change', () => {
   it('compares number, rating and scale answers as numbers', async () => {
     for (const type of ['number', 'rating', 'scale'] as const) {

@@ -898,21 +898,222 @@ describe('a turn that goes wrong ends, and says so', () => {
     expect(await running).toMatchObject({ ok: false, error: { code: 'stopped' } });
   });
 
-  it('leaves a Desktop turn\'s deadline to the tunnel, which knows what to say about it', async () => {
+  it('leaves a queued Desktop turn\'s deadline to the tunnel, which knows what to say about it', async () => {
     vi.useFakeTimers();
     let finish!: (result: DesktopTunnelResult<ChatViaTunnelSuccess>) => void;
-    const tunnelChat = vi.fn(() => new Promise<DesktopTunnelResult<ChatViaTunnelSuccess>>((resolve) => { finish = resolve; }));
+    const tunnelChat = vi.fn((options: ChatViaTunnelOptions) => new Promise<DesktopTunnelResult<ChatViaTunnelSuccess>>((resolve) => {
+      options.onState?.({ state: 'queued', position: 0 });
+      finish = resolve;
+    }));
     let settled: ChatTurnOutcome | null = null;
     void sendChatTurn(
       turn(),
       prefsDeps(prefs({ aiSource: 'desktop', desktopProviderId: 'p' }), { tunnelChat: tunnelChat as unknown as ChatEngineDeps['tunnelChat'], mintToolGrant: okGrant() })
     ).then((out) => { settled = out; });
 
-    await vi.advanceTimersByTimeAsync(301_000);
+    await vi.advanceTimersByTimeAsync(700_000);
     expect(settled).toBeNull();
 
     finish({ ok: false, error: { code: 'uncertain', message: 'Timed out waiting for the desktop; the request may still complete.' } });
     await vi.advanceTimersByTimeAsync(0);
     expect(settled).toMatchObject({ ok: false, source: 'desktop', error: { code: 'uncertain' } });
+  });
+
+  // The server allows a turn 10 minutes, and 6 rounds of up to 2 minutes each. A deadline counted
+  // from the start cut off turns that were still working, leaving a build half done.
+  describe('a Site turn that keeps talking', () => {
+    const encoder = new TextEncoder();
+    const event = (text: string) => encoder.encode(`data: ${JSON.stringify({ content: text })}\n\n`);
+
+    /** A real stream the test writes to as the server would, with a turn reading it. */
+    async function streamingTurn() {
+      vi.useFakeTimers();
+      let server!: ReadableStreamDefaultController<Uint8Array>;
+      const body = new ReadableStream<Uint8Array>({ start(controller) { server = controller; } });
+      const fetchFn = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        init?.signal?.addEventListener('abort', () => server.error(new DOMException('Aborted', 'AbortError')));
+        return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      });
+      const seen = { settled: null as ChatTurnOutcome | null };
+      void sendChatTurn(turn(), prefsDeps(prefs(), { fetchFn: fetchFn as typeof fetch })).then((out) => { seen.settled = out; });
+      await vi.advanceTimersByTimeAsync(0);
+      return { server, seen };
+    }
+
+    it('is left to finish past 5 minutes, even near the server\'s own limit', async () => {
+      const { server, seen } = await streamingTurn();
+      for (let minute = 1; minute <= 10; minute += 1) {
+        await vi.advanceTimersByTimeAsync(60_000);
+        server.enqueue(event('.'));
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(seen.settled).toBeNull();
+
+      server.enqueue(encoder.encode('event: done\ndata: {"content":"built it"}\n\n'));
+      server.close();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(seen.settled).toMatchObject({ ok: true, content: 'built it' });
+    });
+
+    it('counts a keepalive, or part of an event, as hearing from the server', async () => {
+      const { server, seen } = await streamingTurn();
+      for (let round = 0; round < 2; round += 1) {
+        await vi.advanceTimersByTimeAsync(280_000);
+        server.enqueue(encoder.encode(': keepalive\n\n'));
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(seen.settled).toBeNull();
+      server.close();
+    });
+
+    it('ends after 5 minutes of silence, and says it may still be finishing', async () => {
+      const { server, seen } = await streamingTurn();
+      await vi.advanceTimersByTimeAsync(240_000);
+      server.enqueue(event('working'));
+      await vi.advanceTimersByTimeAsync(299_000);
+      expect(seen.settled).toBeNull();
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(seen.settled).toMatchObject({ ok: false, error: { code: 'timeout', message: expect.stringContaining('may still be finishing') } });
+    });
+
+    it('ends at the ceiling, a little past the server\'s 10 minutes, however much it sends', async () => {
+      const { server, seen } = await streamingTurn();
+      for (let minute = 1; minute <= 10; minute += 1) {
+        await vi.advanceTimersByTimeAsync(60_000);
+        server.enqueue(event('.'));
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(seen.settled).toBeNull();
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(seen.settled).toMatchObject({ ok: false, error: { code: 'timeout' } });
+    });
+  });
+
+  // Nothing could tell Stop from a turn on its way until it was in the desktop's queue.
+  describe('a Desktop turn stopped while its grant is fetched', () => {
+    function holdGrant() {
+      let release!: (grant: Awaited<ReturnType<ReturnType<typeof okGrant>>>) => void;
+      const mintToolGrant = vi.fn(() => new Promise<Awaited<ReturnType<ReturnType<typeof okGrant>>>>((resolve) => { release = resolve; }));
+      return { mintToolGrant, release: () => release({ data: { grantToken: 'grant-1', expiresAt: '' }, status: 200 }) };
+    }
+    const desktop = prefs({ aiSource: 'desktop', desktopProviderId: 'p' });
+
+    it('never reaches the queue', async () => {
+      const { mintToolGrant, release } = holdGrant();
+      const tunnelChat = okTunnel();
+      const stop = new AbortController();
+      const running = sendChatTurn(turn({ signal: stop.signal }), prefsDeps(desktop, { tunnelChat, mintToolGrant }));
+      await vi.waitFor(() => expect(mintToolGrant).toHaveBeenCalled());
+
+      stop.abort();
+      expect(await running).toMatchObject({ ok: false, error: { code: 'stopped' } });
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(tunnelChat).not.toHaveBeenCalled();
+    });
+
+    it('has the deadline running while the grant hangs', async () => {
+      vi.useFakeTimers();
+      const { mintToolGrant } = holdGrant();
+      let settled: ChatTurnOutcome | null = null;
+      void sendChatTurn(turn(), prefsDeps(desktop, { tunnelChat: okTunnel(), mintToolGrant })).then((out) => { settled = out; });
+
+      await vi.advanceTimersByTimeAsync(300_000);
+
+      expect(settled).toMatchObject({ ok: false, error: { code: 'timeout' } });
+    });
+
+    it('has the deadline running until the tunnel says the turn is queued', async () => {
+      vi.useFakeTimers();
+      const hangs = vi.fn(() => new Promise<DesktopTunnelResult<ChatViaTunnelSuccess>>(() => {}));
+      let settled: ChatTurnOutcome | null = null;
+      void sendChatTurn(turn(), prefsDeps(desktop, { tunnelChat: hangs as unknown as ChatEngineDeps['tunnelChat'], mintToolGrant: okGrant() })).then((out) => { settled = out; });
+
+      await vi.advanceTimersByTimeAsync(300_000);
+
+      expect(settled).toMatchObject({ ok: false, error: { code: 'timeout' } });
+    });
+  });
+});
+
+// One model that ended a round with nothing to say used to be stored as a reply, and every later
+// turn in that thread was refused by the server for carrying it, Compact included.
+describe('an empty reply', () => {
+  const site = (events: string[]) => prefsDeps(prefs(), { fetchFn: vi.fn(async () => sseResponse(events)) });
+
+  it.each([
+    ['no text at all', ['event: done\ndata: {"usage":{}}\n\nevent: end\ndata: {}\n\n']],
+    ['an empty final text', ['event: done\ndata: {"content":""}\n\n']],
+    ['only spaces', ['data: {"content":"  \\n "}\n\n', 'event: done\ndata: {}\n\n']],
+  ])('is an error for a Site turn with %s', async (_label, events) => {
+    expect(await sendChatTurn(turn(), site(events))).toMatchObject({ ok: false, source: 'site', error: { code: 'empty_reply' } });
+  });
+
+  it('is an error for a non-streaming Site answer, a Desktop turn and a custom service', async () => {
+    const plain = prefsDeps(prefs(), { fetchFn: vi.fn(async () => jsonResponse({ data: { content: '' } })) });
+    expect(await sendChatTurn(turn(), plain)).toMatchObject({ ok: false, source: 'site', error: { code: 'empty_reply' } });
+
+    const desktop = prefsDeps(prefs({ aiSource: 'desktop', desktopProviderId: 'p' }), { tunnelChat: okTunnel(''), mintToolGrant: okGrant() });
+    expect(await sendChatTurn(turn(), desktop)).toMatchObject({ ok: false, source: 'desktop', error: { code: 'empty_reply' } });
+
+    const custom = prefsDeps(prefs({ aiSource: 'custom', customProviderId: 'c' }), {
+      fetchFn: vi.fn(async () => jsonResponse({ choices: [{ message: { content: '' } }] })),
+      resolveCustomProvider: async () => customProvider(),
+    });
+    expect(await sendChatTurn(turn(), custom)).toMatchObject({ ok: false, source: 'custom', error: { code: 'empty_reply' } });
+  });
+
+  it('says what may have happened, for a retry that could repeat it', async () => {
+    const out = await sendChatTurn(turn(), site(['event: done\ndata: {}\n\n']));
+    expect(!out.ok && out.error.message).toContain('stays done');
+  });
+
+  describe('already in a thread', () => {
+    const stuck: ChatEngineMessage[] = [
+      { role: 'user', content: 'first' },
+      { role: 'assistant', content: '' },
+      { role: 'user', content: 'second' },
+      { role: 'assistant', content: '   ' },
+      { role: 'user', content: 'third' },
+    ];
+    const reply = () => sseResponse(['event: done\ndata: {"content":"back"}\n\n']);
+    const roles = (messages: ChatEngineMessage[]) => messages.map((m) => m.content);
+
+    it('is left out by the trim, however small the thread', () => {
+      expect(roles(fitChatRequest(stuck, SITE_CHAT_LIMITS)!)).toEqual(['first', 'second', 'third']);
+      expect(roles(fitChatRequest(stuck, DESKTOP_CHAT_LIMITS)!)).toEqual(['first', 'second', 'third']);
+    });
+
+    it('is left out of a thread over the limits as well', () => {
+      const long = Array.from({ length: 60 }, (_, i): ChatEngineMessage => ({ role: i % 2 === 0 ? 'user' : 'assistant', content: i % 4 === 1 ? '' : `turn ${i}` }));
+      expect(fitChatRequest(long, SITE_CHAT_LIMITS)!.every((m) => chatTextOf(m.content) !== '')).toBe(true);
+    });
+
+    it('does not take a message with only an image for empty', () => {
+      const photo: ChatEngineMessage = { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AAAA' } }] };
+      expect(fitChatRequest([photo], SITE_CHAT_LIMITS)).toEqual([photo]);
+    });
+
+    it('lets a Site turn go out, and a compact, which are the same request', async () => {
+      for (const noTools of [false, true]) {
+        const fetchFn = vi.fn(async () => reply());
+        const out = await sendChatTurn(turn({ messages: stuck, noTools }), prefsDeps(prefs(), { fetchFn }));
+
+        expect(out).toMatchObject({ ok: true, content: 'back' });
+        const sent = JSON.parse(String((fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1].body)) as { messages: ChatEngineMessage[] };
+        expect(roles(sent.messages)).toEqual(['first', 'second', 'third']);
+      }
+    });
+
+    it('lets a Desktop turn go out', async () => {
+      const tunnelChat = okTunnel();
+      await sendChatTurn(turn({ messages: stuck }), prefsDeps(prefs({ aiSource: 'desktop', desktopProviderId: 'p' }), { tunnelChat, mintToolGrant: okGrant() }));
+      expect(roles(tunnelChat.mock.calls[0][0].messages as ChatEngineMessage[])).toEqual(['first', 'second', 'third']);
+    });
   });
 });

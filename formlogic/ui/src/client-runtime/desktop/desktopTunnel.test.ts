@@ -742,6 +742,47 @@ describe('chatViaTunnel state machine', () => {
     }
   });
 
+  it('follows a long turn that keeps sending frames, and gives up only on silence', async () => {
+    vi.useFakeTimers();
+    try {
+      const encoder = new TextEncoder();
+      let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
+      mockOvertakenRelay(() => [], () => [], {
+        first: (init) => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            stream = controller;
+            init.signal?.addEventListener('abort', () => controller.error(new Error('aborted')));
+          },
+        }), { status: 200 })),
+      });
+
+      let settled = false;
+      const reply = chatViaTunnel({
+        instanceId: INSTANCE,
+        providerId: 'openai-codex-agent',
+        messages: [{ role: 'user', content: 'hi' }],
+        timeoutMs: 5_000,
+      });
+      void reply.then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stream).toBeDefined();
+
+      // Twenty seconds in all, four times the limit, and never five seconds of silence.
+      for (let beat = 0; beat < 5; beat += 1) {
+        await vi.advanceTimersByTimeAsync(4_000);
+        stream!.enqueue(encoder.encode('event: status\ndata: {"status":"streaming"}\n\n'));
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(settled).toBe(true);
+      expect((await reply).ok).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('still reports a cancel by the caller after the relay said done', async () => {
     const encoder = new TextEncoder();
     const abort = new AbortController();
@@ -763,6 +804,26 @@ describe('chatViaTunnel state machine', () => {
     });
 
     expect(res).toMatchObject({ ok: false, error: { code: 'uncertain' } });
+  });
+
+  it('queues nothing when stopped while the desktop\'s key was being read', async () => {
+    const backend = mockTunnelBackend(DESKTOP, () => []);
+    const answer = backend.fetchMock.getMockImplementation() as (...args: unknown[]) => unknown;
+    const abort = new AbortController();
+    backend.fetchMock.mockImplementation((...args: unknown[]) => {
+      if (String(args[0]).includes('/api/desktop/ai/pubkey')) abort.abort();
+      return answer(...args);
+    });
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+      signal: abort.signal,
+    });
+
+    expect(res).toMatchObject({ ok: false, error: { code: 'stopped' } });
+    expect(backend.fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/desktop/ai/requests'))).toBe(false);
   });
 
   it('keeps reading a backlog until a pass adds nothing, however many passes it takes', async () => {

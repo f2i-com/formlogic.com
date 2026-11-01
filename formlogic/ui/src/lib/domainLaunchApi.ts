@@ -6,8 +6,9 @@
 // host for the session so the launch page paints once.
 //
 // Every page on a host the build doesn't know starts with that question, which is every page of a
-// self-hosted site. So the answer is remembered per host, a page doesn't wait long for a new one,
-// and offline it doesn't ask.
+// self-hosted site. So the answer is remembered per host, with what it takes to draw the page, and
+// only a real answer from the server replaces it. A timeout, a 429, a 5xx or being offline says
+// nothing about the host.
 import { logger } from './logger';
 
 export interface LaunchConfig {
@@ -46,22 +47,35 @@ export interface LaunchConfig {
   };
 }
 
-/** What became of asking. No answer (offline, too slow, a 429 or 5xx) says nothing about the host. */
+/**
+ * What became of asking. No answer (offline, too slow, a 429 or 5xx) says nothing about the host.
+ * `platform`: the server says this host is the site's own address, not a domain that isn't connected.
+ */
 export interface HostLookup {
   config: LaunchConfig | null;
   answered: boolean;
+  platform?: boolean;
 }
 
-/** What this browser last heard about a host: a customer's domain, or not one. */
-export type RememberedHost = 'domain' | 'not-domain';
+export type SoftnAccess = 'application' | 'members';
+
+/** What this browser last heard about a host. All of it is public. */
+export type RememberedHost =
+  | { kind: 'not-domain' }
+  /** With no config, the word an older version kept: it knows nothing to draw the page with. */
+  | { kind: 'domain'; config?: LaunchConfig; softnAccess?: SoftnAccess };
 
 const API_BASE = (import.meta.env.VITE_API_URL as string) || '/api';
 const NO_ANSWER: HostLookup = { config: null, answered: false };
-/** How long a page may wait to find out. Past this, the host counts as no customer's domain. */
-const LOOKUP_TIMEOUT_MS = 2500;
+/** How long one try may take. Nothing is decided by its running out: it is asked again. */
+const LOOKUP_TIMEOUT_MS = 15_000;
 const REMEMBERED_PREFIX = 'formlogic:domain-host:';
 const cache = new Map<string, Promise<LaunchConfig | null>>();
 const lookups = new Map<string, Promise<HostLookup>>();
+
+function isLaunchConfig(data: unknown): data is LaunchConfig {
+  return !!data && typeof data === 'object' && 'app' in data && 'landing' in data;
+}
 
 async function request(host: string, signal?: AbortSignal): Promise<HostLookup> {
   try {
@@ -70,13 +84,14 @@ async function request(host: string, signal?: AbortSignal): Promise<HostLookup> 
       headers: { Accept: 'application/json' },
       signal,
     });
-    if (res.status === 404) return { config: null, answered: true };
-    if (!res.ok) return NO_ANSWER;
+    if (res.status !== 404 && !res.ok) return NO_ANSWER;
+    // The server's 404 is JSON. Any other is a proxy or a page, which knows nothing about the host.
     const data = (await res.json()) as unknown;
-    if (data && typeof data === 'object' && 'app' in data && 'landing' in data) {
-      return { config: data as LaunchConfig, answered: true };
+    if (res.status === 404) {
+      if (!data || typeof data !== 'object') return NO_ANSWER;
+      return { config: null, answered: true, ...('platform' in data && data.platform === true ? { platform: true } : {}) };
     }
-    return NO_ANSWER;
+    return isLaunchConfig(data) ? { config: data, answered: true } : NO_ANSWER;
   } catch (e) {
     if (!signal?.aborted) logger.error('launch config fetch failed', e);
     return NO_ANSWER;
@@ -93,18 +108,29 @@ export function fetchLaunchConfig(host: string): Promise<LaunchConfig | null> {
 export function rememberedHost(host: string): RememberedHost | null {
   try {
     const value = localStorage.getItem(`${REMEMBERED_PREFIX}${host.toLowerCase()}`);
-    return value === 'domain' || value === 'not-domain' ? value : null;
+    if (value === 'not-domain') return { kind: 'not-domain' };
+    if (value === 'domain') return { kind: 'domain' };
+    if (value === null) return null;
+    const stored = JSON.parse(value) as { config?: unknown; softnAccess?: SoftnAccess } | null;
+    return isLaunchConfig(stored?.config)
+      ? { kind: 'domain', config: stored.config, ...(stored.softnAccess ? { softnAccess: stored.softnAccess } : {}) }
+      : null;
   } catch {
     return null;
   }
 }
 
-function remember(host: string, config: LaunchConfig | null): void {
+/**
+ * Keep what the server said about a host. A customer's domain is kept only with its `softnAccess`,
+ * which decides what its pages are: kept without it, a SoftN app's domain would show the platform's.
+ */
+export function rememberHost(host: string, config: LaunchConfig | null, softnAccess?: SoftnAccess): void {
+  const key = host.toLowerCase();
   // FormLogic's own address can still have an app connected from an older version. It isn't a
   // customer's domain: its pages must not wait, and its sign-in is its own.
-  const domain = config !== null && !config.platformUrl?.endsWith(`//${host}`);
+  const domain = config !== null && !config.platformUrl?.endsWith(`//${key}`);
   try {
-    localStorage.setItem(`${REMEMBERED_PREFIX}${host}`, domain ? 'domain' : 'not-domain');
+    localStorage.setItem(`${REMEMBERED_PREFIX}${key}`, domain ? JSON.stringify({ config, softnAccess }) : 'not-domain');
   } catch {
     /* storage blocked: the next page asks again */
   }
@@ -121,8 +147,9 @@ async function lookUpInTime(host: string): Promise<HostLookup> {
 }
 
 /**
- * Ask whether a host is a connected domain, for a page that may be waiting on the answer. Once per
- * page load, and only a real answer sticks: no answer is asked for again.
+ * Ask whether a host is a connected domain. Once per page load, and only a real answer sticks: no
+ * answer is asked for again. An answer that it is one isn't kept here, as the caller still has to
+ * learn its `softnAccess` (see rememberHost).
  */
 export function lookUpHost(host: string): Promise<HostLookup> {
   const key = host.toLowerCase();
@@ -130,8 +157,8 @@ export function lookUpHost(host: string): Promise<HostLookup> {
   if (running) return running;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return Promise.resolve(NO_ANSWER);
   const lookup = lookUpInTime(key).then((result) => {
-    if (result.answered) remember(key, result.config);
-    else lookups.delete(key);
+    if (!result.answered) lookups.delete(key);
+    else if (!result.config) rememberHost(key, null);
     return result;
   });
   lookups.set(key, lookup);

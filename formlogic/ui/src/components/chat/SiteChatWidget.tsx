@@ -66,6 +66,11 @@ import { chatPrivacyBadge, chatThreadTitle, chatToolLinkPath, prepareSoftnHandOf
 import { useCanDockChat } from './useChatDockOffset';
 
 const PAGE_SIZE = 30;
+/**
+ * Every turn still running, whichever mount of the widget began it: a full-screen route remounts
+ * this one, and moving to another thread lets Send go without stopping the turn.
+ */
+const runningTurns = new Set<{ threadId: string; controller: AbortController }>();
 /** Desktop panel dock size (w-96 x h-[34rem]) used to clamp a restored drag offset. */
 const PANEL_WIDTH = 384;
 const PANEL_HEIGHT = 544;
@@ -315,6 +320,7 @@ function AccountChatWidget() {
 
   const holdSend = useCallback((threadId: string) => {
     const turn = { threadId, controller: new AbortController() };
+    runningTurns.add(turn);
     heldTurnRef.current = turn;
     setSending(true);
     return turn;
@@ -326,6 +332,11 @@ function AccountChatWidget() {
     heldTurnRef.current = null;
     setSending(false);
   }, []);
+
+  const endTurn = useCallback((turn: { threadId: string; controller: AbortController }) => {
+    runningTurns.delete(turn);
+    releaseSend(turn);
+  }, [releaseSend]);
 
   // Demo guided builds: a scripted DIRECTOR replaces live AI for the shared demo account
   // (the backend is read-only for demo — /api/ai/chat would 403 anyway). It is module-
@@ -547,9 +558,9 @@ function AccountChatWidget() {
         if (outcome.source) setLastSource(outcome.source);
         patchTurn((turn) => ({ ...turn, streamText: '', error: outcome.error, status: 'failed' }));
       }
-      releaseSend(held);
+      endTurn(held);
     },
-    [userId, isDemo, followActivity, holdSend, releaseSend]
+    [userId, isDemo, followActivity, holdSend, endTurn]
   );
 
   // Image attachments: downscaled client-side, sent as content parts, stored on
@@ -664,9 +675,9 @@ function AccountChatWidget() {
     } catch (e) {
       toast.error('Could not compact the chat', e instanceof Error ? e.message : undefined);
     } finally {
-      releaseSend(held);
+      endTurn(held);
     }
-  }, [sending, userId, activeThreadId, messages, isDemo, holdSend, releaseSend]);
+  }, [sending, userId, activeThreadId, messages, isDemo, holdSend, endTurn]);
 
   const retryTurn = useCallback(() => {
     const last = lastSendRef.current;
@@ -706,11 +717,12 @@ function AccountChatWidget() {
   const deleteThread = useCallback(
     async (threadId: string) => {
       if (!userId) return;
-      // A turn in a deleted thread has nowhere left to put its reply.
-      const held = heldTurnRef.current;
-      if (held?.threadId === threadId) {
-        held.controller.abort();
-        releaseSend(held);
+      // A turn in a deleted thread has nowhere left to put its reply, whether or not Send still
+      // waits for it. Its tools have nothing left to answer to either.
+      for (const turn of runningTurns) {
+        if (turn.threadId !== threadId) continue;
+        turn.controller.abort();
+        releaseSend(turn);
       }
       await getChatStore(userId).deleteThread(threadId);
       setThreads((existing) => existing.filter((t) => t.id !== threadId));

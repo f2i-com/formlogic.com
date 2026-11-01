@@ -72,15 +72,36 @@ export async function saveFormFields(
   return { ok: true };
 }
 
+/** Any save still on its way, of any part, as a refresh would take that part from under it. */
+function hasEditOfItsOwn(formId: string): boolean {
+  const { savingFormIds, saveErrors } = useFormStore.getState();
+  return !!savingFormIds[formId] || !!saveErrors[formId]?.includes('fields');
+}
+
+async function refreshOnce(formId: string): Promise<void> {
+  const { forms, saveErrors, loadFullForm } = useFormStore.getState();
+  const held = forms.find((form) => form.id === formId);
+  if (!held?.fieldsRevision || hasEditOfItsOwn(formId)) return;
+  await loadFullForm(formId, {
+    force: true,
+    // Asked again with the answer in hand: anything done during the read isn't in it.
+    onlyIf: () => useFormStore.getState().forms.find((form) => form.id === formId) === held && !hasEditOfItsOwn(formId),
+    // What a failed save of another part holds is only here, and Retry still has to send it.
+    fieldsOnly: !!saveErrors[formId]?.length,
+  });
+}
+
+const refreshes = new Map<string, Promise<void>>();
+
 /**
  * Bring the builder's copy up to date after a write that did not come through it or through
- * saveFormFields: the site chat's update_form runs on the server. A copy with an edit of its own
- * still on the way is left as it is, because replacing it would drop that edit without a word.
- * That one save does get refused, and it should: both changed the form at the same moment.
+ * saveFormFields: the site chat's update_form runs on the server. A copy with an edit of its own,
+ * still on the way or made during the read, is left as it is, because replacing it would drop that
+ * edit without a word. That one save does get refused, and it should: both changed the form at the
+ * same moment. One at a time, as a turn can make several writes and each must see the one before.
  */
-export async function refreshFormFields(formId: string): Promise<void> {
-  const { forms, savingFormIds, saveErrors, loadFullForm } = useFormStore.getState();
-  const held = forms.find((form) => form.id === formId);
-  if (!held?.fieldsRevision || savingFormIds[formId] || saveErrors[formId]) return;
-  await loadFullForm(formId, { force: true });
+export function refreshFormFields(formId: string): Promise<void> {
+  const turn = (refreshes.get(formId) ?? Promise.resolve()).then(() => refreshOnce(formId));
+  refreshes.set(formId, turn);
+  return turn;
 }

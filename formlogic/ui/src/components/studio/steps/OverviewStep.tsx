@@ -131,9 +131,12 @@ export function OverviewStep({
   };
 
   const commitDescription = async () => {
-    const next = (descDraft ?? '').trim();
+    const typed = descDraft;
     setDescDraft(null);
-    if (takeCancelled() || next === (app.description ?? '').trim()) return;
+    // Unlike a name, a description may be cleared, so a box nobody typed in can't read as empty.
+    if (takeCancelled() || typed === null) return;
+    const next = typed.trim();
+    if (next === (app.description ?? '').trim()) return;
     await saveField('description', next, 'App description');
   };
 

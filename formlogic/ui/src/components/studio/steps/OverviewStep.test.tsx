@@ -88,6 +88,35 @@ describe('Escape', () => {
   });
 });
 
+describe('leaving a box without typing', () => {
+  it.each([['name', nameBox], ['description', descriptionBox]])('saves nothing for the %s', async (_label, box) => {
+    await render();
+    await act(async () => { box().focus(); });
+    await act(async () => box().blur());
+
+    expect(updateApp).not.toHaveBeenCalled();
+    expect(box().value).toBe(box === nameBox ? 'Shop' : 'Sells things');
+  });
+
+  it('leaves Escape nothing to cancel on the next edit', async () => {
+    await render();
+    await act(async () => { descriptionBox().focus(); });
+    await press(descriptionBox(), 'Escape');
+    edit(descriptionBox(), 'New words');
+    await act(async () => descriptionBox().blur());
+
+    expect(updateApp).toHaveBeenCalledWith('a1', { description: 'New words' });
+  });
+
+  it('still lets a description be cleared on purpose', async () => {
+    await render();
+    edit(descriptionBox(), '');
+    await act(async () => descriptionBox().blur());
+
+    expect(updateApp).toHaveBeenCalledWith('a1', { description: '' });
+  });
+});
+
 it('still saves on Enter and on leaving the box', async () => {
   await render();
   edit(nameBox(), 'Renamed');

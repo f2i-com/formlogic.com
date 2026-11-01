@@ -155,6 +155,58 @@ describe('threads', () => {
     expect(message.seq).toBe(1);
     expect((await store.listMessages('missing-thread')).messages).toHaveLength(1);
   });
+
+  // A turn can outlive its thread, and its reply came in as a row nothing shows or removes.
+  it('stores nothing for a thread deleted in this session', async () => {
+    const store = getChatStore('u1');
+    const thread = await store.createThread('Gone');
+    await store.deleteThread(thread.id);
+
+    const late = await store.appendMessage(thread.id, 'assistant', 'too late');
+
+    expect(late.content).toBe('too late');
+    expect((await store.listMessages(thread.id)).messages).toEqual([]);
+    expect(await store.listThreads()).toEqual([]);
+  });
+
+  it('removes a message on its way as the delete begins', async () => {
+    const store = getChatStore('u1');
+    const thread = await store.createThread('Gone');
+
+    await Promise.all([store.appendMessage(thread.id, 'assistant', 'racing'), store.deleteThread(thread.id)]);
+
+    expect((await store.listMessages(thread.id)).messages).toEqual([]);
+    expect(await store.listThreads()).toEqual([]);
+  });
+
+  // The delete lands between the write's two steps, which a stamp on the thread would undo.
+  it('does not bring back a thread deleted while a message was being written to it', async () => {
+    const store = getChatStore('u1');
+    const thread = await store.createThread('Gone');
+    const backend = (store as unknown as { backend: { allThreads(): Promise<unknown[]> } }).backend;
+    const read = backend.allThreads.bind(backend);
+    vi.spyOn(backend, 'allThreads').mockImplementationOnce(async () => {
+      const threads = await read();
+      await store.deleteThread(thread.id);
+      return threads;
+    });
+
+    await store.appendMessage(thread.id, 'assistant', 'racing');
+
+    expect(await store.listThreads()).toEqual([]);
+    expect((await store.listMessages(thread.id)).messages).toEqual([]);
+  });
+
+  it('leaves other threads to go on as they were', async () => {
+    const store = getChatStore('u1');
+    const gone = await store.createThread('Gone');
+    const kept = await store.createThread('Kept');
+    await store.deleteThread(gone.id);
+
+    await store.appendMessage(kept.id, 'assistant', 'hello');
+
+    expect((await store.listMessages(kept.id)).messages).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -285,6 +337,19 @@ describe('in-memory fallback', () => {
     factory.dbs.get('formlogic-chat:u1')!.failWrites = 'throw';
     await expect(store.deleteThread(thread.id)).rejects.toThrow();
     expect(store.persistent).toBe(true);
+  });
+
+  it('goes on storing a thread whose delete the database refused: it is still there', async () => {
+    const store = new ChatStore('u1');
+    const thread = await store.createThread('Stays');
+    const db = factory.dbs.get('formlogic-chat:u1')!;
+    db.failWrites = 'throw';
+    await expect(store.deleteThread(thread.id)).rejects.toThrow();
+    db.failWrites = null;
+
+    await store.appendMessage(thread.id, 'assistant', 'still arrives');
+
+    expect((await store.listMessages(thread.id)).messages.map((m) => m.content)).toEqual(['still arrives']);
   });
 
   it('still deletes from the database after a fallback, so the thread stays gone on reload', async () => {

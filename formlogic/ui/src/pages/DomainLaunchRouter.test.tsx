@@ -5,9 +5,9 @@ import { MemoryRouter, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LaunchConfig } from '../lib/domainLaunchApi';
 
-const { getNativeEntry, lookUpHost, rememberedHost } = vi.hoisted(() => ({ getNativeEntry: vi.fn(), lookUpHost: vi.fn(), rememberedHost: vi.fn() }));
+const { getNativeEntry, lookUpHost, rememberedHost, rememberHost } = vi.hoisted(() => ({ getNativeEntry: vi.fn(), lookUpHost: vi.fn(), rememberedHost: vi.fn(), rememberHost: vi.fn() }));
 vi.mock('../lib/api', () => ({ api: { getNativeEntry } }));
-vi.mock('../lib/domainLaunchApi', () => ({ lookUpHost, rememberedHost }));
+vi.mock('../lib/domainLaunchApi', () => ({ lookUpHost, rememberedHost, rememberHost }));
 vi.mock('./AppLaunchPage', () => ({ AppLaunchPage: () => <p>launch page</p> }));
 vi.mock('../components/app-runtime/AppEntryRouter', () => ({
   DomainNativeApp: ({ slug, access }: { slug: string; access: string }) => <p>app {slug} for {access}</p>,
@@ -20,6 +20,14 @@ const config = (mode: string) => ({ app: { slug: 'shop', name: 'Shop' }, domain:
 const serverSays = (found: unknown) => lookUpHost.mockResolvedValue({ config: found as LaunchConfig | null, answered: true });
 const noAnswer = () => lookUpHost.mockResolvedValue({ config: null, answered: false });
 const stillAsking = () => lookUpHost.mockReturnValue(new Promise(() => {}));
+/** An answer the test gives when it chooses. */
+function answerLater() {
+  let answer!: (result: unknown) => void;
+  lookUpHost.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+  return (result: unknown) => act(async () => answer(result));
+}
+const SPINNER = '.animate-spin';
+const waitFor = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root;
 let container: HTMLDivElement;
@@ -34,11 +42,12 @@ const show = async (path: string) => {
 
 describe('DomainLaunchRouter', () => {
   const replace = vi.fn();
+  const assign = vi.fn();
   beforeEach(() => {
     vi.clearAllMocks();
     lookUpHost.mockReset();
     rememberedHost.mockReturnValue(null);
-    Object.defineProperty(window, 'location', { configurable: true, value: { ...window.location, replace } });
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...window.location, replace, assign } });
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -46,6 +55,7 @@ describe('DomainLaunchRouter', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    vi.useRealTimers();
   });
 
   it('opens a SoftN app at the domain itself, with no redirect', async () => {
@@ -127,32 +137,31 @@ describe('DomainLaunchRouter', () => {
     expect(getNativeEntry).not.toHaveBeenCalled();
   });
 
-  it('says so at the root of a host that is not connected', async () => {
+  it('says so at the root of a host the server says is neither a domain nor the site', async () => {
     serverSays(null);
     expect(await show('/')).toContain("This domain isn't connected yet");
   });
 
-  // Every page of a self-hosted site starts with this question, on a phone with one bar as much as
-  // anywhere. Only the pages a real domain has rules about may wait for the answer.
-  describe('while the server is being asked', () => {
-    it('shows the platform\'s pages at once on a host it knows nothing of', async () => {
+  // The server's word that a host is the site's own: nothing about it can be unconnected.
+  it.each(['/', '/login', '/signup', '/app/shop', '/dashboard', '/some-new-page'])('shows the normal app at %s on the site\'s own address', async (path) => {
+    lookUpHost.mockResolvedValue({ config: null, answered: true, platform: true });
+    expect(await show(path)).toBe('platform page');
+  });
+
+  it('keeps what the server said, with the app\'s kind', async () => {
+    const found = config('launch_page');
+    serverSays(found);
+    getNativeEntry.mockResolvedValue({ data: { home: false, access: 'members', native: true } });
+    await show('/');
+    expect(rememberHost).toHaveBeenCalledWith('shop.acme.com', found, 'members');
+  });
+
+  describe('on a host nothing is known of, before there is an answer', () => {
+    it('shows the platform\'s pages at once, and the form and legal pages', async () => {
       stillAsking();
-      for (const path of ['/dashboard', '/forms', '/form/abc123', '/settings/ai', '/docs', '/admin/users', '/open/app/shop']) {
+      for (const path of ['/dashboard', '/forms', '/form/abc123', '/settings/ai', '/docs', '/admin/users', '/open/app/shop', '/privacy', '/terms']) {
         expect(await show(path), path).toBe('platform page');
       }
-    });
-
-    // AppRuntimeAuthGuard draws its sign-in form in place, and only the answer tells it the domain's
-    // address to send people to instead. A first visit there has to hear that answer first.
-    it.each(['/app/shop', '/app/shop/form/1', '/APP/shop/'])('waits at %s on a host it knows nothing of', async (path) => {
-      stillAsking();
-      expect(await show(path)).not.toContain('platform page');
-    });
-
-    it('does not wait at an app on a host remembered as no customer\'s domain', async () => {
-      stillAsking();
-      rememberedHost.mockReturnValue('not-domain');
-      expect(await show('/app/shop')).toBe('platform page');
     });
 
     it('does not take a page whose name starts the same for /app', async () => {
@@ -160,54 +169,349 @@ describe('DomainLaunchRouter', () => {
       expect(await show('/apps')).toBe('platform page');
     });
 
-    it('shows them at once on a host remembered as no customer\'s domain, the root too', async () => {
+    // AppRuntimeAuthGuard draws its sign-in form in place, and only the answer tells it the domain's
+    // address to send people to instead. A sign-in form must never show on a real domain, and a
+    // first visit must land on its app or launch page, not a 404.
+    const notThePlatforms = ['/', '/login', '/LOGIN/', '/signup', '/forgot-password', '/reset-password', '/accept-invite', '/sign-in/complete', '/app/shop', '/app/shop/form/1', '/APP/shop/', '/products/42'];
+    it.each(notThePlatforms)('waits at %s, then says it can\'t reach the site, and never shows the page', async (path) => {
+      vi.useFakeTimers();
+      noAnswer();
+      const page = await show(path);
+      expect(page).not.toContain('platform page');
+      expect(container.querySelector(SPINNER)).not.toBeNull();
+
+      await waitFor(7_900);
+      expect(container.querySelector(SPINNER)).not.toBeNull();
+      await waitFor(100);
+
+      expect(container.textContent).toContain("Can't reach this site right now");
+      expect(container.textContent).not.toContain('platform page');
+      await waitFor(120_000);
+      expect(container.textContent).not.toContain('platform page');
+    });
+
+    it('takes an answer that comes after it gave up waiting', async () => {
+      vi.useFakeTimers();
+      const answer = answerLater();
+      getNativeEntry.mockResolvedValue({ data: { home: true, access: 'members', native: true } });
+      await show('/');
+      await waitFor(8_000);
+      expect(container.textContent).toContain("Can't reach this site right now");
+
+      await answer({ config: config('runtime_direct'), answered: true });
+
+      expect(container.textContent).toBe('app shop for members');
+    });
+
+    it('asks again from Try again, without reloading the page', async () => {
+      vi.useFakeTimers();
+      const reload = vi.fn();
+      Object.defineProperty(window, 'location', { configurable: true, value: { ...window.location, replace, assign, reload } });
+      noAnswer();
+      await show('/');
+      await waitFor(8_000);
+      const asked = lookUpHost.mock.calls.length;
+      serverSays(null);
+
+      await act(async () => Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Try again')!.click());
+
+      expect(lookUpHost).toHaveBeenCalledTimes(asked + 1);
+      expect(reload).not.toHaveBeenCalled();
+      expect(container.textContent).toContain("This domain isn't connected yet");
+    });
+
+    // The old word for a domain, which came with nothing to draw it from.
+    it('treats a host remembered only as "domain" as one it knows nothing of', async () => {
       stillAsking();
-      rememberedHost.mockReturnValue('not-domain');
+      rememberedHost.mockReturnValue({ kind: 'domain' });
       expect(await show('/dashboard')).toBe('platform page');
-      expect(await show('/')).toContain("This domain isn't connected yet");
-      expect(await show('/some-new-page')).toBe('platform page');
+      expect(await show('/login')).not.toContain('platform page');
+    });
+  });
+
+  describe('on a host remembered as a domain, with its config', () => {
+    const stored = (mode: string, softnAccess?: string) => rememberedHost.mockReturnValue({ kind: 'domain', config: { ...config(mode), platformUrl: 'https://forms.acme.com' }, softnAccess });
+
+    it.each(['/', '/products/42', '/dashboard', '/app/shop'])('draws %s as the stored answer does, with no answer yet', async (path) => {
+      noAnswer();
+      stored('runtime_direct', 'members');
+      expect(await show(path)).toBe('app shop for members');
     });
 
-    it('shows nothing of the platform on a host remembered as a customer\'s domain', async () => {
+    it('draws the launch page at the root', async () => {
       stillAsking();
-      rememberedHost.mockReturnValue('domain');
-      expect(await show('/dashboard')).not.toContain('platform page');
-      expect(await show('/form/abc123')).not.toContain('platform page');
+      stored('launch_page', 'members');
+      expect(await show('/')).toBe('launch page');
     });
 
-    // A sign-in form must never show on a real domain, and a first visit must land on its app or
-    // launch page: both are decided by an answer this browser doesn't have yet.
-    it.each(['/', '/login', '/LOGIN/', '/signup', '/forgot-password', '/reset-password', '/accept-invite', '/sign-in/complete'])(
-      'waits at %s on a host it knows nothing of',
-      async (path) => {
-        stillAsking();
-        const page = await show(path);
-        expect(page).not.toContain('platform page');
-        expect(page).not.toContain("isn't connected");
-      }
-    );
-
-    it('waits on a path that may be an app\'s own: a first visit must not flash a 404', async () => {
+    it('sends a sign-in to FormLogic, not a form here', async () => {
       stillAsking();
-      expect(await show('/products/42')).not.toContain('platform page');
+      stored('launch_page', 'members');
+      expect(await show('/login')).not.toContain('platform page');
+      expect(assign.mock.calls[0][0]).toContain('https://forms.acme.com/sign-in/domain');
     });
 
-    it.each(['/login', '/signup', '/reset-password', '/sign-in/complete'])('waits at %s even on a host remembered as none: it may have been connected since', async (path) => {
+    it('sends a password page there too', async () => {
       stillAsking();
-      rememberedHost.mockReturnValue('not-domain');
+      stored('launch_page');
+      await show('/reset-password?token=t');
+      expect(replace).toHaveBeenCalledWith('https://forms.acme.com/reset-password?token=t');
+    });
+
+    it('finishes the way back from signing in', async () => {
+      stillAsking();
+      stored('launch_page', 'members');
+      await act(async () => { await show('/sign-in/complete'); });
+      expect(container.textContent).toContain("That sign-in didn't finish");
+    });
+
+    it('sends any other kind of app to its address', async () => {
+      stillAsking();
+      stored('runtime_direct');
+      await show('/');
+      expect(replace).toHaveBeenCalledWith('/app/shop');
+    });
+
+    it.each(['/form/abc123', '/privacy', '/terms'])('still opens %s', async (path) => {
+      noAnswer();
+      stored('runtime_direct', 'members');
+      expect(await show(path)).toBe('platform page');
+    });
+
+    it('never says it can\'t reach the site', async () => {
+      vi.useFakeTimers();
+      noAnswer();
+      stored('runtime_direct', 'members');
+      await show('/');
+      await waitFor(60_000);
+      expect(container.textContent).toBe('app shop for members');
+    });
+
+    it('keeps asking, and the same answer changes nothing on the page', async () => {
+      vi.useFakeTimers();
+      noAnswer();
+      stored('runtime_direct', 'members');
+      await show('/');
+      await waitFor(3_000);
+      expect(lookUpHost).toHaveBeenCalledTimes(2);
+      const shown = container.firstElementChild;
+
+      serverSays(config('runtime_direct'));
+      getNativeEntry.mockResolvedValue({ data: { home: true, access: 'members', native: true } });
+      await waitFor(6_000);
+
+      expect(container.textContent).toBe('app shop for members');
+      expect(container.firstElementChild).toBe(shown);
+    });
+
+    it('switches when the answer differs', async () => {
+      const answer = answerLater();
+      stored('runtime_direct', 'members');
+      getNativeEntry.mockResolvedValue({ data: { home: false, access: 'members', native: true } });
+      expect(await show('/')).toBe('app shop for members');
+
+      await answer({ config: config('launch_page'), answered: true });
+
+      expect(container.textContent).toBe('launch page');
+    });
+
+    it('lets the answer that the domain is gone replace it', async () => {
+      const answer = answerLater();
+      stored('runtime_direct', 'members');
+      expect(await show('/')).toBe('app shop for members');
+
+      await answer({ config: null, answered: true });
+
+      expect(container.textContent).toContain("This domain isn't connected yet");
+    });
+  });
+
+  describe('on a host remembered as none', () => {
+    beforeEach(() => rememberedHost.mockReturnValue({ kind: 'not-domain' }));
+
+    it.each(['/', '/dashboard', '/form/abc123', '/privacy'])('shows %s at once', async (path) => {
+      stillAsking();
+      expect(await show(path)).toBe('platform page');
+    });
+
+    // It may have been connected since, and a page that takes a password can't be taken back.
+    it.each(['/login', '/signup', '/reset-password', '/sign-in/complete', '/app/shop', '/APP/shop/'])('holds %s back for 2.5 seconds at most', async (path) => {
+      vi.useFakeTimers();
+      stillAsking();
       expect(await show(path)).not.toContain('platform page');
+      await waitFor(2_400);
+      expect(container.textContent).not.toContain('platform page');
+      await waitFor(100);
+      expect(container.textContent).toBe('platform page');
+    });
+
+    it('lets a late answer that it is a domain take over', async () => {
+      vi.useFakeTimers();
+      const answer = answerLater();
+      getNativeEntry.mockResolvedValue({ data: { home: true, access: 'members', native: true } });
+      await show('/app/shop');
+      await waitFor(2_500);
+      expect(container.textContent).toBe('platform page');
+
+      await answer({ config: config('runtime_direct'), answered: true });
+
+      expect(container.textContent).toBe('app shop for members');
+    });
+
+    it('does not call it unconnected for want of an answer', async () => {
+      vi.useFakeTimers();
+      noAnswer();
+      await show('/');
+      await waitFor(30_000);
+      expect(container.textContent).toBe('platform page');
     });
   });
 
   it('applies the answer when it comes: a first visit to a platform path ends on the app', async () => {
-    let answer!: (result: unknown) => void;
-    lookUpHost.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    const answer = answerLater();
     getNativeEntry.mockResolvedValue({ data: { home: true, access: 'members', native: true } });
     expect(await show('/settings')).toBe('platform page');
 
-    await act(async () => answer({ config: config('runtime_direct'), answered: true }));
+    await answer({ config: config('runtime_direct'), answered: true });
 
     expect(container.textContent).toBe('app shop for members');
+  });
+
+  describe('asking again', () => {
+    it('backs off to every 15 seconds, for as long as the page is open', async () => {
+      vi.useFakeTimers();
+      noAnswer();
+      await show('/dashboard');
+      expect(lookUpHost).toHaveBeenCalledTimes(1);
+
+      for (const [ms, asked] of [[2_900, 1], [100, 2], [5_900, 2], [100, 3], [11_900, 3], [100, 4], [14_900, 4], [100, 5], [14_900, 5], [100, 6], [15_000, 7]]) {
+        await waitFor(ms);
+        expect(lookUpHost).toHaveBeenCalledTimes(asked);
+      }
+    });
+
+    it('asks as soon as the browser is back online', async () => {
+      vi.useFakeTimers();
+      noAnswer();
+      await show('/dashboard');
+      await waitFor(3_000);
+      const asked = lookUpHost.mock.calls.length;
+
+      await act(async () => window.dispatchEvent(new Event('online')));
+
+      expect(lookUpHost).toHaveBeenCalledTimes(asked + 1);
+    });
+
+    it('does not start a second try while one is running', async () => {
+      stillAsking();
+      await show('/dashboard');
+      await act(async () => window.dispatchEvent(new Event('online')));
+      expect(lookUpHost).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops once it has an answer', async () => {
+      vi.useFakeTimers();
+      serverSays(null);
+      await show('/dashboard');
+      await act(async () => window.dispatchEvent(new Event('online')));
+      await waitFor(60_000);
+      expect(lookUpHost).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops when the page goes, waiting to try again', async () => {
+      vi.useFakeTimers();
+      noAnswer();
+      await show('/dashboard');
+      await act(async () => root.unmount());
+      root = createRoot(container);
+
+      await waitFor(60_000);
+
+      expect(lookUpHost).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops when the page goes with a try on its way, whatever that try comes back with', async () => {
+      vi.useFakeTimers();
+      const answer = answerLater();
+      await show('/dashboard');
+      await act(async () => root.unmount());
+      root = createRoot(container);
+
+      await answer({ config: null, answered: false });
+      await waitFor(60_000);
+
+      expect(lookUpHost).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when the app\'s own answer doesn\'t come', () => {
+    const nativeEntry = { data: { home: true, access: 'members', native: true } };
+
+    it.each([
+      ['a rate limit', { error: 'Too many requests', status: 429 }],
+      ['a server error', { error: 'Server error (503)', status: 503 }],
+      ['no connection', { error: 'Network error', transportFailure: true }],
+    ])('does not take %s to mean it is no SoftN app', async (_label, failed) => {
+      vi.useFakeTimers();
+      serverSays(config('runtime_direct'));
+      getNativeEntry.mockResolvedValue(failed);
+
+      expect(await show('/dashboard')).not.toContain('platform page');
+      expect(rememberHost).not.toHaveBeenCalled();
+
+      getNativeEntry.mockResolvedValue(nativeEntry);
+      await waitFor(3_000);
+      expect(container.textContent).toBe('app shop for members');
+    });
+
+    it('still opens a form and the legal pages on the domain meanwhile', async () => {
+      serverSays(config('runtime_direct'));
+      getNativeEntry.mockResolvedValue({ error: 'Too many requests', status: 429 });
+      for (const path of ['/form/abc123', '/privacy', '/terms']) {
+        expect(await show(path), path).toBe('platform page');
+      }
+    });
+
+    it('does not take a host remembered as none at its word, once the server has said otherwise', async () => {
+      vi.useFakeTimers();
+      serverSays(config('runtime_direct'));
+      getNativeEntry.mockResolvedValue({ error: 'Too many requests', status: 429 });
+      rememberedHost.mockReturnValue({ kind: 'not-domain' });
+
+      expect(await show('/')).not.toContain('platform page');
+      await waitFor(2_500);
+      expect(container.textContent).not.toContain('platform page');
+    });
+
+    it('takes a refusal for the answer it is', async () => {
+      serverSays(config('launch_page'));
+      getNativeEntry.mockResolvedValue({ error: 'Not allowed', status: 403 });
+      expect(await show('/dashboard')).toBe('platform page');
+    });
+
+    it('asks again when the request never returns', async () => {
+      vi.useFakeTimers();
+      serverSays(config('runtime_direct'));
+      getNativeEntry.mockReturnValueOnce(new Promise(() => {})).mockResolvedValue(nativeEntry);
+      await show('/products/42');
+
+      await waitFor(14_900);
+      expect(container.textContent).toContain("Can't reach this site right now");
+      await waitFor(3_200);
+
+      expect(container.textContent).toBe('app shop for members');
+    });
+
+    it('keeps the stored page meanwhile', async () => {
+      vi.useFakeTimers();
+      serverSays(config('runtime_direct'));
+      getNativeEntry.mockResolvedValue({ error: 'Too many requests', status: 429 });
+      rememberedHost.mockReturnValue({ kind: 'domain', config: config('runtime_direct'), softnAccess: 'members' });
+
+      expect(await show('/dashboard')).toBe('app shop for members');
+      await waitFor(30_000);
+      expect(container.textContent).toBe('app shop for members');
+    });
   });
 
   it('keeps waiting at a sign-in page it moved to while the server was being asked', async () => {
@@ -227,34 +531,5 @@ describe('DomainLaunchRouter', () => {
     await act(async () => goTo('/login?redirect=%2Fdashboard'));
 
     expect(container.textContent).not.toContain('platform page');
-  });
-
-  describe('with no answer from the server', () => {
-    it('treats a host it knows nothing of as no customer\'s domain, sign-in included', async () => {
-      noAnswer();
-      expect(await show('/')).toBe('platform page');
-      expect(await show('/login')).toBe('platform page');
-      expect(await show('/dashboard')).toBe('platform page');
-    });
-
-    it('does not call a host it has heard of "not connected" just because it could not ask', async () => {
-      noAnswer();
-      rememberedHost.mockReturnValue('not-domain');
-      expect(await show('/')).toBe('platform page');
-    });
-
-    it.each(['/', '/login', '/signup', '/reset-password', '/app/shop', '/dashboard', '/products/42'])('never shows %s as a platform page on a remembered domain', async (path) => {
-      noAnswer();
-      rememberedHost.mockReturnValue('domain');
-      const page = await show(path);
-      expect(page).not.toContain('platform page');
-      expect(page).toContain("Can't reach this site right now");
-    });
-
-    it.each(['/form/abc123', '/privacy', '/terms'])('still opens %s on a remembered domain: nothing there asks anyone to sign in', async (path) => {
-      noAnswer();
-      rememberedHost.mockReturnValue('domain');
-      expect(await show(path)).toBe('platform page');
-    });
   });
 });

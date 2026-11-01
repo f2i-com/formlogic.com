@@ -12,7 +12,9 @@ export interface SimpleCondition {
 // it compares as a number only when the value it is given is one.
 export const NUMBER_ANSWERS: ReadonlySet<string> = new Set(['number', 'rating', 'scale']);
 export const CHOICE_FIELDS: ReadonlySet<string> = new Set(['dropdown', 'multiple_choice', 'checkboxes']);
-export const OPERATORS_ON_AN_OPTION: ReadonlySet<string> = new Set(['===', '!==', 'contains']);
+// Whose answer is a list. It is never equal to an option, it holds some: === could never be true.
+export const LIST_ANSWERS: ReadonlySet<string> = new Set(['checkboxes']);
+export const OPERATORS_ON_AN_OPTION: ReadonlySet<string> = new Set(['===', '!==', 'contains', 'notContains']);
 // The inputs these answers are typed into, which store them as ISO text ("2026-01-31", "14:30",
 // "2026-01-31T14:30"). Text in that shape sorts in date order, so a date is compared as quoted
 // text, the same in the browser and on the server. As a number it read as 0, which no date beats.
@@ -64,6 +66,8 @@ export function simpleConditionToExpression(
         return answerIsNumber || type === 'calculated'
           ? `isNotEmpty(${fieldRef}) && String(${fieldRef}).includes(${text})`
           : `isNotEmpty(${fieldRef}) && ${fieldRef}.includes(${text})`;
+      case 'notContains':
+        return `!(isNotEmpty(${fieldRef}) && ${fieldRef}.includes(${text}))`;
       case 'notEmpty':
         return `isNotEmpty(${fieldRef})`;
       case 'empty':

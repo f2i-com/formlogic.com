@@ -207,6 +207,8 @@ export class ChatStore {
   private memoryFallback: Promise<Backend> | null = null;
   /** The database a memory fallback left behind: it still holds the history a reload shows. */
   private leftDatabase: Backend | null = null;
+  /** Deleted this session, which a turn still running can outlive. */
+  private readonly deletedThreads = new Set<string>();
   private seq = 0;
 
   constructor(userId: string) {
@@ -311,10 +313,16 @@ export class ChatStore {
    * back on the next load. The database goes first, so a refusal leaves the thread showing.
    */
   async deleteThread(threadId: string): Promise<void> {
-    const backend = await this.ready();
-    for (const target of this.leftDatabase ? [this.leftDatabase, backend] : [backend]) {
-      await target.deleteMessagesForThread(threadId);
-      await target.deleteThread(threadId);
+    this.deletedThreads.add(threadId);
+    try {
+      const backend = await this.ready();
+      for (const target of this.leftDatabase ? [this.leftDatabase, backend] : [backend]) {
+        await target.deleteMessagesForThread(threadId);
+        await target.deleteThread(threadId);
+      }
+    } catch (e) {
+      this.deletedThreads.delete(threadId);
+      throw e;
     }
   }
 
@@ -336,13 +344,15 @@ export class ChatStore {
       createdAt: now,
       seq: this.nextSeq(),
     };
+    // A late reply has nowhere to go: its row would be hidden for good, and never cleaned up.
+    if (this.deletedThreads.has(threadId)) return message;
     await this.write(async (target) => {
       await target.putMessage(message);
       // Bump the thread's activity stamp so the list re-sorts; tolerate a missing thread
       // (a message must never fail because its thread row is gone).
       const threads = await target.allThreads();
       const thread = threads.find((t) => t.id === threadId);
-      if (thread) await target.putThread({ ...thread, updatedAt: now });
+      if (thread && !this.deletedThreads.has(threadId)) await target.putThread({ ...thread, updatedAt: now });
     });
     return message;
   }

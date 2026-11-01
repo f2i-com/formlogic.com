@@ -6,9 +6,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FormTheme } from '../../types/form';
 
-const h = vi.hoisted(() => ({ shrink: vi.fn(), success: vi.fn(), error: vi.fn() }));
+const h = vi.hoisted(() => ({ shrink: vi.fn(), success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock('../../lib/shrinkImage', () => ({ shrinkImageToDataUrl: h.shrink }));
-vi.mock('../../stores/toastStore', () => ({ toast: { success: h.success, error: h.error, info: vi.fn(), warning: vi.fn() } }));
+vi.mock('../../stores/toastStore', () => ({ toast: { success: h.success, error: h.error, info: vi.fn(), warning: h.warning } }));
 
 import { ThemeEditor } from './ThemeEditor';
 
@@ -25,6 +25,7 @@ beforeEach(() => {
   h.shrink.mockReset().mockResolvedValue({ ok: true, dataUrl: 'data:image/jpeg;base64,AAAA' });
   h.success.mockReset();
   h.error.mockReset();
+  h.warning.mockReset();
   onSave = vi.fn().mockResolvedValue(true);
   onClose = vi.fn();
 });
@@ -61,13 +62,48 @@ async function pick(label: string, picked: File) {
 const png = (size = 1000) => new File([new Uint8Array(size)], 'logo.png', { type: 'image/png' });
 
 describe('uploading a logo or background', () => {
-  it('stores what the image was shrunk to, held to a size two can share', async () => {
+  it('stores what the image was shrunk to, a logo fitting 512px and about 64KB', async () => {
     render();
     await pick('Logo file', png());
 
-    expect(h.shrink).toHaveBeenCalledWith(expect.any(File), { maxPx: 1024, maxChars: 200 * 1024 });
+    expect(h.shrink).toHaveBeenCalledWith(expect.any(File), { maxPx: 512, maxChars: 64 * 1024 });
     await act(async () => apply().click());
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ logo: 'data:image/jpeg;base64,AAAA' }));
+  });
+
+  it('gives a background 1280px and about 150KB', async () => {
+    render();
+    await pick('Background image file', png());
+
+    expect(h.shrink).toHaveBeenCalledWith(expect.any(File), { maxPx: 1280, maxChars: 150 * 1024 });
+  });
+
+  // The server's limit is 256KB, and PHP writes every / in the base64 as \/.
+  it('sends a theme holding both images at their largest, well under what the server takes', async () => {
+    // Base64 has 64 characters, so about one in 64 is a /.
+    const base64 = (chars: number) => `data:image/jpeg;base64,${`${'A'.repeat(63)}/`.repeat(Math.floor(chars / 64))}`;
+    render({ ...theme, logo: base64(64 * 1024), backgroundImage: base64(150 * 1024) });
+    await act(async () => apply().click());
+
+    expect(onSave).toHaveBeenCalled();
+    const sent = JSON.stringify(onSave.mock.calls[0][0]);
+    expect(sent.replace(/\//g, '\\/').length).toBeLessThan(256 * 1024);
+  });
+
+  it('says so when an animated GIF will keep only its first frame', async () => {
+    h.shrink.mockResolvedValue({ ok: true, dataUrl: 'data:image/jpeg;base64,AAAA', firstFrameOnly: true });
+    render();
+    await pick('Logo file', new File(['x'], 'spin.gif', { type: 'image/gif' }));
+
+    expect(h.warning).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('first frame'));
+    await act(async () => apply().click());
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ logo: 'data:image/jpeg;base64,AAAA' }));
+  });
+
+  it('says nothing of the kind for an image that was still', async () => {
+    render();
+    await pick('Logo file', png());
+    expect(h.warning).not.toHaveBeenCalled();
   });
 
   it('clears the file input, so the same file can be picked again', async () => {
@@ -141,7 +177,7 @@ describe('Apply Theme', () => {
 
   // Local-mode themes were never held to a size, and would stop every save once synced.
   it('does not send a theme the server would refuse, whatever it took to get here', async () => {
-    render({ ...theme, logo: `data:image/png;base64,${'A'.repeat(600 * 1024)}` });
+    render({ ...theme, logo: `data:image/png;base64,${'A'.repeat(260 * 1024)}` });
     await act(async () => apply().click());
 
     expect(onSave).not.toHaveBeenCalled();

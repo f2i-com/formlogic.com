@@ -128,6 +128,149 @@ describe('refreshFormFields', () => {
     expect(mocked.getForm).not.toHaveBeenCalled();
   });
 
+  /** A read the test ends when it chooses, as a slow network would. */
+  function holdRead() {
+    let answer!: () => void;
+    mocked.getForm.mockImplementationOnce(() => {
+      // As the server stood when it was read, whenever the answer gets back.
+      const { fields, revision } = server;
+      return new Promise((resolve) => {
+        answer = () => resolve({ data: { form: { id: 'f1', title: 'F', fields, settings: {}, theme: {}, status: 'draft', fieldsRevision: revision } } });
+      });
+    });
+    return () => answer();
+  }
+
+  it('does not replace an edit made during the read', async () => {
+    chatEdits();
+    const answer = holdRead();
+    const refreshing = refreshFormFields('f1');
+    await vi.waitFor(() => expect(mocked.getForm).toHaveBeenCalled());
+
+    useFormStore.getState().updateField('f1', 'name', { label: 'Typed during the read' });
+    answer();
+    await refreshing;
+
+    const held = useFormStore.getState();
+    expect(held.forms[0].fields.map((f) => f.label)).toEqual(['Typed during the read']);
+    expect(held.fieldHistory.f1.past).toHaveLength(1);
+    clearAllDebounceTimers();
+  });
+
+  it('does not replace an edit that was made and saved during the read', async () => {
+    const answer = holdRead();
+    const refreshing = refreshFormFields('f1');
+    await vi.waitFor(() => expect(mocked.getForm).toHaveBeenCalled());
+
+    useFormStore.getState().updateField('f1', 'name', { label: 'Saved during the read' });
+    await flushDebouncedSave('f1');
+    answer();
+    await refreshing;
+
+    expect(useFormStore.getState().forms[0].fields[0].label).toBe('Saved during the read');
+  });
+
+  it('does not replace a title changed during the read', async () => {
+    const answer = holdRead();
+    const refreshing = refreshFormFields('f1');
+    await vi.waitFor(() => expect(mocked.getForm).toHaveBeenCalled());
+
+    useFormStore.setState((s) => ({ forms: s.forms.map((f) => ({ ...f, title: 'Mine' })) }));
+    answer();
+    await refreshing;
+
+    expect(useFormStore.getState().forms[0].title).toBe('Mine');
+  });
+
+  it('does not apply a read over anything marked unsaved since it began', async () => {
+    chatEdits();
+    const answer = holdRead();
+    const refreshing = refreshFormFields('f1');
+    await vi.waitFor(() => expect(mocked.getForm).toHaveBeenCalled());
+
+    useFormStore.setState({ savingFormIds: { f1: 1 } });
+    answer();
+    await refreshing;
+
+    expect(useFormStore.getState().forms[0].fieldsRevision).toBe('one');
+  });
+
+  it('keeps undo when the fields came back as they were', async () => {
+    useFormStore.setState({ fieldHistory: { f1: { past: [[field('before')]], future: [] } } });
+    server.revision = 'one';
+
+    await refreshFormFields('f1');
+
+    expect(mocked.getForm).toHaveBeenCalled();
+    expect(useFormStore.getState().fieldHistory.f1.past).toHaveLength(1);
+  });
+
+  it('drops undo when they did not: it would restore fields from before the chat\'s', async () => {
+    useFormStore.setState({ fieldHistory: { f1: { past: [[field('before')]], future: [] } } });
+    chatEdits();
+
+    await refreshFormFields('f1');
+
+    expect(useFormStore.getState().fieldHistory.f1).toBeUndefined();
+  });
+
+  it('does not let a failed save of something else hold back the refresh', async () => {
+    useFormStore.setState({ saveErrors: { f1: ['theme'] } });
+    chatEdits();
+
+    await refreshFormFields('f1');
+
+    expect(useFormStore.getState().forms[0].fieldsRevision).toBe('chat');
+    useFormStore.getState().updateField('f1', 'name', { label: 'Full name' });
+    await flushDebouncedSave('f1');
+    expect(useFormStore.getState().saveErrors.f1).toEqual(['theme']);
+    expect((server.fields as FormField[]).map((f) => f.id)).toEqual(['name', 'from_chat']);
+  });
+
+  it('keeps what such a failed save holds, for its Retry to send', async () => {
+    useFormStore.setState((s) => ({ saveErrors: { f1: ['meta'] }, forms: s.forms.map((f) => ({ ...f, title: 'Not saved yet' })) }));
+    chatEdits();
+
+    await refreshFormFields('f1');
+
+    const form = useFormStore.getState().forms[0];
+    expect(form.title).toBe('Not saved yet');
+    expect(form.fields.map((f) => f.id)).toEqual(['name', 'from_chat']);
+  });
+
+  // Two update_form calls in one turn, with the first read still out when the second begins.
+  it('takes every write of a turn, in order', async () => {
+    chatEdits();
+    const answerFirst = holdRead();
+    const answerSecond = holdRead();
+    const first = refreshFormFields('f1');
+    await vi.waitFor(() => expect(mocked.getForm).toHaveBeenCalledTimes(1));
+
+    server.fields = [field('name'), field('from_chat'), field('and_again')];
+    server.revision = 'chat2';
+    const second = refreshFormFields('f1');
+    answerFirst();
+    await first;
+    await vi.waitFor(() => expect(mocked.getForm).toHaveBeenCalledTimes(2));
+    answerSecond();
+    await second;
+
+    const form = useFormStore.getState().forms[0];
+    expect(form.fieldsRevision).toBe('chat2');
+    expect(form.fields.map((f) => f.id)).toEqual(['name', 'from_chat', 'and_again']);
+  });
+
+  // A real conflict stays one: the person is told, and nothing is overwritten either way.
+  it('still has an edit that was waiting when the chat\'s change landed refused', async () => {
+    useFormStore.getState().updateField('f1', 'name', { label: 'Half typed' });
+    chatEdits();
+    await refreshFormFields('f1');
+    await flushDebouncedSave('f1');
+
+    expect(useFormStore.getState().saveErrors.f1).toEqual(['fields']);
+    expect((server.fields as FormField[]).map((f) => f.id)).toEqual(['name', 'from_chat']);
+  });
+
   it('has nothing to do for a form this tab has not opened', async () => {
     await refreshFormFields('another');
     useFormStore.setState({ forms: [{ id: 'f1', title: 'F', fields: [] } as unknown as Form] });

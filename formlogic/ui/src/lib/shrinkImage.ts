@@ -3,7 +3,8 @@
 // besides its pixels (its location, for one), and the markup an SVG can hold.
 
 export type ShrunkImage =
-  | { ok: true; dataUrl: string }
+  /** `firstFrameOnly`: the file was animated, and a canvas draws only its first frame. */
+  | { ok: true; dataUrl: string; firstFrameOnly?: true }
   /** `unreadable`: not an image the browser can draw. `too-large`: no size or quality tried fits. */
   | { ok: false; reason: 'unreadable' | 'too-large' };
 
@@ -32,6 +33,41 @@ function hasTransparency(context: CanvasRenderingContext2D, width: number, heigh
   return false;
 }
 
+/** Whether a GIF's blocks hold a second image. Anything it can't follow counts as a still. */
+function isAnimatedGif(bytes: Uint8Array): boolean {
+  const skipColourTable = (at: number, packed: number) => (packed & 0x80 ? at + 3 * 2 ** ((packed & 7) + 1) : at);
+  const skipSubBlocks = (from: number) => {
+    let at = from;
+    while (at < bytes.length && bytes[at] !== 0) at += bytes[at] + 1;
+    return at + 1;
+  };
+  // Past the 6-byte signature and the 7-byte screen descriptor, which has its flags at byte 10.
+  let at = skipColourTable(13, bytes[10]);
+  let images = 0;
+  while (at < bytes.length) {
+    if (bytes[at] === 0x21) {
+      at = skipSubBlocks(at + 2);
+    } else if (bytes[at] === 0x2c) {
+      images += 1;
+      if (images > 1) return true;
+      // 10 bytes of image descriptor, its colour table, then one byte of LZW code size.
+      at = skipSubBlocks(skipColourTable(at + 10, bytes[at + 9]) + 1);
+    } else {
+      return false;
+    }
+  }
+  return false;
+}
+
+async function keepsOnlyItsFirstFrame(file: File): Promise<boolean> {
+  if (file.type !== 'image/gif') return false;
+  try {
+    return isAnimatedGif(new Uint8Array(await file.arrayBuffer()));
+  } catch {
+    return false;
+  }
+}
+
 export async function shrinkImageToDataUrl(
   file: File,
   { maxPx, maxChars }: { maxPx: number; maxChars: number }
@@ -47,7 +83,10 @@ export async function shrinkImageToDataUrl(
     const longest = Math.max(image.naturalWidth, image.naturalHeight);
     // An SVG with no size of its own reads as 0 wide in some browsers, and draws as nothing.
     if (longest === 0) return { ok: false, reason: 'unreadable' };
-    const fit = Math.min(1, maxPx / longest);
+    // An SVG has no pixels of its own to lose, so it is drawn as large as it may be stored: frozen
+    // at its nominal size, a 48px logo goes soft on any sharp screen.
+    const fit = file.type === 'image/svg+xml' ? maxPx / longest : Math.min(1, maxPx / longest);
+    const firstFrameOnly = await keepsOnlyItsFirstFrame(file);
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d', { willReadFrequently: true });
     if (!context) return { ok: false, reason: 'unreadable' };
@@ -63,7 +102,7 @@ export async function shrinkImageToDataUrl(
       for (const format of formats) {
         for (const quality of format === 'image/png' ? [1] : QUALITIES) {
           const dataUrl = canvas.toDataURL(format, quality);
-          if (dataUrl.startsWith('data:image/') && dataUrl.length <= maxChars) return { ok: true, dataUrl };
+          if (dataUrl.startsWith('data:image/') && dataUrl.length <= maxChars) return { ok: true, dataUrl, ...(firstFrameOnly ? { firstFrameOnly } : {}) };
         }
       }
     }

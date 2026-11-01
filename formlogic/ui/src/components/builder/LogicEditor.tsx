@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/Tabs';
 import { cn, createFieldVariableMap, replaceVariablesWithIds, replaceIdsWithVariables } from '../../lib/utils';
 import { useExpressionTester } from '../../hooks/useFormLogic';
 import type { FormField, ConditionalLogic } from '../../types/form';
-import { CHOICE_FIELDS, DATE_INPUTS, NUMBER_ANSWERS, OPERATORS_ON_AN_OPTION, simpleConditionToExpression, type SimpleCondition } from './logicConditions';
+import { CHOICE_FIELDS, DATE_INPUTS, LIST_ANSWERS, NUMBER_ANSWERS, OPERATORS_ON_AN_OPTION, simpleConditionToExpression, type SimpleCondition } from './logicConditions';
 
 interface LogicEditorProps {
   isOpen: boolean;
@@ -28,6 +28,13 @@ const OPERATORS = [
   { value: '>=', label: 'is greater than or equal to' },
   { value: '<=', label: 'is less than or equal to' },
   { value: 'contains', label: 'contains' },
+  { value: 'notEmpty', label: 'is not empty' },
+  { value: 'empty', label: 'is empty' },
+];
+
+const LIST_OPERATORS = [
+  { value: 'contains', label: 'contains' },
+  { value: 'notContains', label: 'does not contain' },
   { value: 'notEmpty', label: 'is not empty' },
   { value: 'empty', label: 'is empty' },
 ];
@@ -111,11 +118,14 @@ export function LogicEditor({
     }
   }, [conditions, combinator, mode, idToVar, fieldTypes]);
 
+  const operatorsFor = (fieldId: string) => (LIST_ANSWERS.has(fieldTypes.get(fieldId) ?? '') ? LIST_OPERATORS : OPERATORS);
+
   const handleAddCondition = () => {
     if (availableFields.length === 0) return;
+    const fieldId = availableFields[0].id;
     setConditions([
       ...conditions,
-      { id: uuidv4(), fieldId: availableFields[0].id, operator: '===', value: '' },
+      { id: uuidv4(), fieldId, operator: operatorsFor(fieldId)[0].value, value: '' },
     ]);
   };
 
@@ -131,6 +141,13 @@ export function LogicEditor({
     setConditions(
       conditions.map((cond) => (cond.id === conditionId ? { ...cond, ...updates } : cond))
     );
+  };
+
+  /** Another field may not take the same comparison, and the box would show none picked. */
+  const handleConditionFieldChange = (cond: SimpleCondition, fieldId: string) => {
+    const operators = operatorsFor(fieldId);
+    const operator = operators.some((op) => op.value === cond.operator) ? cond.operator : operators[0].value;
+    handleConditionChange(cond.id, { fieldId, operator });
   };
 
   const parseTestContext = (input: string): Record<string, unknown> => {
@@ -328,11 +345,11 @@ export function LogicEditor({
                       <Dropdown
                         options={fieldOptions}
                         value={cond.fieldId}
-                        onChange={(v) => handleConditionChange(cond.id, { fieldId: v })}
+                        onChange={(v) => handleConditionFieldChange(cond, v)}
                         className="flex-1 min-w-[150px]"
                       />
                       <Dropdown
-                        options={OPERATORS.map((op) => ({ value: op.value, label: op.label }))}
+                        options={operatorsFor(cond.fieldId).map((op) => ({ value: op.value, label: op.label }))}
                         value={cond.operator}
                         onChange={(v) => handleConditionChange(cond.id, { operator: v })}
                         className="w-full sm:w-48"

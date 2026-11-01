@@ -287,20 +287,52 @@ function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// A `/` straight after one of these, or at the start, opens a regex. After anything else it divides.
+const BEFORE_A_REGEX = new Set(['', '(', ',', '=', ':', '!', '&', '|', '?', '{', '}', ';']);
+
+/** Where the regex that opens at `start` ends, flags and all. Null when it never closes: then it was a division. */
+function regexEnd(expression: string, start: number): number | null {
+  let inClass = false;
+  for (let at = start + 1; at < expression.length && expression[at] !== '\n'; at += 1) {
+    const char = expression[at];
+    if (char === '\\') {
+      at += 1;
+    } else if (char === '[') {
+      inClass = true;
+    } else if (char === ']') {
+      inClass = false;
+    } else if (char === '/' && !inClass) {
+      at += 1;
+      while (at < expression.length && /[a-z]/i.test(expression[at])) at += 1;
+      return at;
+    }
+  }
+  return null;
+}
+
 /**
  * Rewrite an expression's code and leave its quoted text as typed: the text "manager" an answer
  * is compared with is not the field labelled Manager, and saving it as that field's id made a rule
- * that could never match. What sits inside a template's ${ } is code again.
+ * that could never match. What sits inside a template's ${ } is code again. A regex and a comment
+ * are left as typed too, so a quote in one is not taken for the start of text.
  */
 function rewriteOutsideQuotes(expression: string, rewrite: (code: string) => string): string {
   let out = '';
   let code = '';
   let at = 0;
+  // The last thing read that isn't a space or a comment, which tells a regex from a division.
+  let previous = '';
   // One entry per ${ } being read: how many of its own { are still open.
   const open: number[] = [];
   const takeCode = () => {
     out += rewrite(code);
     code = '';
+  };
+  /** Pass through up to `end` as typed. */
+  const takeAsTyped = (end: number) => {
+    takeCode();
+    out += expression.slice(at, end);
+    at = end;
   };
   const takeTemplateText = () => {
     const start = at;
@@ -319,30 +351,41 @@ function rewriteOutsideQuotes(expression: string, rewrite: (code: string) => str
       }
     }
     out += expression.slice(start, at);
+    // Back in the code of a ${ }, where a regex may come first. Past the closing `, a `/` divides.
+    previous = expression[at - 1] === '{' ? '{' : '`';
   };
 
   while (at < expression.length) {
     const char = expression[at];
+    const regex = char === '/' && BEFORE_A_REGEX.has(previous) ? regexEnd(expression, at) : null;
     if (char === '"' || char === "'") {
-      takeCode();
-      const start = at;
-      at += 1;
-      while (at < expression.length && expression[at] !== char && expression[at] !== '\n') {
-        at += expression[at] === '\\' ? 2 : 1;
+      let end = at + 1;
+      while (end < expression.length && expression[end] !== char && expression[end] !== '\n') {
+        end += expression[end] === '\\' ? 2 : 1;
       }
-      at += 1;
-      out += expression.slice(start, at);
+      takeAsTyped(end + 1);
+      previous = char;
     } else if (char === '`' || (char === '}' && open.at(-1) === 0)) {
       takeCode();
       if (char === '}') open.pop();
       out += char;
       at += 1;
       takeTemplateText();
+    } else if (expression.startsWith('//', at)) {
+      const end = expression.indexOf('\n', at);
+      takeAsTyped(end === -1 ? expression.length : end);
+    } else if (expression.startsWith('/*', at)) {
+      const end = expression.indexOf('*/', at + 2);
+      takeAsTyped(end === -1 ? expression.length : end + 2);
+    } else if (regex !== null) {
+      takeAsTyped(regex);
+      previous = '/';
     } else {
       if (open.length > 0 && char === '{') open[open.length - 1] += 1;
       if (open.length > 0 && char === '}') open[open.length - 1] -= 1;
       code += char;
       at += 1;
+      if (char.trim() !== '') previous = char;
     }
   }
   takeCode();
