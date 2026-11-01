@@ -47,6 +47,7 @@ class MySQLConnection
                 // would appear expired immediately and webhook retries mis-time.
                 self::$instance->exec("SET time_zone = '+00:00'");
             } catch (PDOException $e) {
+                error_log('MySQL connection failed: ' . $e->getMessage());
                 throw new PDOException('MySQL Connection failed');
             }
         }

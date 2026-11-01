@@ -54,6 +54,8 @@ use FormLogic\Middleware\ApiKeyMiddleware;
 
 require __DIR__ . '/../vendor/autoload.php';
 
+\FormLogic\Support\StartupFailure::install();
+
 // Pin PHP's timezone to UTC so date()/strtotime() output matches the pinned
 // MySQL session (SET time_zone='+00:00') and SQLite's datetime('now'). A non-UTC
 // php.ini would otherwise skew PHP-written timestamps against DB-written ones.
@@ -63,6 +65,9 @@ date_default_timezone_set('UTC');
 $dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/..');
 $dotenv->safeLoad();
 \FormLogic\Support\Environment::bootstrap();
+if (\FormLogic\Support\Environment::get('APP_ENV', 'production') === 'development') {
+    \FormLogic\Support\StartupFailure::showPhpErrors();
+}
 
 // Load settings
 $settings = require __DIR__ . '/../config/settings.php';
