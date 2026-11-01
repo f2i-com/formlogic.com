@@ -1046,7 +1046,7 @@ class PackController
             ]);
 
         } catch (\FormLogic\Services\TrashSnapshotException $e) {
-            return $this->jsonResponse($response, ['error' => true, 'code' => \FormLogic\Services\TrashSnapshotException::ERROR_CODE, 'message' => $e->getMessage()], 503);
+            return $this->jsonResponse($response, ['error' => true, 'code' => $e->canGoOn() ? \FormLogic\Services\TrashSnapshotException::ERROR_CODE : 'data_key_invalid', 'message' => $e->getMessage()], 503);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 404);
         } catch (\Exception $e) {

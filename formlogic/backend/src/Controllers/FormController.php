@@ -545,6 +545,8 @@ class FormController
             }
         } catch (\FormLogic\Services\TrashSnapshotException $e) {
             return $this->jsonError($response, $e->getMessage(), 503, \FormLogic\Services\TrashSnapshotException::ERROR_CODE);
+        } catch (\FormLogic\Support\DataEncryptionException $e) {
+            return $this->jsonError($response, 'Nothing was deleted: ' . $e->getMessage(), 503, 'data_key_invalid');
         } catch (FormDeletionIncompleteException $e) {
             // Metadata removed but the on-disk stores still disagree — truthful,
             // retryable failure instead of fake success (the deletion intent is

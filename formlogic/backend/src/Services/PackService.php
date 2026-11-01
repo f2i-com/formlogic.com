@@ -1733,7 +1733,7 @@ class PackService
                 try {
                     $kept[$appId] = $trash->keepApp($appId, $userId);
                 } catch (TrashSnapshotException $e) {
-                    if ($goOnWithoutCopies) {
+                    if ($goOnWithoutCopies && $e->canGoOn()) {
                         $noCopy[$appId] = true;
                         continue;
                     }

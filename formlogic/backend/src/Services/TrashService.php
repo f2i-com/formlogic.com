@@ -98,6 +98,8 @@ final class TrashService
     {
         try {
             $pending = $keepCopy ? $this->capturePendingForm($formId, $userId) : null;
+        } catch (\FormLogic\Support\DataEncryptionException $e) {
+            throw $e; // The site's key, not this form: nobody is offered to go on past it.
         } catch (\Throwable $e) {
             throw $this->copyRefused('Nothing was deleted', $this->formTitle($formId), $e);
         }
@@ -253,7 +255,7 @@ final class TrashService
                     $saved[] = $pending;
                 }
             } catch (\Throwable $e) {
-                if (!$stopAtARefusal) {
+                if (!$stopAtARefusal && !($e instanceof \FormLogic\Support\DataEncryptionException)) {
                     if ($pending !== null) {
                         $this->takeBack($pending);
                     }

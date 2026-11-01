@@ -8,4 +8,13 @@ namespace FormLogic\Services;
 final class TrashSnapshotException extends \RuntimeException
 {
     public const ERROR_CODE = 'bin_unavailable';
+
+    /**
+     * Whether a person can sensibly go on without the copy. Not past a bad DATA_ENCRYPTION_KEY: that
+     * stops every copy of everything, healthy or not, and the way on is to correct it.
+     */
+    public function canGoOn(): bool
+    {
+        return !($this->getPrevious() instanceof \FormLogic\Support\DataEncryptionException);
+    }
 }

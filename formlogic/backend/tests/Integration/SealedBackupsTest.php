@@ -17,6 +17,7 @@ use FormLogic\Services\MaintenanceService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\ScheduledBackupService;
 use FormLogic\Services\TrashService;
+use FormLogic\Services\TrashSnapshotException;
 use FormLogic\Services\UpgradeService;
 use FormLogic\Support\BackupEnvelope;
 use FormLogic\Support\DataEncryption;
@@ -217,6 +218,26 @@ final class SealedBackupsTest extends TestCase
             $this->trash()->trashForm($formId, $this->userId);
             self::fail('a form was deleted with no way to seal its snapshot');
         } catch (DataEncryptionException $e) {
+            self::assertStringContainsString('not a valid key', $e->getMessage());
+        }
+        unset($_ENV[DataEncryption::KEY_ENV]);
+        self::assertSame(self::PLANTED, self::$forms->getForm($formId)['title'], 'nothing was deleted');
+    }
+
+    // A mistyped key stops every copy of everything. Going on would lose healthy data over a setting.
+    public function testAnInvalidKeyIsNotSomethingAnUninstallGoesOnPast(): void
+    {
+        $formId = $this->form();
+        (new ResponseService(self::$mysql, self::$sqlite))->createResponse($formId, ['answers' => []]);
+        $installation = 'inst-' . bin2hex(random_bytes(8));
+        self::$pdo->prepare("INSERT INTO pack_installations (id, user_id, pack_id, pack_name, form_ids, app_ids) VALUES (?, ?, 'test-pack', 'Test Pack', ?, '[]')")
+            ->execute([$installation, $this->userId, json_encode([$formId])]);
+        $_ENV[DataEncryption::KEY_ENV] = 'too-short';
+        try {
+            $this->trash()->captureRecordBearingForms($installation, $this->userId, false);
+            self::fail('the uninstall went on with no way to seal its copies');
+        } catch (TrashSnapshotException $e) {
+            self::assertFalse($e->canGoOn());
             self::assertStringContainsString('not a valid key', $e->getMessage());
         }
         unset($_ENV[DataEncryption::KEY_ENV]);
