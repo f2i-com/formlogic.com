@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ status: vi.fn(), latest: vi.fn(), download: vi.fn(), apply: vi.fn() }));
+const mocks = vi.hoisted(() => ({ status: vi.fn(), latest: vi.fn(), download: vi.fn(), apply: vi.fn(), rollback: vi.fn() }));
 vi.mock('../../lib/api', () => ({ api: {
   adminUpgradeStatus: mocks.status, adminUpgradeLatest: mocks.latest,
-  adminUpgradeDownload: mocks.download, adminUpgradeApply: mocks.apply,
+  adminUpgradeDownload: mocks.download, adminUpgradeApply: mocks.apply, adminUpgradeRollback: mocks.rollback,
 } }));
 vi.mock('../../stores/toastStore', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('../../lib/timezone', () => ({ useAdminTimezone: () => 'UTC', formatDateTimeInZone: (date: string) => date }));
@@ -63,6 +63,42 @@ it('explains missing releases and lets an unavailable GitHub request be retried'
   await click('Check for updates');
   expect(container.textContent).toContain('No installable stable release');
   expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+describe('rolling back', () => {
+  const backup = { id: '20260101-000000-aaaaaa', version: '0.1.17', manual: false, hasCode: true, hasDatabase: false, sizeBytes: 1048576 };
+  const inDialog = (label: string) => [...document.querySelectorAll('[role="dialog"] button, [role="alertdialog"] button')].find(el => el.textContent === label) as HTMLButtonElement | undefined;
+
+  beforeEach(() => mocks.rollback.mockResolvedValue({ data: { ok: true, restoredVersion: '0.1.17', journal: [] } }));
+
+  it('says what a snapshot would break, and only then sends the confirmation', async () => {
+    const warning = 'This snapshot is v0.1.17, and authenticator codes fail.';
+    mocks.status.mockResolvedValue({ data: { ...status, backups: [{ ...backup, rollbackWarning: warning }] } });
+    await mount();
+    await click('Roll back code');
+    expect(document.body.textContent).toContain(warning);
+    const confirm = inDialog('Roll back anyway');
+    expect(confirm, 'the button says this is not the ordinary rollback').toBeTruthy();
+    await act(async () => confirm!.click());
+    expect(mocks.rollback).toHaveBeenCalledWith(backup.id, true);
+  });
+
+  it('asks nothing extra of a snapshot that breaks nothing', async () => {
+    mocks.status.mockResolvedValue({ data: { ...status, backups: [{ ...backup, version: '0.1.18', rollbackWarning: null }] } });
+    await mount();
+    await click('Roll back code');
+    await act(async () => inDialog('Roll back code')!.click());
+    expect(mocks.rollback).toHaveBeenCalledWith(backup.id, false);
+  });
+
+  // A page newer than its server, in the moment after an update failed.
+  it('takes a server that says nothing about it', async () => {
+    mocks.status.mockResolvedValue({ data: { ...status, backups: [backup] } });
+    await mount();
+    await click('Roll back code');
+    await act(async () => inDialog('Roll back code')!.click());
+    expect(mocks.rollback).toHaveBeenCalledWith(backup.id, false);
+  });
 });
 
 it('shows an up-to-date state without offering an older release', async () => {

@@ -82,10 +82,11 @@ export function isConflict(item: { failure?: FailureKind; lastError?: string | n
 
 /**
  * True when the form's script acted and the record wasn't stored. A native item has no `failure`, so
- * it is known by the server's words (NotStoredAfterScript, ScriptRejection).
+ * it is known by the server's words (NotStoredAfterScript, ScriptRejection). So is an item a tab from
+ * before v0.1.19 gave up on: that tab took the refusal for an ordinary one, and only the words say it.
  */
 export function isScriptRan(item: { failure?: FailureKind; lastError?: string | null }): boolean {
-  if (item.failure) return item.failure === 'script-ran';
+  if (item.failure && item.failure !== 'gave-up') return item.failure === 'script-ran';
   return /script has already run|may already have acted/i.test(item.lastError ?? '');
 }
 

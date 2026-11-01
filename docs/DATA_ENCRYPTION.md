@@ -59,6 +59,21 @@ Do this if `.env` may have been seen.
 
 Each app's own key is rewrapped, so records aren't rewritten. Native app keys inside older backups and bin items stay under the old key, and restoring one on this server is refused while that key is missing, rather than giving the app new keys and losing what it sealed.
 
+## Rolling back below v0.1.18
+
+Releases before v0.1.18 have no decryption, and the key does nothing for them. With a key set, a rollback to one is refused until you confirm it: Admin → Updates says what breaks and asks, and `php api/bin/upgrade.php --rollback=<id> --allow-downgrade` goes ahead from a shell. Installing an older package does the same damage. It asks you to confirm the downgrade, but doesn't list this. A site with no key has nothing sealed and rolls back as it always did.
+
+Until the site is back on v0.1.18 or newer:
+
+| Stored | What happens |
+| --- | --- |
+| Two-factor secrets | Authenticator codes fail at sign-in. Recovery codes are hashed, not sealed, and still work |
+| Webhook signing secrets | Every delivery is signed with the sealed text, so receivers reject it. The site reports nothing wrong |
+| Hosted app records | They read as empty. An app that saves a record replaces what was there, and that record's old value is gone |
+| Recycle bin snapshots | Encrypted ones can't be restored |
+
+Values stored while rolled back are plain, and read as themselves once the site returns. `encrypt-data.php` brings them in. Keep the key: everything else comes back with it.
+
 ## Sealed nightly backups
 
 Off by default, because the server can't open what it seals: if you lose the secret key, you lose those backups, and the admin panel can't restore from them until they are opened.

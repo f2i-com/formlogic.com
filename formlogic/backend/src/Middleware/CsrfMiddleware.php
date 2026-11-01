@@ -99,8 +99,10 @@ class CsrfMiddleware implements MiddlewareInterface
             }
             // Asked before the configured origins: a domain may be listed there from before, and a
             // server set up that way must not go on handing out platform sessions on it.
+            // A page from before domains got a code shows a password box here. So can a current page,
+            // on a site with no address to send anyone to, where reloading changes nothing: "may".
             if ($this->onCustomerDomain($request)) {
-                return $this->forbidden('Sign in on the main site, not on this domain');
+                return $this->forbidden('Sign in on the main site, not on this domain. If this page shows a password box, it may be out of date: reload it.');
             }
             if (!$this->sessionOriginPolicy->allows($request)) {
                 return $this->forbidden('Session creation requires an explicitly trusted request origin');

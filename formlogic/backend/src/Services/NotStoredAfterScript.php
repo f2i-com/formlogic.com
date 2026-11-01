@@ -14,7 +14,7 @@ final class NotStoredAfterScript extends \RuntimeException
     public function __construct(\Throwable $previous)
     {
         parent::__construct(
-            "Your answers could not be saved, but this form's script has already run. Please check with the form's owner before sending them again.",
+            "Your answers could not be saved, but this form's script has already run. Please check with the form's owner before sending them again. If sending them again is refused, reload this page.",
             0,
             $previous,
         );

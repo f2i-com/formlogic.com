@@ -34,6 +34,29 @@ class CsrfMiddlewareTest extends TestCase
             ->withHeader('Origin', 'http://api.test');
     }
 
+    // A page from before domains got a code shows a password box there, and this line is all its
+    // visitor gets. A current page on a site with no address to send them to shows the box too, and
+    // reloading changes nothing, which is why it says "may".
+    public function testAPasswordBoxOnACustomerDomainIsToldItMayBeOutOfDate(): void
+    {
+        $mw = new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', 'formlogic_auth', self::SECRET, ['http://api.test'], null, true, static fn (string $host): bool => $host === 'shop.example');
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                throw new \LogicException('no session on a customer domain');
+            }
+        };
+        $request = $this->request('POST', '/api/auth/login')->withHeader('Content-Type', 'application/json')->withHeader('Host', 'shop.example');
+
+        $response = $mw->process($request, $handler);
+
+        $this->assertSame(403, $response->getStatusCode());
+        $this->assertSame(
+            'Sign in on the main site, not on this domain. If this page shows a password box, it may be out of date: reload it.',
+            json_decode((string) $response->getBody(), true)['message']
+        );
+    }
+
     public function testCookieSettingRoutesAcceptJson(): void
     {
         foreach (['/api/auth/login', '/api/auth/register', '/api/auth/mfa/verify', '/api/demo/start'] as $path) {

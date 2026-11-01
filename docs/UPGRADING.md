@@ -45,6 +45,43 @@ A folder without one was never finished, and the upgrade hadn't touched the site
 maintenance mode needs turning off. Without a shell, copy the folder's `api` and `web` contents back
 over the site by hand.
 
+### Rolling back below v0.1.18
+
+**With `DATA_ENCRYPTION_KEY` set, a rollback to a release before v0.1.18 breaks things, and the
+snapshot won't go back until you confirm it.** Those releases can't read what the key encrypted. The
+dialog in Admin → Updates says what breaks and asks. From a shell, the same refusal says so, and
+`php api/bin/upgrade.php --rollback=<id> --allow-downgrade` goes ahead. A snapshot that doesn't
+record a version is asked about too. A site with no key rolls back as it always did.
+
+Until the site is back on v0.1.18 or newer:
+
+- authenticator codes fail at sign-in. Recovery codes still work.
+- webhook receivers reject every delivery, because the signature is made with the wrong key. The site
+  reports nothing wrong.
+- hosted apps read their encrypted records as empty, and an app that saves a record replaces what was
+  there.
+- encrypted items in the recycle bin can't be restored.
+
+Installing an older package does the same. It asks you to confirm the downgrade, but that dialog
+doesn't list these. See [DATA_ENCRYPTION.md](DATA_ENCRYPTION.md#rolling-back-below-v0118).
+
+**Records kept in the browser go out of sight, with or without a key.** An app with no backend keeps
+its records in the visitor's browser, which may be the only copy. v0.1.18 moved them to a new place,
+named after the app's id, and an older release doesn't look there, so after a rollback such an app
+opens empty, or with only its seeds, and nothing says why. The records aren't lost: they come back
+when the site returns to v0.1.18 or newer. What someone adds in the meantime goes to the old place,
+and a newer release doesn't read that, so it stays hidden after the site returns. The same happens to
+a tab from before v0.1.18 left open beside a newer one.
+
+### Tabs left open across an update
+
+A tab left open goes on running the old code against the new server. API replies name the running
+release in an `X-FormLogic-Release` header. A page that sees another release, or whose service worker
+changes, shows **A new version is ready** with a Reload button. It never reloads by itself, because
+someone may be typing. Only pages newer than v0.1.20 do this, and only builds made by
+`scripts/package-dist.mjs` know their release. An older page gets the server's refusals instead, which
+tell it to reload.
+
 The manual paths below remain fully supported and are what the wizard automates.
 
 ## Official release requirements
@@ -210,7 +247,8 @@ Restore the backup from step 1: the old files, the MySQL dump, `api/.env`, and `
 together (MySQL rows point at SQLite files on disk — restore both sides or you get orphaned
 responses). Migrations are additive/guarded, so a database that was migrated forward generally
 still works with the previous release's code, but restoring the DB dump alongside the old files is
-the clean, supported rollback.
+the clean, supported rollback. Going below v0.1.18 this way breaks the same things:
+see [Rolling back below v0.1.18](#rolling-back-below-v0118).
 
 ## CLI reference — `api/bin/upgrade.php`
 
@@ -219,6 +257,8 @@ the clean, supported rollback.
 | `php api/bin/upgrade.php --app-version=<v>` | Ensure schema + run all migrations, verify core tables, stamp `schema_meta` with `<v>` |
 | `php api/bin/upgrade.php` | Same, version taken from the `api/VERSION` file (else `unknown`, which never overwrites a real stamp) |
 | `php api/bin/upgrade.php --check` | **Read-only**: report which core tables / recently-migrated columns/indexes exist. Writes nothing |
+| `php api/bin/upgrade.php --rollback=<id>` | Put back the code snapshot in `api/storage/backups/<id>`. The database is left as it is |
+| `php api/bin/upgrade.php --rollback=<id> --allow-downgrade` | The same, for a snapshot that can't read this site's encrypted data. Without the flag it says what would break, and exits 1 |
 | `php api/bin/upgrade.php --help` | Usage |
 
 Exit codes: `0` success / check passed · `1` drift found or post-migration verification failed ·
@@ -240,3 +280,6 @@ needed — if the app can reach the database, so can the CLI.
   `upgrade_source=installer` (the wizard's upgrade mode); an install that has only ever
   auto-migrated via the web app won't have it — `--check` reports that informationally, not as
   drift.
+- **API keys limited to specific forms** reach only the `/forms` routes since v0.1.18. An integration
+  that used one for `/flows`, `/flow-runs`, `/flow-kv` or `/app-logic` now gets `403`, and needs a key
+  with no form restriction. See [API.md](API.md#authentication).

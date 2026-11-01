@@ -1040,6 +1040,11 @@ class AuthController
             // Not 401: the client takes that to mean the session has gone, and tears it down.
             return $this->jsonError($response, 'Incorrect password', 403, 'password_incorrect');
         }
+        // A page from before this took a code sends none. "That code didn't match" had its owner
+        // checking an authenticator nothing had asked them for, in a dialog with no box for a code.
+        if (!is_array($data) || !array_key_exists('code', $data)) {
+            return $this->jsonError($response, 'This page is out of date, so it did not ask for your code. Reload it and try again.', 403, 'mfa_code_required');
+        }
         if (!$this->mfaService->verifyChallenge($user->id, (string) ($data['code'] ?? ''))) {
             return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 403, 'mfa_code_required');
         }

@@ -4,6 +4,8 @@
 // goes again, so no page has to know about any of this.
 
 export const ADMIN_CONFIRMATION_REQUIRED = 'admin_confirmation_required';
+/** What a refusal says once the dialog has asked. The server's own words go on to a page that can't. */
+export const ADMIN_CONFIRMATION_DECLINED = 'Confirm your password to continue';
 
 let held: { token: string; expires: number } | null = null;
 let ask: (() => Promise<boolean>) | null = null;
@@ -20,6 +22,14 @@ export function rememberAdminConfirmation(token: string, seconds: number): void 
 /** AdminConfirmHost registers the dialog here while it is mounted. */
 export function setAdminConfirmationPrompt(prompt: (() => Promise<boolean>) | null): void {
   ask = prompt;
+}
+
+/**
+ * False before the dialog's chunk has arrived, or when it couldn't. A refusal then keeps the server's
+ * words, which are for a page where nothing asks.
+ */
+export function canAskForAdminConfirmation(): boolean {
+  return ask !== null;
 }
 
 /** Several requests refused at once share one dialog. False: cancelled, or nothing to ask with. */

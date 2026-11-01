@@ -35,6 +35,10 @@ Authorization: Bearer flk_xxxxxxxxxxxxxxxxxxxx
 
 - A key only ever reaches **its owner's own forms**. Restricting a key to specific form IDs narrows
   it further.
+- A key restricted to specific forms reaches only the `/forms` routes. Every other route acts on the
+  whole account, so since v0.1.18 `/flows`, `/flow-runs`, `/flow-kv`, `/app-logic` and the rest answer
+  `403` with `This API key is limited to specific forms.`, whatever the key's scopes. Use a key with no
+  form restriction for those.
 - Missing/invalid key → `401`. Valid key without the required scope → `403`.
 - Requests are rate-limited per key (120 a minute) and per address (120 a minute); exceeding
   either returns `429` with `Retry-After` (seconds). A linked desktop's lanes (its long polls,

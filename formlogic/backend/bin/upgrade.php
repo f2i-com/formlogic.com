@@ -31,6 +31,8 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
  *   php api/bin/upgrade.php                        # version falls back to the VERSION file (api/VERSION)
  *   php api/bin/upgrade.php --check                # read-only drift report; writes nothing
  *   php api/bin/upgrade.php --rollback=<id>        # put back the code of api/storage/backups/<id>
+ *   php api/bin/upgrade.php --rollback=<id> --allow-downgrade
+ *                                                  # and accept what that breaks (it says what first)
  *
  * In a source checkout the backend is formlogic/backend, so:
  *   php formlogic/backend/bin/upgrade.php --check
@@ -323,6 +325,37 @@ function formlogicUpgradeRun(MySQLConnection $mysql, string $version, string $ve
     return 0;
 }
 
+/**
+ * --rollback: put the code of a snapshot back. Returns 0 when it did, 1 when it did not. A refusal
+ * says what would break and which flag accepts that, for a site the admin panel can't reach.
+ */
+function formlogicUpgradeRollback(
+    \FormLogic\Services\UpgradeService $upgrade,
+    \FormLogic\Services\MaintenanceService $maintenance,
+    string $backupId,
+    bool $allowDowngrade,
+    callable $out,
+    callable $err
+): int {
+    try {
+        $result = $upgrade->rollback($backupId, 'cli', $allowDowngrade);
+    } catch (\FormLogic\Services\DowngradeNotConfirmedException $e) {
+        $err('Rollback refused: ' . str_replace(\FormLogic\Services\UpgradeService::CONFIRM_ROLLBACK, 'Add --allow-downgrade to go ahead.', $e->getMessage()));
+        return 1;
+    } catch (\Throwable $e) {
+        $err('Rollback failed: ' . $e->getMessage());
+        return 1;
+    }
+    foreach ($result['journal'] as $line) {
+        $out($line);
+    }
+    $out("Restored version {$result['restoredVersion']}.");
+    if ($maintenance->enabled()) {
+        $out('Maintenance mode is still on. Sign in as an administrator and turn it off from the Maintenance tab.');
+    }
+    return 0;
+}
+
 /** @param resource $stream */
 function formlogicUpgradeUsage($stream): void
 {
@@ -338,6 +371,9 @@ Usage:
                                            when an upgrade was killed and the admin panel can't run.
                                            The database is left as it is. Run it as the web server's
                                            user: the files it writes are owned by whoever runs it.
+  php bin/upgrade.php --rollback=<id> --allow-downgrade
+                                           The same, for a snapshot that can't read this site's
+                                           encrypted data. Without the flag it says what would break.
   php bin/upgrade.php --help               This help.
 
 Version stamped into schema_meta: the --app-version flag, else the VERSION file next to the backend
@@ -368,6 +404,7 @@ $args = array_slice($argvSafe, 1);
 
 $check = false;
 $rollbackId = null;
+$allowDowngrade = false;
 foreach ($args as $arg) {
     if ($arg === '--check') {
         $check = true;
@@ -375,6 +412,10 @@ foreach ($args as $arg) {
     }
     if (preg_match('/^--rollback=(.+)$/', $arg, $m)) {
         $rollbackId = $m[1];
+        continue;
+    }
+    if ($arg === '--allow-downgrade') {
+        $allowDowngrade = true;
         continue;
     }
     if ($arg === '--help' || $arg === '-h') {
@@ -437,20 +478,9 @@ if ($check) {
 if ($rollbackId !== null) {
     $maintenance = new \FormLogic\Services\MaintenanceService(\FormLogic\Services\MaintenanceService::defaultPath());
     $upgrade = new \FormLogic\Services\UpgradeService(\FormLogic\Services\UpgradeService::defaultApiRoot(), $mysql, $maintenance);
-    try {
-        $result = $upgrade->rollback($rollbackId, 'cli');
-    } catch (\Throwable $e) {
-        fwrite(STDERR, 'Rollback failed: ' . $e->getMessage() . "\n");
-        exit(1);
-    }
-    foreach ($result['journal'] as $line) {
-        $out($line);
-    }
-    $out("Restored version {$result['restoredVersion']}.");
-    if ($maintenance->enabled()) {
-        $out('Maintenance mode is still on. Sign in as an administrator and turn it off from the Maintenance tab.');
-    }
-    exit(0);
+    exit(formlogicUpgradeRollback($upgrade, $maintenance, $rollbackId, $allowDowngrade, $out, static function (string $line): void {
+        fwrite(STDERR, $line . "\n");
+    }));
 }
 
 [$version, $versionSource] = formlogicUpgradeResolveVersion($args, __DIR__ . '/../VERSION');

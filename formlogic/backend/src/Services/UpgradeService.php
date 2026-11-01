@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Support\DataEncryption;
 use PDO;
 
 /**
@@ -44,6 +45,12 @@ class UpgradeService
     private const WEB_DIR_MODE = 0755;
 
     private const SNAPSHOTS_KEPT = 3;
+
+    /** The first release that can read what DATA_ENCRYPTION_KEY sealed. */
+    private const READS_SEALED_DATA_SINCE = '0.1.18';
+
+    /** The end of that refusal, for a page. bin/upgrade.php swaps it for its flag. */
+    public const CONFIRM_ROLLBACK = 'Confirm the rollback to go ahead. If nothing asks you to, reload this page.';
 
     /** Room left for the database export, whose size isn't known until it is written. */
     private const SPARE_DISK_BYTES = 256 * 1024 * 1024;
@@ -692,14 +699,16 @@ class UpgradeService
      * files the release being left shipped that were not in the snapshot are
      * REMOVED, so the prior inventory is reconstructed; protected data/config
      * paths and the host's own files stay untouched.
+     *
+     * @throws DowngradeNotConfirmedException when the snapshot can't read this site's sealed data
      */
-    public function rollback(string $backupId, string $actingUserId): array
+    public function rollback(string $backupId, string $actingUserId, bool $allowDowngrade = false): array
     {
         @set_time_limit(600);
-        return $this->withUpgradeLock(fn (): array => $this->rollbackLocked($backupId, $actingUserId));
+        return $this->withUpgradeLock(fn (): array => $this->rollbackLocked($backupId, $actingUserId, $allowDowngrade));
     }
 
-    private function rollbackLocked(string $backupId, string $actingUserId): array
+    private function rollbackLocked(string $backupId, string $actingUserId, bool $allowDowngrade): array
     {
         $backupDir = $this->backupDirFor($backupId);
         $layout = $this->layout();
@@ -712,6 +721,12 @@ class UpgradeService
         // Written last: without it the copy stopped part way, and restoring would delete what it lacks.
         if (!is_file("{$backupDir}/backup-info.json")) {
             throw new \RuntimeException('This backup was never finished. The upgrade that made it had not touched the site yet, so there is nothing to roll back from it.');
+        }
+        $info = json_decode((string) @file_get_contents("{$backupDir}/backup-info.json"), true);
+        $restoredVersion = is_array($info) ? (string) ($info['version'] ?? 'unknown') : 'unknown';
+        $warning = $allowDowngrade ? null : $this->rollbackWarning($restoredVersion);
+        if ($warning !== null) {
+            throw new DowngradeNotConfirmedException($warning . ' ' . self::CONFIRM_ROLLBACK);
         }
 
         $maintenanceWasOn = $this->maintenance->enabled();
@@ -731,8 +746,6 @@ class UpgradeService
         $removed = $this->deleteStale($layout['webRoot'], "{$backupDir}/web", self::PROTECTED_WEB_PATHS, $shipped['web']);
         $journal[] = "Frontend files not in the snapshot removed ({$removed})";
 
-        $info = json_decode((string) @file_get_contents("{$backupDir}/backup-info.json"), true);
-        $restoredVersion = is_array($info) ? (string) ($info['version'] ?? 'unknown') : 'unknown';
         $this->stampSchemaMeta($restoredVersion !== 'unknown' ? $restoredVersion : $fromVersion);
 
         $this->appendHistory([
@@ -747,6 +760,28 @@ class UpgradeService
         $journal[] = 'Database was NOT restored (records created since the upgrade are intact) — restore it separately only if needed';
 
         return ['ok' => true, 'restoredVersion' => $restoredVersion, 'journal' => $journal];
+    }
+
+    /**
+     * What rolling back to $version would break, or null when it breaks nothing. Code from before
+     * sealing has no decryption: it hands a sealed two-factor secret to the code check, signs webhooks
+     * with sealed text and reads a sealed hosted record as null, and the site reports nothing wrong.
+     * A site with no key sealed nothing. A key that can't be used still left behind what the right
+     * one sealed. A version that says nothing is asked about, as a staged package is
+     * (normalizeVersion): one question costs less than a site whose authenticators have stopped.
+     */
+    private function rollbackWarning(string $version): ?string
+    {
+        $encryption = DataEncryption::fromEnvironment();
+        if (($encryption->usable() && !$encryption->enabled())
+            || version_compare($this->normalizeVersion($version), self::READS_SEALED_DATA_SINCE, '>=')) {
+            return null;
+        }
+        $snapshot = $this->normalizeVersion($version) === '0.0.0' ? 'doesn\'t record which release it is' : 'is v' . ltrim($version, 'vV');
+        return "This snapshot {$snapshot}, and FormLogic before v" . self::READS_SEALED_DATA_SINCE . ' can\'t read what'
+            . ' DATA_ENCRYPTION_KEY encrypted. Until the site is back on a newer release: authenticator codes fail (recovery codes still'
+            . ' sign in), webhook receivers reject every delivery, hosted apps read their records as empty, and one that saves a record'
+            . ' replaces what was there, and encrypted items in the recycle bin can\'t be restored.';
     }
 
     /**
@@ -855,6 +890,7 @@ class UpgradeService
                 'hasCode' => is_dir("{$dir}/{$entry}/api"),
                 'hasDatabase' => is_file("{$dir}/{$entry}/database.sql.gz"),
                 'sizeBytes' => $this->dirSize("{$dir}/{$entry}"),
+                'rollbackWarning' => is_array($info) && is_dir("{$dir}/{$entry}/api") ? $this->rollbackWarning((string) ($info['version'] ?? 'unknown')) : null,
             ];
         }
         return array_slice($out, 0, 20);

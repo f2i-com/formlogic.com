@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetAdminConfirmationForTests, adminConfirmationHeaders, askForAdminConfirmation, rememberAdminConfirmation, setAdminConfirmationPrompt } from './adminConfirmation';
 import { api } from './api';
 
-const refused = () => new Response(JSON.stringify({ error: true, code: 'admin_confirmation_required', message: 'Confirm your password to continue' }), { status: 403 });
+const refused = () => new Response(JSON.stringify({ error: true, code: 'admin_confirmation_required', message: 'Confirm your password to continue. If nothing asks for it, this page is out of date: reload it.' }), { status: 403 });
 const ok = () => new Response(JSON.stringify({ success: true, payments: [] }), { status: 200 });
 
 beforeEach(() => __resetAdminConfirmationForTests());
@@ -58,6 +58,25 @@ describe('a refused request', () => {
     const result = await api.adminResetPassword('user-1');
     expect(result.status).toBe(403);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The server's words are for a page too old to ask, and this one has just asked.
+    expect(result.error).toBe('Confirm your password to continue');
+  });
+
+  // The dialog is a lazy chunk, and an acting route's first request can beat it there, or it can
+  // fail to load. Then nothing did ask, and the server's words are the right ones.
+  it('keeps the server\'s words when nothing here could ask', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(refused()));
+    const result = await api.adminResetPassword('user-1');
+    expect(result.error).toBe('Confirm your password to continue. If nothing asks for it, this page is out of date: reload it.');
+  });
+
+  it('says the same on the path that keeps the whole answer', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(refused()));
+    setAdminConfirmationPrompt(async () => false);
+    const client = api as unknown as { requestWithMeta(endpoint: string): Promise<{ status: number; body: Record<string, unknown> }> };
+    const result = await client.requestWithMeta('/admin/users');
+    expect(result.status).toBe(403);
+    expect(result.body).toMatchObject({ code: 'admin_confirmation_required', message: 'Confirm your password to continue' });
   });
 
   it('asks only once, however the second try goes', async () => {
@@ -65,9 +84,10 @@ describe('a refused request', () => {
     vi.stubGlobal('fetch', fetchMock);
     const prompt = vi.fn(async () => true);
     setAdminConfirmationPrompt(prompt);
-    await api.adminResetPassword('user-1');
+    const result = await api.adminResetPassword('user-1');
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.error).toBe('Confirm your password to continue');
   });
 
   it('never sends the proof anywhere but the admin routes', async () => {

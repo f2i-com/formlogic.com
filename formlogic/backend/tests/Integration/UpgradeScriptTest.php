@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace FormLogic\Tests\Integration;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Services\MaintenanceService;
+use FormLogic\Services\UpgradeService;
+use FormLogic\Support\DataEncryption;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
@@ -197,6 +200,72 @@ class UpgradeScriptTest extends TestCase
         $this->assertStringContainsString('app_forms.idx_form_id', $output);
         // Read-only contract: every core table is listed, none as missing.
         $this->assertStringNotContainsString('MISSING', $output);
+    }
+
+    // The one way back when the admin panel can't run, so it asks what the panel asks.
+    public function testARollbackBelowDataEncryptionTakesTheFlagAndSaysWhich(): void
+    {
+        if (self::$mysql === null || self::$pdo === null) {
+            $this->markTestSkipped('No test database available');
+        }
+        self::$mysql->initializeSchema();
+        self::$mysql->runMigrations();
+        $web = sys_get_temp_dir() . '/formlogic-upgrade-cli-' . bin2hex(random_bytes(4));
+        $api = $web . '/api';
+        $snapshot = $api . '/storage/backups/20260101-000000-aaaaaa';
+        mkdir($snapshot . '/api', 0777, true);
+        mkdir($snapshot . '/web');
+        file_put_contents($web . '/index.html', 'new');
+        file_put_contents($api . '/VERSION', "0.1.20\n");
+        file_put_contents($snapshot . '/web/index.html', 'old');
+        file_put_contents($snapshot . '/api/VERSION', "0.1.17\n");
+        file_put_contents($snapshot . '/backup-info.json', json_encode(['id' => basename($snapshot), 'version' => '0.1.17']));
+        $maintenance = new MaintenanceService($api . '/storage/maintenance.json');
+        $upgrade = new UpgradeService($api, self::$mysql, $maintenance, '');
+        $saved = $_ENV[DataEncryption::KEY_ENV] ?? null;
+        $_ENV[DataEncryption::KEY_ENV] = '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';
+        try {
+            $errors = [];
+            $toStderr = static function (string $line) use (&$errors): void {
+                $errors[] = $line;
+            };
+            [$code, $output] = self::capture(fn (callable $out): int => formlogicUpgradeRollback($upgrade, $maintenance, basename($snapshot), false, $out, $toStderr));
+            $this->assertSame(1, $code);
+            $this->assertSame('', $output, 'a refusal goes to stderr, as a failure always did');
+            $this->assertCount(1, $errors);
+            $this->assertStringContainsString('authenticator', $errors[0]);
+            $this->assertStringEndsWith('Add --allow-downgrade to go ahead.', $errors[0]);
+            $this->assertStringNotContainsString('reload this page', $errors[0], 'there is no page here');
+            $this->assertSame('new', file_get_contents($web . '/index.html'));
+
+            $errors = [];
+            [$code, $output] = self::capture(fn (callable $out): int => formlogicUpgradeRollback($upgrade, $maintenance, 'no-such-backup', false, $out, $toStderr));
+            $this->assertSame(1, $code);
+            $this->assertSame(['Rollback failed: Backup not found'], $errors);
+
+            [$code, $output] = self::capture(fn (callable $out): int => formlogicUpgradeRollback($upgrade, $maintenance, basename($snapshot), true, $out, $toStderr));
+            $this->assertSame(0, $code, $output);
+            $this->assertStringContainsString('Restored version 0.1.17', $output);
+            $this->assertSame('old', file_get_contents($web . '/index.html'));
+        } finally {
+            unset($_ENV[DataEncryption::KEY_ENV]);
+            if ($saved !== null) {
+                $_ENV[DataEncryption::KEY_ENV] = $saved;
+            }
+            self::removeTree($web);
+        }
+    }
+
+    private static function removeTree(string $dir): void
+    {
+        if (!str_starts_with(basename($dir), 'formlogic-upgrade-cli-') || !str_starts_with($dir, sys_get_temp_dir())) {
+            throw new \LogicException("Not this test's folder: {$dir}");
+        }
+        $entries = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST);
+        foreach ($entries as $entry) {
+            $entry->isDir() ? rmdir($entry->getPathname()) : unlink($entry->getPathname());
+        }
+        rmdir($dir);
     }
 
     /** @return array<string,string> meta_key => meta_value */

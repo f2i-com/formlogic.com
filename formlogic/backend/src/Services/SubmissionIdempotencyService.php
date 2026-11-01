@@ -35,7 +35,13 @@ class SubmissionIdempotencyService
 
     /** The row of a submission whose form script acted and left nothing stored (holdAfterScript). */
     public const SCRIPT_RAN = 'script_ran';
-    public const SCRIPT_RAN_MESSAGE = "This form's script has already run for this submission, and nothing was stored. Please check with the form's owner before sending it again.";
+    /**
+     * A page from before v0.1.19 keeps this key, so only a reload gets it past this. A current page
+     * changes the key and goes straight through, and a reload would throw its answers away, so
+     * reloading is only for a page that is refused. The offline queues know this by "script has
+     * already run" (isScriptRan).
+     */
+    public const SCRIPT_RAN_MESSAGE = "This form's script has already run for this submission, and nothing was stored. Please check with the form's owner before sending it again. If sending it again is refused, reload this page.";
 
     private ?PDO $mysql;
 

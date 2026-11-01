@@ -23,6 +23,7 @@ use FormLogic\Services\ResponseService;
 use FormLogic\Services\StagedPackageMismatchException;
 use FormLogic\Services\UpgradeInProgressException;
 use FormLogic\Services\UpgradeService;
+use FormLogic\Support\DataEncryption;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
@@ -1024,6 +1025,135 @@ class AdminPanelTest extends TestCase
         $this->assertFileDoesNotExist($apiRoot . '/src/NewFeature.php');
         $this->assertFileExists($apiRoot . '/src/OldFeature.php');
         $this->assertFileExists($webRoot . '/.user.ini');
+    }
+
+    /**
+     * $body with DATA_ENCRYPTION_KEY set to $key, or with none.
+     *
+     * @template T
+     * @param callable(): T $body
+     * @return T
+     */
+    private function withDataKey(?string $key, callable $body): mixed
+    {
+        $saved = $_ENV[DataEncryption::KEY_ENV] ?? null;
+        unset($_ENV[DataEncryption::KEY_ENV], $_SERVER[DataEncryption::KEY_ENV]);
+        putenv(DataEncryption::KEY_ENV);
+        if ($key !== null) {
+            $_ENV[DataEncryption::KEY_ENV] = $key;
+        }
+        try {
+            return $body();
+        } finally {
+            unset($_ENV[DataEncryption::KEY_ENV]);
+            if ($saved !== null) {
+                $_ENV[DataEncryption::KEY_ENV] = $saved;
+            }
+        }
+    }
+
+    /** An install at $version, upgraded to 2.0.0 so a snapshot of it can be rolled back to. */
+    private function upgradedFrom(string $version): array
+    {
+        [$webRoot, $apiRoot] = $this->buildFakeInstall();
+        file_put_contents($apiRoot . '/VERSION', "{$version}\n");
+        $maintenance = new MaintenanceService($apiRoot . '/storage/maintenance.json');
+        $svc = $this->upgradeService($apiRoot, $maintenance);
+        $staged = $svc->stageUploadedPackage($this->buildFakePackage('2.0.0'));
+        $backupId = $svc->apply($this->adminId, false, $staged['packageId'], $staged['digest'])['backupId'];
+        return [$svc, $maintenance, $backupId, $apiRoot, $webRoot];
+    }
+
+    private const DATA_KEY = '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';
+
+    // v0.1.17 has no decryption. It hands a sealed two-factor secret to the code check, signs webhooks
+    // with sealed text, and a hosted app reads a sealed record as null.
+    public function testARollbackBelowDataEncryptionSaysWhatBreaksAndNeedsConfirming(): void
+    {
+        [$svc, $maintenance, $backupId, $apiRoot] = $this->upgradedFrom('0.1.17');
+        $this->withDataKey(self::DATA_KEY, function () use ($svc, $maintenance, $backupId, $apiRoot): void {
+            try {
+                $svc->rollback($backupId, $this->adminId);
+                $this->fail('it went ahead');
+            } catch (\FormLogic\Services\DowngradeNotConfirmedException $e) {
+                foreach (['v0.1.17', 'DATA_ENCRYPTION_KEY', 'authenticator', 'recovery codes', 'webhook', 'hosted apps', 'recycle bin'] as $said) {
+                    $this->assertStringContainsString($said, $e->getMessage());
+                }
+            }
+            $this->assertFalse($maintenance->enabled(), 'refused before the site closed');
+            $this->assertSame("2.0.0\n", (string) file_get_contents($apiRoot . '/VERSION'));
+            $this->assertFileExists($apiRoot . '/src/NewFeature.php');
+
+            $this->assertSame('0.1.17', $svc->rollback($backupId, $this->adminId, true)['restoredVersion']);
+            $this->assertFileDoesNotExist($apiRoot . '/src/NewFeature.php');
+        });
+    }
+
+    public function testASiteWithNoDataKeyRollsBackAsItAlwaysDid(): void
+    {
+        [$svc, , $backupId] = $this->upgradedFrom('0.1.17');
+        $this->withDataKey(null, function () use ($svc, $backupId): void {
+            $this->assertNull($svc->listBackups()[0]['rollbackWarning']);
+            $this->assertSame('0.1.17', $svc->rollback($backupId, $this->adminId)['restoredVersion']);
+        });
+    }
+
+    public function testARollbackToAReleaseThatCanReadItNeedsNothing(): void
+    {
+        [$svc, , $backupId] = $this->upgradedFrom('0.1.18');
+        $this->withDataKey(self::DATA_KEY, function () use ($svc, $backupId): void {
+            $this->assertNull($svc->listBackups()[0]['rollbackWarning']);
+            $this->assertSame('0.1.18', $svc->rollback($backupId, $this->adminId)['restoredVersion']);
+        });
+    }
+
+    // Mistyped, it unseals nothing and seals nothing, but what the right key sealed is still sealed.
+    public function testAKeyThatCannotBeUsedStillCounts(): void
+    {
+        [$svc, , $backupId] = $this->upgradedFrom('0.1.17');
+        $this->withDataKey('not-a-key', function () use ($svc, $backupId): void {
+            $this->expectException(\FormLogic\Services\DowngradeNotConfirmedException::class);
+            $svc->rollback($backupId, $this->adminId);
+        });
+    }
+
+    // A snapshot whose version says nothing is treated like an older one, as a staged package is:
+    // asking once costs less than a site whose authenticators have stopped.
+    public function testASnapshotOfUnknownAgeIsAsked(): void
+    {
+        [$svc] = $this->upgradedFrom('dev');
+        $this->withDataKey(self::DATA_KEY, function () use ($svc): void {
+            $warning = (string) $svc->listBackups()[0]['rollbackWarning'];
+            $this->assertStringStartsWith("This snapshot doesn't record which release it is, and FormLogic before v0.1.18", $warning);
+            $this->assertStringNotContainsString('vdev', $warning);
+        });
+    }
+
+    public function testTheBackupListSaysWhatARollbackWouldBreak(): void
+    {
+        [$svc, , $backupId] = $this->upgradedFrom('0.1.17');
+        $this->withDataKey(self::DATA_KEY, function () use ($svc, $backupId): void {
+            $rows = array_column($svc->listBackups(), null, 'id');
+            $this->assertStringContainsString('authenticator', (string) $rows[$backupId]['rollbackWarning']);
+            $this->assertStringNotContainsString('reload this page', (string) $rows[$backupId]['rollbackWarning'], 'the dialog is what asks');
+        });
+    }
+
+    public function testTheRollbackRouteRefusesThenTakesTheConfirmation(): void
+    {
+        [$svc, $maintenance, $backupId] = $this->upgradedFrom('0.1.17');
+        $post = fn (array $body) => $this->controller($svc, $maintenance)->upgradeRollback(
+            $this->request('POST', '/api/admin/upgrade/rollback', $body + ['backupId' => $backupId, 'confirm' => true])->withAttribute('userId', $this->adminId),
+            (new ResponseFactory())->createResponse()
+        );
+        $this->withDataKey(self::DATA_KEY, function () use ($post): void {
+            $refused = $post([]);
+            $this->assertSame(409, $refused->getStatusCode());
+            $this->assertSame('downgrade_not_confirmed', $this->json($refused)['code']);
+            $this->assertStringContainsString('reload this page', $this->json($refused)['message'], 'for a page that has no way to confirm it');
+            $this->assertSame(409, $post(['allowDowngrade' => 'yes'])->getStatusCode(), 'true, and nothing else');
+            $this->assertSame(200, $post(['allowDowngrade' => true])->getStatusCode());
+        });
     }
 
     public function testASnapshotThatWasNeverFinishedCannotReplaceTheSite(): void

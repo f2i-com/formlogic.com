@@ -183,6 +183,23 @@ describe('a submission the queue gave up on', () => {
     expect(api.createAppResponseResult).toHaveBeenLastCalledWith('shop', 'orders', { answers: { item: 'tea' }, idempotencyKey: 'key' });
   });
 
+  // A tab from before v0.1.19 has no 'script-ran': it counted the same refusal as a failed attempt
+  // until it gave up. The server's words are on the row, and the key is still held against it.
+  it('reads the server\'s words on a row an older tab gave up on', async () => {
+    const said = 'This form\'s script has already run for this submission, and nothing was stored. Please check with the form\'s owner before sending it again. If sending it again is refused, reload this page.';
+    rows.set('r1', todaysRow({ status: 'failed', attempts: 8, failure: 'gave-up', lastError: said, failedAt: now }));
+    expect((await listFailedSubmissions())[0].scriptRan).toBe(true);
+
+    vi.mocked(api.createAppResponseResult).mockReset().mockResolvedValue({ ok: true, status: 201, response: { id: 'r1' } });
+    expect(await retrySubmission('r1')).toBe('sent');
+    expect(vi.mocked(api.createAppResponseResult).mock.lastCall?.[2]).toMatchObject({ idempotencyKey: 'key' });
+  });
+
+  it('keeps an ordinary give-up what it is', async () => {
+    const q = await giveUp();
+    expect((await listFailedSubmissions()).find((item) => item.id === q.id)?.scriptRan).toBe(false);
+  });
+
   it('can be discarded, with the copy Workbox may hold of it', async () => {
     const q = await giveUp();
     expect(await discardSubmission(q.id)).toBe(true);

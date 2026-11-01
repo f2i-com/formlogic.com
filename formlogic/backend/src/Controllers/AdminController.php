@@ -965,14 +965,17 @@ class AdminController
         if ($backupId === '' || ($body['confirm'] ?? null) !== true) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Send backupId and confirm: true'], 400);
         }
+        $allowDowngrade = ($body['allowDowngrade'] ?? null) === true;
         try {
-            $result = $this->upgrade->rollback($backupId, (string) $request->getAttribute('userId'));
+            $result = $this->upgrade->rollback($backupId, (string) $request->getAttribute('userId'), $allowDowngrade);
+        } catch (\FormLogic\Services\DowngradeNotConfirmedException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage(), 'code' => 'downgrade_not_confirmed'], 409);
         } catch (\FormLogic\Services\UpgradeInProgressException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage(), 'code' => 'upgrade_in_progress'], 409);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
-        $this->audit($request, 'admin.upgrade_rollback', null, ['backupId' => $backupId]);
+        $this->audit($request, 'admin.upgrade_rollback', null, ['backupId' => $backupId, 'allowDowngrade' => $allowDowngrade]);
         return $this->jsonResponse($response, $result);
     }
 

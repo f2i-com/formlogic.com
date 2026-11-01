@@ -532,6 +532,27 @@ class AdminSafeguardsTest extends TestCase
         $this->assertSame(200, $controller->mfaDisable($request->withParsedBody(['password' => 'the-right-password', 'code' => '123456']), (new ResponseFactory())->createResponse())->getStatusCode());
     }
 
+    // A page from before this took a code has no box for one, and "That code didn't match" had its
+    // owner checking an authenticator nothing had asked them for. The code and status stay.
+    public function testAPageWithNoCodeBoxIsToldItIsOutOfDate(): void
+    {
+        $mfa = $this->createMock(MfaService::class);
+        $mfa->method('verifyChallenge')->willReturn(false);
+        $mfa->expects($this->never())->method('disable');
+        $controller = new AuthController(self::$auth, [], 3600, null, null, 'csrf', null, null, null, null, null, $mfa);
+        $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://formlogic.example/api/auth/mfa/disable')
+            ->withAttribute('user', $this->owner())->withAttribute('userId', $this->ownerId);
+        $answer = static function ($response): array {
+            return [$response->getStatusCode(), ...array_values(array_intersect_key(json_decode((string) $response->getBody(), true), ['code' => 1, 'message' => 1]))];
+        };
+        $outOfDate = [403, 'This page is out of date, so it did not ask for your code. Reload it and try again.', 'mfa_code_required'];
+        $wrongCode = [403, 'That code didn\'t match — check your authenticator app and try again', 'mfa_code_required'];
+
+        $this->assertSame($outOfDate, $answer($controller->mfaDisable($request->withParsedBody(['password' => 'the-right-password']), (new ResponseFactory())->createResponse())));
+        $this->assertSame($wrongCode, $answer($controller->mfaDisable($request->withParsedBody(['password' => 'the-right-password', 'code' => '']), (new ResponseFactory())->createResponse())), 'a current page always sends the key');
+        $this->assertSame('password_incorrect', json_decode((string) $controller->mfaDisable($request->withParsedBody(['password' => 'a-guess']), (new ResponseFactory())->createResponse())->getBody(), true)['code'], 'the password is still asked about first');
+    }
+
     // ── Support access ───────────────────────────────────────────────────────
 
     public function testTheAdminFormEditorWaitsForTheOwnerToo(): void

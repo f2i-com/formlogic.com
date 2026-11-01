@@ -43,10 +43,13 @@ class AdminConfirmationMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
         $response = new SlimResponse();
+        // A page from before this gate has nothing that asks, and a new page's first request looks
+        // the same from here, so the code stays and the words do the telling. A page that does ask
+        // opens its dialog on the code, and doesn't show this.
         $response->getBody()->write((string) json_encode([
             'error' => true,
             'code' => self::CODE,
-            'message' => 'Confirm your password to continue',
+            'message' => 'Confirm your password to continue. If nothing asks for it, this page is out of date: reload it.',
         ]));
         return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
     }

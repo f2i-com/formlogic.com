@@ -94,7 +94,8 @@ export function AdminUpgrade() {
     if (!rollbackId) return;
     const id = rollbackId;
     setRollbackId(null);
-    const r = await api.adminUpgradeRollback(id);
+    // Confirmed only when the dialog said what it would break.
+    const r = await api.adminUpgradeRollback(id, !!status?.backups.find((b) => b.id === id)?.rollbackWarning);
     if (r.error) toast.error('Rollback failed', r.error);
     else {
       setJournal(r.data!.journal);
@@ -118,6 +119,7 @@ export function AdminUpgrade() {
       ? <AdminError message={loadError} onRetry={load} />
       : <AdminSpinner label="Loading upgrade status" />;
   }
+  const rollbackWarning = status.backups.find((b) => b.id === rollbackId)?.rollbackWarning;
 
   return (
     <div className="space-y-5">
@@ -290,8 +292,8 @@ export function AdminUpgrade() {
         onClose={() => setRollbackId(null)}
         onConfirm={rollback}
         title="Roll back to this code snapshot?"
-        message="The backend and frontend files are restored from the backup. The database is NOT touched (records created since the upgrade stay), and user form data is never affected."
-        confirmLabel="Roll back code"
+        message={`${rollbackWarning ? `${rollbackWarning}\n\n` : ''}The backend and frontend files are restored from the backup. The database is NOT touched (records created since the upgrade stay), and user form data is never affected.`}
+        confirmLabel={rollbackWarning ? 'Roll back anyway' : 'Roll back code'}
         variant="danger"
       />
       <ConfirmDialog
