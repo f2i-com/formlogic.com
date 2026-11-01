@@ -318,7 +318,7 @@ class FlowService
                 $fallbackPolicy['onError'] = $f['onError'];
             }
             if (isset($f['fallbackReply'])) {
-                if (!is_string($f['fallbackReply']) || strlen($f['fallbackReply']) > 500) {
+                if (!is_string($f['fallbackReply']) || mb_strlen($f['fallbackReply']) > 500) {
                     throw new \InvalidArgumentException('fallbackPolicy.fallbackReply must be a string ≤ 500 chars');
                 }
                 $fallbackPolicy['fallbackReply'] = $f['fallbackReply'];
@@ -378,7 +378,8 @@ class FlowService
             // 'scope'/'key' (formlogic.store) mirror the FlowKvService caps: scope ≤ 64, key ≤ 190.
             foreach (['form' => 128, 'responseId' => 128, 'when' => 500, 'connectorId' => 64, 'command' => 96, 'message' => 500, 'scope' => 64, 'key' => 190] as $key => $cap) {
                 if (isset($action[$key])) {
-                    if (!is_string($action[$key]) || strlen($action[$key]) > $cap) {
+                    // A message is text anyone may write. The rest are ids, in bytes where they are used.
+                    if (!is_string($action[$key]) || ($key === 'message' ? mb_strlen($action[$key]) : strlen($action[$key])) > $cap) {
                         throw new \InvalidArgumentException("outputActions[{$i}].{$key} must be a string ≤ {$cap} chars");
                     }
                     $clean[$key] = $action[$key];
@@ -429,7 +430,7 @@ class FlowService
     public function createFlow(string $appId, string $ownerUserId, array $data): array
     {
         $name = trim((string) ($data['name'] ?? ''));
-        if ($name === '' || strlen($name) > 255) {
+        if ($name === '' || mb_strlen($name) > 255) {
             throw new \InvalidArgumentException('Flow name is required (max 255 chars)');
         }
         $slug = self::sanitizeSlug($data['slug'] ?? $this->slugify($name));
@@ -460,7 +461,7 @@ class FlowService
                 'app' => $appId,
                 'name' => $name,
                 'slug' => $slug,
-                'descr' => isset($data['description']) && is_string($data['description']) ? substr($data['description'], 0, 2000) : null,
+                'descr' => isset($data['description']) && is_string($data['description']) ? mb_substr($data['description'], 0, 2000) : null,
                 'flow_json' => json_encode($flowJson),
                 'input_schema' => $inputSchema !== null ? json_encode($inputSchema) : null,
                 'output_schema' => $outputSchema !== null ? json_encode($outputSchema) : null,
@@ -501,7 +502,7 @@ class FlowService
 
         if (array_key_exists('name', $data)) {
             $name = trim((string) $data['name']);
-            if ($name === '' || strlen($name) > 255) {
+            if ($name === '' || mb_strlen($name) > 255) {
                 throw new \InvalidArgumentException('Flow name is required (max 255 chars)');
             }
             $sets[] = 'name = :name';
@@ -513,7 +514,7 @@ class FlowService
         }
         if (array_key_exists('description', $data)) {
             $sets[] = 'description = :descr';
-            $params['descr'] = is_string($data['description']) ? substr($data['description'], 0, 2000) : null;
+            $params['descr'] = is_string($data['description']) ? mb_substr($data['description'], 0, 2000) : null;
         }
         $contractChanged = false;
         if (array_key_exists('flowJson', $data)) {
@@ -2100,7 +2101,7 @@ class FlowService
     public function createWorkspaceFlow(string $ownerUserId, array $data): array
     {
         $name = trim((string) ($data['name'] ?? ''));
-        if ($name === '' || strlen($name) > 255) {
+        if ($name === '' || mb_strlen($name) > 255) {
             throw new \InvalidArgumentException('Flow name is required (max 255 chars)');
         }
         $slug = self::sanitizeSlug($data['slug'] ?? $this->slugify($name));
@@ -2131,7 +2132,7 @@ class FlowService
             'owner' => $ownerUserId,
             'name' => $name,
             'slug' => $slug,
-            'descr' => isset($data['description']) && is_string($data['description']) ? substr($data['description'], 0, 2000) : null,
+            'descr' => isset($data['description']) && is_string($data['description']) ? mb_substr($data['description'], 0, 2000) : null,
             'flow_json' => json_encode($flowJson),
             'input_schema' => $inputSchema !== null ? json_encode($inputSchema) : null,
             'output_schema' => $outputSchema !== null ? json_encode($outputSchema) : null,
@@ -2160,7 +2161,7 @@ class FlowService
 
         if (array_key_exists('name', $data)) {
             $name = trim((string) $data['name']);
-            if ($name === '' || strlen($name) > 255) {
+            if ($name === '' || mb_strlen($name) > 255) {
                 throw new \InvalidArgumentException('Flow name is required (max 255 chars)');
             }
             $sets[] = 'name = :name';
@@ -2176,7 +2177,7 @@ class FlowService
         }
         if (array_key_exists('description', $data)) {
             $sets[] = 'description = :descr';
-            $params['descr'] = is_string($data['description']) ? substr($data['description'], 0, 2000) : null;
+            $params['descr'] = is_string($data['description']) ? mb_substr($data['description'], 0, 2000) : null;
         }
         $contractChanged = false;
         if (array_key_exists('flowJson', $data)) {
@@ -3476,7 +3477,7 @@ class FlowService
         if ($deviceName === '') {
             $deviceName = 'FormLogic Desktop';
         }
-        $deviceName = substr($deviceName, 0, 255);
+        $deviceName = mb_substr($deviceName, 0, 255);
 
         $capabilities = $this->sanitizeStringList($data['capabilities'] ?? null, 64, 128, 'capabilities');
         $trustedOrigins = $this->sanitizeStringList($data['trustedOrigins'] ?? null, 32, 255, 'trustedOrigins');
@@ -3633,7 +3634,7 @@ class FlowService
         $runtime = $runtimeName !== null && trim($runtimeName) !== ''
             ? trim($runtimeName)
             : 'FormLogic Desktop';
-        $deviceName = substr($device !== null ? "{$runtime} on {$device}" : $runtime, 0, 255);
+        $deviceName = mb_substr($device !== null ? "{$runtime} on {$device}" : $runtime, 0, 255);
         $instanceId = 'oauth-' . bin2hex(random_bytes(12));
         $id = $this->uuidV4();
         $stmt = $this->mysql->prepare("
@@ -3853,7 +3854,8 @@ class FlowService
             'executionLocation' => $row['execution_location'] ?? null,
             'claimedBy' => $row['claimed_by'] ?? null,
             'inputSnapshot' => $this->decodeJson($row['input_snapshot_json']),
-            'result' => $this->decodeJson($row['result_json']),
+            // Any JSON: a flow may end in text, a number or a boolean, which decodeJson reads as null.
+            'result' => is_string($row['result_json'] ?? null) && $row['result_json'] !== '' ? json_decode($row['result_json'], true) : null,
             'outputActions' => $this->decodeJson($row['output_actions_json']),
             'error' => $this->decodeJson($row['error_json']),
             'startedAt' => $row['started_at'],

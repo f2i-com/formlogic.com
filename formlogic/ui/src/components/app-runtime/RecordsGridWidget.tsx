@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, Inbox } from 'lucide-react';
 import type { DashboardWidget } from '../../types/app';
 import type { WidgetDataForm } from './widgetData';
-import { useDisplayTimezone, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
+import { useDisplayTimezone, formatAnswerDateTime, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
 import { useFittedColumns } from '../../hooks/useFittedColumns';
 
 type FieldOption = { value: string; label?: string };
@@ -30,8 +30,8 @@ function deriveColumns(form: WidgetDataForm | undefined, columnFieldIds?: string
     .map((f) => toCol(f, f.id));
 }
 
-/** Format a cell: choice values map to their option label; dates localize;
- *  datetimes (and ISO-8601 text) render in the viewer's timezone; arrays join. */
+/** Format a cell: choice values map to their option label; dates localize; instants (incl.
+ *  ISO-8601 text) render in the viewer's timezone, a zone-less datetime as written; arrays join. */
 function cell(v: unknown, col: Col, tz: string): string {
   const labelFor = (x: unknown): string => col.options?.find((o) => o.value === x)?.label ?? String(x);
   if (v == null || v === '') return '—';
@@ -41,7 +41,7 @@ function cell(v: unknown, col: Col, tz: string): string {
     return formatDateOnly(v);
   }
   if (typeof v === 'string' && (col.type === 'datetime' || isIsoDateTime(v))) {
-    return formatDateTimeInZone(v, tz);
+    return formatAnswerDateTime(v, tz);
   }
   return labelFor(v);
 }

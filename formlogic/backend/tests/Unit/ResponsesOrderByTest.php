@@ -41,7 +41,7 @@ class ResponsesOrderByTest extends TestCase
     public function testAnswerFieldSortsViaJsonExtract(): void
     {
         $this->assertSame(
-            ' ORDER BY json_extract(answers, \'$."caller_name"\') COLLATE NOCASE ASC, submitted_at DESC',
+            ' ORDER BY answer_sort_key(json_extract(answers, \'$."caller_name"\')) ASC, submitted_at DESC',
             ResponseService::buildResponsesOrderBy(['sort' => 'caller_name', 'sortDir' => 'asc'])
         );
     }

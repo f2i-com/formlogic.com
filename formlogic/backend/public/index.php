@@ -127,7 +127,9 @@ $container->set(SQLiteConnection::class, function (Container $c) {
 
 // Register services
 $container->set(\FormLogic\Services\EmailService::class, function (Container $c) {
-    return new \FormLogic\Services\EmailService($c->get(LoggerInterface::class));
+    // A failed mail goes in the audit log. Fetched when one fails: /api/health builds this service
+    // and has to answer while the database is down.
+    return new \FormLogic\Services\EmailService($c->get(LoggerInterface::class), null, static fn () => $c->get(AuditService::class));
 });
 
 $container->set(AuthService::class, function (Container $c) {
@@ -1140,10 +1142,19 @@ $errorMiddleware->setDefaultErrorHandler(function (
             ]);
         }
     }
+    // The catch-all OPTIONS route matches every path, so a path nothing answers arrives as a 405.
+    // With "Internal Server Error" on it, a mistyped or removed route read as a crash.
+    $nothingHere = $exception instanceof \Slim\Exception\HttpNotFoundException
+        || ($exception instanceof \Slim\Exception\HttpMethodNotAllowedException && $exception->getAllowedMethods() === ['OPTIONS']);
     $payload = [
         'error' => true,
-        'message' => $displayErrorDetails ? $exception->getMessage() : 'Internal Server Error',
+        'message' => $nothingHere ? 'There is nothing at this address.'
+            : ($exception instanceof \Slim\Exception\HttpMethodNotAllowedException ? 'This address does not take that method.'
+            : ($displayErrorDetails ? $exception->getMessage() : 'Internal Server Error')),
     ];
+    if ($nothingHere) {
+        $payload['code'] = 'route_not_found';
+    }
 
     $response = $app->getResponseFactory()->createResponse();
     $response->getBody()->write(json_encode($payload));
@@ -1157,6 +1168,9 @@ $errorMiddleware->setDefaultErrorHandler(function (
         if (method_exists($exception, 'getStatusCode')) {
             $statusCode = $exception->getStatusCode();
         }
+    }
+    if ($nothingHere) {
+        $statusCode = 404;
     }
 
     return $response
@@ -1292,6 +1306,9 @@ $app->add(new \FormLogic\Middleware\ReleaseHeaderMiddleware(\FormLogic\Services\
 
 // Added last, so outermost: it sees every answer, and keeps the headers those above have set.
 $app->add(new \FormLogic\Middleware\SqlErrorGuardMiddleware($appLogger));
+
+// Outside that one, because it has to measure the answer as it will be sent.
+$app->add(new \FormLogic\Middleware\AfterResponseMiddleware());
 
 // Create auth middleware instances
 $appDomainSessions = new \FormLogic\Support\AppDomainSession(

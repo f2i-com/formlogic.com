@@ -108,14 +108,12 @@ class ReportService
         $db = $this->sqlite->getFormDatabase($formId);
 
         // Relative date filters ("today", "this month", …) are evaluated in the APP's timezone (not the
-        // server's UTC), so business users see predictable boundaries. Stored timestamps are UTC; we shift
-        // them by the tz's current offset (handles whole + half-hour zones; historical DST for old rows is
-        // approximated by the current offset — acceptable for relative filters).
+        // server's UTC), so business users see predictable boundaries. Submission times are UTC instants
+        // and move into that zone (localClock). A date answer is a calendar date and a zone-less datetime
+        // answer a wall clock: both already say the day they mean, so they never move.
         try { $tz = new \DateTimeZone($timezone !== '' ? $timezone : 'UTC'); } catch (\Throwable $e) { $tz = new \DateTimeZone('UTC'); }
         $nowLocal = new \DateTime('now', $tz);
-        $tzOffsetMin = (int) round($tz->getOffset($nowLocal) / 60);
-        $tzMod = $tzOffsetMin === 0 ? '' : (($tzOffsetMin > 0 ? '+' : '-') . abs($tzOffsetMin) . ' minutes');
-        $localExpr = static fn (string $e): string => $tzMod === '' ? $e : "datetime($e, '$tzMod')";
+        $instantLocal = $this->localClock($db, $tz);
 
         $baseFieldById = [];
         foreach ($fields as $f) {
@@ -175,6 +173,13 @@ class ReportService
                 }
                 return $baseFieldById[$ref] ?? null;
             };
+            // What a date filter or bucket reads for a date-typed ref. A datetime answer can carry a
+            // zone when the API wrote it (the form's own input never does): that one is an instant.
+            $calendarExpr = static function (string $ref, string $expr) use ($refField, $instantLocal): string {
+                if ($ref === '__submitted_at') { return $instantLocal($expr); }
+                if (($refField($ref)['type'] ?? '') !== 'datetime') { return $expr; }
+                return "CASE WHEN substr($expr, 11) GLOB '*[Zz+-]*' THEN " . $instantLocal("datetime($expr)") . " ELSE substr($expr, 1, 10) END";
+            };
 
             $params = [];
 
@@ -217,7 +222,7 @@ class ReportService
 
                 // Relative date filters — boundaries computed in the app timezone (PHP), bound as params.
                 if (in_array($op, self::DATE_OPS, true)) {
-                    $le = $localExpr($expr);
+                    $le = $calendarExpr($ref, $expr);
                     if ($op === 'last_n_days') {
                         $n = max(1, min((int) ($flt['value'] ?? 30), 3650));
                         $p = ':p' . $pi++;
@@ -261,7 +266,7 @@ class ReportService
                     if ($isNumeric) {
                         $filterConds[] = "CAST($expr AS REAL) " . self::OPS[$op] . " CAST($p AS REAL)";
                     } elseif ($isDate) {
-                        $filterConds[] = "date($expr) " . self::OPS[$op] . " date($p)";
+                        $filterConds[] = 'date(' . $calendarExpr($ref, $expr) . ') ' . self::OPS[$op] . " date($p)";
                     } else {
                         $filterConds[] = "$expr " . self::OPS[$op] . " $p";
                     }
@@ -287,7 +292,7 @@ class ReportService
                 if ($refExpr($dref) === null || !in_array($refField($dref)['type'] ?? '', self::DATE_TYPES, true)) {
                     $dref = '__submitted_at';
                 }
-                $le = $localExpr((string) $refExpr($dref));
+                $le = $calendarExpr($dref, (string) $refExpr($dref));
                 $params[':drange'] = match ($drPreset) {
                     '7d' => (clone $nowLocal)->modify('-7 days')->format('Y-m-d'),
                     '30d' => (clone $nowLocal)->modify('-30 days')->format('Y-m-d'),
@@ -331,10 +336,10 @@ class ReportService
                     $bucket = (string) ($spec['groupBy']['bucket'] ?? 'none');
                     if ($gcol !== null && in_array($bucket, ['day', 'month', 'year'], true)) {
                         $normArr = $this->unnestable($gcol);
-                        // Bucket boundaries in the app timezone (same $localExpr as the filters above), so
-                        // a day/month/year bucket agrees with a same-field date filter near a boundary.
+                        // Bucket boundaries as the filters above read them ($calendarExpr), so a
+                        // day/month/year bucket agrees with a same-field date filter near a boundary.
                         $gIsDate = in_array($refField($gref)['type'] ?? '', self::DATE_TYPES, true) || $gref === '__submitted_at';
-                        $gVal = $gIsDate ? $localExpr('ge.value') : 'ge.value';
+                        $gVal = $gIsDate ? $calendarExpr($gref, 'ge.value') : 'ge.value';
                         $key = match ($bucket) {
                             'month' => "strftime('%Y-%m', $gVal)",
                             'year'  => "strftime('%Y', $gVal)",
@@ -369,10 +374,10 @@ class ReportService
                 // Normalise to a JSON array so multi-select answers group per-option and scalars stay 1:1.
                 $normArr = $this->unnestable($gcol);
                 $groupFrom = "$from, json_each($normArr) ge";
-                // Bucket boundaries in the app timezone (same $localExpr as the filters above), so a
-                // day/month/year bucket agrees with a same-field date filter near a boundary.
+                // Bucket boundaries as the filters above read them ($calendarExpr), so a day/month/year
+                // bucket agrees with a same-field date filter near a boundary.
                 $gIsDate = in_array($refField($gref)['type'] ?? '', self::DATE_TYPES, true) || $gref === '__submitted_at';
-                $gVal = $gIsDate ? $localExpr('ge.value') : 'ge.value';
+                $gVal = $gIsDate ? $calendarExpr($gref, 'ge.value') : 'ge.value';
                 $key = match ($bucket) {
                     'month' => "strftime('%Y-%m', $gVal)",
                     'year'  => "strftime('%Y', $gVal)",
@@ -467,7 +472,7 @@ class ReportService
             $selects = [];
             $columns = [];
             foreach ($refs as $i => $ref) {
-                $selects[] = $refExpr((string) $ref) . " AS c$i";
+                $selects[] = ($ref === '__submitted_at' ? $instantLocal('r.submitted_at') : $refExpr((string) $ref)) . " AS c$i";
                 $columns[] = ['id' => "c$i", 'label' => $refField((string) $ref)['label'] ?? (string) $ref];
             }
             $selectSql = implode(', ', $selects);
@@ -593,6 +598,37 @@ class ReportService
             if ($other !== null) { $out[] = ['label' => $label, 'value' => $other, 'series' => 'Other']; }
         }
         return $out;
+    }
+
+    /**
+     * SQL that reads a stored UTC instant on $tz's wall clock. Each row takes the offset in force at
+     * its own moment, so a month's total doesn't move when the clocks change. SQLite knows no zones,
+     * so the changes come from PHP's zone data, as a CASE over the years this form's rows span.
+     *
+     * @return \Closure(string): string
+     */
+    private function localClock(PDO $db, \DateTimeZone $tz): \Closure
+    {
+        $now = time();
+        $first = $db->query('SELECT MIN(submitted_at) FROM responses')->fetchColumn();
+        $from = min(is_string($first) ? (strtotime($first . ' UTC') ?: $now) : $now, $now);
+        // A year ahead for the answers that carry a zone, which can be in the future. A zone given
+        // as an offset has no transitions to list.
+        $changes = $tz->getTransitions($from, $now + 31536000) ?: [['offset' => $tz->getOffset(new \DateTimeImmutable('now', $tz))]];
+        $modifier = static fn (array $change): string => sprintf('%+d seconds', $change['offset']);
+        $earliest = array_shift($changes);
+        $later = array_reverse($changes);
+
+        return static function (string $instant) use ($earliest, $later, $modifier): string {
+            if ($later === []) {
+                return $earliest['offset'] === 0 ? $instant : "datetime($instant, '" . $modifier($earliest) . "')";
+            }
+            $arms = '';
+            foreach ($later as $change) {
+                $arms .= " WHEN $instant >= '" . gmdate('Y-m-d H:i:s', $change['ts']) . "' THEN '" . $modifier($change) . "'";
+            }
+            return "datetime($instant, CASE$arms ELSE '" . $modifier($earliest) . "' END)";
+        };
     }
 
     /** Whitelist an identifier to safe chars (matches the field-id rules enforced on write). */

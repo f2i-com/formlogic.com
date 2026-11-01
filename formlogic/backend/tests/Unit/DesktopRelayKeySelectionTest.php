@@ -29,4 +29,17 @@ final class DesktopRelayKeySelectionTest extends TestCase
         $this->assertSame('flow-computer', $body['instanceId']);
         $this->assertSame($key, $body['publicKey']);
     }
+
+    /** The page's warning about a changed key names the computer from this, and had only a default. */
+    public function testTheKeyComesWithTheNameOfItsComputer(): void
+    {
+        $commands = $this->createMock(DesktopCommandService::class);
+        $commands->method('resolveTargetInstance')->willReturn(['target' => 'desk-1', 'error' => null, 'desktops' => []]);
+        $commands->expects($this->once())->method('describeInstances')->with('owner', ['desk-1'])->willReturn(['desk-1' => 'Studio PC']);
+        $relay = $this->createMock(DesktopAiRelayService::class);
+        $relay->method('getPubkey')->willReturn(base64_encode(str_repeat('k', 32)));
+        $request = (new ServerRequestFactory())->createServerRequest('GET', '/api/desktop/ai/pubkey')->withAttribute('userId', 'owner');
+        $response = (new DesktopAiRelayController($relay, $commands))->getPubkey($request, (new ResponseFactory())->createResponse());
+        $this->assertSame('Studio PC', json_decode((string) $response->getBody(), true)['deviceName']);
+    }
 }

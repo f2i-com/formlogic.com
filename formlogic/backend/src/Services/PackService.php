@@ -519,7 +519,7 @@ class PackService
                 'app' => $appId,
                 'name' => (string) ($packFlow['name'] ?? $slug),
                 'slug' => $slug,
-                'descr' => isset($packFlow['description']) && is_string($packFlow['description']) ? substr($packFlow['description'], 0, 2000) : null,
+                'descr' => isset($packFlow['description']) && is_string($packFlow['description']) ? mb_substr($packFlow['description'], 0, 2000) : null,
                 'flow_json' => json_encode($flowJson),
                 'input_schema' => is_array($packFlow['inputSchema'] ?? null) ? json_encode($packFlow['inputSchema']) : null,
                 'output_schema' => is_array($packFlow['outputSchema'] ?? null) ? json_encode($packFlow['outputSchema']) : null,

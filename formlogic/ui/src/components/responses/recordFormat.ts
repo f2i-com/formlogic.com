@@ -2,7 +2,7 @@
 // so the responses table, the CSV export, the full-page record view (FormResponseView) and
 // the linked-record peek all render answers identically. Components live in recordDisplay.tsx
 // (kept separate so react fast-refresh sees component-only modules).
-import { browserTimezone, formatDateTimeInZone, isIsoDateTime } from '../../lib/timezone';
+import { browserTimezone, formatAnswerDateTime, formatDateTimeInZone, isIsoDateTime } from '../../lib/timezone';
 // A linked_record value resolved server-side into a human label. `targetFormId` lets the
 // UI open the referenced record on demand (the owner owns it, so it's fetchable directly).
 export type ResolvedLink = { id: string; display: string; targetFormId?: string };
@@ -57,11 +57,7 @@ export function formatValue(value: unknown, fieldType?: string, options?: Array<
     } else if (fieldType === 'datetime') {
       // A full ISO instant (explicit zone) renders in the viewer's timezone;
       // a zone-less datetime-local value is a wall clock — formatted verbatim.
-      if (isIsoDateTime(value)) {
-        return formatDateTimeInZone(value, tz || browserTimezone() || 'UTC');
-      }
-      const d = new Date(value);
-      return isNaN(d.getTime()) ? value : d.toLocaleString();
+      return formatAnswerDateTime(value, tz || browserTimezone() || 'UTC');
     } else if (isIsoDateTime(value)) {
       // ANY other field holding a full ISO instant — e.g. the Aokie Calls pack's
       // short_text started_at/answered_at/ended_at — also renders in the viewer's

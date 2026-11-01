@@ -94,6 +94,8 @@ async function fetchAllApiResponses(
   const PAGE = 1000;
   const MAX_PAGES = 100; // 100k safety cap, mirrors the server-side export cap
   const all: ResponseWithStatus[] = [];
+  // Newest first by offset, so a record that arrives between two pages pushes one already read onto the next.
+  const seen = new Set<string>();
   let truncated = false;
   let isPrivate = privacy === 'private';
   let totalCount: number | null = null;
@@ -105,6 +107,8 @@ async function fetchAllApiResponses(
     }
     if (typeof result.data?.count === 'number') totalCount = result.data.count;
     for (const r of batch) {
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
       const rr = r as unknown as ResponseWithStatus & { metadata?: { completionTime?: number } };
       all.push({ ...rr, completionTime: rr.completionTime ?? rr.metadata?.completionTime ?? 0 });
     }
@@ -669,8 +673,7 @@ function FormResponses() {
     setExportMenuOpen(false);
     setIsExporting(true);
     try {
-      const csv = await api.exportResponses(form.id);
-      const blob = new Blob([csv], { type: 'text/csv' });
+      const blob = await api.exportResponses(form.id);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

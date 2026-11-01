@@ -457,8 +457,7 @@ export default function FormAnalytics() {
       // Try to export from API first if in API mode
       if (storageMode === 'api' && user) {
         try {
-          const csv = await api.exportResponses(form.id);
-          const blob = new Blob([csv], { type: 'text/csv' });
+          const blob = await api.exportResponses(form.id);
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
@@ -508,7 +507,8 @@ export default function FormAnalytics() {
 
       // Formula-injection safe, numbers left as numbers (lib/csv.ts).
       const csv = [headers.map(csvEscapeCell).join(','), ...rows.map((r) => r.map(csvEscapeCell).join(','))].join('\n');
-      const blob = new Blob([csv], { type: 'text/csv' });
+      // The BOM tells Excel the file is UTF-8, as the server's export does.
+      const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

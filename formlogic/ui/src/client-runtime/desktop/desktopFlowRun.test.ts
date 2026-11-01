@@ -142,7 +142,8 @@ function mockFlowBackend(
         if (opts.enqueueBody !== undefined || opts.enqueueStatus) {
           return jsonResponse(opts.enqueueBody ?? { error: true, code: 'queue_full_user', message: 'full' }, opts.enqueueStatus ?? 429);
         }
-        return jsonResponse({ data: { requestId: 'req-1', status: 'pending', queuePos: 2 } }, 201);
+        // As the server sends it: bare, and the pubkey above with its deviceName since this release.
+        return jsonResponse({ requestId: 'req-1', status: 'pending', queuePos: 2 }, 201);
       }
       if (url.includes('/stream')) {
         if (opts.streamRejects) return Promise.reject(new TypeError('Failed to fetch'));

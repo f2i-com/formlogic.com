@@ -25,7 +25,7 @@ interface CsvImportWizardProps {
 interface ParseResult {
   headers: string[];
   rowCount: number;
-  previewRows: Array<Record<string, string>>;
+  previewCells: string[][];
   fields: Array<{ id: string; label: string; type: string }>;
 }
 
@@ -50,7 +50,8 @@ export function CsvImportWizard({
   const [isDragOver, setIsDragOver] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
-  const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
+  // A field id or 'skip' for each column, by position: two columns can share a heading.
+  const [columnMapping, setColumnMapping] = useState<string[]>([]);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [showErrors, setShowErrors] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -67,7 +68,7 @@ export function CsvImportWizard({
     setIsDragOver(false);
     setIsLoading(false);
     setParseResult(null);
-    setColumnMapping({});
+    setColumnMapping([]);
     setImportResult(null);
     setShowErrors(false);
   }, []);
@@ -112,7 +113,7 @@ export function CsvImportWizard({
 
           // Auto-match columns by comparing header labels to field labels. Track
           // claimed fields so two columns can't auto-map to the same field.
-          const autoMapping: Record<string, string> = {};
+          const autoMapping: string[] = [];
           const claimed = new Set<string>();
           for (const header of result.data.headers) {
             const headerLower = header.toLowerCase().trim();
@@ -127,7 +128,7 @@ export function CsvImportWizard({
               );
             });
             if (match) claimed.add(match.id);
-            autoMapping[header] = match ? match.id : 'skip';
+            autoMapping.push(match ? match.id : 'skip');
           }
           setColumnMapping(autoMapping);
           setStep('map');
@@ -200,20 +201,38 @@ export function CsvImportWizard({
     setIsLoading(false);
   }, [file, formId, columnMapping, onImportComplete]);
 
-  const mappedFieldCount = useMemo(() => {
-    return Object.values(columnMapping).filter((v) => v !== 'skip' && v !== '').length;
+  // Column positions that go to a field, for the preview.
+  const mappedColumns = useMemo(() => {
+    return columnMapping.flatMap((fieldId, column) => (fieldId !== 'skip' && fieldId !== '' ? [column] : []));
   }, [columnMapping]);
+  const mappedFieldCount = mappedColumns.length;
 
   // Track which field IDs are already mapped (to prevent duplicates)
   const usedFieldIds = useMemo(() => {
     const used = new Set<string>();
-    for (const fieldId of Object.values(columnMapping)) {
+    for (const fieldId of columnMapping) {
       if (fieldId && fieldId !== 'skip') {
         used.add(fieldId);
       }
     }
     return used;
   }, [columnMapping]);
+
+  // What a CSV can't bring back, said before the import rather than found afterwards.
+  const importNotes = useMemo(() => {
+    const labelsOf = (type: string) => inputFields
+      .filter((f) => f.type === type && usedFieldIds.has(f.id))
+      .map((f) => f.label)
+      .join(', ');
+    const notes: string[] = [];
+    const files = labelsOf('file_upload');
+    if (files) notes.push(`${files}: files aren't imported. A CSV holds only their names, so these rows come in without them, and a required file field refuses the row.`);
+    const signatures = labelsOf('signature');
+    if (signatures) notes.push(`${signatures}: typed signatures are imported. Drawn ones aren't, because a CSV has only "[signature]" in their place.`);
+    const links = labelsOf('linked_record');
+    if (links) notes.push(`${links}: a linked record needs its record ID. An export has its display text instead, which won't link to the record.`);
+    return notes;
+  }, [inputFields, usedFieldIds]);
 
   return (
     <Modal
@@ -341,8 +360,8 @@ export function CsvImportWizard({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
-                  {parseResult.headers.map((header) => (
-                    <tr key={header} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
+                  {parseResult.headers.map((header, column) => (
+                    <tr key={column} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
                       <td className="px-4 py-3 text-sm text-gray-900 dark:text-white font-medium">
                         {header}
                       </td>
@@ -351,19 +370,16 @@ export function CsvImportWizard({
                       </td>
                       <td className="px-4 py-3">
                         <select
-                          aria-label={`Map column "${header}" to field`}
-                          value={columnMapping[header] || 'skip'}
+                          aria-label={`Map column ${column + 1}, "${header}", to field`}
+                          value={columnMapping[column] || 'skip'}
                           onChange={(e) =>
-                            setColumnMapping((prev) => ({
-                              ...prev,
-                              [header]: e.target.value,
-                            }))
+                            setColumnMapping((prev) => prev.map((fieldId, i) => (i === column ? e.target.value : fieldId)))
                           }
                           className="w-full px-3 py-1.5 text-sm bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-gray-900 dark:text-white"
                         >
                           <option value="skip">-- Skip --</option>
                           {inputFields.map((field) => {
-                            const isUsedElsewhere = usedFieldIds.has(field.id) && columnMapping[header] !== field.id;
+                            const isUsedElsewhere = usedFieldIds.has(field.id) && columnMapping[column] !== field.id;
                             return (
                               <option key={field.id} value={field.id} disabled={isUsedElsewhere}>
                                 {field.label} ({field.type}){isUsedElsewhere ? ' (mapped)' : ''}
@@ -405,7 +421,7 @@ export function CsvImportWizard({
             <div className="mb-4 flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400">
               <FileSpreadsheet className="h-4 w-4" />
               <span>
-                Previewing first {Math.min(5, parseResult.previewRows.length)} of{' '}
+                Previewing first {Math.min(5, parseResult.previewCells.length)} of{' '}
                 {parseResult.rowCount} rows
               </span>
             </div>
@@ -414,39 +430,36 @@ export function CsvImportWizard({
               <table className="w-full">
                 <thead className="bg-gray-50 dark:bg-slate-800">
                   <tr>
-                    {Object.entries(columnMapping)
-                      .filter(([, fieldId]) => fieldId !== 'skip' && fieldId !== '')
-                      .map(([csvCol, fieldId]) => {
-                        const field = inputFields.find((f) => f.id === fieldId);
-                        return (
-                          <th
-                            key={csvCol}
-                            className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap"
-                          >
-                            {field?.label || fieldId}
-                          </th>
-                        );
-                      })}
+                    {mappedColumns.map((column) => {
+                      const fieldId = columnMapping[column];
+                      const field = inputFields.find((f) => f.id === fieldId);
+                      return (
+                        <th
+                          key={column}
+                          className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap"
+                        >
+                          {field?.label || fieldId}
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
-                  {parseResult.previewRows.map((row, i) => (
+                  {parseResult.previewCells.map((cells, i) => (
                     <tr key={i} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
-                      {Object.entries(columnMapping)
-                        .filter(([, fieldId]) => fieldId !== 'skip' && fieldId !== '')
-                        .map(([csvCol]) => (
-                          <td
-                            key={csvCol}
-                            className="px-4 py-2.5 text-sm text-gray-900 dark:text-white max-w-[200px] truncate"
-                            title={row[csvCol] || ''}
-                          >
-                            {row[csvCol] || (
-                              <span className="text-gray-400 dark:text-slate-500 italic">
-                                empty
-                              </span>
-                            )}
-                          </td>
-                        ))}
+                      {mappedColumns.map((column) => (
+                        <td
+                          key={column}
+                          className="px-4 py-2.5 text-sm text-gray-900 dark:text-white max-w-[200px] truncate"
+                          title={cells[column] || ''}
+                        >
+                          {cells[column] || (
+                            <span className="text-gray-400 dark:text-slate-500 italic">
+                              empty
+                            </span>
+                          )}
+                        </td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>
@@ -459,7 +472,21 @@ export function CsvImportWizard({
                 imported with <span className="font-medium">{mappedFieldCount}</span> mapped
                 fields.
               </p>
+              <p className="mt-1 text-sm text-primary-700 dark:text-primary-300">
+                Each row becomes a new record with its own ID and time. Records already here aren't
+                updated, so importing the same file twice adds its rows twice.
+              </p>
             </div>
+
+            {importNotes.length > 0 && (
+              <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-lg">
+                {importNotes.map((note) => (
+                  <p key={note} className="text-sm text-amber-700 dark:text-amber-400">
+                    {note}
+                  </p>
+                ))}
+              </div>
+            )}
 
             <div className="mt-4 flex items-center justify-between">
               <Button variant="outline" onClick={() => setStep('map')}>

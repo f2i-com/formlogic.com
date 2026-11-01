@@ -7,7 +7,7 @@ import { ListRowSkeleton } from '../ui/Skeleton';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { parseServerDate } from '../../lib/utils';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
-import { useDisplayTimezone, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
+import { useDisplayTimezone, formatAnswerDateTime, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
 import { useFittedColumns } from '../../hooks/useFittedColumns';
 
 type RelatedColumn = NonNullable<RelatedRecordGroup['columns']>[number];
@@ -32,8 +32,8 @@ interface RelatedRecordsPanelProps {
   excludeFieldIds?: string[];
 }
 
-/** Render one related-record cell: arrays join, choice values map to their
- *  option label, datetimes (incl. ISO-8601 text) show in the viewer's timezone. */
+/** Render one related-record cell: arrays join, choice values map to their option label, instants
+ *  (incl. ISO-8601 text) show in the viewer's timezone and a zone-less datetime as written. */
 function formatCell(value: unknown, col: RelatedColumn, tz: string): string {
   const labelFor = (v: unknown): string => {
     const opt = col.options?.find((o) => o.value === v);
@@ -46,7 +46,7 @@ function formatCell(value: unknown, col: RelatedColumn, tz: string): string {
     return formatDateOnly(value);
   }
   if (typeof value === 'string' && (col.type === 'datetime' || isIsoDateTime(value))) {
-    return formatDateTimeInZone(value, tz);
+    return formatAnswerDateTime(value, tz);
   }
   return labelFor(value);
 }

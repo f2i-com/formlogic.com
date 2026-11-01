@@ -296,6 +296,9 @@ final class SqlErrorGuardMiddlewareTest extends TestCase
         $global = [];
         preg_match_all('/^\$app->add\((.{0,60})/m', $source, $global);
         self::assertNotEmpty($global[1]);
-        self::assertStringContainsString('SqlErrorGuardMiddleware', (string) end($global[1]), 'added last means it runs outermost');
+        // Only AfterResponseMiddleware sits outside it: it states the length of the answer as sent,
+        // which the guard can rewrite, and it reads no database and writes no body.
+        self::assertStringContainsString('AfterResponseMiddleware', (string) end($global[1]), 'it measures the final answer');
+        self::assertStringContainsString('SqlErrorGuardMiddleware', (string) prev($global[1]), 'added last means it runs outermost');
     }
 }

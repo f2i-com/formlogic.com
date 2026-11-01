@@ -231,6 +231,23 @@ class ExternalApiSyncTest extends TestCase
         $this->assertSame(['responses'], array_keys($r['body']));
     }
 
+    /**
+     * A desktop flow's gte/lte filter. It was ignored here, so a flow asking for upcoming bookings
+     * was handed every booking and reported success: OAIY trusts the listing, as it should.
+     */
+    public function testARangeFilterIsAppliedInBothSpellings(): void
+    {
+        $owner = $this->makeUser();
+        $form = $this->makeAppointmentsForm($owner);
+        $past = self::$responses->createResponse($form, ['answers' => ['service' => 'Past', 'date' => '2026-01-01', 'status' => 'done']]);
+        $next = self::$responses->createResponse($form, ['answers' => ['service' => 'Next', 'date' => '2027-01-01', 'status' => 'requested']]);
+        $ids = fn (array $query) => array_column($this->invoke('listResponses', $this->request($owner, $query), ['formId' => $form])['body']['responses'], 'id');
+        $this->assertSame([$next['id']], $ids(['answersGte.date' => '2026-06-01']));
+        $this->assertSame([$next['id']], $ids(['answersGte_date' => '2026-06-01']), 'PHP turns the dot into an underscore');
+        $this->assertSame([$past['id']], $ids(['answersLte.date' => '2026-06-01']));
+        $this->assertSame([$past['id']], $ids(['answersLte_date' => '2026-06-01']));
+    }
+
     public function testARecordPutBackUnderItsIdIsNoLongerReportedDeleted(): void
     {
         $owner = $this->makeUser();

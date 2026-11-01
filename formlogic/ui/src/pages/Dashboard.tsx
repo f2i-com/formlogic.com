@@ -401,8 +401,7 @@ function FormActionsDropdown({
   const handleExportCsv = async () => {
     setIsExporting(true);
     try {
-      const csv = await api.exportResponses(formId);
-      const blob = new Blob([csv], { type: 'text/csv' });
+      const blob = await api.exportResponses(formId);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;

@@ -1063,7 +1063,7 @@ class FormService
             $newData = [
                 'id' => $newId,
                 'userId' => $userId ?? $original['userId'],
-                'title' => $original['title'] . ' (Copy)',
+                'title' => mb_substr($original['title'], 0, 248) . ' (Copy)',
                 'description' => $original['description'],
                 'status' => 'draft',
                 'settings' => $original['settings'],

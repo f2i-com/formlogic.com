@@ -190,6 +190,16 @@ class FlowRunLogTest extends TestCase
         ]);
         $runId = $r['run']['runId'];
 
+        // A flow may end in text, a number or a boolean: stored, and read back as nothing, as Done.
+        foreach (['just text', 7, true, [1, 2]] as $value) {
+            $other = self::$flows->reserveRun($this->appId, $this->userId, [
+                'flowSlug' => 'call-triage', 'triggerEvent' => 'manual', 'correlationId' => 'c-' . bin2hex(random_bytes(4)),
+                'idempotencyKey' => 'k-' . bin2hex(random_bytes(6)),
+            ]);
+            self::$flows->completeRun($this->appId, $other['run']['runId'], ['status' => 'done', 'result' => $value]);
+            $this->assertSame($value, self::$flows->getRun($this->appId, $other['run']['runId'])['result']);
+        }
+
         $done = self::$flows->completeRun($this->appId, $runId, [
             'status' => 'done',
             'result' => ['summary' => 'booked'],

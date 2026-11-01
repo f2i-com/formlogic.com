@@ -1123,7 +1123,7 @@ final class AokieReceptionistUpgradeService
     private function prepareFlow(string $slug, array $packFlow, array $formMap): array
     {
         $name = trim((string) ($packFlow['name'] ?? ''));
-        if ($name === '' || strlen($name) > 255) {
+        if ($name === '' || mb_strlen($name) > 255) {
             throw new \RuntimeException("Pack flow '{$slug}' has an invalid name");
         }
         $flowJson = FlowService::sanitizeFlowJson($packFlow['flowJson'] ?? null);
@@ -1139,7 +1139,7 @@ final class AokieReceptionistUpgradeService
         return [
             'name' => $name,
             'description' => isset($packFlow['description']) && is_string($packFlow['description'])
-                ? substr($packFlow['description'], 0, 2000) : null,
+                ? mb_substr($packFlow['description'], 0, 2000) : null,
             'flowJson' => $flowJson,
             'inputSchema' => is_array($packFlow['inputSchema'] ?? null) ? $packFlow['inputSchema'] : null,
             'outputSchema' => is_array($packFlow['outputSchema'] ?? null) ? $packFlow['outputSchema'] : null,

@@ -85,6 +85,11 @@ function resolveHomeKind(cs: CustomScreen | null | undefined): HomeKind {
   return 'default';
 }
 
+/** Whether anything was ever saved in the slot. The server sends [] for an empty one, and [] is truthy. */
+function hasSavedScreen(cs: CustomScreen | null | undefined): boolean {
+  return !!cs && Boolean(cs.sdkScreen?.screenId || cs.html || cs.js || cs.ts || cs.files?.length || cs.dashboard?.widgets?.length);
+}
+
 /**
  * A FORM's section screen has different rules from the home: AppFormView requires
  * `enabled` for every kind, including dashboards. Sharing one resolver labelled a
@@ -648,7 +653,7 @@ export function ScreensStep({
                   <p className="text-xs font-medium text-gray-500 dark:text-slate-400">Current home screen</p>
                   <p className="mt-2 text-sm font-semibold text-gray-900 dark:text-white">{homeKind === 'default' ? 'Default dashboard' : SCREEN_KIND_LABEL[homeKind]}</p>
                   <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">{homeKind === 'default' ? 'An overview generated from your app’s forms and records.' : homeKind === 'dashboard' ? 'A dashboard built from your saved widgets. Open the app to edit them.' : 'Your saved custom screen is used as the app home.'}</p>
-                  {app.customScreen && homeKind === 'default' && (
+                  {hasSavedScreen(app.customScreen) && homeKind === 'default' && (
                     <p className="mt-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
                       A custom screen is saved but switched off, so members get the default dashboard.
                     </p>

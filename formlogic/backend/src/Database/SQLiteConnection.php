@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Database;
 
+use FormLogic\Helpers\AnswerText;
 use PDO;
 use PDOException;
 
@@ -84,15 +85,7 @@ class SQLiteConnection
         }
 
         try {
-            $pdo = new PDO(
-                "sqlite:$dbPath",
-                null,
-                null,
-                [
-                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                ]
-            );
+            $pdo = self::open($dbPath);
 
             // Enable WAL mode for better concurrent read/write performance
             $pdo->exec('PRAGMA journal_mode = WAL');
@@ -131,6 +124,26 @@ class SQLiteConnection
                 @unlink($dbPath . '.init');
             }
         }
+    }
+
+    /**
+     * A connection with the SQL functions record search and sort are built on (see AnswerText).
+     *
+     * @throws PDOException
+     */
+    private static function open(string $dbPath): PDO
+    {
+        $options = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ];
+        // connect() gives the driver's own class where PHP has one: PDO's sqlite methods are going.
+        $connect = [PDO::class, 'connect'];
+        $pdo = is_callable($connect) ? $connect("sqlite:$dbPath", null, null, $options) : new PDO("sqlite:$dbPath", null, null, $options);
+        $create = method_exists($pdo, 'createFunction') ? 'createFunction' : 'sqliteCreateFunction';
+        $pdo->$create('answers_contain', AnswerText::contains(...), 3);
+        $pdo->$create('answer_sort_key', AnswerText::sortKey(...), 1);
+        return $pdo;
     }
 
     /**

@@ -532,18 +532,20 @@ TXT;
         $insertHead = 'INSERT INTO ' . ($dialect === 'mysql' ? $q($table) : "[dbo].[{$table}]")
             . ' (' . implode(', ', $columnList) . ") VALUES\n";
 
-        $offset = 0;
+        // Paged from the last row read, not by offset: a record deleted during the dump would hide
+        // the row after it.
+        $afterRow = 0;
         $rowsBuffer = [];
         while (true) {
-            $stmt = $db->prepare('SELECT id, answers, metadata, status, submitted_at, updated_at FROM responses ORDER BY rowid LIMIT :lim OFFSET :off');
+            $stmt = $db->prepare('SELECT rowid AS row_number, id, answers, metadata, status, submitted_at, updated_at FROM responses WHERE rowid > :after ORDER BY rowid LIMIT :lim');
             $stmt->bindValue('lim', self::ROW_BATCH, PDO::PARAM_INT);
-            $stmt->bindValue('off', $offset, PDO::PARAM_INT);
+            $stmt->bindValue('after', $afterRow, PDO::PARAM_INT);
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
             if ($rows === []) {
                 break;
             }
-            $offset += count($rows);
+            $afterRow = (int) $rows[array_key_last($rows)]['row_number'];
 
             [$computedByResponse, $tagsByResponse] = $this->childRows($db, array_column($rows, 'id'));
 

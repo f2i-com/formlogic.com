@@ -1762,8 +1762,9 @@ class ApiClient {
     return this.request(`/forms/${seg(formId)}/analytics${query}`);
   }
 
-  // Export
-  async exportResponses(formId: string): Promise<string> {
+  // Export. A Blob of the bytes as sent: `response.text()` would drop the BOM the server writes,
+  // and without it Excel reads the file in the local code page and garbles every accent.
+  async exportResponses(formId: string): Promise<Blob> {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
@@ -1776,7 +1777,7 @@ class ApiClient {
       throw new Error(errorText || 'Failed to export responses');
     }
 
-    return response.text();
+    return response.blob();
   }
 
   // Download SQLite database file
@@ -4313,14 +4314,15 @@ class ApiClient {
     }
   }
 
-  async importCsv(formId: string, file: File, columnMapping: Record<string, string>): Promise<ApiResponse<CsvImportResult>> {
+  /** `columns` holds a field id, or 'skip', for each column of the file in order. */
+  async importCsv(formId: string, file: File, columns: string[]): Promise<ApiResponse<CsvImportResult>> {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
     const url = `${this.baseUrl}/forms/${seg(formId)}/responses/import`;
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('columnMapping', JSON.stringify(columnMapping));
+    formData.append('columns', JSON.stringify(columns));
 
     try {
       const fetchHeaders: Record<string, string> = {};
@@ -4746,6 +4748,7 @@ class ApiClient {
       if (body?.code === ADMIN_CONFIRMATION_REQUIRED && !confirmedAgain && await askForAdminConfirmation()) {
         return this.adminUpgradeUpload(file, true);
       }
+      if (body?.code === ADMIN_CONFIRMATION_REQUIRED && canAskForAdminConfirmation()) return { error: ADMIN_CONFIRMATION_DECLINED, status: res.status };
       if (!res.ok) return { error: body?.message || `Upload failed (HTTP ${res.status})`, status: res.status };
       return { data: body };
     } catch (e) {
@@ -5500,7 +5503,8 @@ interface PackUninstallResult {
 interface CsvParseResult {
   headers: string[];
   rowCount: number;
-  previewRows: Array<Record<string, string>>;
+  /** The first rows, each a list of cells in column order. */
+  previewCells: string[][];
   fields: Array<{ id: string; label: string; type: string }>;
 }
 

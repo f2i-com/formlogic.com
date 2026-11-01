@@ -74,7 +74,7 @@ class ApiKeyService
 
         // Validate name
         $name = trim($name);
-        if (empty($name) || strlen($name) > 255) {
+        if (empty($name) || mb_strlen($name) > 255) {
             throw new \InvalidArgumentException('Key name is required and must be under 255 characters');
         }
 
@@ -285,7 +285,7 @@ class ApiKeyService
     {
         $key = $this->mintKey(
             $userId,
-            substr($device !== null ? "FormLogic Backups on {$device}" : 'FormLogic Backups', 0, 255),
+            mb_substr($device !== null ? "FormLogic Backups on {$device}" : 'FormLogic Backups', 0, 255),
             self::BACKUP_CLIENT_SCOPES,
             self::BACKUP_CLIENT_SCOPES,
         );

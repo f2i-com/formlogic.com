@@ -6,6 +6,8 @@ namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Helpers\AnswerText;
+use FormLogic\Support\CsvUpload;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use PDO;
@@ -1016,7 +1018,7 @@ class ResponseService
                                     break;
                                 }
                                 // Filename must be a string within the 255-char cap (mirrors the public path).
-                                if (!is_string($item['originalFilename']) || strlen($item['originalFilename']) > 255) {
+                                if (!is_string($item['originalFilename']) || mb_strlen($item['originalFilename']) > 255) {
                                     $errors[$fieldId] = 'Invalid file name';
                                     break;
                                 }
@@ -1028,7 +1030,7 @@ class ResponseService
                 case 'long_text':
                     if (is_string($value)) {
                         $maxLength = $fieldType === 'short_text' ? 1000 : 50000;
-                        if (strlen($value) > $maxLength) {
+                        if (mb_strlen($value) > $maxLength) {
                             $errors[$fieldId] = "Text exceeds maximum length of {$maxLength} characters";
                         }
                     }
@@ -1320,10 +1322,10 @@ class ResponseService
      * interpolated pieces are strictly constrained — the direction collapses
      * to the literal ASC/DESC, and a field key must pass the SAME
      * `[A-Za-z0-9_]{1,64}` allowlist as the answersEq pushdown (anything else
-     * falls back to the default order). Answer sorting uses the raw
-     * `json_extract` value, so numeric answers sort numerically and text
-     * answers sort case-insensitively; `submitted_at` breaks ties for a
-     * stable pagination order across pages.
+     * falls back to the default order). Answer sorting goes through
+     * `answer_sort_key`, so numeric answers sort numerically and text answers
+     * sort alphabetically whatever their case or accent; `submitted_at` breaks
+     * ties for a stable pagination order across pages.
      */
     public static function buildResponsesOrderBy(array $options): string
     {
@@ -1336,7 +1338,7 @@ class ResponseService
             return " ORDER BY status COLLATE NOCASE {$dir}, submitted_at DESC";
         }
         if ($sort !== '' && preg_match('/^[A-Za-z0-9_]{1,64}$/', $sort)) {
-            return " ORDER BY json_extract(answers, '$.\"" . $sort . "\"') COLLATE NOCASE {$dir}, submitted_at DESC";
+            return " ORDER BY answer_sort_key(json_extract(answers, '$.\"" . $sort . "\"')) {$dir}, submitted_at DESC";
         }
         return " ORDER BY submitted_at DESC";
     }
@@ -1436,6 +1438,13 @@ class ResponseService
             }
         }
 
+        // The page after a record an export has already read (EXPORT_ORDER, pageEnd).
+        if (is_array($options['before'] ?? null)) {
+            $conditions[] = "(submitted_at, id) < (:before_at, :before_id)";
+            $params['before_at'] = $options['before']['submittedAt'];
+            $params['before_id'] = $options['before']['id'];
+        }
+
         // Indexed answer-equality lookups (audit AOK-FLOW-001).
         $this->applyAnswersEq($options, $conditions, $params);
         // Phone-normalized lookups (flow filter op `phone_eq`): a coarse
@@ -1485,6 +1494,25 @@ class ResponseService
             $rows = array_values(array_filter($rows, static fn (array $row): bool => self::matchesAnswersRange($row, $options)));
         }
         return $this->formatResponses($db, $rows);
+    }
+
+    /**
+     * How an export reads a form: newest first, each page starting after the last record of the one
+     * before (pageEnd), in getFormResponses' `before`. By offset, every record arriving during the
+     * export pushes one already read onto the next page, and every one deleted hides one.
+     */
+    public const EXPORT_ORDER = ['sort' => 'submittedAt', 'sortDir' => 'desc'];
+
+    /**
+     * Where the next page of an export starts.
+     *
+     * @param array<int, array<string, mixed>> $batch
+     * @return array{submittedAt: mixed, id: mixed}|null
+     */
+    public static function pageEnd(array $batch): ?array
+    {
+        $last = $batch === [] ? null : $batch[array_key_last($batch)];
+        return $last === null ? null : ['submittedAt' => $last['submittedAt'], 'id' => $last['id']];
     }
 
     private const RETENTION_BATCH = 500;
@@ -1940,8 +1968,8 @@ class ResponseService
         // §9.2 gate: whole-answers substring search is content-dependent.
         $this->assertNotPrivate($formId);
         $db = $this->sqlite->getFormDatabase($formId);
-        $conditions = ["answers LIKE :q ESCAPE '\'"];
-        $params = ['q' => '%' . strtr($term, ['%' => '\%', '_' => '\_']) . '%'];
+        $conditions = ["answers_contain(answers, :q, '') = 1"];
+        $params = ['q' => AnswerText::fold($term)];
         if ($ownerUserId !== null) {
             $conditions[] = "json_extract(metadata, '$.submittedByUserId') = :owner";
             $params['owner'] = $ownerUserId;
@@ -2003,28 +2031,11 @@ class ResponseService
         // the phone_eq lesson).
         $this->applyAnswersRange($options, $conditions, $params);
 
-        // Build search conditions using json_extract
+        // The answers' values, in the fields asked for or all of them when none are.
         if ($searchQuery !== '') {
-            $searchConditions = [];
-            // Escape LIKE special characters to prevent wildcard injection
-            $escapedSearch = strtr($searchQuery, ['%' => '\%', '_' => '\_']);
-            $searchParam = '%' . $escapedSearch . '%';
-
-            if (!empty($searchFieldIds)) {
-                foreach ($searchFieldIds as $i => $fieldId) {
-                    // Sanitize field ID to prevent SQL injection (allow only alphanumeric and underscore)
-                    $safeFieldId = preg_replace('/[^a-zA-Z0-9_]/', '', $fieldId);
-                    if ($safeFieldId === '') continue;
-                    $paramName = 'search_' . $i;
-                    // json_extract path must be a literal, not a bound parameter
-                    $searchConditions[] = "json_extract(answers, '\$.$safeFieldId') LIKE :val_$paramName ESCAPE '\'";
-                    $params['val_' . $paramName] = $searchParam;
-                }
-            } else {
-                // Fallback: search the entire answers JSON string
-                $searchConditions[] = "answers LIKE :search_all ESCAPE '\'";
-                $params['search_all'] = $searchParam;
-            }
+            $searchConditions = ['answers_contain(answers, :search_term, :search_fields) = 1'];
+            $params['search_term'] = AnswerText::fold($searchQuery);
+            $params['search_fields'] = implode("\n", $searchFieldIds);
 
             // Extra matches (linked-record display / choice labels resolved to stored values by the caller).
             foreach ($extraMatches as $mi => $m) {
@@ -2045,39 +2056,55 @@ class ResponseService
                     : "json_extract(answers, '\$.$mfid') IN ($inList)";
             }
 
-            if (!empty($searchConditions)) {
-                $conditions[] = '(' . implode(' OR ', $searchConditions) . ')';
-            }
+            $conditions[] = '(' . implode(' OR ', $searchConditions) . ')';
         }
 
         $whereClause = !empty($conditions) ? " WHERE " . implode(' AND ', $conditions) : '';
 
-        // Get total count
-        $countSql = "SELECT COUNT(*) as total FROM responses" . $whereClause;
-        $countStmt = $db->prepare($countSql);
-        foreach ($params as $key => $value) {
-            $countStmt->bindValue($key, $value);
-        }
-        $countStmt->execute();
-        $countRow = $countStmt->fetch();
-        $total = $countRow ? (int)$countRow['total'] : 0;
-
         // Get paginated results
         $limit = max(1, min((int)($options['limit'] ?? 20), 100));
         $offset = max(0, (int)($options['offset'] ?? 0));
+        $order = self::buildResponsesOrderBy($options);
 
-        $sql = "SELECT * FROM responses" . $whereClause
-            . self::buildResponsesOrderBy($options)
-            . " LIMIT :limit OFFSET :offset";
-        $stmt = $db->prepare($sql);
-        foreach ($params as $key => $value) {
-            $stmt->bindValue($key, $value);
+        if ($searchQuery !== '') {
+            // A search reads every row's answers in PHP. One pass gives the total and the page
+            // alike, where a count and then a page would read them twice when matches are few.
+            $stmt = $db->prepare("SELECT rowid FROM responses{$whereClause}{$order}");
+            foreach ($params as $key => $value) {
+                $stmt->bindValue($key, $value);
+            }
+            $stmt->execute();
+            $matches = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            $total = count($matches);
+            $page = array_flip(array_slice($matches, $offset, $limit));
+            $rows = [];
+            if ($page !== []) {
+                $read = $db->prepare('SELECT rowid AS row_number, * FROM responses WHERE rowid IN (' . implode(',', array_fill(0, count($page), '?')) . ')');
+                $read->execute(array_keys($page));
+                foreach ($read->fetchAll() as $row) {
+                    $rows[$page[$row['row_number']]] = $row;
+                }
+                ksort($rows);
+            }
+        } else {
+            $countStmt = $db->prepare("SELECT COUNT(*) as total FROM responses{$whereClause}");
+            foreach ($params as $key => $value) {
+                $countStmt->bindValue($key, $value);
+            }
+            $countStmt->execute();
+            $countRow = $countStmt->fetch();
+            $total = $countRow ? (int)$countRow['total'] : 0;
+
+            $stmt = $db->prepare("SELECT * FROM responses{$whereClause}{$order} LIMIT :limit OFFSET :offset");
+            foreach ($params as $key => $value) {
+                $stmt->bindValue($key, $value);
+            }
+            $stmt->bindValue('limit', $limit, PDO::PARAM_INT);
+            $stmt->bindValue('offset', $offset, PDO::PARAM_INT);
+            $stmt->execute();
+
+            $rows = $stmt->fetchAll();
         }
-        $stmt->bindValue('limit', $limit, PDO::PARAM_INT);
-        $stmt->bindValue('offset', $offset, PDO::PARAM_INT);
-        $stmt->execute();
-
-        $rows = $stmt->fetchAll();
         // Exact phone check over the coarse SQL candidates (mirrors
         // getFormResponses; the total stays the coarse count — the flow
         // runners only consume `responses`, and a rare LIKE false positive
@@ -3750,7 +3777,7 @@ class ResponseService
         fwrite($outputStream, "\xEF\xBB\xBF");
 
         // Header row (sanitize against CSV formula injection)
-        $headers = ['Response ID', 'Submitted At', 'Status'];
+        $headers = ['Response ID', 'Submitted At (UTC)', 'Status'];
         foreach ($fields as $field) {
             // Display-only layout fields carry no data — don't emit empty columns for them.
             if (in_array($field['type'] ?? '', ['statement', 'welcome_screen', 'thank_you'], true)) {
@@ -3769,15 +3796,14 @@ class ResponseService
         fputcsv($outputStream, $headers, ',', '"', '');
 
         $batchSize = 500;
-        $offset = 0;
         $totalWritten = 0;
 
-        $batchOptions = ['limit' => $batchSize];
+        $batchOptions = self::EXPORT_ORDER + ['limit' => $batchSize];
         if ($submittedByUserId !== null) {
             $batchOptions['submittedByUserId'] = $submittedByUserId;
         }
         do {
-            $batch = $this->getFormResponses($formId, $batchOptions + ['offset' => $offset]);
+            $batch = $this->getFormResponses($formId, $batchOptions);
 
             // Resolve linked record display values for this batch
             $linkedDisplayCache = [];
@@ -3849,11 +3875,11 @@ class ResponseService
                 $totalWritten++;
             }
 
-            $offset += $batchSize;
+            $batchOptions['before'] = self::pageEnd($batch);
         } while (count($batch) === $batchSize && $totalWritten < $maxExportRows);
 
         // Stopping has to show in the file, or the owner takes it for the whole form.
-        if ($totalWritten >= $maxExportRows && $this->getFormResponses($formId, ['limit' => 1, 'offset' => $offset] + $batchOptions) !== []) {
+        if ($totalWritten >= $maxExportRows && $this->getFormResponses($formId, ['limit' => 1] + $batchOptions) !== []) {
             fputcsv($outputStream, ["Export stopped at {$totalWritten} rows. This form has more: use the SQLite export."], ',', '"', '');
         }
 
@@ -4147,11 +4173,73 @@ class ResponseService
     }
 
     /**
+     * What the text of a choice cell means: option value by the text that names it. The export
+     * writes labels and the builder names every value option_1, so a label has to be read, and it
+     * wins over a value spelled the same. A label two options share names neither: it stays out, and
+     * the validator refuses the cell rather than this guessing which was meant.
+     *
+     * @return array<string, mixed>
+     */
+    private static function choiceCellMap(array $field): array
+    {
+        $options = array_values(array_filter(
+            is_array($field['properties']['options'] ?? null) ? $field['properties']['options'] : [],
+            static fn (mixed $option): bool => is_array($option) && isset($option['value'])
+        ));
+        $map = [];
+        foreach ($options as $option) {
+            $map[trim((string) $option['value'])] = $option['value'];
+        }
+        $labels = array_map(static fn (array $option): string => trim((string) ($option['label'] ?? '')), $options);
+        $uses = array_count_values($labels);
+        foreach ($options as $i => $option) {
+            if ($labels[$i] !== '' && $uses[$labels[$i]] === 1) {
+                $map[$labels[$i]] = $option['value'];
+            }
+        }
+        unset($map['']);
+        return $map;
+    }
+
+    /**
+     * The options in a checkbox cell. The export joins labels with ", " and a label can hold a
+     * comma itself, so known text is matched first, longest first. Anything else is kept up to the
+     * next comma for the validator to name.
+     *
+     * @param array<string, mixed> $map from choiceCellMap
+     * @return list<mixed>
+     */
+    private static function choicesInCell(string $cell, array $map): array
+    {
+        $texts = array_map('strval', array_keys($map)); // a numeric key comes back as an int
+        usort($texts, static fn (string $a, string $b): int => strlen($b) <=> strlen($a));
+        $choices = [];
+        $rest = ltrim($cell);
+        while ($rest !== '') {
+            foreach ($texts as $text) {
+                $after = str_starts_with($rest, $text) ? ltrim(substr($rest, strlen($text))) : null;
+                if ($after === '' || ($after !== null && $after[0] === ',')) {
+                    $choices[] = $map[$text];
+                    $rest = ltrim(ltrim($after, ','));
+                    continue 2;
+                }
+            }
+            $comma = strpos($rest, ',');
+            $unknown = rtrim($comma === false ? $rest : substr($rest, 0, $comma));
+            if ($unknown !== '') {
+                $choices[] = $unknown;
+            }
+            $rest = $comma === false ? '' : ltrim(substr($rest, $comma + 1));
+        }
+        return $choices;
+    }
+
+    /**
      * Import responses from CSV data
      *
      * @param string $formId The form to import into
-     * @param array $rows Array of associative arrays (CSV rows)
-     * @param array $columnMapping Map of CSV column name => field ID
+     * @param array $rows Array of CSV rows, each an array of cells
+     * @param array $columnMapping Map of a row's key (the controller's rows are keyed by column position) => field ID
      * @param array $fields Form field definitions for type coercion
      * @return array { created: int, skipped: int, total: int, errors: [{row: int, errors: string[]}] }
      */
@@ -4169,10 +4257,14 @@ class ResponseService
         // they name the field the user recognizes, not the internal id).
         $fieldTypeMap = [];
         $fieldLabelMap = [];
+        $choiceCells = [];
         foreach ($fields as $field) {
             if (isset($field['id']) && isset($field['type'])) {
                 $fieldTypeMap[$field['id']] = $field['type'];
                 $fieldLabelMap[$field['id']] = $field['label'] ?? $field['id'];
+                if (in_array($field['type'], ['dropdown', 'multiple_choice', 'checkboxes'], true)) {
+                    $choiceCells[$field['id']] = self::choiceCellMap($field);
+                }
             }
         }
 
@@ -4201,24 +4293,48 @@ class ResponseService
                 // Map CSV columns to field IDs using columnMapping. This step only
                 // COERCES (CSV cells are strings); validation happens through the
                 // canonical validator below (audit FL-16) — a non-numeric number is
-                // kept as-is so the validator names the failure.
+                // kept as-is so the validator names the failure. What the export changes on
+                // the way out (exportResponsesStreaming) is put back here.
                 foreach ($columnMapping as $csvColumn => $fieldId) {
                     if ($fieldId === '' || $fieldId === 'skip') {
                         continue;
                     }
 
-                    $value = $row[$csvColumn] ?? '';
+                    $value = CsvUpload::withoutExportApostrophe((string) ($row[$csvColumn] ?? ''));
                     $fieldType = $fieldTypeMap[$fieldId] ?? 'short_text';
                     switch ($fieldType) {
                         case 'number':
                             $value = $value === '' ? null : (is_numeric($value) ? floatval($value) : $value);
                             break;
+                        case 'dropdown':
+                        case 'multiple_choice':
+                            $value = $choiceCells[$fieldId][trim($value)] ?? $value;
+                            break;
                         case 'checkboxes':
-                            $value = $value !== '' ? array_map('trim', explode(',', $value)) : [];
+                            $value = $value !== '' ? self::choicesInCell($value, $choiceCells[$fieldId] ?? []) : [];
                             break;
                         case 'rating':
                         case 'scale':
                             $value = $value === '' ? null : (is_numeric($value) ? intval($value) : $value);
+                            break;
+                        case 'location':
+                            $parts = array_map('trim', explode(',', $value));
+                            if (count($parts) === 2 && is_numeric($parts[0]) && is_numeric($parts[1])) {
+                                $value = ['latitude' => (float) $parts[0], 'longitude' => (float) $parts[1]];
+                            }
+                            break;
+                        case 'file_upload':
+                            // The cell holds file names and no files, so there is nothing to keep
+                            // (the wizard says so). A required file field then refuses the row.
+                            continue 2;
+                        case 'signature':
+                            if ($value === '[signature]') {
+                                continue 2; // a drawn signature: the export writes this in its place
+                            }
+                            // A typed signature is stored with this prefix, and exported without it.
+                            if ($value !== '' && preg_match('/^(typed|data):/', $value) !== 1) {
+                                $value = 'typed:' . $value;
+                            }
                             break;
                         default:
                             // Keep as string

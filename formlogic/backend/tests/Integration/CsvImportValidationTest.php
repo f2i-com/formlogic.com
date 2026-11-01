@@ -8,6 +8,7 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\FormService;
 use FormLogic\Services\ResponseService;
+use FormLogic\Support\CsvUpload;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
@@ -95,9 +96,9 @@ class CsvImportValidationTest extends TestCase
         if (self::$pdo === null) {
             return;
         }
-        if ($this->formId !== '') {
-            self::$pdo->prepare('DELETE FROM response_metadata WHERE form_id = ?')->execute([$this->formId]);
-            self::$pdo->prepare('DELETE FROM forms WHERE id = ?')->execute([$this->formId]);
+        foreach (array_filter([$this->formId, ...$this->roundTripForms]) as $formId) {
+            self::$pdo->prepare('DELETE FROM response_metadata WHERE form_id = ?')->execute([$formId]);
+            self::$pdo->prepare('DELETE FROM forms WHERE id = ?')->execute([$formId]);
         }
         self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$this->userId]);
     }
@@ -159,5 +160,207 @@ class CsvImportValidationTest extends TestCase
         $count = self::$pdo->prepare('SELECT COUNT(*) FROM response_metadata WHERE form_id = ?');
         $count->execute([$this->formId]);
         $this->assertSame(1, (int) $count->fetchColumn());
+    }
+
+    /**
+     * A record through the real export and back through the real import, as the wizard maps it: each
+     * column to the first field with that label not already taken.
+     *
+     * @param array<int, array> $fields
+     * @param array<string, mixed> $answers
+     * @return array{result:array, copy:array<string, mixed>, csv:string}
+     */
+    private function roundTrip(array $fields, array $answers): array
+    {
+        $formId = self::$formService->createForm(['user_id' => $this->userId, 'title' => 'Round trip', 'status' => 'published', 'fields' => $fields])['id'];
+        $this->roundTripForms[] = $formId;
+        $original = self::$responses->createResponse($formId, ['answers' => $answers]);
+
+        $out = fopen('php://memory', 'w+');
+        self::$responses->exportResponsesStreaming($formId, $fields, $out);
+        rewind($out);
+        $csv = (string) stream_get_contents($out);
+        fclose($out);
+
+        $table = CsvUpload::parse($csv);
+        $taken = [];
+        $mapping = [];
+        foreach ($table['headers'] as $column => $heading) {
+            foreach ($fields as $field) {
+                if ($field['label'] === $heading && !isset($taken[$field['id']])) {
+                    $taken[$field['id']] = true;
+                    $mapping[$column] = $field['id'];
+                    break;
+                }
+            }
+        }
+
+        $result = self::$responses->importResponses($formId, $table['rows'], $mapping, $fields);
+        $db = self::$sqlite->getFormDatabase($formId);
+        $stmt = $db->prepare('SELECT answers FROM responses WHERE id != ?');
+        $stmt->execute([$original['id']]);
+        $copy = $stmt->fetchColumn();
+        return ['result' => $result, 'copy' => $copy === false ? [] : json_decode((string) $copy, true), 'csv' => $csv];
+    }
+
+    /** @var string[] */
+    private array $roundTripForms = [];
+
+    private static function options(string ...$labels): array
+    {
+        return array_map(static fn (int $i, string $label): array => ['id' => "o{$i}", 'value' => 'option_' . ($i + 1), 'label' => $label], array_keys($labels), $labels);
+    }
+
+    public function testChoicesComeBackByLabelThoughTheOptionsAreNumberedInside(): void
+    {
+        $fields = [
+            ['id' => 'drop', 'type' => 'dropdown', 'label' => 'Topic', 'order' => 0, 'properties' => ['options' => self::options('Sales Question', 'Support')]],
+            ['id' => 'pick', 'type' => 'multiple_choice', 'label' => 'Size', 'order' => 1, 'properties' => ['options' => self::options('Small', 'Large')]],
+            ['id' => 'many', 'type' => 'checkboxes', 'label' => 'Colours', 'order' => 2, 'properties' => ['options' => self::options('Red', 'Red, dark', 'Blue')]],
+        ];
+
+        $trip = $this->roundTrip($fields, ['drop' => 'option_2', 'pick' => 'option_1', 'many' => ['option_2', 'option_3']]);
+
+        $this->assertSame(1, $trip['result']['created'], json_encode($trip['result']['errors']));
+        $this->assertSame('option_2', $trip['copy']['drop']);
+        $this->assertSame('option_1', $trip['copy']['pick']);
+        $this->assertSame(['option_2', 'option_3'], $trip['copy']['many'], 'a label with a comma in it stays one option');
+    }
+
+    public function testACellMayStillHoldTheOptionValueAndALabelNamingAnotherValueWins(): void
+    {
+        $fields = [
+            ['id' => 'drop', 'type' => 'dropdown', 'label' => 'Topic', 'order' => 0, 'properties' => ['options' => [
+                ['value' => 'a', 'label' => 'b'],
+                ['value' => 'b', 'label' => 'Bee'],
+                ['value' => 'c', 'label' => 'Sea'],
+            ]]],
+            ['id' => 'many', 'type' => 'checkboxes', 'label' => 'Tags', 'order' => 1, 'properties' => ['options' => self::options('One', 'Two')]],
+        ];
+        $formId = self::$formService->createForm(['user_id' => $this->userId, 'title' => 'Values', 'status' => 'published', 'fields' => $fields])['id'];
+        $this->roundTripForms[] = $formId;
+
+        $result = self::$responses->importResponses($formId, [
+            ['c', 'option_1, option_2'],
+            ['b', 'One,Two'],
+        ], [0 => 'drop', 1 => 'many'], $fields);
+
+        $this->assertSame(2, $result['created'], json_encode($result['errors']));
+        $rows = self::$sqlite->getFormDatabase($formId)->query('SELECT answers FROM responses')->fetchAll(PDO::FETCH_COLUMN);
+        $answers = array_map(static fn ($json) => json_decode((string) $json, true), $rows);
+        $byDrop = array_column($answers, 'many', 'drop');
+        $this->assertSame(['option_1', 'option_2'], $byDrop['c']);
+        $this->assertSame(['option_1', 'option_2'], $byDrop['a'], 'the export wrote label "b" for value "a"');
+    }
+
+    public function testALabelTwoOptionsShareIsRefusedRatherThanGuessed(): void
+    {
+        $fields = [['id' => 'drop', 'type' => 'dropdown', 'label' => 'Topic', 'order' => 0, 'properties' => ['options' => self::options('Same', 'Same')]]];
+        $formId = self::$formService->createForm(['user_id' => $this->userId, 'title' => 'Twice', 'status' => 'published', 'fields' => $fields])['id'];
+        $this->roundTripForms[] = $formId;
+
+        $result = self::$responses->importResponses($formId, [['Same'], ['option_2']], [0 => 'drop'], $fields);
+
+        $this->assertSame(1, $result['created']);
+        $this->assertSame([['row' => 1, 'errors' => ["Field 'Topic': Invalid selection"]]], $result['errors']);
+    }
+
+    public function testACellThatMatchesNoOptionIsStillRefused(): void
+    {
+        $fields = [['id' => 'many', 'type' => 'checkboxes', 'label' => 'Tags', 'order' => 0, 'properties' => ['options' => self::options('One', 'Two')]]];
+        $formId = self::$formService->createForm(['user_id' => $this->userId, 'title' => 'Refused', 'status' => 'published', 'fields' => $fields])['id'];
+        $this->roundTripForms[] = $formId;
+
+        $result = self::$responses->importResponses($formId, [['One, Three']], [0 => 'many'], $fields);
+
+        $this->assertSame(0, $result['created']);
+        $this->assertSame([['row' => 1, 'errors' => ["Field 'Tags': Invalid selection"]]], $result['errors']);
+    }
+
+    public function testTheApostropheTheExportAddedComesOffAnAnswer(): void
+    {
+        $fields = [
+            ['id' => 'phone', 'type' => 'phone', 'label' => 'Phone', 'order' => 0, 'properties' => []],
+            ['id' => 'text', 'type' => 'short_text', 'label' => 'Note', 'order' => 1, 'properties' => []],
+            ['id' => 'pick', 'type' => 'dropdown', 'label' => 'Term', 'order' => 2, 'properties' => ['options' => self::options('+1 year', '-1 year')]],
+            ['id' => 'mine', 'type' => 'short_text', 'label' => 'Quote', 'order' => 3, 'properties' => []],
+        ];
+
+        $trip = $this->roundTrip($fields, ['phone' => '+61400123456', 'text' => '=not a formula', 'pick' => 'option_2', 'mine' => "'tis mine"]);
+
+        $this->assertStringContainsString("'+61400123456", $trip['csv'], 'the file itself stays safe to open');
+        $this->assertSame(1, $trip['result']['created'], json_encode($trip['result']['errors']));
+        $this->assertSame('+61400123456', $trip['copy']['phone']);
+        $this->assertSame('=not a formula', $trip['copy']['text']);
+        $this->assertSame('option_2', $trip['copy']['pick']);
+        $this->assertSame("'tis mine", $trip['copy']['mine']);
+    }
+
+    public function testALocationComesBackFromItsTwoNumbers(): void
+    {
+        $fields = [['id' => 'place', 'type' => 'location', 'label' => 'Place', 'order' => 0, 'properties' => []]];
+
+        $trip = $this->roundTrip($fields, ['place' => ['latitude' => -33.8688, 'longitude' => 151.2093]]);
+
+        $this->assertSame(1, $trip['result']['created'], json_encode($trip['result']['errors']));
+        $this->assertSame(['latitude' => -33.8688, 'longitude' => 151.2093], $trip['copy']['place']);
+    }
+
+    public function testACellThatIsNotALocationIsRefused(): void
+    {
+        $fields = [['id' => 'place', 'type' => 'location', 'label' => 'Place', 'order' => 0, 'properties' => []]];
+        $formId = self::$formService->createForm(['user_id' => $this->userId, 'title' => 'Bad place', 'status' => 'published', 'fields' => $fields])['id'];
+        $this->roundTripForms[] = $formId;
+
+        $result = self::$responses->importResponses($formId, [['Sydney'], ['120, 10']], [0 => 'place'], $fields);
+
+        $this->assertSame(0, $result['created']);
+        $this->assertSame('Invalid location format', explode(': ', $result['errors'][0]['errors'][0])[1]);
+        $this->assertSame('Latitude must be between -90 and 90', explode(': ', $result['errors'][1]['errors'][0])[1]);
+    }
+
+    public function testAFileColumnIsNotImportedAndTheRowComesInWithoutIt(): void
+    {
+        $fields = [
+            ['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'order' => 0, 'properties' => []],
+            ['id' => 'photo', 'type' => 'file_upload', 'label' => 'Photo', 'order' => 1, 'properties' => []],
+        ];
+        $formId = self::$formService->createForm(['user_id' => $this->userId, 'title' => 'Files', 'status' => 'published', 'fields' => $fields])['id'];
+        $this->roundTripForms[] = $formId;
+
+        $result = self::$responses->importResponses($formId, [['Ada', 'cv.pdf, photo.png']], [0 => 'name', 1 => 'photo'], $fields);
+
+        $this->assertSame(1, $result['created'], json_encode($result['errors']));
+        $stored = self::$sqlite->getFormDatabase($formId)->query('SELECT answers FROM responses')->fetchColumn();
+        $this->assertSame(['name' => 'Ada'], json_decode((string) $stored, true));
+    }
+
+    public function testASignatureTypedComesBackAndOneDrawnDoesNot(): void
+    {
+        $fields = [
+            ['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'order' => 0, 'properties' => []],
+            ['id' => 'sign', 'type' => 'signature', 'label' => 'Sign', 'order' => 1, 'properties' => []],
+        ];
+
+        $typed = $this->roundTrip($fields, ['name' => 'Ada', 'sign' => 'typed:Ada Lovelace']);
+        $drawn = $this->roundTrip($fields, ['name' => 'Bea', 'sign' => 'data:image/png;base64,AAAA']);
+
+        $this->assertSame('typed:Ada Lovelace', $typed['copy']['sign']);
+        $this->assertStringContainsString('[signature]', $drawn['csv']);
+        $this->assertSame(1, $drawn['result']['created'], json_encode($drawn['result']['errors']));
+        $this->assertArrayNotHasKey('sign', $drawn['copy'], 'the placeholder is not a signature');
+    }
+
+    public function testTwoFieldsWithOneLabelKeepBothColumns(): void
+    {
+        $fields = [
+            ['id' => 'first', 'type' => 'short_text', 'label' => 'Name', 'order' => 0, 'properties' => []],
+            ['id' => 'second', 'type' => 'short_text', 'label' => 'Name', 'order' => 1, 'properties' => []],
+        ];
+
+        $trip = $this->roundTrip($fields, ['first' => 'Ada', 'second' => 'Lovelace']);
+
+        $this->assertSame('Ada', $trip['copy']['first']);
+        $this->assertSame('Lovelace', $trip['copy']['second']);
     }
 }

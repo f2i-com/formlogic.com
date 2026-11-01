@@ -50,7 +50,7 @@ const requests: Array<[string, () => Promise<unknown>]> = [
   ['form file upload', () => api.uploadFile('f1', file())],
   ['app file upload', () => api.uploadAppFile('app', 'f1', file())],
   ['CSV parse', () => api.parseImportCsv('f1', file())],
-  ['CSV import', () => api.importCsv('f1', file(), {})],
+  ['CSV import', () => api.importCsv('f1', file(), [])],
   ['upgrade upload', () => api.adminUpgradeUpload(file())],
 ];
 

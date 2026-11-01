@@ -23,6 +23,8 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Database\SqliteSnapshot;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Support\AfterResponse;
+use FormLogic\Support\CsvUpload;
 use FormLogic\Support\SqlErrorText;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -106,7 +108,8 @@ class ResponseController
     /**
      * Send a best-effort "new response" email to the form's configured
      * notification address when the Notifications tab has it enabled. Never
-     * throws — a notification failure must not affect the submission.
+     * throws — a notification failure must not affect the submission, and the
+     * visitor doesn't wait for the mail server: it goes after their answer.
      */
     private function maybeNotifyNewResponse(array $form): void
     {
@@ -117,21 +120,23 @@ class ResponseController
         if (empty($notifications['emailNotifications']) || empty($notifications['notificationEmail'])) {
             return;
         }
-        try {
-            $to = (string) $notifications['notificationEmail'];
-            $rawTitle = (string) ($form['title'] ?? 'your form');
-            $title = htmlspecialchars($rawTitle, ENT_QUOTES); // for the HTML body only
-            $formId = (string) ($form['id'] ?? '');
-            $html = "<p>You've received a new response on <strong>{$title}</strong>.</p>"
-                . "<p>Sign in to FormLogic to view it in the form's responses.</p>"
-                . ($formId !== '' ? "<p style=\"color:#888;font-size:12px\">Form ID: {$formId}</p>" : '');
-            // Subject is plaintext (EmailService strips CR/LF) — use the raw title so HTML entities
-            // don't show literally (e.g. "Tom &amp; Jerry").
-            // Within the per-account and per-address limits on mail to an address a user chose.
-            $this->emailService->sendResponseNotification($this->mysql, $form, $to, "New response: {$rawTitle}", $html);
-        } catch (\Throwable $e) {
-            $this->logger->warning('New-response notification failed', ['error' => $e->getMessage()]);
-        }
+        AfterResponse::run(function () use ($form, $notifications): void {
+            try {
+                $to = (string) $notifications['notificationEmail'];
+                $rawTitle = (string) ($form['title'] ?? 'your form');
+                $title = htmlspecialchars($rawTitle, ENT_QUOTES); // for the HTML body only
+                $formId = (string) ($form['id'] ?? '');
+                $html = "<p>You've received a new response on <strong>{$title}</strong>.</p>"
+                    . "<p>Sign in to FormLogic to view it in the form's responses.</p>"
+                    . ($formId !== '' ? "<p style=\"color:#888;font-size:12px\">Form ID: {$formId}</p>" : '');
+                // Subject is plaintext (EmailService strips CR/LF) — use the raw title so HTML entities
+                // don't show literally (e.g. "Tom &amp; Jerry").
+                // Within the per-account and per-address limits on mail to an address a user chose.
+                $this->emailService->sendResponseNotification($this->mysql, $form, $to, "New response: {$rawTitle}", $html);
+            } catch (\Throwable $e) {
+                $this->logger->warning('New-response notification failed', ['error' => $e->getMessage()]);
+            }
+        });
     }
 
     /**
@@ -1272,7 +1277,7 @@ class ResponseController
                 // Enforce reasonable length limits
                 if (is_string($value)) {
                     $maxLength = $type === 'short_text' ? 1000 : 50000;
-                    if (strlen($value) > $maxLength) {
+                    if (mb_strlen($value) > $maxLength) {
                         return "Text exceeds maximum length of {$maxLength} characters";
                     }
                 }
@@ -1330,7 +1335,7 @@ class ResponseController
                     }
                     // Bound the filename so a client can't smuggle a multi-megabyte
                     // string into storage via file metadata.
-                    if (!is_string($item['originalFilename']) || strlen($item['originalFilename']) > 255) {
+                    if (!is_string($item['originalFilename']) || mb_strlen($item['originalFilename']) > 255) {
                         return 'Invalid file name';
                     }
                 }
@@ -2015,46 +2020,21 @@ class ResponseController
         }
 
         // Parse CSV
-        $handle = fopen($file['tmp_name'], 'r');
-        if ($handle === false) {
+        $bytes = file_get_contents($file['tmp_name']);
+        if ($bytes === false) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'Failed to open CSV file',
             ], 400);
         }
-
-        // Strip UTF-8 BOM if present (Excel on Windows adds this)
-        $bom = fread($handle, 3);
-        if ($bom !== "\xEF\xBB\xBF") {
-            rewind($handle);
-        }
-
-        // Match the export's RFC-4180 escaping (fputcsv with '' escape) so export→edit→re-import
-        // round-trips symmetrically, and pass the arg explicitly to silence the PHP 8.4 deprecation.
-        $headers = fgetcsv($handle, 0, ',', '"', '');
-        // fgetcsv returns a non-empty array or false, so `empty($headers)`
-        // was dead code (a blank first line is [null], which is not empty()
-        // either — it falls through to column mapping exactly as before).
-        if ($headers === false) {
-            fclose($handle);
+        $table = CsvUpload::parse($bytes);
+        if ($table === null) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'CSV file is empty or has no headers',
             ], 400);
         }
-
-        // Read all data rows
-        $rows = [];
-        while (($row = fgetcsv($handle, 0, ',', '"', '')) !== false) {
-            if (count($row) === count($headers)) {
-                $rows[] = array_combine($headers, $row);
-            } elseif (count($row) > 0 && !(count($row) === 1 && trim($row[0]) === '')) {
-                // Pad or trim to match header count
-                $padded = array_pad($row, count($headers), '');
-                $rows[] = array_combine($headers, array_slice($padded, 0, count($headers)));
-            }
-        }
-        fclose($handle);
+        ['headers' => $headers, 'rows' => $rows] = $table;
 
         // Validate row count (between 1 and 1000 data rows)
         if (count($rows) === 0) {
@@ -2071,13 +2051,16 @@ class ResponseController
             ], 400);
         }
 
-        // Check if columnMapping is provided
+        // Check if a mapping is provided. `columns` holds a field id for each column in order, so
+        // two columns with one heading stay apart. `columnMapping`, by heading, is what a page
+        // from before v0.1.21 sends, and it reads the last column of a heading it finds twice.
         $parsedBody = $request->getParsedBody();
-        $columnMappingJson = $parsedBody['columnMapping'] ?? null;
+        $columnsJson = $parsedBody['columns'] ?? null;
+        $columnMappingJson = $columnsJson ?? ($parsedBody['columnMapping'] ?? null);
 
         if ($columnMappingJson === null) {
             // No mapping provided - return preview data for the frontend mapping step
-            $previewRows = array_slice($rows, 0, 5);
+            $previewCells = array_slice($rows, 0, 5);
 
             // Build fields array from form
             $fields = [];
@@ -2095,7 +2078,8 @@ class ResponseController
             return $this->jsonResponse($response, [
                 'headers' => $headers,
                 'rowCount' => count($rows),
-                'previewRows' => $previewRows,
+                'previewCells' => $previewCells,
+                'previewRows' => array_map(static fn (array $cells): array => array_combine($headers, $cells), $previewCells),
                 'fields' => $fields,
             ]);
         }
@@ -2126,6 +2110,16 @@ class ResponseController
                     'error' => true,
                     'message' => "Invalid field ID in column mapping: {$fieldId}",
                 ], 400);
+            }
+        }
+        if ($columnsJson === null) {
+            $positions = array_flip($headers);
+            $byHeading = $columnMapping;
+            $columnMapping = [];
+            foreach ($byHeading as $heading => $fieldId) {
+                if (isset($positions[(string) $heading])) {
+                    $columnMapping[$positions[(string) $heading]] = $fieldId;
+                }
             }
         }
 
@@ -2295,25 +2289,17 @@ class ResponseController
 
         // Fetch responses in batches to limit memory usage
         $batchSize = 500;
-        $offset = 0;
         $totalWritten = 0;
         $isFirst = true;
         // Hard cap (mirrors the CSV export) so one request cannot stream an
         // unbounded table and monopolize a PHP worker.
         $maxExportRows = 100000;
-        $truncated = false;
+        $batchOptions = ResponseService::EXPORT_ORDER + ['limit' => $batchSize];
 
         do {
-            $batch = $this->responseService->getFormResponses($formId, [
-                'limit' => $batchSize,
-                'offset' => $offset,
-            ]);
+            $batch = $this->responseService->getFormResponses($formId, $batchOptions);
 
             foreach ($batch as $resp) {
-                if ($totalWritten >= $maxExportRows) {
-                    $truncated = true;
-                    break;
-                }
                 if (!$isFirst) {
                     $body->write(',');
                 }
@@ -2322,8 +2308,10 @@ class ResponseController
                 $totalWritten++;
             }
 
-            $offset += $batchSize;
+            $batchOptions['before'] = ResponseService::pageEnd($batch);
         } while (count($batch) === $batchSize && $totalWritten < $maxExportRows);
+
+        $truncated = $totalWritten >= $maxExportRows && $this->responseService->getFormResponses($formId, ['limit' => 1] + $batchOptions) !== [];
 
         $body->write('],"meta":' . json_encode([
             'totalResponses' => $totalWritten,

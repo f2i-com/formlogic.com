@@ -638,7 +638,8 @@ function statusToTerminal(
 ): Terminal | null {
   switch (status) {
     case 'pending':
-      safeCall(() => onState({ state: 'queued', position: queuePos ?? 0 }));
+      // The stream's status event has no position: the one from the enqueue stands.
+      if (queuePos !== undefined) safeCall(() => onState({ state: 'queued', position: queuePos }));
       return null;
     case 'claimed':
     case 'streaming':

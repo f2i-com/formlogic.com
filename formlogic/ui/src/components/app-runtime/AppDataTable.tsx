@@ -7,7 +7,7 @@ import { PageHeader } from '../ui/PageHeader';
 import { EmptyState } from '../ui/EmptyState';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
-import { useDisplayTimezone, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
+import { useDisplayTimezone, formatAnswerDateTime, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
 import { api } from '../../lib/api';
 import { guessRecordLabel, resolveLinkedDisplays } from '../../lib/recordLabel';
 import { toast } from '../../stores/toastStore';
@@ -354,7 +354,7 @@ export function AppDataTable() {
         } else if (field.type === 'datetime' || isIsoDateTime(val)) {
           // 'datetime' fields AND plain text holding an ISO-8601 instant
           // (e.g. the Aokie Calls started_at/ended_at short_text fields).
-          return formatDateTimeInZone(val, tz);
+          return formatAnswerDateTime(val, tz);
         }
       }
       if (field.type === 'file_upload' && Array.isArray(val)) {

@@ -7,6 +7,7 @@ namespace FormLogic\Controllers;
 use FormLogic\Services\SubmissionIdempotencyService;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Helpers\AnswerText;
 use FormLogic\Helpers\AppMemberView;
 use FormLogic\Helpers\CustomLogicSanitizer;
 use FormLogic\Helpers\RelatedRecords;
@@ -938,7 +939,7 @@ class AppPublicController
             foreach ($this->appService->getAppForms($app['id']) as $af) {
                 $appFormIds[$af['formId']] = true;
             }
-            $lowerSearch = mb_strtolower($search);
+            $foldedSearch = AnswerText::fold($search);
             $choiceTypes = ['dropdown', 'multiple_choice', 'checkbox', 'checkboxes', 'radio'];
             $multiTypes = ['multiple_choice', 'checkbox', 'checkboxes'];
             foreach ($fields as $field) {
@@ -962,7 +963,7 @@ class AppPublicController
                     foreach (($field['properties']['options'] ?? []) as $o) {
                         if (!is_array($o)) { continue; }
                         $label = (string) ($o['label'] ?? '');
-                        if (isset($o['value']) && $label !== '' && str_contains(mb_strtolower($label), $lowerSearch)) {
+                        if (isset($o['value']) && $label !== '' && str_contains(AnswerText::fold($label), $foldedSearch)) {
                             $vals[] = (string) $o['value'];
                         }
                     }
@@ -2407,7 +2408,7 @@ class AppPublicController
             case 'long_text':
                 if (is_string($value)) {
                     $maxLength = $type === 'short_text' ? 1000 : 50000;
-                    if (strlen($value) > $maxLength) {
+                    if (mb_strlen($value) > $maxLength) {
                         return "Text exceeds maximum length of {$maxLength} characters";
                     }
                 }
@@ -2462,7 +2463,7 @@ class AppPublicController
                     if (!is_array($item) || !isset($item['id']) || !isset($item['originalFilename'])) {
                         return 'Invalid file metadata';
                     }
-                    if (!is_string($item['originalFilename']) || strlen($item['originalFilename']) > 255) {
+                    if (!is_string($item['originalFilename']) || mb_strlen($item['originalFilename']) > 255) {
                         return 'Invalid file name';
                     }
                 }

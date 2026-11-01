@@ -1354,8 +1354,8 @@ class ChatToolsService
     /** Mirror FormController's shape/type/size rules (MCP bypasses that controller, calling services directly). */
     private function validateFormInput(array $args): void
     {
-        if (array_key_exists('title', $args) && (!is_string($args['title']) || strlen($args['title']) > 500)) {
-            throw new \Exception('title must be a string up to 500 characters');
+        if (array_key_exists('title', $args) && (!is_string($args['title']) || mb_strlen($args['title']) > 255)) {
+            throw new \Exception('title must be a string up to 255 characters');
         }
         if (array_key_exists('description', $args) && $args['description'] !== null && !is_string($args['description'])) {
             throw new \Exception('description must be a string or null');

@@ -16,7 +16,7 @@ import { Skeleton } from '../ui/Skeleton';
 import { api } from '../../lib/api';
 import { guessRecordLabel, resolveLinkedDisplays } from '../../lib/recordLabel';
 import { cn, statusBadgeVariant, formatStatusLabel } from '../../lib/utils';
-import { useDisplayTimezone, formatDateTimeInZone, formatDateInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
+import { useDisplayTimezone, formatAnswerDateTime, formatDateTimeInZone, formatDateInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
 import { describeUserAgent, primaryLanguage } from '../../lib/userAgent';
 import { Badge } from '../ui/Badge';
 
@@ -658,9 +658,9 @@ function ResponseVisit() {
                                 return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
                               } catch { return String(val); }
                             }
-                            // Datetime formatting (in the viewer's timezone)
+                            // Datetime formatting (a wall clock as written, an instant in the viewer's timezone)
                             if (field.type === 'datetime' && typeof val === 'string' && val) {
-                              return formatDateTimeInZone(val, tz);
+                              return formatAnswerDateTime(val, tz);
                             }
                             // Long text: preserve whitespace
                             if (field.type === 'long_text' && typeof val === 'string') {

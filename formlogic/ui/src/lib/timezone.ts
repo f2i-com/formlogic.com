@@ -118,6 +118,33 @@ export function formatDateTimeInZone(value: string | Date, tz: string): string {
   }
 }
 
+// A date and time with no zone: "2026-03-31T14:30", the date-time input's own form, and the
+// variants an API client can store ("2026-03-31 14:30:00").
+const WALL_CLOCK_RE = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/;
+
+/**
+ * A `datetime` answer as a viewer reads it. One that names a zone is an instant, shown in `tz`.
+ * One that doesn't is the wall clock the respondent picked, which is the same in every zone: it
+ * shows as written, with no zone name beside it, wherever the browser is. It never goes through
+ * Date's local time, which would move a time inside the hour the viewer's own clocks skip.
+ */
+export function formatAnswerDateTime(value: string, tz: string): string {
+  const m = WALL_CLOCK_RE.exec(value.trim());
+  if (!m) return isIsoDateTime(value) ? formatDateTimeInZone(value, tz) : value;
+  const wall = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] ?? 0)));
+  // Date rolls a 31 February on into March, which isn't what was written.
+  if (wall.getUTCMonth() !== +m[2] - 1 || wall.getUTCDate() !== +m[3] || wall.getUTCHours() !== +m[4] || wall.getUTCMinutes() !== +m[5]) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: m[6] ? '2-digit' : undefined,
+    timeZone: 'UTC',
+  }).format(wall);
+}
+
 /**
  * The timezone for PLATFORM CHROME pages (Settings, the recycle bin, the
  * admin panel): the signed-in user's own account timezone, else their

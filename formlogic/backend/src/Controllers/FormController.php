@@ -269,8 +269,8 @@ class FormController
         if (isset($data['title']) && !is_string($data['title'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Title must be a string'], 422);
         }
-        if (isset($data['title']) && mb_strlen($data['title']) > 500) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Title must be 500 characters or fewer'], 422);
+        if (isset($data['title']) && mb_strlen($data['title']) > 255) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Title must be 255 characters or fewer'], 422);
         }
         if (isset($data['description']) && !is_string($data['description'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Description must be a string'], 422);
@@ -369,8 +369,8 @@ class FormController
         if (isset($data['title']) && !is_string($data['title'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Title must be a string'], 422);
         }
-        if (isset($data['title']) && mb_strlen($data['title']) > 500) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Title must be 500 characters or fewer'], 422);
+        if (isset($data['title']) && mb_strlen($data['title']) > 255) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Title must be 255 characters or fewer'], 422);
         }
         if (isset($data['description']) && !is_string($data['description'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Description must be a string'], 422);

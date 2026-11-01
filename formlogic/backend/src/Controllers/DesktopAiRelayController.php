@@ -217,7 +217,13 @@ class DesktopAiRelayController
         if ($key === null) {
             return $this->jsonError($response, 'The desktop has not published its encryption key yet', 404, 'e2e_key_unknown');
         }
-        return $this->jsonResponse($response, ['instanceId' => $instanceId, 'publicKey' => $key]);
+        // The name is what a person judges a changed key by: with no name here, the warning said
+        // only "FormLogic Desktop", whichever computer it was.
+        $name = $this->commands->describeInstances((string) $userId, [$instanceId])[$instanceId] ?? null;
+        return $this->jsonResponse($response, array_filter(
+            ['instanceId' => $instanceId, 'publicKey' => $key, 'deviceName' => $name],
+            static fn ($value) => $value !== null,
+        ));
     }
 
     // ── Desktop surface (flk_ key; userId == owner; scope ai:relay or connector:relay) ────

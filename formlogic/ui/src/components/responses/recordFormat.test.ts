@@ -26,6 +26,13 @@ describe('formatValue ISO instants', () => {
       .toBe('2026-07-09T23:59');
   });
 
+  it('shows a datetime field\'s wall clock as written, in the same words the app pages use', () => {
+    const out = formatValue('2026-03-31T14:30', 'datetime', undefined, 'Australia/Brisbane');
+    expect(out).toMatch(/31 Mar 2026|Mar 31, 2026/);
+    expect(out).toMatch(/0?2:30/);
+    expect(out).not.toMatch(/AEST|GMT/);
+  });
+
   it('leaves ordinary text alone', () => {
     expect(formatValue('caller said 2026 things', 'short_text', undefined, 'Australia/Brisbane'))
       .toBe('caller said 2026 things');

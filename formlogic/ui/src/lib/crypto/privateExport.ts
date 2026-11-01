@@ -71,6 +71,8 @@ export async function exportPrivateFormCsv(
   const exportFields = args.fields.filter(EXPORTABLE);
   const headers = ['ID', 'Submitted At', 'Status', ...exportFields.map((f) => f.label)];
   const rows: string[][] = [];
+  // Newest first by offset, so a record that arrives between two pages pushes one already read onto the next.
+  const seen = new Set<string>();
   let fetched = 0;
   let decrypted = 0;
   let total: number | null = null;
@@ -91,11 +93,13 @@ export async function exportPrivateFormCsv(
     }
     if (total === null && page.count !== null) total = page.count;
     if (page.rows.length === 0) break;
-    fetched += page.rows.length;
+    const fresh = page.rows.filter((r) => !seen.has(r.id));
+    for (const r of fresh) seen.add(r.id);
+    fetched += fresh.length;
     args.onProgress?.({ fetched, decrypted, total });
 
-    const opened = await deps.decryptRows(page.rows.map((r) => ({ id: r.id, answers: r.answers })));
-    for (const row of page.rows) {
+    const opened = await deps.decryptRows(fresh.map((r) => ({ id: r.id, answers: r.answers })));
+    for (const row of fresh) {
       const dec = opened.get(row.id);
       const answers = dec && !('error' in dec) ? dec.answers : null;
       rows.push([
@@ -107,7 +111,7 @@ export async function exportPrivateFormCsv(
           : formatValue(answers[f.id], f.type, f.properties?.options, args.displayTz)),
       ]);
     }
-    decrypted += page.rows.length;
+    decrypted += fresh.length;
     args.onProgress?.({ fetched, decrypted, total });
 
     if (page.rows.length < pageSize) break;

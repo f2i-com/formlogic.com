@@ -461,7 +461,7 @@ class McpOAuthController
         // reads to decide which desktop to revoke.
         $runtimeName = McpOAuthService::DESKTOP_CLIENTS[(string) ($grant['clientId'] ?? '')]
             ?? 'FormLogic Desktop';
-        $keyName = substr($device !== null ? "{$runtimeName} on {$device}" : $runtimeName, 0, 255);
+        $keyName = mb_substr($device !== null ? "{$runtimeName} on {$device}" : $runtimeName, 0, 255);
         $key = null;
         try {
             $key = $this->apiKeys->createKey($userId, $keyName, $scopes);

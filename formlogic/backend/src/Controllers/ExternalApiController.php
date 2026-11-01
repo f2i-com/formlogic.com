@@ -16,6 +16,7 @@ use FormLogic\Services\ScriptRejection;
 use FormLogic\Services\EmailService;
 use FormLogic\Services\AuditService;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Support\AfterResponse;
 use FormLogic\Support\SqlErrorText;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -65,18 +66,21 @@ class ExternalApiController
         if (empty($notifications['emailNotifications']) || empty($notifications['notificationEmail'])) {
             return;
         }
-        try {
-            $rawTitle = (string) ($form['title'] ?? 'your form');
-            $title = htmlspecialchars($rawTitle, ENT_QUOTES); // HTML body only
-            $formId = (string) ($form['id'] ?? '');
-            $html = "<p>You've received a new response on <strong>{$title}</strong> (via the API).</p>"
-                . "<p>Sign in to FormLogic to view it in the form's responses.</p>"
-                . ($formId !== '' ? "<p style=\"color:#888;font-size:12px\">Form ID: {$formId}</p>" : '');
-            // Within the per-account and per-address limits on mail to an address a user chose.
-            $this->emailService->sendResponseNotification($this->mysql, $form, (string) $notifications['notificationEmail'], "New response: {$rawTitle}", $html);
-        } catch (\Throwable $e) {
-            $this->logger->warning('External-API new-response notification failed', ['error' => $e->getMessage()]);
-        }
+        // The caller doesn't wait for the mail server.
+        AfterResponse::run(function () use ($form, $notifications): void {
+            try {
+                $rawTitle = (string) ($form['title'] ?? 'your form');
+                $title = htmlspecialchars($rawTitle, ENT_QUOTES); // HTML body only
+                $formId = (string) ($form['id'] ?? '');
+                $html = "<p>You've received a new response on <strong>{$title}</strong> (via the API).</p>"
+                    . "<p>Sign in to FormLogic to view it in the form's responses.</p>"
+                    . ($formId !== '' ? "<p style=\"color:#888;font-size:12px\">Form ID: {$formId}</p>" : '');
+                // Within the per-account and per-address limits on mail to an address a user chose.
+                $this->emailService->sendResponseNotification($this->mysql, $form, (string) $notifications['notificationEmail'], "New response: {$rawTitle}", $html);
+            } catch (\Throwable $e) {
+                $this->logger->warning('External-API new-response notification failed', ['error' => $e->getMessage()]);
+            }
+        });
     }
 
     /** Audit log helper. The middleware sets `userId` to the API key's owner, so audits attribute correctly. */
@@ -540,6 +544,8 @@ class ExternalApiController
         // accept both spellings ('answers.call_id' arrives as 'answers_call_id').
         $answersEq = [];
         $answersPhoneEq = [];
+        $answersGte = [];
+        $answersLte = [];
         foreach ($params as $k => $v) {
             if (!is_string($v)) {
                 continue;
@@ -548,6 +554,13 @@ class ExternalApiController
             // filter op phone_eq): digits-only last-9 suffix match server-side.
             if (str_starts_with((string) $k, 'answersPhone.') || str_starts_with((string) $k, 'answersPhone_')) {
                 $answersPhoneEq[substr((string) $k, 13)] = $v;
+            // ?answersGte.<fieldId> / ?answersLte.<fieldId> — range bounds, as on the session
+            // route. Unread here, a desktop's gte/lte filter returned every row and reported
+            // success: the browser filters again, and OAIY trusts the listing.
+            } elseif (str_starts_with((string) $k, 'answersGte.') || str_starts_with((string) $k, 'answersGte_')) {
+                $answersGte[substr((string) $k, 11)] = $v;
+            } elseif (str_starts_with((string) $k, 'answersLte.') || str_starts_with((string) $k, 'answersLte_')) {
+                $answersLte[substr((string) $k, 11)] = $v;
             } elseif (str_starts_with((string) $k, 'answers.') || str_starts_with((string) $k, 'answers_')) {
                 $answersEq[substr((string) $k, 8)] = $v;
             }
@@ -564,6 +577,8 @@ class ExternalApiController
             'to' => $params['to'] ?? null,
             'answersEq' => $answersEq,
             'answersPhoneEq' => $answersPhoneEq,
+            'answersGte' => $answersGte,
+            'answersLte' => $answersLte,
             'updatedSince' => $since,
             'afterId' => is_string($params['afterId'] ?? null) ? $params['afterId'] : null,
             'limit' => max(1, min((int)($params['limit'] ?? 50), 1000)),
