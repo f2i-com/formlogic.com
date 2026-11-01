@@ -93,10 +93,27 @@ Work top to bottom before exposing the app publicly. Most of these live in
 - [ ] After that test, Doctor's `email` check shows no failed mail. Password resets, invitations and
       new-response notifications go out after the visitor has their answer, and each step with the
       mail server may take 5 seconds. A mail that can't be sent isn't retried: it goes in the audit
-      log as `mail.failed`, and Doctor reports the last 7 days' with the reason. The answer ends early
-      on PHP-FPM, LiteSpeed and mod_php. Plain FastCGI (mod_fcgid) holds a short answer until PHP
-      exits, so there the visitor waits for the send, and a forgot-password request takes longer for
-      an address with an account. Doctor says so if this site runs that way: use PHP-FPM if you can.
+      log as `mail.failed`, and Doctor reports the last 7 days' with the reason.
+- [ ] Use PHP-FPM if you can. A forgot-password request mustn't show which addresses have accounts,
+      and how PHP runs decides how well it can hide that. Doctor warns on the last two:
+      - **nginx or Apache with PHP-FPM:** the answer and the connection end at once, whatever comes
+        after, so neither the visitor nor anyone timing it sees the mail. The mail still holds a
+        worker while it sends, so on a pool that is nearly full, someone's next request can show that
+        one is busy: give the pool room. LiteSpeed has the same kind of call, though this hasn't been
+        tested on it.
+      - **mod_php:** the visitor has the answer at once, but Apache can't close the connection until
+        PHP exits, and someone timing the close sees how long the mail took. So the request holds
+        the connection to 2 seconds for every address, with an account or without. That hides a
+        healthy mail server. It's a floor, not a guarantee: a mail server slower than that shows,
+        and one that never answers closes at 5 seconds against 2. A proxy in front of Apache that
+        holds its own connection should hide the close, though this hasn't been tested.
+      - **mod_fcgid:** Apache holds the whole answer until PHP exits, so the visitor waits for
+        whatever follows it. Every forgot-password request takes about 2 seconds, with the same
+        floor and the same limit as mod_php, and a submit waits for its notification to send.
+
+      The 2 seconds hold a PHP worker on mod_php and mod_fcgid. The limit of 10 forgot-password
+      requests a minute from one IP address is checked first, and a refused request holds nothing,
+      so one IP address can take at most a third of a worker on average.
 
 **AI (optional)**
 - [ ] AI uses any OpenAI-compatible API via `AI_BASE_URL` (LM Studio / Ollama / vLLM / self-hosted /

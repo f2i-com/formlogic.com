@@ -17,11 +17,20 @@ namespace FormLogic\Support;
  * Plain FastCGI (mod_fcgid) has neither, and holds a short answer until PHP exits, so there the
  * client waits for the jobs: nothing is lost, but it is what the jobs are here to avoid, and Doctor
  * says so (LIMITATION).
+ *
+ * Without a call that ends it, the connection stays open while PHP runs, even once the client has
+ * every byte, so anyone timing the close sees how long the jobs took (runWithFloor).
  */
 final class AfterResponse
 {
     /** What Doctor says on a server that holds the answer until the jobs are done. */
-    public const LIMITATION = 'PHP runs here as plain FastCGI, which can\'t end an answer early: a visitor waits while mail is sent, up to several seconds if the mail server is down, and a forgot-password request takes longer for an address with an account. PHP-FPM or LiteSpeed don\'t have this.';
+    public const LIMITATION = 'PHP runs here as plain FastCGI, which can\'t end an answer early: a visitor waits while mail is sent, up to several seconds if the mail server is down, and every forgot-password request takes at least 2 seconds, longer if the mail server is slower than that, which shows that the address has an account. PHP-FPM or LiteSpeed don\'t have this.';
+
+    /** What Doctor says under mod_php, where the visitor doesn't wait but the connection does. */
+    public const LIMITATION_MOD_PHP = 'PHP runs here as mod_php, which can\'t close a connection until the work after an answer is done. Visitors have their answer at once, but someone timing the close of a forgot-password request can tell an address with an account from one without if the mail server takes more than 2 seconds or is down. PHP-FPM doesn\'t have this.';
+
+    /** Long enough to cover a healthy mail server: 0.8 s at 100 ms a step, measured. */
+    public const FLOOR_SECONDS = 2.0;
 
     /** A mail is a few seconds at worst (EmailService::SMTP_TIMEOUT_SECONDS for each step). */
     private const SECONDS_PER_JOB = 60;
@@ -42,6 +51,30 @@ final class AfterResponse
         self::$jobs[] = $job;
     }
 
+    /**
+     * A job whose length would say something private. Where the server can't end the answer, it
+     * takes FLOOR_SECONDS at least, whatever it did, so the close comes at the same time on every
+     * path. That costs the worker those seconds, and a job slower than the floor still shows.
+     */
+    public static function runWithFloor(callable $job): void
+    {
+        if (PHP_SAPI === 'cli' || self::serverCanFinish()) {
+            self::run($job);
+            return;
+        }
+        self::run(static function () use ($job): void {
+            $until = microtime(true) + self::FLOOR_SECONDS;
+            try {
+                $job();
+            } finally {
+                $left = $until - microtime(true);
+                if ($left > 0 && function_exists('usleep')) {
+                    usleep((int) ($left * 1_000_000));
+                }
+            }
+        });
+    }
+
     public static function pending(): bool
     {
         return self::$jobs !== [];
@@ -56,7 +89,14 @@ final class AfterResponse
     /** Doctor's warning for this server, or null. */
     public static function limitation(string $sapi = PHP_SAPI): ?string
     {
-        return $sapi === 'cgi-fcgi' && !self::serverCanFinish() ? self::LIMITATION : null;
+        if (self::serverCanFinish()) {
+            return null;
+        }
+        return match ($sapi) {
+            'cgi-fcgi' => self::LIMITATION,
+            'apache2handler' => self::LIMITATION_MOD_PHP,
+            default => null,
+        };
     }
 
     /** @internal registered as a shutdown function; public for that reason only */

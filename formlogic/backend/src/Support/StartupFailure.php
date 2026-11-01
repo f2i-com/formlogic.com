@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace FormLogic\Support;
 
+use FormLogic\Database\MigrationInProgressException;
+
 /**
  * What a request gets when something fails outside Slim's error handling.
  *
@@ -14,6 +16,9 @@ namespace FormLogic\Support;
 final class StartupFailure
 {
     private const RETRY_AFTER_SECONDS = 30;
+
+    /** A migration this has already waited 15 s for is likely nearly done. */
+    private const MIGRATION_RETRY_AFTER_SECONDS = 5;
 
     /** Production answers never carry PHP's own text, whatever php.ini says. */
     public static function install(): void
@@ -63,6 +68,18 @@ final class StartupFailure
      */
     public static function answerTo(\Throwable $failure): array
     {
+        if ($failure instanceof MigrationInProgressException) {
+            return [
+                'status' => 503,
+                'retryAfter' => self::MIGRATION_RETRY_AFTER_SECONDS,
+                'body' => [
+                    'error' => true,
+                    'code' => 'migration_in_progress',
+                    'retryable' => true,
+                    'message' => 'The site is finishing an update. Please try again in a moment.',
+                ],
+            ];
+        }
         if ($failure instanceof \PDOException) {
             return [
                 'status' => 503,

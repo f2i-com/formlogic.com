@@ -492,8 +492,9 @@ class AuthController
                 $base = AppUrl::frontendBase($request) . '/reset-password';
                 // Finding the account, making the token and sending the mail all happen after
                 // the answer: up to here an address with an account and one without take the same
-                // path, so the time this takes says nothing about which it is.
-                AfterResponse::run(function () use ($email, $base): void {
+                // path, so the time this takes says nothing about which it is. The floor is for
+                // servers that hold the connection open while this runs.
+                AfterResponse::runWithFloor(function () use ($email, $base): void {
                     try {
                         $this->authService->requestPasswordReset($email, $base, false);
                     } catch (\Throwable $e) {

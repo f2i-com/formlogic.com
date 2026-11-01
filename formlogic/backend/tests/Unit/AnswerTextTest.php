@@ -122,10 +122,31 @@ class AnswerTextTest extends TestCase
         $this->assertSame('plain', AnswerText::fold('PLAIN'));
     }
 
-    /** @requires extension intl */
-    public function testTwoSpellingsOfOneAccentAreOneText(): void
+    /** With intl or without: the polyfill comes with symfony/mailer. */
+    public static function twoSpellings(): array
     {
-        $this->assertSame(AnswerText::fold("Jose\u{301}"), AnswerText::fold("Jos\u{E9}"));
+        return [
+            'Latin accent' => ["Jose\u{301}", "jos\u{E9}"],
+            'Cyrillic breve' => ["\u{438}\u{306}", "\u{439}"],
+            'Japanese voicing mark' => ["\u{304B}\u{3099}", "\u{304C}"],
+            'Korean jamo, which are not marks' => ["\u{1112}\u{1161}\u{11AB}", "\u{D55C}"],
+            'Greek with oxia, no mark in it' => ["\u{1F71}", "\u{3AC}"],
+            'a CJK compatibility ideograph' => ["\u{F900}", "\u{8C48}"],
+            'a Hebrew presentation form' => ["\u{FB2A}", "\u{5E9}\u{5C1}"],
+        ];
+    }
+
+    /** @dataProvider twoSpellings */
+    public function testTwoSpellingsOfOneLetterAreOneText(string $decomposed, string $composed): void
+    {
+        $this->assertSame(AnswerText::fold($composed), AnswerText::fold($decomposed));
+        $this->assertSame($composed, AnswerText::fold($decomposed));
+    }
+
+    public function testASearchFindsATermSpelledTheOtherWay(): void
+    {
+        $this->assertTrue($this->holds(['t1' => "\u{1112}\u{1161}\u{11AB}\u{1100}\u{1173}\u{11AF}"], "\u{D55C}\u{AE00}"));
+        $this->assertTrue($this->holds(['t1' => "\u{D55C}\u{AE00}"], "\u{1112}\u{1161}\u{11AB}"));
     }
 
     private function sorted(array $values, callable $key): array

@@ -321,9 +321,17 @@ class AdminController
         }
         if ($this->email?->isConfigured()) {
             try {
-                $this->auth->requestPasswordReset((string) $target['email'], AppUrl::frontendBase($request) . '/reset-password', false);
+                $sent = $this->auth->requestPasswordReset((string) $target['email'], AppUrl::frontendBase($request) . '/reset-password', false);
             } catch (\RuntimeException $e) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'The reset link could not be sent: ' . $e->getMessage()], 503);
+            }
+            // Signing them out with no mail on its way would leave them with no way back in.
+            if (!$sent) {
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'retryable' => true,
+                    'message' => 'The mail server didn\'t take the reset link, so it was not sent. This member is still signed in. Doctor\'s email check shows the reason.',
+                ], 503);
             }
             // Someone asking for this may be locked out by whoever is signed in.
             $this->auth->revokeTokens($target['id']);

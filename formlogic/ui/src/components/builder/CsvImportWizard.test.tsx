@@ -26,8 +26,8 @@ const button = (name: RegExp) => {
 };
 const click = (name: RegExp) => act(async () => { button(name).click(); });
 
-const open = async (headers: string[], previewCells: string[][]) => {
-  vi.spyOn(api, 'parseImportCsv').mockResolvedValue({ data: { headers, rowCount: previewCells.length, previewCells, fields } });
+const open = async (headers: string[], previewCells: string[][], read: { encoding?: string; endCut?: boolean } = {}) => {
+  vi.spyOn(api, 'parseImportCsv').mockResolvedValue({ data: { headers, rowCount: previewCells.length, previewCells, fields, ...read } });
   const importCsv = vi.spyOn(api, 'importCsv').mockResolvedValue({ data: { created: 1, skipped: 0, total: 1, errors: [] } });
   await act(async () => {
     root.render(<CsvImportWizard isOpen onClose={() => {}} formId="f1" fields={fields} />);
@@ -104,5 +104,49 @@ describe('CsvImportWizard', () => {
     await click(/Preview/);
 
     expect(page()).not.toContain("aren't imported");
+  });
+
+  it('says what it assumed about a file that was not UTF-8, at both steps', async () => {
+    await open(['Name'], [['José']], { encoding: 'Windows-1252', endCut: false });
+
+    expect(page()).toContain('read as Western (Windows-1252)');
+    expect(page()).toContain('CSV UTF-8');
+    await click(/Preview/);
+    expect(page()).toContain('read as Western (Windows-1252)');
+  });
+
+  it('says nothing about the encoding of UTF-8, or when an older server does not say', async () => {
+    await open(['Name'], [['Ada']], { encoding: 'UTF-8', endCut: false });
+    expect(page()).not.toMatch(/read as|cut short/);
+
+    await click(/Preview/);
+    expect(page()).not.toMatch(/read as|cut short/);
+    await act(async () => root.unmount());
+    root = createRoot(host);
+
+    await open(['Name'], [['Ada']]);
+    expect(page()).not.toMatch(/read as|cut short/);
+  });
+
+  it('names any other encoding it read', async () => {
+    await open(['Name'], [['Ada']], { encoding: 'UTF-16' });
+
+    expect(page()).toContain('This file was read as UTF-16.');
+  });
+
+  it('says when a file ends part-way through a character', async () => {
+    await open(['Name'], [['Ada']], { encoding: 'UTF-8', endCut: true });
+
+    expect(page()).toContain('may have been cut short');
+  });
+
+  it('gives the import the headings as well as the columns', async () => {
+    const importCsv = await open(['Name', 'Notes'], [['Ada', 'x']]);
+
+    await click(/Preview/);
+    await click(/Import 1 Rows/);
+
+    expect(importCsv.mock.calls[0][2]).toEqual(['first', 'skip']);
+    expect(importCsv.mock.calls[0][3]).toEqual(['Name', 'Notes']);
   });
 });

@@ -24,6 +24,7 @@ use FormLogic\Database\SQLiteConnection;
 use FormLogic\Database\SqliteSnapshot;
 use FormLogic\Helpers\IpResolver;
 use FormLogic\Support\AfterResponse;
+use FormLogic\Support\CsvEncodingRefused;
 use FormLogic\Support\CsvUpload;
 use FormLogic\Support\SqlErrorText;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -2027,7 +2028,14 @@ class ResponseController
                 'message' => 'Failed to open CSV file',
             ], 400);
         }
-        $table = CsvUpload::parse($bytes);
+        try {
+            $table = CsvUpload::parse($bytes);
+        } catch (CsvEncodingRefused $e) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => $e->getMessage(),
+            ], 400);
+        }
         if ($table === null) {
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -2081,6 +2089,8 @@ class ResponseController
                 'previewCells' => $previewCells,
                 'previewRows' => array_map(static fn (array $cells): array => array_combine($headers, $cells), $previewCells),
                 'fields' => $fields,
+                'encoding' => $table['encoding'],
+                'endCut' => $table['endCut'],
             ]);
         }
 

@@ -801,11 +801,15 @@ class AuthService
 
     /**
      * Begin a password reset: issue a single-use, expiring token and email a
-     * reset link. Always returns silently (never reveals whether the email
-     * exists) to avoid account enumeration. Best-effort email — if no email
-     * service is configured the token is still created but undeliverable.
+     * reset link. Says nothing a visitor could use: the forgot-password route
+     * answers before this runs and never reads the result. Best-effort email —
+     * if no email service is configured the token is still created but
+     * undeliverable.
+     *
+     * @return bool Whether a mail with a link went to the mail server. An
+     *   administrator's reset needs to know, because it signs the member out.
      */
-    public function requestPasswordReset(string $email, string $resetUrlBase, bool $countAttempt = true): void
+    public function requestPasswordReset(string $email, string $resetUrlBase, bool $countAttempt = true): bool
     {
         // Per-email rate limit, checked BEFORE the existence lookup below and keyed on the
         // raw submitted email string itself (never on whether an account was found). This
@@ -820,7 +824,7 @@ class AuthService
         $stmt->execute(['email' => trim($email)]);
         $user = $stmt->fetch();
         if (!$user) {
-            return; // Don't reveal non-existence.
+            return false;
         }
 
         // Invalidate any outstanding resets for this user, then issue a new one.
@@ -850,8 +854,9 @@ class AuthService
                 . "<p><a href=\"{$safeLink}\">Reset your password</a></p>"
                 . "<p>Resetting it also turns off your API keys and signs out linked apps such as OAIY. You'll need to make new keys and connect those apps again.</p>"
                 . "<p>If you didn't request this, you can safely ignore this email.</p>";
-            $this->emailService->send((string) $email, 'Reset your FormLogic password', $html);
+            return $this->emailService->send((string) $email, 'Reset your FormLogic password', $html);
         }
+        return false;
     }
 
     /**

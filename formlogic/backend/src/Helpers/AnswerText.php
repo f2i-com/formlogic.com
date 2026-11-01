@@ -19,6 +19,12 @@ final class AnswerText
         'r' => 'ŕŗř', 's' => 'śŝşš', 't' => 'ţťŧ', 'u' => 'ùúûüũūŭůűų', 'w' => 'ŵ', 'y' => 'ýÿŷ', 'z' => 'źżž',
     ];
 
+    /**
+     * What Unicode normalisation can change: combining marks, Korean jamo (letters, not marks), and
+     * the characters it swaps for a twin, such as CJK compatibility ideographs and Greek oxia.
+     */
+    private const COMPOSES = '/[\p{M}\x{1100}-\x{11FF}\x{0374}\x{037E}\x{0387}\x{0958}-\x{095F}\x{09DC}\x{09DD}\x{09DF}\x{0A33}\x{0A36}\x{0A59}-\x{0A5B}\x{0A5E}\x{0B5C}\x{0B5D}\x{0F43}\x{0F4D}\x{0F52}\x{0F57}\x{0F5C}\x{0F69}\x{1F71}-\x{1FFD}\x{2000}\x{2001}\x{2329}\x{232A}\x{2ADC}\x{F900}-\x{FAD9}\x{FB1D}-\x{FB4E}\x{1D15E}-\x{1D164}\x{1D1BB}-\x{1D1C0}\x{2F800}-\x{2FA1D}]/u';
+
     /** Text with case taken out, in any script, so two spellings compare equal. */
     public static function fold(string $text): string
     {
@@ -27,7 +33,12 @@ final class AnswerText
             return strtolower($text);
         }
         $folded = mb_convert_case($text, MB_CASE_FOLD, 'UTF-8');
-        // A Mac can hand over é as e plus an accent. Without intl that spelling stays apart.
+        // A Mac can hand over é as e plus an accent, and Korean as separate jamo. Text with nothing
+        // to compose skips this, because a search pays for it on every row: without intl it runs in
+        // PHP, through the polyfill symfony/mailer brings, at 0.4 ms for 2,000 Japanese characters.
+        if (preg_match(self::COMPOSES, $folded) !== 1) {
+            return $folded;
+        }
         return class_exists(\Normalizer::class) ? ((string) \Normalizer::normalize($folded) ?: $folded) : $folded;
     }
 

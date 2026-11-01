@@ -3,8 +3,9 @@
 declare(strict_types=1);
 
 // A web request never runs this. The folder can be reachable on a server without the bundle's
-// rewrites, and a visit would run it with the site's credentials.
-if (isset($_SERVER['REQUEST_METHOD'])) {
+// rewrites, and a visit would run it with the site's credentials. The install wizard loads it for
+// its functions, having defined FORMLOGIC_UPGRADE_NO_RUN, which a visitor can't do.
+if (isset($_SERVER['REQUEST_METHOD']) && !defined('FORMLOGIC_UPGRADE_NO_RUN')) {
     http_response_code(404);
     exit;
 }

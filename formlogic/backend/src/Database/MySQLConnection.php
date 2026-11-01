@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = '31621de3e53f834fc7711ce1dd5113de';
+    public const SCHEMA_STAMP = 'cda19a012401f776e35910a8c122bb46';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -95,7 +95,7 @@ class MySQLConnection
         }
         $got = $pdo->query("SELECT GET_LOCK('formlogic_schema_migration', 15)")->fetchColumn();
         if ((int) $got !== 1) {
-            throw new \RuntimeException(
+            throw new MigrationInProgressException(
                 'Database migration is in progress on another worker — retry shortly'
             );
         }

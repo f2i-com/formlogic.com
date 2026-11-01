@@ -32,6 +32,11 @@ final class MailDeliveryTest extends TestCase
     private static $site = null;
     private static string $base = '';
     private static string $storage = '';
+    /** @var resource|null */
+    private static $mailServer = null;
+    /** @var resource|null */
+    private static $healthySite = null;
+    private static string $healthyBase = '';
 
     /** Well under the 5 s one step with the mail server may take. */
     private const QUICK_SECONDS = 2.5;
@@ -68,9 +73,11 @@ final class MailDeliveryTest extends TestCase
 
     public static function tearDownAfterClass(): void
     {
-        if (is_resource(self::$site)) {
-            proc_terminate(self::$site);
-            proc_close(self::$site);
+        foreach ([self::$site, self::$healthySite, self::$mailServer] as $process) {
+            if (is_resource($process)) {
+                proc_terminate($process);
+                proc_close($process);
+            }
         }
         if (is_resource(self::$deadServer)) {
             fclose(self::$deadServer);
@@ -97,50 +104,90 @@ final class MailDeliveryTest extends TestCase
         if (self::$site !== null) {
             return;
         }
+        [self::$site, self::$base] = self::launchSite(self::$deadPort);
+    }
+
+    /** The same site with a mail server that answers. */
+    private static function startHealthySite(): void
+    {
+        if (self::$healthySite !== null) {
+            return;
+        }
+        $pipes = [];
+        self::$mailServer = proc_open([PHP_BINARY, dirname(__DIR__) . '/Support/fake-smtp.php'], [1 => ['pipe', 'w']], $pipes) ?: null;
+        self::assertIsResource(self::$mailServer, 'the mail server starts');
+        $port = (int) fgets($pipes[1]);
+        self::assertGreaterThan(0, $port);
+        [self::$healthySite, self::$healthyBase] = self::launchSite($port);
+    }
+
+    /** @return array{0: resource, 1: string} */
+    private static function launchSite(int $smtpPort): array
+    {
         $probe = stream_socket_server('tcp://127.0.0.1:0');
         $port = (int) substr(strrchr((string) stream_socket_get_name($probe, false), ':'), 1);
         fclose($probe);
-        self::$base = "http://127.0.0.1:{$port}";
+        $base = "http://127.0.0.1:{$port}";
 
         $backend = dirname(__DIR__, 2);
-        $relative = 'storage/fl-mail-test-' . bin2hex(random_bytes(5));
-        self::$storage = $backend . '/' . $relative;
-        mkdir(self::$storage, 0777, true);
+        if (self::$storage === '') {
+            self::$storage = $backend . '/storage/fl-mail-test-' . bin2hex(random_bytes(5));
+            mkdir(self::$storage, 0777, true);
+        }
         $env = [
             'DB_HOST' => self::$config['host'], 'DB_PORT' => self::$config['port'], 'DB_DATABASE' => self::$config['database'],
             'DB_USERNAME' => self::$config['username'], 'DB_PASSWORD' => self::$config['password'],
             'SystemRoot' => (string) getenv('SystemRoot'), 'PATH' => (string) getenv('PATH'), 'TEMP' => sys_get_temp_dir(), 'TMP' => sys_get_temp_dir(),
-            'APP_ENV' => 'development', 'APP_URL' => self::$base, 'CORS_ORIGIN' => self::$base, 'CORS_ALLOWED_ORIGINS' => self::$base,
-            'SQLITE_STORAGE_PATH' => $relative, 'PRIVATE_FORMS' => 'false', 'DATA_NODES' => 'false',
-            'MAIL_FROM_ADDRESS' => 'noreply@example.com', 'SMTP_HOST' => '127.0.0.1', 'SMTP_PORT' => (string) self::$deadPort,
+            'APP_ENV' => 'development', 'APP_URL' => $base, 'CORS_ORIGIN' => $base, 'CORS_ALLOWED_ORIGINS' => $base,
+            'SQLITE_STORAGE_PATH' => 'storage/' . basename(self::$storage), 'PRIVATE_FORMS' => 'false', 'DATA_NODES' => 'false',
+            'MAIL_FROM_ADDRESS' => 'noreply@example.com', 'SMTP_HOST' => '127.0.0.1', 'SMTP_PORT' => (string) $smtpPort,
         ];
         $pipes = [];
         $nowhere = PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
-        self::$site = proc_open(
+        $site = proc_open(
             [PHP_BINARY, '-d', 'variables_order=EGPCS', '-d', 'xdebug.mode=off', '-S', "127.0.0.1:{$port}", '-t', $backend . '/public', dirname($backend) . '/ci/router.php'],
             [1 => ['file', $nowhere, 'a'], 2 => ['file', $nowhere, 'a']],
             $pipes,
             $backend,
             $env
-        ) ?: null;
-        self::assertIsResource(self::$site, 'the site starts');
+        );
+        self::assertIsResource($site, 'the site starts');
         for ($i = 0; $i < 300; $i++) {
-            if (@self::post('/api/health', null)['status'] === 200) {
-                return;
+            if (@self::post('/api/health', null, $base)['status'] === 200) {
+                return [$site, $base];
             }
             usleep(200_000);
         }
         self::fail('the site did not come up');
     }
 
-    /** @return array{status:int, seconds:float, body:string} */
-    private static function post(string $path, ?array $json): array
+    /**
+     * A forgot-password request on a plain socket: when the server closed it, as someone would
+     * measure who was sent the answer's bytes at once and wants to know more.
+     */
+    private static function secondsToClose(string $base, string $email): float
     {
-        $curl = curl_init(self::$base . $path);
+        $body = (string) json_encode(['email' => $email]);
+        $host = substr($base, strlen('http://'));
+        $socket = stream_socket_client('tcp://' . $host);
+        self::assertIsResource($socket);
+        $started = microtime(true);
+        fwrite($socket, "POST /api/auth/forgot-password HTTP/1.1\r\nHost: {$host}\r\nOrigin: {$base}\r\nContent-Type: application/json\r\nContent-Length: " . strlen($body) . "\r\n\r\n{$body}");
+        stream_get_contents($socket);
+        $seconds = microtime(true) - $started;
+        fclose($socket);
+        return $seconds;
+    }
+
+    /** @return array{status:int, seconds:float, body:string} */
+    private static function post(string $path, ?array $json, ?string $base = null): array
+    {
+        $base ??= self::$base;
+        $curl = curl_init($base . $path);
         curl_setopt_array($curl, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 30,
-            CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Origin: ' . self::$base],
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Origin: ' . $base],
         ] + ($json === null ? [] : [CURLOPT_POST => true, CURLOPT_POSTFIELDS => (string) json_encode($json)]));
         $started = microtime(true);
         $body = curl_exec($curl);
@@ -214,11 +261,49 @@ final class MailDeliveryTest extends TestCase
         self::$pdo?->exec("DELETE FROM audit_log WHERE action = 'mail.failed' AND details LIKE '%@example.com%'");
     }
 
-    public function testDoctorSaysSoWherePlainFastCgiHoldsTheAnswer(): void
+    public function testDoctorSaysSoWhereAServerCannotEndAnAnswer(): void
     {
         self::assertSame(AfterResponse::LIMITATION, AfterResponse::limitation('cgi-fcgi'));
-        self::assertNull(AfterResponse::limitation('apache2handler'));
+        self::assertSame(AfterResponse::LIMITATION_MOD_PHP, AfterResponse::limitation('apache2handler'));
+        self::assertNull(AfterResponse::limitation('fpm-fcgi'));
         self::assertNull(AfterResponse::limitation('cli-server'));
+    }
+
+    public function testNobodyWaitsForTheFloorOnTheCommandLine(): void
+    {
+        $ran = false;
+        $started = microtime(true);
+        AfterResponse::runWithFloor(static function () use (&$ran): void {
+            $ran = true;
+        });
+
+        self::assertTrue($ran);
+        self::assertLessThan(AfterResponse::FLOOR_SECONDS / 2, microtime(true) - $started);
+    }
+
+    /**
+     * mod_php and php -S share this: every byte of the answer arrives at once, and the connection
+     * closes when PHP exits, after the mail. Before the floor the close came at 0.75 s and 0.04 s.
+     */
+    public function testTheConnectionClosesAtTheSameTimeForAnAddressWithAnAccountAndOneWithout(): void
+    {
+        self::startHealthySite();
+        self::$pdo->exec('DELETE FROM rate_limits');
+        $email = 'closes-' . bin2hex(random_bytes(5)) . '@example.com';
+        $userId = $this->user($email);
+        try {
+            $known = self::secondsToClose(self::$healthyBase, $email);
+            $unknown = self::secondsToClose(self::$healthyBase, 'nobody-' . bin2hex(random_bytes(5)) . '@example.com');
+
+            self::assertSame(0, $this->failedMailsTo($email), 'the mail went: this is the healthy server');
+            $token = self::$pdo->prepare('SELECT COUNT(*) FROM password_resets WHERE user_id = ?');
+            $token->execute([$userId]);
+            self::assertSame(1, (int) $token->fetchColumn());
+            self::assertGreaterThanOrEqual(AfterResponse::FLOOR_SECONDS - 0.05, $unknown, 'an unknown address is held too');
+            self::assertLessThan(0.4, abs($known - $unknown), "closed at {$known} s and {$unknown} s");
+        } finally {
+            $this->dropUser($userId);
+        }
     }
 
     public function testDoctorCountsTheLastWeekAndNamesTheLatest(): void
@@ -261,6 +346,8 @@ final class MailDeliveryTest extends TestCase
             self::assertSame($known['status'], $unknown['status']);
             self::assertSame($known['body'], $unknown['body']);
             self::assertLessThan(self::QUICK_SECONDS, $unknown['seconds']);
+            // php -S has one worker, and the floor keeps it for what follows that answer.
+            self::post('/api/health', null);
         } finally {
             $this->dropUser($userId);
         }

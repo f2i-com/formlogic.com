@@ -30,7 +30,9 @@ final class ServerSurfaceTest extends TestCase
     public function testAWebRequestRunsNoScript(string $path): void
     {
         $source = (string) file_get_contents($path);
-        $guard = strpos($source, "if (isset(\$_SERVER['REQUEST_METHOD'])) {");
+        // upgrade.php also lets the install wizard load it, by a constant a visitor can't set.
+        $guard = strpos($source, "if (isset(\$_SERVER['REQUEST_METHOD'])) {")
+            ?: strpos($source, "if (isset(\$_SERVER['REQUEST_METHOD']) && !defined('FORMLOGIC_UPGRADE_NO_RUN')) {");
         self::assertNotFalse($guard, basename($path) . ' can be run by visiting it');
         foreach (['require ', 'require_once ', 'include ', 'include_once '] as $load) {
             $first = strpos($source, $load);

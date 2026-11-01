@@ -27,6 +27,8 @@ interface ParseResult {
   rowCount: number;
   previewCells: string[][];
   fields: Array<{ id: string; label: string; type: string }>;
+  encoding?: string;
+  endCut?: boolean;
 }
 
 interface ImportResult {
@@ -182,7 +184,7 @@ export function CsvImportWizard({
     if (!file) return;
 
     setIsLoading(true);
-    const result = await api.importCsv(formId, file, columnMapping);
+    const result = await api.importCsv(formId, file, columnMapping, parseResult?.headers ?? []);
 
     if (result.error) {
       toast.error('Import failed', result.error);
@@ -199,7 +201,7 @@ export function CsvImportWizard({
     }
 
     setIsLoading(false);
-  }, [file, formId, columnMapping, onImportComplete]);
+  }, [file, formId, columnMapping, parseResult, onImportComplete]);
 
   // Column positions that go to a field, for the preview.
   const mappedColumns = useMemo(() => {
@@ -233,6 +235,20 @@ export function CsvImportWizard({
     if (links) notes.push(`${links}: a linked record needs its record ID. An export has its display text instead, which won't link to the record.`);
     return notes;
   }, [inputFields, usedFieldIds]);
+
+  // What was assumed about the file, on the steps where a wrong guess would show.
+  const fileNotes = useMemo(() => {
+    const notes: string[] = [];
+    if (parseResult?.encoding === 'Windows-1252') {
+      notes.push('This file isn\'t UTF-8, so it was read as Western (Windows-1252). If any names look wrong in the preview, don\'t import it: save it from Excel as "CSV UTF-8" and upload that instead.');
+    } else if (parseResult?.encoding && parseResult.encoding !== 'UTF-8') {
+      notes.push(`This file was read as ${parseResult.encoding}.`);
+    }
+    if (parseResult?.endCut) {
+      notes.push('This file ends part-way through a character, so it may have been cut short. Check its last row.');
+    }
+    return notes;
+  }, [parseResult]);
 
   return (
     <Modal
@@ -282,6 +298,16 @@ export function CsvImportWizard({
             </div>
           ))}
         </div>
+
+        {(step === 'map' || step === 'preview') && fileNotes.length > 0 && (
+          <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-lg">
+            {fileNotes.map((note) => (
+              <p key={note} className="text-sm text-amber-700 dark:text-amber-400">
+                {note}
+              </p>
+            ))}
+          </div>
+        )}
 
         {/* Step 1: Upload */}
         {step === 'upload' && (

@@ -100,7 +100,11 @@ function isFormLogicReply(body: unknown): boolean {
   return !!body && typeof body === 'object' && !Array.isArray(body);
 }
 const AUTH_SESSION_CHANGED = 'Session changed. Please try again.';
-const NOT_FORMLOGIC_REPLY = 'Your answers were not sent: something on the network answered instead of FormLogic (a Wi-Fi sign-in page, for example). Your answers are still here. Check your connection and send them again.';
+/** The server's 503 while a migration runs past the 15 s a request waits for it (StartupFailure). */
+const MIGRATION_IN_PROGRESS = 'migration_in_progress';
+/** At about 20 s each that's ten minutes. A migration that ends frees the lock, so this ends too. */
+const MIGRATION_WAITS = 30;
+const NOT_FORMLOGIC_REPLY ='Your answers were not sent: something on the network answered instead of FormLogic (a Wi-Fi sign-in page, for example). Your answers are still here. Check your connection and send them again.';
 
 /**
  * `<id>;<revision>` of the engine decision a hosted frame was mounted with, if it has one.
@@ -877,7 +881,8 @@ class ApiClient {
   private async request<T>(
     endpoint: string,
     options: RequestInit = {},
-    confirmedAgain = false
+    confirmedAgain = false,
+    migrationWaits = 0
   ): Promise<ApiResponse<T>> {
     const generation = currentSessionGeneration();
     const routed = this.routeForAdminActing(endpoint);
@@ -930,6 +935,13 @@ class ApiClient {
         const d = data as Record<string, unknown>;
         if (d?.code === ADMIN_CONFIRMATION_REQUIRED && !confirmedAgain && await askForAdminConfirmation()) {
           return this.request<T>(endpoint, options, true);
+        }
+        // Reading can wait with the server. A page that gave up here showed a signed-in person a
+        // 404, and stayed on it after the update had finished. A write is left to the person.
+        if (d?.code === MIGRATION_IN_PROGRESS && method === 'GET' && migrationWaits < MIGRATION_WAITS) {
+          const seconds = Number(response.headers?.get?.('Retry-After')) || 5;
+          await new Promise((done) => setTimeout(done, seconds * 1000));
+          return this.request<T>(endpoint, options, confirmedAgain, migrationWaits + 1);
         }
         let message = d?.code === ADMIN_CONFIRMATION_REQUIRED && canAskForAdminConfirmation() ? ADMIN_CONFIRMATION_DECLINED : (d?.message as string) || 'An error occurred';
         // Surface per-field validation errors so failures are actionable rather
@@ -4308,14 +4320,18 @@ class ApiClient {
         if (response.status === 401) this.handleUnauthorized(generation);
         return { error: data.message || 'Failed to parse CSV' };
       }
-      return { data };
+      return { data: previewCellsOf(data) };
     } catch (error) {
       return { error: error instanceof Error ? error.message : 'Network error' };
     }
   }
 
-  /** `columns` holds a field id, or 'skip', for each column of the file in order. */
-  async importCsv(formId: string, file: File, columns: string[]): Promise<ApiResponse<CsvImportResult>> {
+  /**
+   * `columns` holds a field id, or 'skip', for each column of the file in order. A server from
+   * before v0.1.21 knows only `columnMapping`, by heading, and would read `columns` alone as a
+   * request for another preview, so it goes beside them. A newer server ignores it.
+   */
+  async importCsv(formId: string, file: File, columns: string[], headers: string[] = []): Promise<ApiResponse<CsvImportResult>> {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
@@ -4323,6 +4339,9 @@ class ApiClient {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('columns', JSON.stringify(columns));
+    formData.append('columnMapping', JSON.stringify(Object.fromEntries(
+      headers.flatMap((heading, column) => (columns[column] && columns[column] !== 'skip' ? [[heading, columns[column]]] : []))
+    )));
 
     try {
       const fetchHeaders: Record<string, string> = {};
@@ -5506,6 +5525,18 @@ interface CsvParseResult {
   /** The first rows, each a list of cells in column order. */
   previewCells: string[][];
   fields: Array<{ id: string; label: string; type: string }>;
+  /** What the file was read as. A server from before v0.1.21 doesn't say. */
+  encoding?: string;
+  /** The file stopped part-way through a character, which was dropped. */
+  endCut?: boolean;
+}
+
+/** A server from before v0.1.21 sends each preview row by heading, as `previewRows`, and no cells. */
+function previewCellsOf(reply: Omit<CsvParseResult, 'previewCells'> & { previewCells?: string[][]; previewRows?: Array<Record<string, string>> }): CsvParseResult {
+  return {
+    ...reply,
+    previewCells: reply.previewCells ?? (reply.previewRows ?? []).map((row) => reply.headers.map((heading) => row[heading] ?? '')),
+  };
 }
 
 interface CsvImportResult {

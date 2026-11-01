@@ -114,11 +114,11 @@ class AdminSafeguardsTest extends TestCase
         return self::$auth->getUserById($this->ownerId);
     }
 
-    private function controller(?MfaService $mfa = null, ?EmailService $email = null, ?FormService $forms = null, ?FlowService $flows = null): AdminController
+    private function controller(?MfaService $mfa = null, ?EmailService $email = null, ?FormService $forms = null, ?FlowService $flows = null, ?AuthService $auth = null): AdminController
     {
         return new AdminController(
             self::$admin,
-            self::$auth,
+            $auth ?? self::$auth,
             $this->createStub(MaintenanceService::class),
             $this->createStub(UpgradeService::class),
             $forms ?? $this->createStub(FormService::class),
@@ -325,16 +325,45 @@ class AdminSafeguardsTest extends TestCase
         try {
             $email = $this->createStub(EmailService::class);
             $email->method('isConfigured')->willReturn(true);
-            $response = $this->controller(null, $email)->resetPassword($this->adminRequest('/x', ['password' => 'admin-chosen-password-1']), (new ResponseFactory())->createResponse(), ['id' => $this->ownerId]);
+            $email->method('send')->willReturn(true);
+            $session = self::$auth->issueToken($this->owner());
+            $response = $this->controller(null, $email, null, null, new AuthService(self::$mysql, self::JWT, [], $email))->resetPassword($this->adminRequest('/x', ['password' => 'admin-chosen-password-1']), (new ResponseFactory())->createResponse(), ['id' => $this->ownerId]);
             $body = self::decode($response);
             $this->assertSame(200, $response->getStatusCode(), json_encode($body));
             $this->assertTrue($body['emailed']);
             $this->assertArrayNotHasKey('tempPassword', $body);
             $this->assertTrue(self::$auth->verifyPassword($this->ownerId, 'the-right-password'), 'still the owner\'s own');
             $this->assertFalse(self::$auth->verifyPassword($this->ownerId, 'admin-chosen-password-1'));
+            $this->assertNull(self::$auth->validateToken($session), 'whoever is signed in is out');
             $row = self::$pdo->prepare('SELECT COUNT(*) FROM password_resets WHERE user_id = ?');
             $row->execute([$this->ownerId]);
             $this->assertSame(1, (int) $row->fetchColumn());
+        } finally {
+            if ($saved === null) {
+                unset($_ENV['APP_URL']);
+            } else {
+                $_ENV['APP_URL'] = $saved;
+            }
+        }
+    }
+
+    public function testAResetTheMailServerDidNotTakeSaysSoAndSignsNobodyOut(): void
+    {
+        $saved = $_ENV['APP_URL'] ?? null;
+        $_ENV['APP_URL'] = 'https://forms.safeguards.test';
+        try {
+            $email = $this->createStub(EmailService::class);
+            $email->method('isConfigured')->willReturn(true);
+            $email->method('send')->willReturn(false);
+            $session = self::$auth->issueToken($this->owner());
+            $response = $this->controller(null, $email, null, null, new AuthService(self::$mysql, self::JWT, [], $email))->resetPassword($this->adminRequest('/x'), (new ResponseFactory())->createResponse(), ['id' => $this->ownerId]);
+            $body = self::decode($response);
+            $this->assertSame(503, $response->getStatusCode(), json_encode($body));
+            $this->assertTrue($body['error']);
+            $this->assertTrue($body['retryable']);
+            $this->assertArrayNotHasKey('emailed', $body);
+            $this->assertNotNull(self::$auth->validateToken($session), 'still signed in, with no link on its way');
+            $this->assertTrue(self::$auth->verifyPassword($this->ownerId, 'the-right-password'));
         } finally {
             if ($saved === null) {
                 unset($_ENV['APP_URL']);

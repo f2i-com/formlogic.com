@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Tests\Unit;
 
+use FormLogic\Database\MigrationInProgressException;
 use FormLogic\Support\StartupFailure;
 use PHPUnit\Framework\TestCase;
 
@@ -17,6 +18,18 @@ final class StartupFailureTest extends TestCase
         $this->assertSame(30, $answer['retryAfter']);
         $this->assertTrue($answer['body']['retryable']);
         $this->assertStringNotContainsString('MySQL', $answer['body']['message']);
+    }
+
+    public function testAMigrationStillRunningIsATryAgainSoon(): void
+    {
+        $answer = StartupFailure::answerTo(new MigrationInProgressException('on another worker'));
+
+        $this->assertSame(503, $answer['status']);
+        $this->assertSame(5, $answer['retryAfter']);
+        $this->assertTrue($answer['body']['error']);
+        $this->assertTrue($answer['body']['retryable']);
+        $this->assertSame('migration_in_progress', $answer['body']['code']);
+        $this->assertStringNotContainsString('worker', $answer['body']['message']);
     }
 
     public function testAnythingElseSaysNothingOfWhatHappened(): void

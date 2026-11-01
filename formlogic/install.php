@@ -1156,9 +1156,9 @@ function flBootstrapBackend(): array
 }
 
 /**
- * Load the shared helpers from bin/upgrade.php (formlogicUpgrade*). Under the web SAPI its runnable
- * tail is skipped by its own guard, so requiring it only defines the functions — the wizard and the
- * CLI literally share one implementation (core-table list, version resolution, table probes).
+ * Load the shared helpers from bin/upgrade.php (formlogicUpgrade*). With FORMLOGIC_UPGRADE_NO_RUN
+ * defined, requiring it only defines the functions — the wizard and the CLI literally share one
+ * implementation (core-table list, version resolution, table probes).
  */
 function flLoadUpgradeHelpers(): bool
 {
@@ -1166,8 +1166,8 @@ function flLoadUpgradeHelpers(): bool
     if (!is_file($file) || !is_file(flBackendDir() . '/vendor/autoload.php')) {
         return false;
     }
-    // Belt-and-suspenders: the guard in bin/upgrade.php already skips its runnable tail under a
-    // web SAPI, but the constant makes "definitions only" explicit in EVERY SAPI (incl. CLI tests).
+    // Without the constant bin/upgrade.php answers a web request with a 404 and stops there, and
+    // with it the file holds definitions only, in every SAPI (incl. CLI tests).
     if (!defined('FORMLOGIC_UPGRADE_NO_RUN')) {
         define('FORMLOGIC_UPGRADE_NO_RUN', true);
     }
