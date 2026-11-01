@@ -163,12 +163,22 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
   if (!/fastcgi_param SCRIPT_FILENAME \S+\/backend\/public\/index\.php;/.test(apiBlock) || /\balias\b|try_files/.test(apiBlock)) {
     fail('the nginx example must hand all of /api/ to the front controller: alias with try_files never reaches PHP');
   }
+  if (!/fastcgi_read_timeout\s+\d{3,}s;/.test(apiBlock)) {
+    fail('the nginx example must let /api/ run past nginx\'s 60 seconds: a Studio round, an update and a backup may take ten minutes, and PHP goes on behind a 504');
+  }
+  const apache = readme.match(/```apache\n([\s\S]*?)```/)?.[1] ?? '';
+  if (!apache) fail('README.md must keep its Apache example, or this check must go with it');
+  if (!/RewriteRule \^\/api\/\(\.\*\)\$ \/api\/index\.php \[[^\]]*\bPT\b/.test(apache)) {
+    fail('the Apache example must pass /api/ on with PT: without it Alias never sees the rule, and every /api/ request is a 404');
+  }
+  const apacheExampleRoot = new RegExp(apache.match(/RewriteRule (\^\/\(manifest\S+\$) /)?.[1] ?? '^$');
   const rootPaths = ['manifest.json', '.well-known/formlogic-app.json', '.well-known/assetlinks.json', '.well-known/aokie-companion', '.well-known/aokie-companion.json', '.well-known/oauth-authorization-server', '.well-known/oauth-protected-resource', '.well-known/oauth-protected-resource/api/mcp'];
   const apacheRoot = [...htaccess.matchAll(/^\s*RewriteRule (\^\S+\$) api\/public\/index\.php/gm)].map((match) => new RegExp(match[1]));
   const nginxRoot = new RegExp(nginx.match(/location ~ (\^\/\(manifest\S+\$) \{/)?.[1] ?? '^$');
   for (const path of rootPaths) {
     if (!apacheRoot.some((rule) => rule.test(path))) fail(`.htaccess must hand /${path} to the backend`);
     if (!nginxRoot.test(`/${path}`)) fail(`the nginx example must hand /${path} to the backend, as .htaccess does`);
+    if (!apacheExampleRoot.test(`/${path}`)) fail(`the Apache example must hand /${path} to the backend, as .htaccess does`);
   }
 }
 

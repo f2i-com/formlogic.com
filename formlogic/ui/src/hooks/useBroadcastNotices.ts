@@ -68,7 +68,9 @@ export function useBroadcastNotices(enabled: boolean): MaintenanceState {
       try {
         const res = await api.getNotices();
         if (cancelled) return;
-        if (res.status === 503) {
+        // A database that is down is a 503 too, and nobody turned maintenance on for it. An admin
+        // was told "Maintenance mode is ON" with no panel to turn it off from.
+        if (res.status === 503 && res.code !== 'database_unavailable') {
           // MaintenanceMiddleware's 503 carries the admin's message as `message`,
           // which the api client flattens into `error`.
           setMaintenance({ active: true, message: res.error || 'The site is briefly down for maintenance.' });

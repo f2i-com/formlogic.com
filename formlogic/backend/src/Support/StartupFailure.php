@@ -69,6 +69,7 @@ final class StartupFailure
                 'retryAfter' => self::RETRY_AFTER_SECONDS,
                 'body' => [
                     'error' => true,
+                    'code' => 'database_unavailable',
                     'retryable' => true,
                     'message' => "The site can't reach its database right now. Please try again in a moment.",
                 ],

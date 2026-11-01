@@ -9,6 +9,11 @@ use PDOException;
 
 class MySQLConnection
 {
+    /** Where the stamp is kept. See ensureSchemaCurrent(). */
+    public const SCHEMA_STAMP_KEY = 'schema_stamp';
+    /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
+    public const SCHEMA_STAMP = '31621de3e53f834fc7711ce1dd5113de';
+
     private static ?PDO $instance = null;
     private array $config;
 
@@ -60,8 +65,8 @@ class MySQLConnection
      * FULL initializeSchema + runMigrations (50+ CREATEs, dozens of SHOW
      * COLUMNS probes, DDL) in EVERY php-fpm process. Now:
      *
-     *  - Fast path: ONE indexed SELECT compares schema_meta's stamp against a
-     *    hash of this file — when the schema code hasn't changed, a request
+     *  - Fast path: ONE indexed SELECT compares schema_meta's stamp against
+     *    SCHEMA_STAMP — when the schema code hasn't changed, a request
      *    executes zero DDL and zero probes.
      *  - Miss (fresh install / after a deploy that touched this file): one
      *    worker migrates under a named MySQL lock; concurrent workers wait on
@@ -69,15 +74,23 @@ class MySQLConnection
      *    migration at once. A worker that can't get the lock reports
      *    "migration in progress" instead of partially serving.
      *
-     * The stamp is md5(this file): every schema/migration change lives here,
-     * so a deploy that touches it re-migrates exactly once — no version
-     * constant for a developer to forget to bump.
+     * The stamp is a hash of this file, compiled into it: every schema/migration change lives
+     * here, so a deploy that touches it re-migrates exactly once, and SchemaStampTest fails with
+     * the value to use if it isn't updated. It is not read from the disk any more. An update
+     * replaces this file while PHP can go on running the old bytecode, and old code that read the
+     * new file's hash wrote it as done having run only its own migrations: the release's never
+     * ran, and every check stayed green. Stale code can now only write its own value. The key is
+     * new as well, because releases to v0.1.20 can still do that to the old one, and never touch
+     * this: new code migrates once whatever they stamped, which also heals a site they raced.
+     *
+     * $force runs the migrations whatever the stamp says, which is how an operator heals drift
+     * (bin/upgrade.php), and still under the lock, and still leaves the stamp.
      */
-    public function ensureSchemaCurrent(): void
+    public function ensureSchemaCurrent(bool $force = false): void
     {
-        $stamp = md5_file(__FILE__) ?: 'unknown';
+        $stamp = self::schemaCodeStamp();
         $pdo = $this->getConnection();
-        if ($this->schemaStampMatches($pdo, $stamp)) {
+        if (!$force && $this->schemaStampMatches($pdo, $stamp)) {
             return; // one SELECT, no DDL — the normal request path
         }
         $got = $pdo->query("SELECT GET_LOCK('formlogic_schema_migration', 15)")->fetchColumn();
@@ -88,7 +101,7 @@ class MySQLConnection
         }
         try {
             // Re-check under the lock: a concurrent worker may have finished.
-            if ($this->schemaStampMatches($pdo, $stamp)) {
+            if (!$force && $this->schemaStampMatches($pdo, $stamp)) {
                 return;
             }
             $this->initializeSchema();
@@ -104,21 +117,27 @@ class MySQLConnection
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
             );
             $stmt = $pdo->prepare(
-                "INSERT INTO schema_meta (meta_key, meta_value) VALUES ('schema_code_stamp', :s)
+                "INSERT INTO schema_meta (meta_key, meta_value) VALUES (:k, :s)
                  ON DUPLICATE KEY UPDATE meta_value = :s2"
             );
-            $stmt->execute(['s' => $stamp, 's2' => $stamp]);
+            $stmt->execute(['k' => self::SCHEMA_STAMP_KEY, 's' => $stamp, 's2' => $stamp]);
         } finally {
             $pdo->query("SELECT RELEASE_LOCK('formlogic_schema_migration')");
         }
     }
 
+    /** What schema_meta's stamp holds once this code's migrations have all run. */
+    public static function schemaCodeStamp(): string
+    {
+        return self::SCHEMA_STAMP;
+    }
+
     private function schemaStampMatches(\PDO $pdo, string $stamp): bool
     {
         try {
-            $current = $pdo
-                ->query("SELECT meta_value FROM schema_meta WHERE meta_key = 'schema_code_stamp'")
-                ->fetchColumn();
+            $read = $pdo->prepare('SELECT meta_value FROM schema_meta WHERE meta_key = :k');
+            $read->execute(['k' => self::SCHEMA_STAMP_KEY]);
+            $current = $read->fetchColumn();
             return $current === $stamp;
         } catch (\PDOException $e) {
             return false; // schema_meta missing — fresh install/upgrade path
@@ -1048,13 +1067,15 @@ class MySQLConnection
         // workspace scope so the UNIQUE key actually dedupes (MySQL UNIQUE ignores NULLs); there is
         // deliberately no FK on app_id for that reason (FlowKvService validates app ownership).
         // Caps enforced in FlowKvService: value ≤ 64 KiB, ≤ 500 keys per (owner, app, scope).
+        // k is compared byte for byte: a flow keys by short codes and tokens, where AB12 and ab12 are
+        // two customers.
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS flow_kv (
                 id VARCHAR(36) PRIMARY KEY,
                 owner_user_id VARCHAR(36) NOT NULL,
                 app_id VARCHAR(36) NOT NULL DEFAULT '',
                 scope VARCHAR(64) NOT NULL,
-                k VARCHAR(190) NOT NULL,
+                k VARCHAR(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
                 v MEDIUMTEXT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -2479,6 +2500,13 @@ class MySQLConnection
         // FormLogic Flows tables for existing installs (CREATE TABLE IF NOT EXISTS; shared with
         // initializeSchema so fresh and migrated schemas match byte-for-byte).
         $this->createFlowTables($pdo);
+
+        // flow_kv.k used to ignore case, so two keys that differ by case were one entry. Going to
+        // bytes can only tell rows apart, never make two collide, so no row needs handling.
+        $col = $pdo->query("SHOW FULL COLUMNS FROM flow_kv LIKE 'k'")->fetch(PDO::FETCH_ASSOC);
+        if ($col && ($col['Collation'] ?? '') !== 'utf8mb4_bin') {
+            $pdo->exec("ALTER TABLE flow_kv MODIFY COLUMN k VARCHAR(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
+        }
 
         // Flows v1 (workspace scope + queued/claim lifecycle) for installs whose flow tables
         // predate it. The CREATEs above already carry these on a fresh DB; each ALTER below is

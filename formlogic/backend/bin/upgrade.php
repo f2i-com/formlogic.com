@@ -23,8 +23,10 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
  *     limits, no visibility, a slow first request on big tables);
  *   - verify the core tables exist afterwards;
  *   - stamp a schema_meta table (app_version / last_upgrade_at / upgrade_source) so any install can
- *     tell you what version its schema was last upgraded to;
- *   - --check: READ-ONLY drift report (core tables + recently-migrated columns/indexes), exit 0/1.
+ *     tell you what version its schema was last upgraded to, and schema_stamp, which tells the
+ *     web app this code's migrations have run, so its first request doesn't run them again;
+ *   - --check: READ-ONLY drift report (schema_stamp against this code, core tables,
+ *     recently-migrated columns/indexes), exit 0/1.
  *
  * Usage (deployed zip layout — the backend lives at <web-root>/api):
  *   php api/bin/upgrade.php --app-version=1.4.0    # migrate + stamp this version
@@ -147,15 +149,31 @@ function formlogicUpgradeIndexExists(\PDO $pdo, string $table, string $index): b
 }
 
 /**
- * --check: read-only schema drift report. Writes NOTHING. Returns 0 when every core table and
- * every drift probe is present, 1 otherwise. The schema_meta stamp is reported informationally
- * only (web auto-migration never stamps it, so its absence is not drift).
+ * --check: read-only schema drift report. Writes NOTHING. Returns 0 when schema_stamp matches
+ * this code and every core table and drift probe is present, 1 otherwise. The stamp is what shows
+ * an install is really current: it's written after all of this code's migrations have run, by the
+ * web app or by the upgrade below, where the short list of tables and columns can't see a release
+ * that was skipped. The app_version stamps are reported informationally only (web auto-migration
+ * never writes them, so their absence is not drift).
  */
 function formlogicUpgradeCheck(\PDO $pdo, callable $out): int
 {
-    $out('READ-ONLY check: core tables + recently-migrated columns/indexes (nothing will be written).');
+    $out('READ-ONLY check: schema stamp + core tables + recently-migrated columns/indexes (nothing will be written).');
 
     $missing = [];
+    $stored = false;
+    try {
+        $stmt = $pdo->query("SELECT meta_value FROM schema_meta WHERE meta_key = '" . MySQLConnection::SCHEMA_STAMP_KEY . "'");
+        $stored = $stmt !== false ? $stmt->fetchColumn() : false;
+    } catch (\Throwable $e) {
+        // No schema_meta table: the same answer as no stamp in it.
+    }
+    $current = $stored === MySQLConnection::schemaCodeStamp();
+    $out(sprintf('  stamp   %-42s %s', MySQLConnection::SCHEMA_STAMP_KEY, $current ? 'ok' : ($stored === false ? 'MISSING' : 'OUT OF DATE')));
+    if (!$current) {
+        $missing[] = MySQLConnection::SCHEMA_STAMP_KEY . " (this code's migrations have not run)";
+    }
+
     foreach (formlogicUpgradeCoreTables() as $table) {
         $ok = formlogicUpgradeTableExists($pdo, $table);
         $out(sprintf('  table   %-42s %s', $table, $ok ? 'ok' : 'MISSING'));
@@ -201,8 +219,7 @@ function formlogicUpgradeCheck(\PDO $pdo, callable $out): int
             $out('  schema_meta: present but unreadable (' . $e->getMessage() . ')');
         }
     } else {
-        $out('  schema_meta: not present — this install has never been upgraded via this CLI'
-            . ' (web auto-migration does not stamp it). Not counted as drift.');
+        $out('  schema_meta: not present.');
     }
 
     if ($missing !== []) {
@@ -211,13 +228,14 @@ function formlogicUpgradeCheck(\PDO $pdo, callable $out): int
         $out('Run "php bin/upgrade.php" (no --check) to apply the migrations.');
         return 1;
     }
-    $out('Check passed: all core tables and probed columns/indexes are present.');
+    $out('Check passed: this code\'s migrations have run, and all core tables and probed columns/indexes are present.');
     return 0;
 }
 
 /**
- * The upgrade proper: ensure base schema, run all guarded migrations, verify the core tables, and
- * stamp schema_meta. Returns 0 on success, 1 if a core table is still missing afterwards.
+ * The upgrade proper: ensure base schema, run all guarded migrations (under the web app's lock, and
+ * whatever the stamp says, which is how drift is healed), verify the core tables, and stamp
+ * schema_meta. Returns 0 on success, 1 if the migrations stopped or a core table is still missing.
  *
  * $versionSource is 'flag' | 'file' | 'none' (from formlogicUpgradeResolveVersion) — logged so the
  * operator can see where the stamped version came from.
@@ -250,10 +268,13 @@ function formlogicUpgradeRun(MySQLConnection $mysql, string $version, string $ve
         }
     }
 
-    $mysql->initializeSchema();
+    try {
+        $mysql->ensureSchemaCurrent(true);
+    } catch (\Throwable $e) {
+        $out('ERROR: the migrations stopped: ' . $e->getMessage());
+        return 1;
+    }
     $out('Schema ensured (base tables present).');
-
-    $mysql->runMigrations();
     $out('Migrations applied (every step is guarded — already-applied steps are no-ops).');
 
     $missing = [];
@@ -365,8 +386,9 @@ FormLogic database upgrade CLI
 Usage:
   php bin/upgrade.php [--app-version=<v>]  Ensure schema + run all migrations, verify core tables,
                                            stamp schema_meta. Idempotent — safe to re-run.
-  php bin/upgrade.php --check              Read-only: report which core tables / recently-migrated
-                                           columns and indexes exist. Writes nothing.
+  php bin/upgrade.php --check              Read-only: report whether this code's migrations have run,
+                                           and which core tables / recently-migrated columns and
+                                           indexes exist. Writes nothing.
   php bin/upgrade.php --rollback=<id>      Put back the code snapshot in storage/backups/<id>, for
                                            when an upgrade was killed and the admin panel can't run.
                                            The database is left as it is. Run it as the web server's

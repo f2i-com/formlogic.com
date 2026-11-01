@@ -888,7 +888,7 @@ function runInstall(array $data): array
         : ['label' => 'Application mode', 'status' => 'ok', 'message' => 'Production (APP_ENV=production, APP_DEBUG=false)'];
     $steps[] = $betaMode
         ? ['label' => 'Sign-ups', 'status' => 'ok', 'message' => 'Free public beta (BETA_MODE=true): anyone can register, new accounts get BETA_FREE_DAYS of Cloud (default 90), the payment gateway stays off. Set BETA_MODE=false in ' . basename($backendDir) . '/.env when you are ready to charge.']
-        : ['label' => 'Sign-ups', 'status' => 'ok', 'message' => 'Standard mode (BETA_MODE=false): sign-ups open; plan limits apply only when CLOUD_PLAN_ENFORCED=true (off by default for self-hosting).'];
+        : ['label' => 'Sign-ups', 'status' => 'ok', 'message' => 'Standard mode (BETA_MODE=false): sign-ups open, with no plan limits.'];
 
     // A configured .env is only replaced when the operator asked for that. One that exists but
     // carries no JWT secret (a copy of .env.example nobody filled in) cannot run the site, and
@@ -1302,9 +1302,10 @@ function runUpgrade(): array
     // The migration proper. Big tables can take a while — don't let PHP time out mid-migration.
     if (function_exists('set_time_limit')) @set_time_limit(0);
     try {
-        $mysql->initializeSchema();
+        // Under the web app's lock, and leaves schema_stamp, so the first request doesn't
+        // run all of this again and bin/upgrade.php --check knows it has run.
+        $mysql->ensureSchemaCurrent(true);
         $steps[] = ['label' => 'Ensure base schema', 'status' => 'ok', 'message' => 'MySQLConnection::initializeSchema()'];
-        $mysql->runMigrations();
         $steps[] = ['label' => 'Run migrations', 'status' => 'ok',
             'message' => 'MySQLConnection::runMigrations() — every step is guarded; already-applied steps are no-ops'];
     } catch (\Throwable $e) {
@@ -1603,7 +1604,7 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
       <input type="checkbox" id="beta_mode" checked />
       <label for="beta_mode" style="font-size:13px;">Free public beta — sign-ups are open and free, the payment gateway stays off</label>
     </div>
-    <p class="help-text" style="margin-top:6px;">Writes <code>BETA_MODE=true</code>: new accounts get 90 days of Cloud (<code>BETA_FREE_DAYS</code>), plan limits are never enforced, and the sign-up page says "free public beta — no card required". Uncheck for a paid hosted deployment (then configure PayPal + <code>CLOUD_PLAN_ENFORCED=true</code> in <code>.env</code>). Self-hosting has no limits either way.</p>
+    <p class="help-text" style="margin-top:6px;">Writes <code>BETA_MODE=true</code>: new accounts get 90 days of Cloud (<code>BETA_FREE_DAYS</code>), plan limits are never enforced, and the sign-up page says "free public beta — no card required". Uncheck for a paid hosted deployment (then configure PayPal in <code>.env</code>). There are no plan limits either way.</p>
     <div class="checkbox-group" style="margin-top:10px;">
       <input type="checkbox" id="dev_mode" />
       <label for="dev_mode" style="font-size:13px;">Local <strong>development</strong> install — enables debug mode and relaxed security policy</label>

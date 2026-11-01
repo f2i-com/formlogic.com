@@ -229,8 +229,11 @@ npm run build     # output: ui/dist/
         Require all granted
     </Directory>
 
+    # PT hands the result on to Alias: without it the rule is taken as a file under the document root.
     RewriteEngine On
-    RewriteRule ^/api/(.*)$ /api/index.php [QSA,L]
+    RewriteRule ^/api/(.*)$ /api/index.php [QSA,PT,L]
+    # The backend also answers at the domain root, per Host, as in the nginx example below.
+    RewriteRule ^/(manifest\.json|\.well-known/((formlogic-app|assetlinks)\.json|aokie-companion(\.json)?|oauth-authorization-server|oauth-protected-resource(/.*)?))$ /api/index.php [QSA,PT,L]
 </VirtualHost>
 ```
 
@@ -336,9 +339,12 @@ server {
     }
 
     # Backend API: everything under /api/ goes to its one front controller, and no file is served.
+    # nginx gives up on a quiet request at 60 seconds. A Studio round, an update and a backup may
+    # each take ten minutes, and PHP goes on working behind the 504.
     location ^~ /api/ {
         fastcgi_pass unix:/run/php/php8.2-fpm.sock;
         include fastcgi_params;
+        fastcgi_read_timeout 660s;
         fastcgi_param SCRIPT_FILENAME /var/www/formlogic/backend/public/index.php;
     }
 

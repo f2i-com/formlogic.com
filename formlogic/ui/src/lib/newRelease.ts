@@ -50,8 +50,10 @@ function offerReload(): void {
 
 /**
  * Compared for difference, not age: after a rollback the server is the older one, and a reload is
- * still what this page needs. scripts/package-dist.mjs names the build with what it writes to
- * api/VERSION, so any other build has nothing to compare and says nothing.
+ * still what this page needs. A release before this header, or a proxy that strips it, sends
+ * nothing to compare, and the page is not told: it reloads at its next route once that is gone.
+ * scripts/package-dist.mjs names the build with what it writes to api/VERSION, so any other build
+ * has nothing to compare and says nothing.
  */
 export function noteServerRelease(release: string | null | undefined): void {
   const built = import.meta.env.VITE_FORMLOGIC_VERSION as string | undefined;

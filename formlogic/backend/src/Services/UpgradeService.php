@@ -645,6 +645,7 @@ class UpgradeService
                 if ($shipped['api'] === [] && $shipped['web'] === []) {
                     $journal[] = 'This install has no manifest.json, so no old files were removed';
                 }
+                $this->dropCachedCode();
 
                 // 4. Version stamps: api/VERSION already copied; mirror into schema_meta
                 //    (the same stamp bin/upgrade.php writes) so --check agrees.
@@ -745,6 +746,7 @@ class UpgradeService
         $journal[] = "Frontend restored ({$counts} files)";
         $removed = $this->deleteStale($layout['webRoot'], "{$backupDir}/web", self::PROTECTED_WEB_PATHS, $shipped['web']);
         $journal[] = "Frontend files not in the snapshot removed ({$removed})";
+        $this->dropCachedCode();
 
         $this->stampSchemaMeta($restoredVersion !== 'unknown' ? $restoredVersion : $fromVersion);
 
@@ -1241,6 +1243,10 @@ class UpgradeService
             try {
                 $write("-- FormLogic database export " . gmdate('c') . "\n");
                 $write("SET NAMES utf8mb4;\n");
+                // The times below are UTC, as this connection reads them (MySQLConnection pins it).
+                // Loaded by hand in a server's own zone, every TIMESTAMP would move, and one in an
+                // hour that zone skips at the clock change would stop the load part way.
+                $write("SET time_zone = '+00:00';\n");
                 $write("SET FOREIGN_KEY_CHECKS=0;\n");
                 $engines = $this->pdo
                     ->query('SELECT TABLE_NAME, ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()')
@@ -1332,6 +1338,18 @@ class UpgradeService
             }
             @unlink($tmpPath);
             throw $e;
+        }
+    }
+
+    /**
+     * The next request must not run the old bytecode of a file that was just replaced. Refused or
+     * disabled, nothing is lost: opcache catches up by itself, except with
+     * opcache.validate_timestamps off, which is why UPGRADING.md says to restart PHP there.
+     */
+    private function dropCachedCode(): void
+    {
+        if (function_exists('opcache_reset')) {
+            @opcache_reset();
         }
     }
 

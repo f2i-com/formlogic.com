@@ -928,7 +928,7 @@ CREATE TABLE `flow_kv` (
   `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
   `scope` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `k` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `k` varchar(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   `v` mediumtext COLLATE utf8mb4_unicode_ci,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

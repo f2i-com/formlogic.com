@@ -185,9 +185,8 @@ class UpgradeScriptTest extends TestCase
         if (self::$mysql === null || self::$pdo === null) {
             $this->markTestSkipped('No test database available');
         }
-        // Make sure the schema is migrated regardless of test ordering (both calls are idempotent).
-        self::$mysql->initializeSchema();
-        self::$mysql->runMigrations();
+        // Make sure the schema is migrated regardless of test ordering (idempotent).
+        self::$mysql->ensureSchemaCurrent(true);
 
         [$code, $output] = self::capture(
             fn (callable $out): int => formlogicUpgradeCheck(self::$pdo, $out)
@@ -200,6 +199,44 @@ class UpgradeScriptTest extends TestCase
         $this->assertStringContainsString('app_forms.idx_form_id', $output);
         // Read-only contract: every core table is listed, none as missing.
         $this->assertStringNotContainsString('MISSING', $output);
+    }
+
+    public function testTheUpgradeLeavesTheStampTheWebAppLooksFor(): void
+    {
+        if (self::$mysql === null || self::$pdo === null) {
+            $this->markTestSkipped('No test database available');
+        }
+        self::$pdo->exec("DELETE FROM schema_meta WHERE meta_key = 'schema_stamp'");
+
+        [$code] = self::capture(
+            fn (callable $out): int => formlogicUpgradeRun(self::$mysql, '9.9.9-test', 'flag', $out)
+        );
+
+        $this->assertSame(0, $code);
+        $this->assertSame(MySQLConnection::schemaCodeStamp(), $this->fetchSchemaMeta()['schema_stamp'] ?? null);
+    }
+
+    public function testCheckFailsOnADatabaseTheseMigrationsHaveNotRunOn(): void
+    {
+        if (self::$mysql === null || self::$pdo === null) {
+            $this->markTestSkipped('No test database available');
+        }
+        self::$mysql->ensureSchemaCurrent(true);
+        try {
+            // Every probed table and column is there, as on a database some releases behind.
+            self::$pdo->exec("UPDATE schema_meta SET meta_value = 'a-stamp-from-an-older-release' WHERE meta_key = 'schema_stamp'");
+            [$code, $output] = self::capture(fn (callable $out): int => formlogicUpgradeCheck(self::$pdo, $out));
+            $this->assertSame(1, $code, $output);
+            $this->assertStringContainsString('OUT OF DATE', $output);
+            $this->assertStringContainsString('CHECK FAILED', $output);
+
+            self::$pdo->exec("DELETE FROM schema_meta WHERE meta_key = 'schema_stamp'");
+            [$code, $output] = self::capture(fn (callable $out): int => formlogicUpgradeCheck(self::$pdo, $out));
+            $this->assertSame(1, $code, $output);
+            $this->assertStringContainsString('MISSING', $output);
+        } finally {
+            self::$mysql->ensureSchemaCurrent(true);
+        }
     }
 
     // The one way back when the admin panel can't run, so it asks what the panel asks.
@@ -273,7 +310,7 @@ class UpgradeScriptTest extends TestCase
     {
         $stmt = self::$pdo->query(
             "SELECT meta_key, meta_value FROM schema_meta
-             WHERE meta_key IN ('app_version', 'last_upgrade_at', 'upgrade_source')"
+             WHERE meta_key IN ('app_version', 'last_upgrade_at', 'upgrade_source', 'schema_stamp')"
         );
         $meta = [];
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
