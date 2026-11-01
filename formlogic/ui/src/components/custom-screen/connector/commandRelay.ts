@@ -139,7 +139,16 @@ export async function runRelayCommand(
   }
   const { commandId } = enq.data;
   if (isTerminalStatus(enq.data.status)) {
-    return { status: enq.data.status, commandId };
+    // The enqueue answer carries the status alone, so a same-key retry that finds the desktop
+    // already finished has neither result nor reason: `done` with nothing reads as "no devices".
+    const finished = (await api.getConnectorCommand(slug, commandId)).data?.command;
+    return {
+      status: finished && isTerminalStatus(finished.status) ? finished.status : enq.data.status,
+      result: finished?.result,
+      error: finished?.error,
+      commandId,
+      handledBy: finished?.claimedByDeviceName ?? finished?.targetDeviceName,
+    };
   }
 
   const startedAt = now();

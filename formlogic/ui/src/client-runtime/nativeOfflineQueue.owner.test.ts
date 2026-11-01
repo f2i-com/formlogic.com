@@ -12,7 +12,7 @@ vi.mock('../lib/api', () => ({
 }));
 
 import { api } from '../lib/api';
-import { setSessionOwner } from '../lib/sessionGeneration';
+import { bumpSessionGeneration, setSessionOwner } from '../lib/sessionGeneration';
 import {
   discardNativeSubmission,
   enqueueNativeSubmission,
@@ -140,6 +140,57 @@ describe('the native queue and the account that queued an item', () => {
     setSessionOwner('u2');
     expect(await flushNativeQueue()).toEqual({ flushed: 1, failed: 0 });
     expect(rows.map((r) => r.id)).toEqual(['anonymous']);
+  });
+
+  // A backlog goes out in several POSTs, each on whoever's cookies are there by then, and a sign-out's
+  // purge can't reach the batches already in memory.
+  describe('when the session ends during a backlog', () => {
+    const backlog = () => Array.from({ length: 150 }, (_, i) => row(`m${i}`, { ownerUserId: 'u1' }));
+    const firstBatchThen = (boundary: () => void) => {
+      vi.mocked(api.syncBatch).mockImplementationOnce(async (_slug, items) => {
+        boundary();
+        return { data: { results: items.map((i) => ({ idempotencyKey: i.idempotencyKey, success: true })) } } as never;
+      });
+    };
+
+    it('sends none of the next batch on the next account’s cookies', async () => {
+      const rows = backlog();
+      runtime(rows);
+      setSessionOwner('u1');
+      firstBatchThen(() => setSessionOwner('u2'));
+      acceptEverything();
+
+      const result = await flushNativeQueue();
+
+      expect(api.syncBatch).toHaveBeenCalledTimes(1);
+      expect(result.flushed).toBe(100);
+      expect(rows).toHaveLength(50);
+    });
+
+    it('sends none of it after a sign-out, nor to the same account signing back in', async () => {
+      const rows = backlog();
+      runtime(rows);
+      setSessionOwner('u1');
+      firstBatchThen(() => bumpSessionGeneration());
+      acceptEverything();
+
+      await flushNativeQueue();
+
+      expect(api.syncBatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('still acknowledges what the server took: that POST went out on the right cookies', async () => {
+      const rows = backlog();
+      const sync = runtime(rows);
+      setSessionOwner('u1');
+      firstBatchThen(() => setSessionOwner(null));
+      acceptEverything();
+
+      await flushNativeQueue();
+
+      expect(sync.ack).toHaveBeenCalledTimes(1);
+      expect(sync.ack.mock.calls[0][0]).toHaveLength(100);
+    });
   });
 
   it('sends nothing when no item is the signed-in account’s', async () => {

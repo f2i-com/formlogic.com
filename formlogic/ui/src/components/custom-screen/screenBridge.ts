@@ -9,9 +9,9 @@
 //  - TRANSPARENT ROUTING: pack code never reimplements the relay
 //    uncertain-outcome machine. When a LOCAL desktop bridge is present the
 //    local transport is AUTHORITATIVE — its failures surface as failed and
-//    never retry via the relay (an attempted desktop route that lost its
-//    response also throws connector_unavailable, and the command may have
-//    executed — the connector client's transportFailure). Only when NO local
+//    never retry via the relay (an attempted route that got no answer throws
+//    connector_uncertain, surfaced as uncertain: the command may have
+//    executed). Only when NO local
 //    bridge exists does the bridge try the local client (in-browser
 //    connectors + the demo simulator need no desktop) and fall back to the
 //    relay on the then-guaranteed-pre-transport connector_unavailable — so
@@ -38,8 +38,9 @@ import { listAiSources, listDesktopServices, type AiSourceListing } from '../../
 
 /** What FormLogic.connector() resolves inside the sandbox. Mirrors the relay's
  *  RelayOutcome semantics with the transport named — `uncertain` means a
- *  desktop CLAIMED the command but hadn't reported back when we gave up (the
- *  hardware may have acted; never treat it as a clean failure). */
+ *  desktop CLAIMED the command but hadn't reported back when we gave up, or
+ *  the local runtime gave no answer (the hardware may have acted; never treat
+ *  it as a clean failure). */
 export interface ConnectorInvokeOutcome {
   status: 'done' | 'failed' | 'expired' | 'uncertain';
   result?: unknown;
@@ -236,9 +237,10 @@ export function createScreenBridge(deps: ScreenBridgeDeps): ScreenBridge {
           // capability_denied, …) or ANY failure while a local bridge is
           // present — resolving it as failed keeps ONE uniform handling
           // pattern in pack code, and must NOT retry via the relay (the
-          // command may have partially executed).
+          // command may have partially executed). No answer at all isn't a
+          // failure: it says uncertain, as the relay does for the same thing.
           return {
-            status: 'failed',
+            status: typed?.code === 'connector_uncertain' ? 'uncertain' : 'failed',
             error: typed
               ? { code: typed.code, message: typed.message }
               : { message: err instanceof Error ? err.message : 'Command failed' },

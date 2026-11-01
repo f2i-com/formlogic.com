@@ -11,7 +11,7 @@ import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
 import { useUIStore } from '../../stores/uiStore';
 import { toast } from '../../stores/toastStore';
 import { cn } from '../../lib/utils';
-import { CHAT_IMAGES_PER_MESSAGE, downscaleChatImage } from './chatImages';
+import { acceptChatImage, CHAT_IMAGES_PER_MESSAGE, downscaleChatImage } from './chatImages';
 
 const SUGGESTIONS = [
   'Create a customer enquiry form',
@@ -119,13 +119,13 @@ export function CreateBand() {
           toast.error('Could not attach that image', 'It is unreadable or too large even after downscaling.');
           continue;
         }
-        prepared.push(url);
+        if (await acceptChatImage(url, [...pendingImages, ...prepared])) prepared.push(url);
       }
       setPendingImages((current) => [...current, ...prepared].slice(0, CHAT_IMAGES_PER_MESSAGE));
     } finally {
       setAttaching(false);
     }
-  }, []);
+  }, [pendingImages]);
 
   if (dismissed || mode === 'loading') return null;
 

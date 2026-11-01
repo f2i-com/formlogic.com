@@ -102,6 +102,22 @@ describe('createDesktopBackedConnector — OAIY-first routing', () => {
     expect(desktopRequest).not.toHaveBeenCalled();
   });
 
+  it('passes on FormLogic Desktop\'s uncertain outcome as it stands, typed and worded', async () => {
+    desktopInfo.mockReturnValue({ available: true } as never);
+    paired.mockReturnValue(true);
+    desktopRequest.mockResolvedValue({
+      ok: false,
+      transportFailure: true,
+      error: { code: 'connector_uncertain', message: 'FormLogic Desktop did not respond — the command may have run.' },
+    });
+    const c = createDesktopBackedConnector(manifest as never, null);
+
+    await expect(c.request('sms.send', { to: 'x' })).rejects.toMatchObject({
+      code: 'connector_uncertain',
+      message: expect.stringContaining('may have run'),
+    });
+  });
+
   it('does NOT fall back on a real per-command refusal from OAIY', async () => {
     // A command that reached OAIY and was refused must not be retried on
     // FormLogic Desktop — that could double a side effect.

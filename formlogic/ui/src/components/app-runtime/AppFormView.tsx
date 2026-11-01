@@ -705,6 +705,24 @@ function runtimeDraftKey(appSlug: string, formId: string): string {
   return `formlogic.runtimeDraft.${owner ? `${owner}.` : ''}${appSlug}.${formId}`;
 }
 
+/**
+ * The draft kept for this form. Before v0.1.18 the key named no owner, so a tab open through the
+ * update holds its draft under the old one: that is moved across the first time it is read, which
+ * also means no later account in this tab can be offered it.
+ */
+function readRuntimeDraft(appSlug: string, formId: string): string | null {
+  const key = runtimeDraftKey(appSlug, formId);
+  const stored = sessionStorage.getItem(key);
+  const beforeOwners = `formlogic.runtimeDraft.${appSlug}.${formId}`;
+  if (stored !== null || key === beforeOwners) return stored;
+  const old = sessionStorage.getItem(beforeOwners);
+  if (old !== null) {
+    sessionStorage.setItem(key, old);
+    sessionStorage.removeItem(beforeOwners);
+  }
+  return old;
+}
+
 export function AppFormView() {
   const { appSlug, formId } = useParams();
   const userId = useAuthStore((state) => state.user?.id ?? 'anonymous');
@@ -745,7 +763,7 @@ function FormVisit() {
   // silently, so nobody is confused by answers they did not just type.
   const [recoverableDraft, setRecoverableDraft] = useState<Record<string, unknown> | null>(() => {
     try {
-      const stored = appSlug && formId ? sessionStorage.getItem(runtimeDraftKey(appSlug, formId)) : null;
+      const stored = appSlug && formId ? readRuntimeDraft(appSlug, formId) : null;
       const parsed: unknown = stored ? JSON.parse(stored) : null;
       return parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length > 0 ? parsed as Record<string, unknown> : null;
     } catch { return null; }
@@ -1007,7 +1025,8 @@ function FormVisit() {
       }
       for (const w of before.warnings) toast.warning(w);
       const created = await createResponse(formId, submissionData);
-      setSubmittedQueued((created as { queued?: unknown } | null | undefined)?.queued === true);
+      const queued = (created as { queued?: unknown } | null | undefined)?.queued === true;
+      setSubmittedQueued(queued);
       setSubmitted(true);
       setRecoverableDraft(null);
       try {
@@ -1025,9 +1044,10 @@ function FormVisit() {
       });
       // Singleton forms: the first fill created THE record — land on it, where all future
       // visits (and edits) happen, instead of the generic thank-you screen. ({store:false}
-      // scripts persist nothing, so there is no record page to land on.)
+      // scripts persist nothing, so there is no record page to land on. Nor is there for one
+      // waiting on this device: its id is the queue's, and "Saved on this device" is what's true.)
       const wasStored = (created as { stored?: unknown } | null | undefined)?.stored !== false;
-      if (singleRecord && wasStored && typeof createdId === 'string' && (canViewOwn(formId) || canViewAll(formId))) {
+      if (singleRecord && wasStored && !queued && typeof createdId === 'string' && (canViewOwn(formId) || canViewAll(formId))) {
         navigate(`/app/${appSlug}/form/${formId}/responses/${createdId}`, { replace: true });
       }
     } catch (err) {

@@ -38,13 +38,18 @@ export const NOT_ALLOWED_MESSAGE =
 
 const STORAGE_PREFIX = 'formlogic:app-local-access:v1:';
 
+interface WaitingRequest extends AppAccessRequest {
+  /** Ends the wait with a no that nobody gave, so it is not kept as anyone's answer. */
+  withdraw(): void;
+}
+
 let onScreen: OnScreenApp | null = null;
 let account: string | null = null;
 const declined = new Set<string>();
 /** A yes from someone not signed in: there is no account to keep it under, so it lasts for the page. */
 const allowedForThePage = new Set<string>();
 const pending = new Map<string, Promise<boolean>>();
-const queue: AppAccessRequest[] = [];
+const queue: WaitingRequest[] = [];
 const requestListeners = new Set<(request: AppAccessRequest | null) => void>();
 const allowedListeners = new Set<() => void>();
 
@@ -59,6 +64,12 @@ export function setAppLocalAccessAccount(userId: string | null): void {
   account = userId;
   declined.clear();
   allowedForThePage.clear();
+  // A prompt still open was put to the last account. Answered now, one person's yes would release
+  // another's command, and be kept for them.
+  const waiting = queue.splice(0);
+  pending.clear();
+  for (const request of waiting) request.withdraw();
+  if (waiting.length > 0) publishRequest();
   for (const listener of allowedListeners) listener();
 }
 
@@ -126,9 +137,11 @@ function ask(app: OnScreenApp): Promise<boolean> {
   if (asking) return asking;
   if (requestListeners.size === 0) return Promise.resolve(false);
   const answer = new Promise<boolean>((resolve) => {
-    queue.push({
+    const request: WaitingRequest = {
       app,
       decide(allowed) {
+        // Answered already, or withdrawn while the prompt was closing.
+        if (queue[0] !== request) return;
         queue.shift();
         pending.delete(app.id);
         if (allowed) {
@@ -140,7 +153,9 @@ function ask(app: OnScreenApp): Promise<boolean> {
         publishRequest();
         resolve(allowed);
       },
-    });
+      withdraw: () => resolve(false),
+    };
+    queue.push(request);
   });
   pending.set(app.id, answer);
   publishRequest();

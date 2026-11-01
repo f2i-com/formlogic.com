@@ -28,6 +28,7 @@ import {
 import {
   discardNativeSubmission,
   flushAllQueues,
+  isNativeFlushing,
   listNativeFailedSubmissions,
   nativeQueueCounts,
   retryNativeSubmission,
@@ -292,7 +293,8 @@ export interface SdkOfflineQueue {
 /**
  * Real offline submission queue status. Reports the browser IndexedDB queue (populated when a submit is
  * made offline — see appRuntimeStore.createResponse), merged with the native runtime's persistent queue
- * when the bridge is present, plus a flush() action. Auto-flushes on reconnect.
+ * when the bridge is present, plus a flush() action. Auto-flushes on reconnect. Both queues' passes
+ * arrive through subscribeQueue.
  */
 export function useOfflineQueue(): SdkOfflineQueue {
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
@@ -308,7 +310,7 @@ export function useOfflineQueue(): SdkOfflineQueue {
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
-      setSyncing(isFlushing());
+      setSyncing(isFlushing() || isNativeFlushing());
       // Merge the browser IndexedDB queue with the native runtime's persistent queue (both
       // pending AND failed) so the SDK surface reflects everything waiting to sync.
       Promise.all([queueCounts(), nativeQueueCounts()])
@@ -354,7 +356,7 @@ export function useOfflineQueue(): SdkOfflineQueue {
       setLastError(`${failed} submission${failed === 1 ? '' : 's'} failed to sync`);
     } else if (r.lastError) {
       setLastError(r.lastError);
-    } else if (r.browser.flushed + r.native.flushed === 0 && !isFlushing()) {
+    } else if (r.browser.flushed + r.native.flushed === 0 && !isFlushing() && !isNativeFlushing()) {
       // Nothing was sent and nothing failed. If something still waits, the server was not reached
       // or asked to be tried later (the queues keep such a submission as it is): say so, or
       // "Sync now" looks as though it did nothing. Not while another pass is under way: this one

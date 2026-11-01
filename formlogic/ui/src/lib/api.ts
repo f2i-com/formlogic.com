@@ -3212,46 +3212,6 @@ class ApiClient {
     return this.request(`/apps/${seg(appId)}/flows/${seg(flowId)}`, { method: 'DELETE' });
   }
 
-  /** Records a 'running' run log with trigger_event 'test'; the builder executes locally and PATCHes the result in. */
-  async testRunFlow(appId: string, flowId: string): Promise<ApiResponse<{ run: FlowRunLog }>> {
-    if (this._demoMode && isDemoLocalId(appId)) {
-      const flow = (await demoApplyFlowOverlay(appId, [])).find((candidate) => candidate.id === flowId);
-      if (!flow) return { error: 'This browser-only automation was not found.', status: 404 };
-      const now = new Date().toISOString();
-      return {
-        data: {
-          run: {
-            runId: 'demolocal_' + newIdempotencyKey(),
-            appId,
-            formId: null,
-            responseId: null,
-            bindingId: null,
-            flowDefinitionId: flow.id,
-            parentRunId: null,
-            rootRunId: null,
-            callNodeId: null,
-            depth: 0,
-            flow: flow.slug,
-            triggerEvent: 'test',
-            correlationId: 'demo',
-            idempotencyKey: newIdempotencyKey(),
-            status: 'done',
-            runtime: 'browser',
-            claimedBy: null,
-            inputSnapshot: {},
-            result: { demo: true },
-            outputActions: null,
-            error: null,
-            startedAt: now,
-            finishedAt: now,
-            createdAt: now,
-          },
-        },
-      };
-    }
-    return this.request(`/apps/${seg(appId)}/flows/${seg(flowId)}/test-run`, { method: 'POST', body: JSON.stringify({}) });
-  }
-
   async listFlowBindings(appId: string): Promise<ApiResponse<{ bindings: FlowBinding[] }>> {
     if (this._demoMode && isDemoLocalId(appId)) {
       return { data: { bindings: await listDemoAppBindings(appId) } };
@@ -4380,8 +4340,8 @@ class ApiClient {
   }
 
   // Form version endpoints
-  async getFormVersions(formId: string): Promise<ApiResponse<{ versions: FormVersion[] }>> {
-    return this.request(`/forms/${seg(formId)}/versions`);
+  async getFormVersions(formId: string, page?: { limit: number; offset: number }): Promise<ApiResponse<{ versions: FormVersion[] }>> {
+    return this.request(`/forms/${seg(formId)}/versions${page ? `?limit=${page.limit}&offset=${page.offset}` : ''}`);
   }
 
   async getFormVersion(formId: string, version: number): Promise<ApiResponse<{ version: FormVersion }>> {

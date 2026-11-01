@@ -26,7 +26,7 @@ import { resolveBackendApiUrl } from '../../lib/apiBase';
 import { logger } from '../../lib/logger';
 import { generateId } from '../../lib/utils';
 import { useAuthStore } from '../../stores/authStore';
-import { CODEX_PROVIDER_ID, chatViaTunnel,
+import { CODEX_PROVIDER_ID, DEFAULT_STREAM_TIMEOUT_MS, chatViaTunnel,
   postInput,
   type ChatViaTunnelOptions,
   type DesktopTunnelState, } from '../../client-runtime/desktop/desktopTunnel';
@@ -103,6 +103,186 @@ export function historyFor(
   });
   return summary ? [{ role: 'system', content: summary }, ...wire] : wire;
 }
+
+/** What one request may carry. Text is counted in bytes, as PHP's strlen counts it. */
+export interface ChatRequestLimits {
+  messages: number;
+  messageBytes: number;
+  textBytes: number;
+  images: number;
+  imagesPerMessage: number;
+  imageChars: number;
+  bodyBytes: number;
+}
+
+/**
+ * POST /api/ai/chat: AIService's CHAT_MAX_MESSAGES, CHAT_MAX_MESSAGE_CHARS, CHAT_MAX_TOTAL_CHARS,
+ * CHAT_MAX_IMAGES_TOTAL, CHAT_MAX_IMAGES_PER_MESSAGE and CHAT_MAX_IMAGE_DATA_CHARS, and the 2 MiB
+ * body limit in index.php less room for the rest of the body. System messages count.
+ */
+export const SITE_CHAT_LIMITS: ChatRequestLimits = {
+  messages: 50,
+  messageBytes: 32_000,
+  textBytes: 128_000,
+  images: 8,
+  imagesPerMessage: 4,
+  imageChars: 700_000,
+  bodyBytes: 2_000_000,
+};
+
+/**
+ * A sealed Desktop AI request has one limit, DesktopAiRelayService::MAX_ENVELOPE_BYTES (262,144).
+ * The envelope also holds the nonce, the tag and the sealed body's other fields, the tool grant
+ * among them, so the messages get a little less.
+ */
+export const DESKTOP_CHAT_LIMITS: ChatRequestLimits = {
+  messages: Infinity,
+  messageBytes: Infinity,
+  textBytes: Infinity,
+  images: Infinity,
+  imagesPerMessage: Infinity,
+  imageChars: Infinity,
+  bodyBytes: 258_048,
+};
+
+const IMAGE_LEFT_OUT = '[An image was attached here. It is left out of this request.]';
+const TEXT_LEFT_OUT = '\n[The rest of this message is left out of this request.]';
+
+const utf8 = new TextEncoder();
+const utf8Bytes = (text: string): number => utf8.encode(text).length;
+/** A value's size on the wire, with the comma after it. */
+const wireBytes = (value: unknown): number => utf8Bytes(JSON.stringify(value)) + 1;
+
+function imagesOf(content: string | ChatContentPart[]): string[] {
+  if (typeof content === 'string') return [];
+  return content.flatMap((part) => (part.type === 'image_url' ? [part.image_url.url] : []));
+}
+
+function clipText(text: string, maxBytes: number): string {
+  if (utf8Bytes(text) <= maxBytes) return text;
+  // A character cut in two decodes to U+FFFD.
+  const kept = new TextDecoder().decode(utf8.encode(text).subarray(0, maxBytes - utf8Bytes(TEXT_LEFT_OUT)));
+  return kept.replace(/�+$/, '') + TEXT_LEFT_OUT;
+}
+
+function withinLimits(messages: ChatEngineMessage[], limits: ChatRequestLimits): boolean {
+  const texts = messages.map((m) => utf8Bytes(chatTextOf(m.content)));
+  const images = messages.map((m) => imagesOf(m.content));
+  return messages.length <= limits.messages
+    && texts.every((bytes) => bytes <= limits.messageBytes)
+    && texts.reduce((sum, bytes) => sum + bytes, 0) <= limits.textBytes
+    && images.flat().length <= limits.images
+    && images.every((urls) => urls.length <= limits.imagesPerMessage)
+    && images.flat().every((url) => url.length <= limits.imageChars)
+    && wireBytes(messages) <= limits.bodyBytes;
+}
+
+/**
+ * The messages cut down to what one request may carry. The thread keeps everything: this is only
+ * what goes on the wire. The system context and the person's newest message go first, images and
+ * all. Then the words of older turns, newest first, down to the first that doesn't fit. Older
+ * images are the first thing to go: they get the room left after that, newest first, and a note
+ * says where one was left out. Null when the newest message can't go even on its own.
+ */
+export function fitChatRequest(messages: ChatEngineMessage[], limits: ChatRequestLimits): ChatEngineMessage[] | null {
+  if (withinLimits(messages, limits)) return messages;
+
+  const slots = messages.map((m) => ({
+    role: m.role,
+    text: chatTextOf(m.content),
+    images: imagesOf(m.content),
+    sentImages: new Set<number>(),
+    sent: false,
+  }));
+  type Slot = (typeof slots)[number];
+  const notesOf = (slot: Slot) => slot.images.map(() => IMAGE_LEFT_OUT);
+  const wordsOf = (slot: Slot, notes: string[]) => [slot.text, ...notes].filter((part) => part !== '').join('\n');
+
+  let count = 0;
+  let textBytes = 0;
+  let bodyBytes = 0;
+  let images = 0;
+  // Words are charged with a note for every image, as any image may yet have to give way to one.
+  const sendWords = (slot: Slot): boolean => {
+    const words = wordsOf(slot, notesOf(slot));
+    const bytes = utf8Bytes(words);
+    const wire = wireBytes({ role: slot.role, content: words });
+    if (count + 1 > limits.messages || textBytes + bytes > limits.textBytes || bodyBytes + wire > limits.bodyBytes) return false;
+    count += 1;
+    textBytes += bytes;
+    bodyBytes += wire;
+    slot.sent = true;
+    return true;
+  };
+  const sendImage = (slot: Slot, index: number): boolean => {
+    const wire = wireBytes({ type: 'image_url', image_url: { url: slot.images[index] } });
+    if (images + 1 > limits.images || bodyBytes + wire > limits.bodyBytes) return false;
+    if (slot.sentImages.size + 1 > limits.imagesPerMessage || slot.images[index].length > limits.imageChars) return false;
+    images += 1;
+    bodyBytes += wire;
+    slot.sentImages.add(index);
+    return true;
+  };
+
+  for (const slot of slots) {
+    if (slot.role !== 'system') continue;
+    slot.text = clipText(slot.text, Math.min(limits.messageBytes, limits.bodyBytes / 2));
+    sendWords(slot);
+  }
+
+  let newestIndex = slots.length - 1;
+  while (newestIndex >= 0 && slots[newestIndex].role !== 'user') newestIndex -= 1;
+  const newest = newestIndex >= 0 ? slots[newestIndex] : null;
+  if (newest) {
+    if (utf8Bytes(newest.text) > limits.messageBytes || !sendWords(newest)) return null;
+    if (!newest.images.every((_, index) => sendImage(newest, index))) return null;
+  }
+
+  for (let i = slots.length - 1; i >= 0; i -= 1) {
+    const slot = slots[i];
+    if (slot.sent || slot.role === 'system') continue;
+    slot.text = clipText(slot.text, limits.messageBytes - utf8Bytes(notesOf(slot).join('\n')) - slot.images.length);
+    if (!sendWords(slot)) break;
+  }
+
+  // A conversation opens with the person: some model templates refuse anything else.
+  for (const slot of slots) {
+    if (!slot.sent || slot.role === 'system') continue;
+    if (slot.role !== 'assistant') break;
+    slot.sent = false;
+  }
+
+  for (let i = slots.length - 1; i >= 0; i -= 1) {
+    const slot = slots[i];
+    if (!slot.sent || slot === newest) continue;
+    for (let index = slot.images.length - 1; index >= 0; index -= 1) sendImage(slot, index);
+  }
+
+  return slots.filter((slot) => slot.sent).map((slot) => {
+    const leftOut = slot.images.length - slot.sentImages.size;
+    const words = wordsOf(slot, Array.from({ length: leftOut }, () => IMAGE_LEFT_OUT));
+    if (slot.sentImages.size === 0) return { role: slot.role, content: words };
+    return {
+      role: slot.role,
+      content: [
+        ...(words !== '' ? [{ type: 'text' as const, text: words }] : []),
+        ...slot.images
+          .filter((_, index) => slot.sentImages.has(index))
+          .map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+      ],
+    };
+  });
+}
+
+/** How a turn that was stopped or ran out of time ends. Nothing here can stop what is already under way. */
+const TURN_STOPPED: ChatTurnError = {
+  code: 'stopped',
+  message: 'Stopped. Anything it already did stays done, and it may still be finishing, so check that before you retry.',
+};
+const TURN_TIMED_OUT: ChatTurnError = {
+  code: 'timeout',
+  message: 'No reply after 5 minutes, so this turn was stopped. Anything it already did stays done, and it may still be finishing, so check that before you retry.',
+};
 
 export type ChatTurnOutcome =
   | { ok: true; source: ChatSource; content: string; note?: string }
@@ -770,15 +950,28 @@ async function runCustomSource(
   const system = systemRaw === undefined ? undefined : chatTextOf(systemRaw);
   const promptRaw = [...messages].reverse().find((m) => m.role === 'user')?.content;
   const prompt = promptRaw === undefined ? undefined : chatTextOf(promptRaw);
-  const requestBody = provider.requestTemplate
-    ? renderRequestTemplate(provider.requestTemplate, {
-        model: provider.model,
-        prompt,
-        system,
-        messages,
-        apiKey: provider.apiKey,
-      })
-    : { messages, ...(provider.model ? { model: provider.model } : {}) };
+  let requestBody: unknown;
+  try {
+    requestBody = provider.requestTemplate
+      ? renderRequestTemplate(provider.requestTemplate, {
+          model: provider.model,
+          prompt,
+          system,
+          messages,
+          apiKey: provider.apiKey,
+        })
+      : { messages, ...(provider.model ? { model: provider.model } : {}) };
+  } catch (e) {
+    // Templates are saved unchecked, so one with a typo first fails here.
+    return {
+      ok: false,
+      source: 'custom',
+      error: {
+        code: 'request_failed',
+        message: `The request template of '${provider.name}' can't be used: ${e instanceof Error ? e.message : String(e)}. Fix it in Settings → AI.`,
+      },
+    };
+  }
 
   const doFetch = deps.fetchFn ?? fetch;
   let res: Response;
@@ -827,7 +1020,37 @@ async function runCustomSource(
 // sendChatTurn — resolve the source from preferences, run exactly one source.
 // ---------------------------------------------------------------------------
 
+/**
+ * One turn, which ends as soon as it is stopped (opts.signal) or its 5 minutes are up, whatever it
+ * is waiting on: the preferences and the tool grant can't be aborted. A Desktop turn has the same
+ * limit in the tunnel, which also knows what to say about it.
+ */
 export async function sendChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDeps = {}): Promise<ChatTurnOutcome> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const deadline = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, DEFAULT_STREAM_TIMEOUT_MS);
+  const ended = new Promise<ChatTurnOutcome>((resolve) => {
+    controller.signal.addEventListener(
+      'abort',
+      () => resolve({ ok: false, source: null, error: timedOut ? TURN_TIMED_OUT : TURN_STOPPED }),
+      { once: true }
+    );
+  });
+  const stop = () => controller.abort();
+  if (opts.signal?.aborted) stop();
+  else opts.signal?.addEventListener('abort', stop, { once: true });
+  try {
+    return await Promise.race([routeChatTurn({ ...opts, signal: controller.signal }, deps, () => clearTimeout(deadline)), ended]);
+  } finally {
+    clearTimeout(deadline);
+    opts.signal?.removeEventListener('abort', stop);
+  }
+}
+
+async function routeChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDeps, onDesktopTurn: () => void): Promise<ChatTurnOutcome> {
   // Page context rides the message list as a trailing system hint — identical for all
   // three sources, so "this form" means the same thing everywhere.
   if (opts.pageContext && /^[A-Za-z0-9-]{1,64}$/.test(opts.pageContext.id)) {
@@ -878,10 +1101,24 @@ export async function sendChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDe
   }
   const prefs = prefsRes.data;
 
+  // Trimmed here, with the page context in place and the source known. A custom service's limits
+  // are its own, and nothing here knows them.
+  const limits = prefs.aiSource === 'site' ? SITE_CHAT_LIMITS : prefs.aiSource === 'desktop' ? DESKTOP_CHAT_LIMITS : null;
+  const messages = limits ? fitChatRequest(opts.messages, limits) : opts.messages;
+  if (!messages) {
+    return {
+      ok: false,
+      source: prefs.aiSource,
+      error: { code: 'too_large', message: 'This message is too large to send. Shorten it or use a smaller image, then send it again.' },
+    };
+  }
+  opts = { ...opts, messages };
+
   switch (prefs.aiSource) {
     case 'site':
       return runSiteSource(opts, deps);
     case 'desktop':
+      onDesktopTurn();
       return runDesktopSource(prefs, opts, deps);
     case 'custom':
       return runCustomSource(prefs, opts, deps);

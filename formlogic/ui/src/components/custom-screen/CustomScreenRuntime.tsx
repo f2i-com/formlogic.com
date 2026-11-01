@@ -544,6 +544,9 @@ export function CustomScreenRuntime({
             }
             // Grants are the app's own word; what these carry is the viewer's (a call, a text).
             await assertAppMayUseThisComputer();
+            // The prompt can outlive the document that asked. Its feeds were stopped when it went,
+            // and nothing would ever stop one started now.
+            if (iframeRef.current?.contentWindow !== requestWindow) return;
             const subId = subscriptions().add(
               'events',
               (emit) => ({
@@ -563,6 +566,8 @@ export function CustomScreenRuntime({
               throw new Error('Live subscriptions are not available in the shared demo.');
             }
             await assertAppMayUseThisComputer();
+            // As for events: the document that asked may be gone by the time the person answers.
+            if (iframeRef.current?.contentWindow !== requestWindow) return;
             // Enforce the documented LOCAL-only contract at subscribe time:
             // the captions reader retries its loopback fetch forever, so
             // starting it with no local bridge would just burn a failing

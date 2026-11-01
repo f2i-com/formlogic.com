@@ -107,6 +107,11 @@ interface AppRuntimeState {
 
 let _appRuntimeSessionCallback: (() => void) | null = null;
 
+// Which load of an app is the live one. A slow app's answer can land after the person has opened
+// another app or signed out: it belongs to neither, in success or failure. What the store holds
+// decides what the app may use of the viewer's computer, so it must stay one app's whole answer.
+let currentLoad = 0;
+
 export const useAppRuntimeStore = create<AppRuntimeState>()(
   persist(
     (set, get) => ({
@@ -130,12 +135,15 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         };
         api.onSessionExpired(_appRuntimeSessionCallback);
 
+        currentLoad += 1;
+        const load = currentLoad;
         set({ isLoading: true, error: null, appSlug, config: null, permissions: null, roleName: null, memberTimezone: null, activeFormId: null });
         // SEC-001: connector capabilities are minted for the CURRENT app —
         // the desktop enforces the member's role-derived grants per command.
         setConnectorCapabilityContext(appSlug);
         try {
           const result = await api.getAppRuntime(appSlug);
+          if (load !== currentLoad) return;
           if (result.error) {
             set({ error: result.error, isLoading: false });
             return;
@@ -183,6 +191,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
             void flushQueuesWhenDue().catch(() => { /* stays queued */ });
           }
         } catch (e) {
+          if (load !== currentLoad) return;
           set({ error: e instanceof Error ? e.message : 'Failed to load app', isLoading: false });
         }
       },
@@ -192,6 +201,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
       reset: () => {
+        currentLoad += 1;
         // Leaving the app tears its pack connectors down with it.
         syncPackConnectors(null);
         // Capability tokens are principal/session scoped, not just slug
@@ -263,17 +273,21 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         if (!api.isDemoMode() && typeof navigator !== 'undefined' && navigator.onLine === false) {
           // In the native runtime, prefer the persistent native queue (survives an app restart);
           // otherwise use the browser IndexedDB queue. Both flush to the SAME idempotent endpoint, so
-          // the shared key keeps the submission deduped whichever queue delivers it.
-          const key = newIdempotencyKey();
+          // the shared key keeps the submission deduped whichever queue delivers it. It is the
+          // retained key when an online attempt at these answers went unconfirmed (see below): the
+          // server may hold that one, and a new key here would store it twice.
+          const key = stableSubmitKey(formId, answers);
           const bridge = typeof window !== 'undefined' ? window.FormLogicNative : undefined;
           if (bridge?.available && bridge.sync?.enqueueSubmission) {
             try {
               // Stamped with the signed-in account, so it waits for that account if the session expires.
               const r = await enqueueNativeSubmission({ appSlug: slug, formId, idempotencyKey: key, answers });
+              clearSubmitKey(formId);
               return { id: r.id, queued: true, answers, submittedAt: new Date().toISOString() };
             } catch { /* fall through to the browser queue */ }
           }
           const q = await enqueueSubmission({ appSlug: slug, formId, answers, idempotencyKey: key, flowRunId: options?.flowRunId });
+          clearSubmitKey(formId);
           return { id: q.id, queued: true, answers, submittedAt: new Date(q.createdAt).toISOString() };
         }
         // ONE stable idempotency key per logical submission (audit FL-004/C-11):

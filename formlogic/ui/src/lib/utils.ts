@@ -288,25 +288,87 @@ function escapeRegExp(str: string): string {
 }
 
 /**
+ * Rewrite an expression's code and leave its quoted text as typed: the text "manager" an answer
+ * is compared with is not the field labelled Manager, and saving it as that field's id made a rule
+ * that could never match. What sits inside a template's ${ } is code again.
+ */
+function rewriteOutsideQuotes(expression: string, rewrite: (code: string) => string): string {
+  let out = '';
+  let code = '';
+  let at = 0;
+  // One entry per ${ } being read: how many of its own { are still open.
+  const open: number[] = [];
+  const takeCode = () => {
+    out += rewrite(code);
+    code = '';
+  };
+  const takeTemplateText = () => {
+    const start = at;
+    while (at < expression.length) {
+      if (expression[at] === '\\') {
+        at += 2;
+      } else if (expression[at] === '`') {
+        at += 1;
+        break;
+      } else if (expression.startsWith('${', at)) {
+        at += 2;
+        open.push(0);
+        break;
+      } else {
+        at += 1;
+      }
+    }
+    out += expression.slice(start, at);
+  };
+
+  while (at < expression.length) {
+    const char = expression[at];
+    if (char === '"' || char === "'") {
+      takeCode();
+      const start = at;
+      at += 1;
+      while (at < expression.length && expression[at] !== char && expression[at] !== '\n') {
+        at += expression[at] === '\\' ? 2 : 1;
+      }
+      at += 1;
+      out += expression.slice(start, at);
+    } else if (char === '`' || (char === '}' && open.at(-1) === 0)) {
+      takeCode();
+      if (char === '}') open.pop();
+      out += char;
+      at += 1;
+      takeTemplateText();
+    } else {
+      if (open.length > 0 && char === '{') open[open.length - 1] += 1;
+      if (open.length > 0 && char === '}') open[open.length - 1] -= 1;
+      code += char;
+      at += 1;
+    }
+  }
+  takeCode();
+  return out;
+}
+
+/**
  * Replace variable names with field IDs in an expression
  */
 export function replaceVariablesWithIds(
   expression: string,
   varToId: Record<string, string>
 ): string {
-  let result = expression;
-
   // Sort by length descending to replace longer names first
   // This prevents "email" from being replaced before "emailAddress"
   const sortedVars = Object.keys(varToId).sort((a, b) => b.length - a.length);
 
-  for (const varName of sortedVars) {
-    // Match whole words only (not part of another word)
-    const regex = new RegExp(`\\b${escapeRegExp(varName)}\\b`, 'g');
-    result = result.replace(regex, varToId[varName]);
-  }
-
-  return result;
+  return rewriteOutsideQuotes(expression, (code) => {
+    let result = code;
+    for (const varName of sortedVars) {
+      // Match whole words only (not part of another word)
+      const regex = new RegExp(`\\b${escapeRegExp(varName)}\\b`, 'g');
+      result = result.replace(regex, varToId[varName]);
+    }
+    return result;
+  });
 }
 
 /**
@@ -316,18 +378,18 @@ export function replaceIdsWithVariables(
   expression: string,
   idToVar: Record<string, string>
 ): string {
-  let result = expression;
-
   // Sort by length descending and match whole tokens only — mirrors
   // replaceVariablesWithIds. Field IDs are human-readable slugs, so without this
   // a shorter id ('first_name') would corrupt a longer one ('first_name_1') by
   // matching its prefix mid-token.
   const sortedIds = Object.keys(idToVar).sort((a, b) => b.length - a.length);
 
-  for (const id of sortedIds) {
-    const regex = new RegExp(`\\b${escapeRegExp(id)}\\b`, 'g');
-    result = result.replace(regex, idToVar[id]);
-  }
-
-  return result;
+  return rewriteOutsideQuotes(expression, (code) => {
+    let result = code;
+    for (const id of sortedIds) {
+      const regex = new RegExp(`\\b${escapeRegExp(id)}\\b`, 'g');
+      result = result.replace(regex, idToVar[id]);
+    }
+    return result;
+  });
 }

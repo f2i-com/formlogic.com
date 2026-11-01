@@ -11,7 +11,10 @@ vi.mock('../lib/api', () => ({
   api: { createAppResponseResult: vi.fn(), syncBatch: vi.fn(), isDemoMode: () => demo.on },
   newIdempotencyKey: () => 'key',
 }));
-vi.mock('../lib/sessionGeneration', () => ({ currentSessionOwner: () => 'u1' }));
+vi.mock('../lib/sessionGeneration', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/sessionGeneration')>()),
+  currentSessionOwner: () => 'u1',
+}));
 
 import { api } from '../lib/api';
 import { enqueueSubmission, isFlushing, listQueue } from './offlineQueue';
@@ -32,7 +35,12 @@ function memoryIndexedDB(): IDBFactory {
     delete: (id: string) => { rows.delete(id); return request(undefined); },
     getAll: () => request([...rows.values()].map((row) => structuredClone(row))),
   };
-  const db = { objectStoreNames: { contains: () => true }, createObjectStore: () => store, transaction: () => ({ objectStore: () => store }) };
+  const transaction = () => {
+    const tx = { objectStore: () => store, oncomplete: null as null | (() => void) };
+    setTimeout(() => tx.oncomplete?.());
+    return tx;
+  };
+  const db = { objectStoreNames: { contains: () => true }, createObjectStore: () => store, transaction };
   return {
     open: () => {
       const req = { result: db, error: null, onsuccess: null as null | (() => void), onerror: null, onupgradeneeded: null };

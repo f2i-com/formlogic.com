@@ -193,12 +193,6 @@ export function createDesktopBackedConnector(
       // simulator — not on transport failure, not on auth_required, not on the old
       // "fallbackable" absent-ish codes. Faking success for a mutation that never
       // reached the hardware is strictly worse than a typed, actionable failure.
-      if (res.transportFailure) {
-        throw new ConnectorError(
-          'connector_unavailable',
-          `FormLogic Desktop did not respond — "${command}" was not performed. ${res.error?.message ?? ''}`.trim()
-        );
-      }
       throw new ConnectorError(res.error.code as ConnectorErrorCode, res.error.message);
     },
   };

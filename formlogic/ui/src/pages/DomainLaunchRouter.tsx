@@ -5,23 +5,47 @@
 // Anything that takes a password happens on FormLogic itself, whose address the server gives
 // (see domainSignIn). A host the server doesn't know renders the normal app too: it may be a
 // self-hosted FormLogic this build wasn't told the name of, and only its root says so.
+//
+// That makes every page of a self-hosted site a question for the server, and the wait is the
+// price of the two rules a real domain has: no sign-in form on it, and its app or launch page on a
+// first visit. So only the pages those rules are about wait for the answer. The platform's own
+// pages show at once, and the answer is applied when it comes, unless this browser remembers the
+// host as a customer's domain. A host with no answer counts as no customer's domain.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { DomainNativeApp } from '../components/app-runtime/AppEntryRouter';
 import { api } from '../lib/api';
 import { signInDestination } from '../lib/authRedirect';
-import { fetchLaunchConfig, type LaunchConfig } from '../lib/domainLaunchApi';
+import { lookUpHost, rememberedHost, type LaunchConfig } from '../lib/domainLaunchApi';
 import { DomainSignInContext, finishDomainSignIn, startDomainSignIn } from '../lib/domainSignIn';
 import { AppLaunchPage } from './AppLaunchPage';
 
 const SIGN_IN_PATHS = ['/login', '/signup'];
 const PASSWORD_PATHS = ['/forgot-password', '/reset-password', '/accept-invite'];
 const LEGAL_PATHS = ['/privacy', '/terms'];
+const SIGN_IN_RETURN_PATH = '/sign-in/complete';
+/**
+ * The platform's own pages, which were never a domain's. A path that isn't here may be a SoftN
+ * app's, so it waits, once: a route left out of this list costs no more than that. /app/:slug is
+ * left out on purpose: its guard draws a sign-in form in place until it knows the domain's address.
+ */
+const PLATFORM_PAGE = /^\/(admin|ai-setup|analytics|aokie|apps|billing|blueprints|builder|connect-ai|dashboard|device-check|diagrams|docs|doctor|download|flows|form|forms|oauth|open|packs|preview|privacy|responses|settings|sign-in\/domain|terms|trash)(\/|$)/;
 
 function Spinner() {
   return (
     <div className="flex min-h-[100dvh] items-center justify-center bg-white dark:bg-slate-950">
       <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600 dark:border-slate-700 dark:border-t-slate-300" />
+    </div>
+  );
+}
+
+/** A customer's domain with no answer from the server: what it shows comes from there, and a sign-in form never shows here. */
+function DomainUnreachable() {
+  return (
+    <div className="flex min-h-[100dvh] flex-col items-center justify-center gap-3 bg-white px-6 text-center dark:bg-slate-950">
+      <h1 className="text-lg font-semibold text-gray-900 dark:text-white">Can't reach this site right now</h1>
+      <p role="alert" className="max-w-sm text-sm text-gray-500 dark:text-slate-400">Check your connection and try again.</p>
+      <button type="button" className="min-h-11 text-sm text-primary-600 dark:text-primary-400" onClick={() => window.location.reload()}>Try again</button>
     </div>
   );
 }
@@ -73,14 +97,16 @@ function useDomainManifest(active: boolean) {
 
 export function DomainLaunchRouter({ host, children }: { host: string; children: ReactNode }) {
   const { pathname, search } = useLocation();
-  const [resolved, setResolved] = useState<{ config: LaunchConfig | null; softnAccess?: 'application' | 'members' } | null>(null);
+  const [resolved, setResolved] = useState<{ config: LaunchConfig | null; answered: boolean; softnAccess?: 'application' | 'members' } | null>(null);
+  // What the last visit learned. It stays as it was for this page: the answer on its way is `resolved`.
+  const [remembered] = useState(() => rememberedHost(host));
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const config = await fetchLaunchConfig(host);
+      const { config, answered } = await lookUpHost(host);
       const entry = config ? await api.getNativeEntry(config.app.slug) : null;
-      if (!cancelled) setResolved({ config, softnAccess: entry?.data?.native ? entry.data.access : undefined });
+      if (!cancelled) setResolved({ config, answered, softnAccess: entry?.data?.native ? entry.data.access : undefined });
     })();
     return () => {
       cancelled = true;
@@ -94,10 +120,15 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
   const path = pathname.toLowerCase().replace(/\/+$/, '');
   // Null where FormLogic is this very address: a local `?__flhost=` preview signs in as usual.
   const platformUrl = config?.platformUrl && config.platformUrl !== window.location.origin ? config.platformUrl : null;
-  const leaves = !!platformUrl && (SIGN_IN_PATHS.includes(path) || PASSWORD_PATHS.includes(path));
-  const finishing = !!platformUrl && path === '/sign-in/complete';
-  const accountPage = SIGN_IN_PATHS.includes(path) || PASSWORD_PATHS.includes(path) || LEGAL_PATHS.includes(path);
-  const showsApp = !!config && !!softnAccess && !accountPage && !finishing && !(pathname === '/' && !direct);
+  const takesPassword = SIGN_IN_PATHS.includes(path) || PASSWORD_PATHS.includes(path);
+  const leaves = !!platformUrl && takesPassword;
+  const finishing = !!platformUrl && path === SIGN_IN_RETURN_PATH;
+  const accountPage = takesPassword || LEGAL_PATHS.includes(path);
+  // FormLogic's own address, if an older version let an app connect to it: /admin and /forms stay.
+  const ownAddress = !!config?.platformUrl?.endsWith(`//${host}`);
+  // A form's link and its embed are the same address. It opens the form, whatever the app.
+  const formPage = path.startsWith('/form/');
+  const showsApp = !!config && !!softnAccess && !ownAddress && !accountPage && !formPage && !finishing && !(pathname === '/' && !direct);
   useDomainManifest(showsApp);
 
   useEffect(() => {
@@ -116,12 +147,18 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
     if (redirects && config) window.location.replace(`/app/${config.app.slug}`);
   }, [redirects, config]);
 
-  if (!resolved || redirects || leaves) return <Spinner />;
+  const sensitive = takesPassword || path === SIGN_IN_RETURN_PATH;
+  const noAnswer = resolved?.answered === false;
+  const waits = sensitive || remembered === 'domain' || (remembered === null && !PLATFORM_PAGE.test(path));
+
+  if ((!resolved && waits) || redirects || leaves) return <Spinner />;
+  // Past the wait, any page but these could be a platform page or a sign-in form on a real domain.
+  if (noAnswer && remembered === 'domain' && !formPage && !LEGAL_PATHS.includes(path)) return <DomainUnreachable />;
   if (finishing && platformUrl) return <DomainSignInComplete platformUrl={platformUrl} />;
   if (showsApp && config && softnAccess) {
     return <DomainSignInContext.Provider value={platformUrl}><DomainNativeApp slug={config.app.slug} access={softnAccess} /></DomainSignInContext.Provider>;
   }
-  if (pathname !== '/' || (config && softnAccess && accountPage)) {
+  if (pathname !== '/' || noAnswer || (config && softnAccess && accountPage)) {
     return <DomainSignInContext.Provider value={platformUrl}>{children}</DomainSignInContext.Provider>;
   }
   if (config) return <AppLaunchPage config={config} />;

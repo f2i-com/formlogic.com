@@ -85,11 +85,32 @@ describe('runRelayCommand — enqueue → poll → terminal', () => {
     expect(outcome.status).toBe('expired');
   });
 
-  it('returns immediately when enqueue is already terminal (idempotent replay)', async () => {
-    const { api, get } = scriptedApi({ enqueueStatus: 'done' });
+  // The enqueue answer carries the status alone, so an idempotent replay of a command the desktop has
+  // finished had no result and no reason: a pack screen read `done` with nothing as "no devices".
+  it('reads the result of a command the enqueue says has already finished, once and without waiting', async () => {
+    const sleep = vi.fn(immediateSleep);
+    const { api, get } = scriptedApi({
+      enqueueStatus: 'done',
+      poll: [command('done', { result: { devices: ['phone'] }, claimedByDeviceName: 'DESKTOP-HOME' })],
+    });
+    const outcome = await runRelayCommand(api, 'slug', 'call.answer', undefined, opts({ sleep }));
+    expect(outcome).toEqual({ status: 'done', result: { devices: ['phone'] }, error: null, commandId: 'cmd-1', handledBy: 'DESKTOP-HOME' });
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('reads the reason of a command the enqueue says has already failed', async () => {
+    const { api } = scriptedApi({ enqueueStatus: 'failed', poll: [command('failed', { error: { message: 'dongle offline' } })] });
     const outcome = await runRelayCommand(api, 'slug', 'call.answer', undefined, opts());
-    expect(outcome.status).toBe('done');
-    expect(get).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ status: 'failed', error: { message: 'dongle offline' } });
+  });
+
+  it('still reports the enqueue\'s status when that read gets no answer', async () => {
+    const { api, get } = scriptedApi({ enqueueStatus: 'done' });
+    get.mockResolvedValueOnce({ error: 'Network error' } as never);
+    const outcome = await runRelayCommand(api, 'slug', 'call.answer', undefined, opts());
+    expect(outcome).toMatchObject({ status: 'done', commandId: 'cmd-1' });
+    expect(get).toHaveBeenCalledTimes(1);
   });
 
   it('gives up as expired once the client timeout elapses', async () => {

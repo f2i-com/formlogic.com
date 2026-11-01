@@ -12,6 +12,7 @@ const queue = vi.hoisted(() => ({
   native: { pending: 0, failed: 0 },
   flushAll: vi.fn(),
   flushing: false,
+  nativeFlushing: false,
 }));
 vi.mock('../client-runtime/offlineQueue', async (original) => ({
   ...(await original<typeof import('../client-runtime/offlineQueue')>()),
@@ -23,6 +24,7 @@ vi.mock('../client-runtime/nativeOfflineQueue', async (original) => ({
   ...(await original<typeof import('../client-runtime/nativeOfflineQueue')>()),
   nativeQueueCounts: async () => queue.native,
   flushAllQueues: queue.flushAll,
+  isNativeFlushing: () => queue.nativeFlushing,
 }));
 
 import { OfflineQueuePanel, SyncStatus } from './components';
@@ -36,6 +38,7 @@ beforeEach(() => {
   queue.browser = { pending: 0, failed: 0 };
   queue.native = { pending: 0, failed: 0 };
   queue.flushing = false;
+  queue.nativeFlushing = false;
   queue.flushAll.mockReset().mockResolvedValue({ browser: { flushed: 0, failed: 0 }, native: { flushed: 0, failed: 0 }, lastError: null });
   host = document.createElement('div');
   document.body.appendChild(host);
@@ -93,6 +96,15 @@ describe('OfflineQueuePanel', () => {
   it('does not say so while another pass is still sending', async () => {
     queue.browser = { pending: 2, failed: 0 };
     queue.flushing = true;
+    await show(<OfflineQueuePanel />);
+    await act(async () => { syncNow()!.click(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(host.textContent).not.toContain('Nothing could be sent');
+  });
+
+  it('does not say so while a pass over the native queue is still sending', async () => {
+    queue.native = { pending: 2, failed: 0 };
+    queue.nativeFlushing = true;
     await show(<OfflineQueuePanel />);
     await act(async () => { syncNow()!.click(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });

@@ -31,7 +31,11 @@ function memoryIndexedDB(): IDBFactory {
   const db = {
     objectStoreNames: { contains: () => true },
     createObjectStore: () => store,
-    transaction: () => ({ objectStore: () => store }),
+    transaction: () => {
+      const transaction = { objectStore: () => store, oncomplete: null as null | (() => void) };
+      setTimeout(() => transaction.oncomplete?.());
+      return transaction;
+    },
   };
   return {
     open: () => {

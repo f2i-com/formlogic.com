@@ -149,6 +149,91 @@ describe('appMayUseThisComputer', () => {
     expect(seen).toHaveLength(1);
     expect(Object.keys(localStorage)).toEqual([]);
   });
+
+  // A tab outlives a sign-in. One account's yes must not release a command another account's
+  // session was waiting on, nor be kept as that second account's answer about an app.
+  describe('a prompt open when the account changes', () => {
+    function promptOpen() {
+      const shown: Array<AppAccessRequest | null> = [];
+      subscribeAppAccessRequests((request) => shown.push(request));
+      return shown;
+    }
+
+    it('is withdrawn: the prompt closes and the waiting command is refused', async () => {
+      setOnScreenApp(theirs);
+      const shown = promptOpen();
+      const waiting = appMayUseThisComputer();
+      expect(shown.at(-1)?.app.name).toBe('Their shop');
+
+      setAppLocalAccessAccount('bob');
+
+      expect(await waiting).toBe(false);
+      expect(shown.at(-1)).toBeNull();
+    });
+
+    it('takes no late answer, and stores none for the next account', async () => {
+      setOnScreenApp(theirs);
+      const shown = promptOpen();
+      const waiting = appMayUseThisComputer();
+      const prompt = shown.at(-1)!;
+
+      setAppLocalAccessAccount('bob');
+      prompt.decide(true);
+
+      expect(await waiting).toBe(false);
+      expect(listAllowedApps()).toEqual([]);
+      setAppLocalAccessAccount('alice');
+      expect(listAllowedApps()).toEqual([]);
+    });
+
+    it('leaves no answer behind: the next account is asked for itself', async () => {
+      setOnScreenApp(theirs);
+      const shown = promptOpen();
+      const first = appMayUseThisComputer();
+
+      setAppLocalAccessAccount('bob');
+      await first;
+      const second = appMayUseThisComputer();
+      const prompt = shown.at(-1)!;
+      expect(prompt.app.name).toBe('Their shop');
+
+      prompt.decide(true);
+
+      expect(await second).toBe(true);
+      expect(listAllowedApps()).toEqual([{ id: 'app-theirs', name: 'Their shop' }]);
+    });
+
+    it('withdraws every prompt in the line', async () => {
+      setOnScreenApp(theirs);
+      const shown = promptOpen();
+      const one = appMayUseThisComputer();
+      setOnScreenApp(mine);
+      setOnScreenApp({ ...theirs, id: 'app-other', slug: 'other' });
+      const two = appMayUseThisComputer();
+
+      setAppLocalAccessAccount(null);
+
+      expect(await Promise.all([one, two])).toEqual([false, false]);
+      expect(shown.at(-1)).toBeNull();
+    });
+  });
+
+  it('counts one answer once, whatever the prompt does', async () => {
+    setOnScreenApp(theirs);
+    const first: AppAccessRequest[] = [];
+    subscribeAppAccessRequests((request) => { if (request) first.push(request); });
+    const one = appMayUseThisComputer();
+    setOnScreenApp({ ...theirs, id: 'app-other', slug: 'other', name: 'Other shop' });
+    const two = appMayUseThisComputer();
+
+    first[0].decide(true);
+    first[0].decide(true); // a double click
+
+    expect(await one).toBe(true);
+    expect(first.at(-1)?.app.name).toBe('Other shop');
+    first.at(-1)!.decide(false);
+    expect(await two).toBe(false);
+  });
 });
 
 /** Drop the answering listener the way a closed page would, keeping the account's stored answers. */

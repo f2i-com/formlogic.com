@@ -867,7 +867,7 @@ describe('chatViaTunnel state machine', () => {
         }
         if (url.endsWith('/stream')) {
           return Promise.resolve(
-            new Response(JSON.stringify({ error: true, code: 'desktop_offline', message: 'The desktop went away.' }), { status: 503 })
+            new Response(JSON.stringify({ error: true, code: 'too_many_streams', message: 'Too many open streams.' }), { status: 429 })
           );
         }
         return jsonResponse({}, 404);
@@ -879,7 +879,36 @@ describe('chatViaTunnel state machine', () => {
       messages: [{ role: 'user', content: 'hi' }],
     });
     expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.error.code).toBe('desktop_offline');
+    if (!res.ok) expect(res.error.code).toBe('too_many_streams');
+  });
+
+  // Long turns reconnect, and a proxy can answer one of those reconnects with an error page. The
+  // turn goes on at the desktop, so a plain failure, with Retry, would start a second run beside it.
+  it.each([502, 503, 504])('treats a %i on the stream as a dropped connection: outcome unknown, not failed', async (status) => {
+    mockOvertakenRelay(() => [], () => [], { first: () => Promise.resolve(new Response('<html>Bad gateway</html>', { status })) });
+    const states: DesktopTunnelState[] = [];
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+      onState: (s) => states.push(s),
+    });
+
+    expect(res).toMatchObject({ ok: false, error: { code: 'uncertain', message: expect.stringContaining('may still complete') } });
+    expect(states.at(-1)?.state).toBe('uncertain');
+  });
+
+  it('still fails on a stream the server itself refuses', async () => {
+    mockOvertakenRelay(() => [], () => [], { first: () => Promise.resolve(new Response('{}', { status: 500 })) });
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    expect(res).toMatchObject({ ok: false, error: { code: 'request_failed' } });
   });
 
   it('handles unsealed queue-status events on the stream', async () => {

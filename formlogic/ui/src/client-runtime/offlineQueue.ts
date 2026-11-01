@@ -184,6 +184,8 @@ export function classifyDeliveryResult(result: DeliveryResultInput): DeliveryCla
 
 const DB_NAME = 'formlogic-offline';
 const STORE = 'submissions';
+/** The form shows this when a write fails and the browser gave no reason of its own. */
+const NOT_SAVED = 'This could not be saved on this device.';
 const listeners = new Set<() => void>();
 let flushing = false;
 
@@ -199,13 +201,15 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
+/** Settles when the transaction commits: a full disk can abort it there, after the request succeeded. */
 function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
   return openDb().then(
     (db) =>
       new Promise<T>((resolve, reject) => {
-        const req = fn(db.transaction(STORE, mode).objectStore(STORE));
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
+        const transaction = db.transaction(STORE, mode);
+        const req = fn(transaction.objectStore(STORE));
+        transaction.oncomplete = () => resolve(req.result);
+        transaction.onabort = () => reject(transaction.error ?? new Error(NOT_SAVED));
       })
   );
 }
@@ -219,19 +223,16 @@ function updateRow(id: string, change: (row: QueuedSubmission) => QueuedSubmissi
   return openDb().then(
     (db) =>
       new Promise<QueuedSubmission | null>((resolve, reject) => {
-        const store = db.transaction(STORE, 'readwrite').objectStore(STORE);
+        const transaction = db.transaction(STORE, 'readwrite');
+        const store = transaction.objectStore(STORE);
         const read = store.get(id) as IDBRequest<QueuedSubmission | undefined>;
+        let next: QueuedSubmission | null = null;
         read.onsuccess = () => {
-          const next = read.result ? change(read.result) : null;
-          if (!next) {
-            resolve(null);
-            return;
-          }
-          const write = store.put(next);
-          write.onsuccess = () => resolve(next);
-          write.onerror = () => reject(write.error);
+          next = read.result ? change(read.result) : null;
+          if (next) store.put(next);
         };
-        read.onerror = () => reject(read.error);
+        transaction.oncomplete = () => resolve(next);
+        transaction.onabort = () => reject(transaction.error ?? new Error(NOT_SAVED));
       })
   );
 }
@@ -245,6 +246,9 @@ function notify(): void {
     }
   });
 }
+
+/** The native queue has no events of its own, so its passes tell the same subscribers. */
+export const notifyQueueChanged = notify;
 
 /** Subscribe to queue changes (enqueue / flush progress). Returns an unsubscribe fn. */
 export function subscribeQueue(cb: () => void): () => void {

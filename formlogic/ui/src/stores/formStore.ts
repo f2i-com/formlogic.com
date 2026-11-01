@@ -78,8 +78,10 @@ async function fetchAllForms(): Promise<Form[] | null> {
 // instead (isReservedExpressionName has both lists). Only a NEW field is named here; a
 // stored id never changes.
 
-// Generate a human-friendly field ID from a label
-function generateFieldId(label: string, existingIds: string[]): string {
+// Generate a human-friendly field ID from a label. Everything that adds a field names it here:
+// a save is refused for an id the server would not accept, and an id out of a random generator
+// holds hyphens, which it does not.
+export function generateFieldId(label: string, existingIds: string[]): string {
   // Convert label to slug: lowercase, replace spaces/special chars with underscores
   let baseId = label
     .toLowerCase()

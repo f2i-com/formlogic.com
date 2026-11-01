@@ -28,6 +28,7 @@ import {
   RotateCcw,
   Send,
   ShieldCheck,
+  Square,
   Trash2,
   X,
   Footprints,
@@ -38,6 +39,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { refreshFormFields } from '../../lib/formFields';
 import { cn, generateId } from '../../lib/utils';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -51,13 +53,14 @@ import {
   type ChatToolActivity,
   type ChatToolProposal,
   type ChatTurnError,
+  type ChatTurnOutcome,
   SUMMARY_PREFIX,
   sinceLastSummary,
   historyFor,
 } from './chatEngine';
 import { getChatStore, type ChatMessage, type ChatThread } from './chatStore';
 import { demoChatDirector } from './demoChatDirector';
-import { CHAT_IMAGES_PER_MESSAGE, downscaleChatImage } from './chatImages';
+import { acceptChatImage, CHAT_IMAGES_PER_MESSAGE, downscaleChatImage } from './chatImages';
 import { CODEX_PROVIDER_ID, CODEX_REASONING_EFFORTS } from '../../client-runtime/desktop/desktopTunnel';
 import { chatPrivacyBadge, chatThreadTitle, chatToolLinkPath, prepareSoftnHandOff } from './siteChatView';
 import { useCanDockChat } from './useChatDockOffset';
@@ -289,6 +292,9 @@ function AccountChatWidget() {
   const activeThreadIdRef = useRef<string | null>(null);
   const clientSeqRef = useRef<Record<string, number>>({});
   const lastSendRef = useRef<{ threadId: string; history: ChatWireMessage[] } | null>(null);
+  // The turn Send is waiting for: what Stop stops. A full-screen route remounts this widget, so
+  // leaving it (Follow AI does) stops nothing, and the turn still saves its reply.
+  const heldTurnRef = useRef<{ threadId: string; controller: AbortController } | null>(null);
 
   const dragControls = useDragControls();
   const constraintsRef = useRef<HTMLDivElement>(null);
@@ -305,6 +311,20 @@ function AccountChatWidget() {
   const setActiveThread = useCallback((threadId: string | null) => {
     activeThreadIdRef.current = threadId;
     setActiveThreadId(threadId);
+  }, []);
+
+  const holdSend = useCallback((threadId: string) => {
+    const turn = { threadId, controller: new AbortController() };
+    heldTurnRef.current = turn;
+    setSending(true);
+    return turn;
+  }, []);
+
+  /** Send stops waiting for a turn, which goes on to its reply or its deadline if it's not stopped. */
+  const releaseSend = useCallback((turn: { threadId: string; controller: AbortController } | null) => {
+    if (!turn || heldTurnRef.current !== turn) return;
+    heldTurnRef.current = null;
+    setSending(false);
   }, []);
 
   // Demo guided builds: a scripted DIRECTOR replaces live AI for the shared demo account
@@ -347,6 +367,7 @@ function AccountChatWidget() {
   const selectThread = useCallback(
     async (threadId: string) => {
       if (!userId) return;
+      if (heldTurnRef.current?.threadId !== threadId) releaseSend(heldTurnRef.current);
       setActiveThread(threadId);
       setLiveTurn(null);
       setView('chat');
@@ -359,7 +380,7 @@ function AccountChatWidget() {
         stickToBottomRef.current = true;
       }
     },
-    [userId, setActiveThread]
+    [userId, setActiveThread, releaseSend]
   );
 
   // First open: load threads (+ resume the most recent one) and the AI preferences.
@@ -470,7 +491,7 @@ function AccountChatWidget() {
       const turnId = generateId();
       lastSendRef.current = { threadId, history };
       clientSeqRef.current[threadId] = (clientSeqRef.current[threadId] ?? 0) + 1;
-      setSending(true);
+      const held = holdSend(threadId);
       stickToBottomRef.current = true;
       lastFollowedRef.current = null;
       setLiveTurn({ id: turnId, threadId, streamText: '', activities: [], proposals: [], note: null, error: null, status: 'running' });
@@ -478,27 +499,35 @@ function AccountChatWidget() {
       const patchTurn = (patch: (turn: LiveTurn) => LiveTurn) =>
         setLiveTurn((turn) => (turn && turn.id === turnId ? patch(turn) : turn));
 
-      const outcome = await sendChatTurn({
-        threadId,
-        messages: history,
-        pageContext: pageContextRef.current,
-        isDemo,
-        reasoning: reasoningRef.current || undefined,
-        clientSeq: clientSeqRef.current[threadId],
-        events: {
-          onDelta: (_delta, accumulated) => patchTurn((turn) => ({ ...turn, streamText: accumulated })),
-          onToolActivity: (activity) => {
-            followActivity(activity);
-            patchTurn((turn) => {
-              const index = turn.activities.findIndex((a) => a.id === activity.id);
-              const activities =
-                index === -1 ? [...turn.activities, activity] : turn.activities.map((a, i) => (i === index ? activity : a));
-              return { ...turn, activities };
-            });
+      let outcome: ChatTurnOutcome;
+      try {
+        outcome = await sendChatTurn({
+          threadId,
+          messages: history,
+          pageContext: pageContextRef.current,
+          isDemo,
+          reasoning: reasoningRef.current || undefined,
+          signal: held.controller.signal,
+          clientSeq: clientSeqRef.current[threadId],
+          events: {
+            onDelta: (_delta, accumulated) => patchTurn((turn) => ({ ...turn, streamText: accumulated })),
+            onToolActivity: (activity) => {
+              followActivity(activity);
+              if (activity.name === 'update_form' && activity.status === 'done' && activity.link?.kind === 'form') void refreshFormFields(activity.link.id);
+              patchTurn((turn) => {
+                const index = turn.activities.findIndex((a) => a.id === activity.id);
+                const activities =
+                  index === -1 ? [...turn.activities, activity] : turn.activities.map((a, i) => (i === index ? activity : a));
+                return { ...turn, activities };
+              });
+            },
+            onToolProposal: (proposal) => patchTurn((turn) => ({ ...turn, proposals: [...turn.proposals, proposal] })),
           },
-          onToolProposal: (proposal) => patchTurn((turn) => ({ ...turn, proposals: [...turn.proposals, proposal] })),
-        },
-      });
+        });
+      } catch (e) {
+        // Whatever went wrong, the turn is over: left unhandled, Send would stay locked with no way out.
+        outcome = { ok: false, source: null, error: { code: 'request_failed', message: e instanceof Error ? e.message : 'The AI request failed.' } };
+      }
 
       if (outcome.ok) {
         setLastSource(outcome.source);
@@ -518,9 +547,9 @@ function AccountChatWidget() {
         if (outcome.source) setLastSource(outcome.source);
         patchTurn((turn) => ({ ...turn, streamText: '', error: outcome.error, status: 'failed' }));
       }
-      setSending(false);
+      releaseSend(held);
     },
-    [userId, isDemo, followActivity]
+    [userId, isDemo, followActivity, holdSend, releaseSend]
   );
 
   // Image attachments: downscaled client-side, sent as content parts, stored on
@@ -530,6 +559,7 @@ function AccountChatWidget() {
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const launchInFlightRef = useRef(false);
   const addAttachment = useCallback(async (files: Iterable<File>) => {
+    const attached = [...pendingImages];
     for (const file of files) {
       if (!file.type.startsWith('image/')) continue;
       const url = await downscaleChatImage(file);
@@ -537,11 +567,13 @@ function AccountChatWidget() {
         toast.error('Could not attach that image', 'It is unreadable or too large even after downscaling.');
         continue;
       }
+      if (!(await acceptChatImage(url, attached))) continue;
+      attached.push(url);
       setPendingImages((current) =>
         current.length >= CHAT_IMAGES_PER_MESSAGE ? current : [...current, url]
       );
     }
-  }, []);
+  }, [pendingImages]);
 
   const handleSend = useCallback(async (textOverride?: string, imageOverride?: string[]) => {
     const text = (textOverride ?? input).trim();
@@ -602,10 +634,11 @@ function AccountChatWidget() {
   const uncompactedCount = sinceLastSummary(messages).tail.length;
   const compactConversation = useCallback(async () => {
     if (sending || !userId || !activeThreadId) return;
-    setSending(true);
+    const threadId = activeThreadId;
+    const held = holdSend(threadId);
     try {
       const outcome = await sendChatTurn({
-        threadId: activeThreadId,
+        threadId,
         messages: [
           ...historyFor(messages),
           {
@@ -616,21 +649,24 @@ function AccountChatWidget() {
         ],
         isDemo,
         noTools: true,
-        clientSeq: clientSeqRef.current[activeThreadId],
+        signal: held.controller.signal,
+        clientSeq: clientSeqRef.current[threadId],
       });
       if (!outcome.ok) {
-        toast.error('Could not compact the chat', outcome.error.message);
+        if (outcome.error.code !== 'stopped') toast.error('Could not compact the chat', outcome.error.message);
         return;
       }
       const store = getChatStore(userId);
-      const marker = await store.appendMessage(activeThreadId, 'assistant', `${SUMMARY_PREFIX}\n${outcome.content.trim()}`);
+      const marker = await store.appendMessage(threadId, 'assistant', `${SUMMARY_PREFIX}\n${outcome.content.trim()}`);
       setStorePersistent(store.persistent);
-      setMessages((current) => [...current, marker]);
+      if (activeThreadIdRef.current === threadId) setMessages((current) => [...current, marker]);
       toast.success('Chat compacted', 'Earlier messages stay in the thread; the summary carries the context forward.');
+    } catch (e) {
+      toast.error('Could not compact the chat', e instanceof Error ? e.message : undefined);
     } finally {
-      setSending(false);
+      releaseSend(held);
     }
-  }, [sending, userId, activeThreadId, messages, isDemo]);
+  }, [sending, userId, activeThreadId, messages, isDemo, holdSend, releaseSend]);
 
   const retryTurn = useCallback(() => {
     const last = lastSendRef.current;
@@ -656,17 +692,26 @@ function AccountChatWidget() {
   }, []);
 
   const startNewChat = useCallback(() => {
+    releaseSend(heldTurnRef.current);
     setActiveThread(null);
     setMessages([]);
     setHasMore(false);
     setLiveTurn(null);
     setView('chat');
     setConfirmingDeleteId(null);
-  }, [setActiveThread]);
+  }, [setActiveThread, releaseSend]);
+
+  const stopTurn = useCallback(() => heldTurnRef.current?.controller.abort(), []);
 
   const deleteThread = useCallback(
     async (threadId: string) => {
       if (!userId) return;
+      // A turn in a deleted thread has nowhere left to put its reply.
+      const held = heldTurnRef.current;
+      if (held?.threadId === threadId) {
+        held.controller.abort();
+        releaseSend(held);
+      }
       await getChatStore(userId).deleteThread(threadId);
       setThreads((existing) => existing.filter((t) => t.id !== threadId));
       setConfirmingDeleteId(null);
@@ -677,7 +722,7 @@ function AccountChatWidget() {
         setLiveTurn(null);
       }
     },
-    [userId, setActiveThread]
+    [userId, setActiveThread, releaseSend]
   );
 
   /** Header "Clear conversation": two-tap confirm, then delete the active thread (view resets to a fresh chat). */
@@ -1182,14 +1227,26 @@ function AccountChatWidget() {
           placeholder={isDemo ? 'Pick a guided build below — or ask what this demo can do.' : 'Ask anything — I can create forms, apps and flows.'}
           className="max-h-28 min-h-[3.5rem] min-w-0 flex-1 resize-none rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-primary-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
         />
-        <button
-          type="submit"
-          aria-label="Send message"
-          disabled={sending || demoRunning || (input.trim() === '' && pendingImages.length === 0)}
-          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary-600 text-primary-foreground hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {sending || demoRunning ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
-        </button>
+        {sending ? (
+          <button
+            type="button"
+            aria-label="Stop"
+            title="Stop this reply"
+            onClick={stopTurn}
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary-600 text-primary-foreground hover:bg-primary-700"
+          >
+            <Square className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+          </button>
+        ) : (
+          <button
+            type="submit"
+            aria-label="Send message"
+            disabled={demoRunning || (input.trim() === '' && pendingImages.length === 0)}
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary-600 text-primary-foreground hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {demoRunning ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
+          </button>
+        )}
       </form>
     </>
   );

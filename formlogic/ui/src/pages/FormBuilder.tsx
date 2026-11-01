@@ -66,7 +66,7 @@ import { resolveBuilderChrome, type BuilderChromeTier } from '../components/buil
 import { BUILDER_FLOWS_W, BUILDER_SETTINGS_W, resolveBuilderLayout, sameResolvedBuilderLayout, type ResolvedBuilderLayout } from '../components/builder/builderLayout';
 import { FORM_SUBMITTED_EVENT } from '../components/builder/formFlowBindingsSerialize';
 import { demoApplyFormBindingOverlay, isDemoLocalId } from '../lib/demoLocal';
-import { flushFormSaves, discardPendingFormSaves, useFormStore } from '../stores/formStore';
+import { flushDebouncedSave, flushFormSaves, discardPendingFormSaves, useFormStore } from '../stores/formStore';
 import { useVaultStore } from '../stores/vaultStore';
 import { VaultUnlockDialog } from '../components/vault/VaultUnlockDialog';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
@@ -1629,7 +1629,13 @@ export default function FormBuilder() {
         isOpen={activeModal === 'theme'}
         onClose={closeModal}
         theme={form.theme}
-        onSave={(theme) => updateForm(form.id, { theme })}
+        onSave={async (theme) => {
+          // Sent now, so the dialog can say whether it arrived. Only this save decides that:
+          // a fields save that failed earlier has nothing to do with the theme.
+          await updateForm(form.id, { theme });
+          await flushDebouncedSave(form.id);
+          return !useFormStore.getState().saveErrors[form.id]?.includes('meta');
+        }}
       />
 
       {/* §11B O5a (owner direction): the SAME floating chat lives here too — the builder

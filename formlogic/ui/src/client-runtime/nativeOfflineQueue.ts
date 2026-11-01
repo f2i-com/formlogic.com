@@ -30,8 +30,8 @@
 // without the field (queued before items carried it, or by a caller that did not stamp it) is
 // anyone's, as before. A runtime that predates the field drops it, and its items stay anyone's.
 import { api } from '../lib/api';
-import { currentSessionOwner } from '../lib/sessionGeneration';
-import { flushBrowserQueue, isConflict, isUnreachableStatus, type FailedSubmissionSummary, type RetryOutcome } from './offlineQueue';
+import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from '../lib/sessionGeneration';
+import { flushBrowserQueue, isConflict, isUnreachableStatus, notifyQueueChanged, type FailedSubmissionSummary, type RetryOutcome } from './offlineQueue';
 import type { FormLogicNativeBridge, NativeSyncFlushGroup, NativeSyncQueueItem } from './connectors/connectorTypes';
 
 /**
@@ -235,6 +235,32 @@ function splitIntoBatches(entries: BatchEntry[]): BatchEntry[][] {
 /** The pass over the native queue under way, if any (see flushNativeQueue). */
 let nativePass: Promise<{ flushed: number; failed: number }> | null = null;
 
+export function isNativeFlushing(): boolean {
+  return nativePass !== null;
+}
+
+/**
+ * The server takes 60 items a minute from an account (AppPublicController::syncItemAllowed), and
+ * the rest of a batch comes back as still to do. Nothing would send those until the next reconnect
+ * or "Sync now", so one more pass is set for when the minute has passed. A session boundary clears
+ * it: what it would send is no longer this session's to send.
+ */
+const RATE_WINDOW_MS = 61_000;
+let resumeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function resumeWhenLimitPasses(): void {
+  if (resumeTimer !== null) return;
+  resumeTimer = setTimeout(() => {
+    resumeTimer = null;
+    void flushNativeQueue();
+  }, RATE_WINDOW_MS);
+}
+
+subscribeSessionGeneration(() => {
+  if (resumeTimer !== null) clearTimeout(resumeTimer);
+  resumeTimer = null;
+});
+
 /**
  * Flush the native runtime's persistent queue: ask the runtime for pending items grouped by appSlug,
  * POST each group to /sync/batch, then ack the accepted items and fail the rest. A no-op (0/0) when the
@@ -254,14 +280,19 @@ export async function flushNativeQueue(): Promise<{ flushed: number; failed: num
   if (nativePass) return { flushed: 0, failed: 0 };
   const pass = drainNativeQueue(sync);
   nativePass = pass;
+  notifyQueueChanged();
   try {
     return await pass;
   } finally {
     nativePass = null;
+    notifyQueueChanged();
   }
 }
 
 async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>): Promise<{ flushed: number; failed: number }> {
+  // A pass can outlive the session that began it: each POST goes on whoever's cookies are there by
+  // then, and a sign-out's purge can't reach the items already in memory here.
+  const session = currentSessionGeneration();
   let flushResult: { pending: NativeSyncFlushGroup[] };
   try {
     flushResult = await sync.flush();
@@ -295,6 +326,7 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
   let failed = 0;
   // Items that used an attempt in this pass: only the runtime knows which of them it was the last of.
   const attempted: string[] = [];
+  let limited = false;
   pass: for (const group of groups) {
     const slug = group?.appSlug;
     const items = (Array.isArray(group?.items) ? group.items : []).filter(ownedByCurrentSession);
@@ -320,6 +352,7 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
 
     const batches = splitIntoBatches(entries);
     while (batches.length > 0) {
+      if (!isSessionGenerationCurrent(session)) break pass;
       const batch = batches.shift() as BatchEntry[];
       const payloadItems = batch.map((e) => e.item);
       const res = await api.syncBatch(slug, batch.map((e) => e.sent));
@@ -359,7 +392,7 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
 
       // Map the server's per-item results (keyed by idempotencyKey) back to queue-item ids, preserving
       // the idempotency distinctions so ack / fail / keep can be decided precisely (see syncBatch).
-      const byKey = new Map<string, { success: boolean; idempotent: boolean; conflict: boolean; processing: boolean; error: string | null }>();
+      const byKey = new Map<string, { success: boolean; idempotent: boolean; conflict: boolean; processing: boolean; status: number | undefined; error: string | null }>();
       for (const r of res.data.results ?? []) {
         if (r && typeof r.idempotencyKey === 'string') {
           byKey.set(r.idempotencyKey, {
@@ -367,6 +400,7 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
             idempotent: r.idempotent === true,
             conflict: r.conflict === true,
             processing: r.processing === true,
+            status: r.status,
             error: r.error ?? null,
           });
         }
@@ -389,6 +423,12 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
         // attempt toward the native terminal-failure cap for something that just needs a retry. This is
         // genuinely attempt-neutral: the native flush() never mutates attempts.
         if (r?.processing) {
+          if (r.status === 429) limited = true;
+          continue;
+        }
+        // KEEP an item the server only asked to be tried later (a 503 for its ledger or a busy form):
+        // nothing about it was judged, as the browser queue has it (isUnreachableStatus).
+        if (r && isUnreachableStatus(r.status)) {
           continue;
         }
         // TERMINAL-fail a `conflict` (this key was already used with a DIFFERENT submission): no retry
@@ -427,6 +467,7 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
     const used = new Set(attempted);
     failed += (await nativeItems()).filter((i) => used.has(i.id) && i.status === 'failed').length;
   }
+  if (limited && isSessionGenerationCurrent(session)) resumeWhenLimitPasses();
   return { flushed, failed };
 }
 

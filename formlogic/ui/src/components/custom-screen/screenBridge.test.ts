@@ -146,6 +146,22 @@ describe('connectorInvoke — routing', () => {
     expect(relayApi.enqueueConnectorCommand).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])('a local command with no answer says uncertain, never failed, and stays off the relay (local bridge: %s)', async (bridgeUp) => {
+    // Pressing again after a clean failure would send a second call or SMS.
+    const capture: { enqueue?: Record<string, unknown> } = {};
+    const relayApi = relayApiDone(capture);
+    const d = deps({
+      localBridgeAvailable: () => bridgeUp,
+      localRequest: vi.fn(async () => {
+        throw new ConnectorError('connector_uncertain', 'FormLogic Desktop did not respond — the command may have run.');
+      }),
+      relayApi,
+    });
+    const out = await createScreenBridge(d).connectorInvoke('aokie', 'call.hangup', { callId: 'c1' });
+    expect(out).toMatchObject({ status: 'uncertain', via: 'local', error: { code: 'connector_uncertain' } });
+    expect(relayApi.enqueueConnectorCommand).not.toHaveBeenCalled();
+  });
+
   it('connector_unavailable falls back to the relay with the SAME connector/command/payload', async () => {
     const capture: { enqueue?: Record<string, unknown> } = {};
     const d = deps({

@@ -73,16 +73,39 @@ describe('desktopClient.connectors.request', () => {
     });
   });
 
-  it('maps a network failure to connector_unavailable with transportFailure', async () => {
-    setFetch(vi.fn(() => Promise.reject(new Error('ECONNREFUSED'))));
+  // Fetch can't tell a refusal before dispatch from a response lost after an SMS went out, and the
+  // 10-second timeout cuts off a command while it runs, so "was not performed" was a guess that
+  // invited a second press.
+  it.each([
+    ['a network failure', new Error('ECONNREFUSED')],
+    ['the fetch timeout', new DOMException('The operation timed out.', 'TimeoutError')],
+  ])('reports %s on a command as uncertain, with transportFailure', async (_label, failure) => {
+    setFetch(vi.fn(() => Promise.reject(failure)));
 
-    const res = await desktopClient.connectors.request('aokie', 'phone.status');
+    const res = await desktopClient.connectors.request('aokie', 'sms.send');
 
     expect(res.ok).toBe(false);
     if (!res.ok) {
-      expect(res.error.code).toBe('connector_unavailable');
+      expect(res.error.code).toBe('connector_uncertain');
+      expect(res.error.message).toContain('may have run');
       expect(res.transportFailure).toBe(true);
     }
+  });
+
+  it('reports a command answered with an unreadable body as uncertain too', async () => {
+    setFetch(vi.fn(async () => new Response('<html>', { status: 200 })));
+
+    const res = await desktopClient.connectors.request('aokie', 'sms.send');
+
+    expect(!res.ok && res.error.code).toBe('connector_uncertain');
+  });
+
+  it('keeps an unreachable desktop as connector_unavailable where nothing was asked to run', async () => {
+    setFetch(vi.fn(() => Promise.reject(new Error('ECONNREFUSED'))));
+
+    const res = await desktopClient.connectors.status('aokie');
+
+    expect(!res.ok && res.error.code).toBe('connector_unavailable');
   });
 
   it('maps HTTP 401 to auth_required and drops the stored pairing token', async () => {

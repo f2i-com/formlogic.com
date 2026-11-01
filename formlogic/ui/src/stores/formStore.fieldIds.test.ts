@@ -27,7 +27,7 @@ vi.mock('./toastStore', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 
-import { clearAllDebounceTimers, useFormStore } from './formStore';
+import { clearAllDebounceTimers, generateFieldId, useFormStore } from './formStore';
 
 const add = (label: string) =>
   useFormStore.getState().addField('f1', { type: 'short_text', label, required: false, properties: {} } as Omit<FormField, 'id' | 'order'>);
@@ -109,5 +109,54 @@ describe('the name a field has in the expression editors', () => {
     expect(toVar.is_empty).not.toBe('isEmpty');
     expect(replaceVariablesWithIds('count(items) > 2 && !isEmpty(items)', toId)).toBe('count(items) > 2 && !isEmpty(items)');
     expect(replaceVariablesWithIds(`${toVar.count_1} > 2`, toId)).toBe('count_1 > 2');
+  });
+});
+
+// `role === "manager"` beside a field labelled Manager: the quoted text is the answer it is
+// compared with, and saving it as that field's id made a rule that could never be true.
+describe('quoted text in an expression', () => {
+  const { toId, toVar } = createFieldVariableMap([{ id: 'mgr_1', label: 'Manager' }, { id: 'role_1', label: 'Role' }]);
+
+  it('is left alone when an expression is saved, while the code around it is not', () => {
+    expect(replaceVariablesWithIds(`${toVar.role_1} === "manager"`, toId)).toBe('role_1 === "manager"');
+    expect(replaceVariablesWithIds(`${toVar.role_1} === 'manager'`, toId)).toBe(`role_1 === 'manager'`);
+    expect(replaceVariablesWithIds('role == "manager" || manager == "role"', toId)).toBe('role_1 == "manager" || mgr_1 == "role"');
+  });
+
+  it('is left alone when an expression is shown', () => {
+    const { toVar: shown } = createFieldVariableMap([{ id: 'email', label: 'Email address' }, { id: 'method', label: 'Method' }]);
+    expect(replaceIdsWithVariables('method == "email" && email != ""', shown)).toBe('method == "email" && emailAddress != ""');
+  });
+
+  it('copes with a quote inside the text', () => {
+    expect(replaceVariablesWithIds(String.raw`role == "the \"manager\" one" && manager`, toId)).toBe(String.raw`role_1 == "the \"manager\" one" && mgr_1`);
+    expect(replaceVariablesWithIds(`role == "it's the manager" && manager`, toId)).toBe(`role_1 == "it's the manager" && mgr_1`);
+  });
+
+  it('reads a template as text, and what is inside its ${ } as code', () => {
+    expect(replaceVariablesWithIds('`manager: ${manager}, role: ${ {a: role}.a }`', toId)).toBe('`manager: ${mgr_1}, role: ${ {a: role_1}.a }`');
+  });
+
+  it('does not run on past the line when a quote is never closed', () => {
+    expect(replaceVariablesWithIds(`/it's/.test(role)\n&& manager`, toId)).toBe(`/it's/.test(role)\n&& mgr_1`);
+  });
+
+  // A rule saved before this reads as it is stored: it could never have matched "manager".
+  it('shows an old rule as it is stored, and saves it unchanged', () => {
+    const stored = 'role_1 === "mgr_1"';
+    const shown = replaceIdsWithVariables(stored, toVar);
+    expect(shown).toBe('role === "mgr_1"');
+    expect(replaceVariablesWithIds(shown, toId)).toBe(stored);
+  });
+});
+
+describe('generateFieldId, for those adding a field outside the builder', () => {
+  it('gives what addField gives, with the reserved names and the ids in use', () => {
+    expect(generateFieldId('Customer name', [])).toBe('customer_name');
+    expect(generateFieldId('Value', [])).toBe('value_1');
+    expect(generateFieldId('Class', [])).toBe('class_1');
+    expect(generateFieldId('Customer', ['customer', 'customer_1'])).toBe('customer_2');
+    expect(generateFieldId('???', [])).toBe('field');
+    expect(generateFieldId('401k', [])).toBe('_401k');
   });
 });

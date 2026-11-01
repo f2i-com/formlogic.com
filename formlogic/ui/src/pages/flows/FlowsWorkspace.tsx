@@ -86,7 +86,6 @@ export function FlowsWorkspace() {
   const [creating, setCreating] = useState(false);
   const [rightPanel, setRightPanel] = useState<'history' | 'test' | 'triggers' | null>(null);
   const [testInputs, setTestInputs] = useState<Record<string, string>>({});
-  const [historyKey, setHistoryKey] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<FlowDefinition | null>(null);
   // Enable/disable goes through an explicit confirm (no accidental sidebar toggles —
   // disabling a flow stops real automation).
@@ -654,7 +653,7 @@ export function FlowsWorkspace() {
         )}
         {rightPanelInline && rightPanel === 'history' && selectedFlow && (
           <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 md:flex motion-safe:transition-[width] motion-safe:duration-200">
-            <FlowRunHistory flowId={selectedFlow.id} flow={selectedFlow} refreshKey={historyKey} />
+            <FlowRunHistory flowId={selectedFlow.id} flow={selectedFlow} />
           </div>
         )}
         {rightPanelInline && rightPanel === 'test' && selectedFlow && (
@@ -664,7 +663,6 @@ export function FlowsWorkspace() {
               inputValue={testInputs[selectedFlow.id]}
               onInputChange={(value) => setTestInputs((drafts) => ({ ...drafts, [selectedFlow.id]: value }))}
               onClose={() => setRightPanel(null)}
-              onServerRun={() => { setHistoryKey((k) => k + 1); setRightPanel('history'); }}
               onRunStart={() => setNodeStatus({})}
               onNodeStatus={(id, status, info) => setNodeStatus((m) => reduceNodeStatus(m, id, status, info))}
               onCloudRunFeedback={handleCloudRunFeedback}
@@ -689,7 +687,7 @@ export function FlowsWorkspace() {
       )}
       {rightPanelDrawer && rightPanel === 'history' && selectedFlow && (
         <FlowMobileDrawer title="Run history" onClose={() => setRightPanel(null)}>
-          <FlowRunHistory flowId={selectedFlow.id} flow={selectedFlow} refreshKey={historyKey} />
+          <FlowRunHistory flowId={selectedFlow.id} flow={selectedFlow} />
         </FlowMobileDrawer>
       )}
       {rightPanelDrawer && rightPanel === 'test' && selectedFlow && (
@@ -700,7 +698,6 @@ export function FlowsWorkspace() {
             onInputChange={(value) => setTestInputs((drafts) => ({ ...drafts, [selectedFlow.id]: value }))}
             hideClose
             onClose={() => setRightPanel(null)}
-            onServerRun={() => { setHistoryKey((k) => k + 1); setRightPanel('history'); }}
             onRunStart={() => setNodeStatus({})}
             onNodeStatus={(id, status, info) => setNodeStatus((m) => reduceNodeStatus(m, id, status, info))}
             onCloudRunFeedback={handleCloudRunFeedback}

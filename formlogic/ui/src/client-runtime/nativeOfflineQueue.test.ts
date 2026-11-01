@@ -8,7 +8,9 @@ vi.mock('../lib/api', () => ({
 }));
 
 import { api } from '../lib/api';
-import { flushNativeQueue } from './nativeOfflineQueue';
+import { bumpSessionGeneration } from '../lib/sessionGeneration';
+import { flushNativeQueue, isNativeFlushing } from './nativeOfflineQueue';
+import { subscribeQueue } from './offlineQueue';
 
 interface Bridge {
   available: boolean;
@@ -238,5 +240,137 @@ describe('flushNativeQueue', () => {
 
     expect(api.syncBatch).toHaveBeenCalledTimes(1);
     expect(bridge.sync.fail).not.toHaveBeenCalled();
+  });
+
+  // A batch answers 200 with a status for each item. A 503 there is the server's ledger down or a
+  // form busy: the browser queue waits on that, and spending an attempt would turn an outage into
+  // "could not be sent".
+  it('uses no attempt on an item the server asked to be tried later', async () => {
+    const bridge = makeBridge();
+    setBridge(bridge);
+    vi.mocked(api.syncBatch).mockResolvedValueOnce({
+      data: {
+        results: [
+          { idempotencyKey: 'k1', success: false, responseId: null, error: 'The form is busy', status: 503 },
+          { idempotencyKey: 'k2', success: false, responseId: null, error: 'Validation failed', status: 400 },
+        ],
+      },
+    });
+
+    await flushNativeQueue();
+
+    expect(bridge.sync.fail).toHaveBeenCalledTimes(1);
+    expect(bridge.sync.fail).toHaveBeenCalledWith(['i2'], 'Validation failed');
+    expect(bridge.sync.ack).not.toHaveBeenCalled();
+  });
+
+  // The status hears about a pass only through the browser queue's subscribers.
+  it('tells the queue\'s subscribers when a pass starts and when it ends', async () => {
+    setBridge(makeBridge());
+    vi.mocked(api.syncBatch).mockResolvedValueOnce({ data: { results: [] } });
+    const heard: boolean[] = [];
+    const stop = subscribeQueue(() => heard.push(isNativeFlushing()));
+
+    await flushNativeQueue();
+    stop();
+
+    expect(heard).toEqual([true, false]);
+  });
+
+  // The server takes 60 items a minute from an account and hands the rest back as still to do.
+  // Nothing else would send those until the next reconnect or "Sync now".
+  describe('a batch cut short by the limit', () => {
+    const cutShort = (keys = ['k2']) => ({
+      data: {
+        results: [
+          { idempotencyKey: 'k1', success: true, responseId: 'r1', error: null, status: 201 },
+          ...keys.map((idempotencyKey) => ({ idempotencyKey, success: false, responseId: null, error: 'Try again in a moment', status: 429, processing: true })),
+        ],
+      },
+    });
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      bumpSessionGeneration();
+      vi.useRealTimers();
+    });
+
+    it('flushes once more when the minute has passed, using no attempt on what waited', async () => {
+      const bridge = makeBridge();
+      setBridge(bridge);
+      vi.mocked(api.syncBatch).mockResolvedValueOnce(cutShort());
+      await flushNativeQueue();
+      expect(bridge.sync.fail).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(api.syncBatch).toHaveBeenCalledTimes(1);
+
+      vi.mocked(api.syncBatch).mockResolvedValueOnce({ data: { results: [] } });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(api.syncBatch).toHaveBeenCalledTimes(2);
+    });
+
+    it('sets one timer however many passes are cut short, and keeps going while it is cut short', async () => {
+      setBridge(makeBridge());
+      vi.mocked(api.syncBatch).mockResolvedValue(cutShort());
+      await flushNativeQueue();
+      await flushNativeQueue();
+      expect(api.syncBatch).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(62_000);
+      expect(api.syncBatch).toHaveBeenCalledTimes(3);
+
+      await vi.advanceTimersByTimeAsync(62_000);
+      expect(api.syncBatch).toHaveBeenCalledTimes(4);
+    });
+
+    it('stops when the batches no longer are', async () => {
+      setBridge(makeBridge());
+      vi.mocked(api.syncBatch).mockResolvedValueOnce(cutShort());
+      await flushNativeQueue();
+      vi.mocked(api.syncBatch).mockResolvedValue({ data: { results: [] } });
+
+      await vi.advanceTimersByTimeAsync(180_000);
+
+      expect(api.syncBatch).toHaveBeenCalledTimes(2);
+    });
+
+    it('sets nothing for an item that is merely being processed elsewhere', async () => {
+      setBridge(makeBridge());
+      vi.mocked(api.syncBatch).mockResolvedValueOnce({
+        data: { results: [{ idempotencyKey: 'k1', success: false, responseId: null, error: 'Busy', status: 409, processing: true }] },
+      });
+      await flushNativeQueue();
+
+      await vi.advanceTimersByTimeAsync(180_000);
+
+      expect(api.syncBatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('is cleared when the session ends: what it would send is not the next session\'s', async () => {
+      setBridge(makeBridge());
+      vi.mocked(api.syncBatch).mockResolvedValueOnce(cutShort());
+      await flushNativeQueue();
+
+      bumpSessionGeneration();
+      await vi.advanceTimersByTimeAsync(180_000);
+
+      expect(api.syncBatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('sets nothing when the session ended during the pass', async () => {
+      setBridge(makeBridge());
+      vi.mocked(api.syncBatch).mockImplementationOnce(async () => {
+        bumpSessionGeneration();
+        return cutShort();
+      });
+      await flushNativeQueue();
+
+      await vi.advanceTimersByTimeAsync(180_000);
+
+      expect(api.syncBatch).toHaveBeenCalledTimes(1);
+    });
   });
 });

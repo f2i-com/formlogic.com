@@ -44,7 +44,7 @@ export const TUNNEL_DIRECTION_RESPONSE = 0x01;
 
 const PINS_STORAGE_KEY = 'formlogic-desktop-e2e-pins';
 /** Overall deadline for one tunnel request; the AI lane TTL is 5 minutes (plan §5.2). */
-const DEFAULT_STREAM_TIMEOUT_MS = 300_000;
+export const DEFAULT_STREAM_TIMEOUT_MS = 300_000;
 const MIN_STREAM_TIMEOUT_MS = 5_000;
 const MAX_STREAM_TIMEOUT_MS = 600_000;
 /** Frames cap at 4 MiB (plan §5.2); SSE data lines carry base64 so allow headroom. */
@@ -917,6 +917,11 @@ async function streamTunnelResponses(
       if (relayDone && (!res.ok || !res.body)) return { kind: 'done' };
       if (res.status === 401) {
         return { kind: 'failed', code: 'auth_required', message: 'Sign in again to follow the desktop request.' };
+      }
+      // A gateway error says the stream can't be followed just now, as a dropped connection does.
+      // The turn goes on at the desktop, so it is no more a failure than that is.
+      if (res.status === 502 || res.status === 503 || res.status === 504) {
+        return { kind: 'uncertain', message: `The desktop stream is unavailable (${res.status}); the request may still complete.` };
       }
       if (!res.ok || !res.body) {
         const body = await readBoundedJson(res);

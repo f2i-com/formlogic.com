@@ -212,7 +212,7 @@ describe('aokie pack connector — request routing', () => {
 
     await expect(aokie.request('call.hangup', { callId: 'call_1' })).rejects.toMatchObject({
       name: 'ConnectorError',
-      code: 'connector_unavailable',
+      code: 'connector_uncertain',
     });
   });
 

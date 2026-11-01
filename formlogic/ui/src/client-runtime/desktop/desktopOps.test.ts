@@ -126,6 +126,44 @@ describe('runDesktopOp enqueue', () => {
       expect(res.error.message).toContain('may or may not have been queued');
     }
   });
+
+  // The enqueue answer is {commandId, status}: a same-key retry that finds the op finished has no
+  // result to give, and a list op would then read as an empty list.
+  it('reads the result of an op the enqueue says has already finished', async () => {
+    const { fetchFn, calls } = stubFetch([
+      'throw',
+      { body: { data: { commandId: 'cmd-8', status: 'done', idempotent: true } } },
+      { body: { data: { status: 'done', result: { services: ['llama-cpp'] } } } },
+    ]);
+
+    const res = await runDesktopOp({ op: 'desktop.services.list' }, { fetchFn, sleep: immediateSleep });
+
+    expect(res).toEqual({ ok: true, outcome: { status: 'done', result: { services: ['llama-cpp'] }, commandId: 'cmd-8' } });
+    expect(calls[2].url).toBe(`${OPS_URL}/cmd-8`);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('reads the reason of an op the enqueue says has already failed', async () => {
+    const { fetchFn } = stubFetch([
+      { body: { data: { commandId: 'cmd-8', status: 'failed' } } },
+      { body: { data: { status: 'failed', error: { message: 'plugin crashed' } } } },
+    ]);
+
+    const res = await runDesktopOp(restartService, { fetchFn, sleep: immediateSleep });
+
+    expect(res.ok && res.outcome.error).toBe('plugin crashed');
+  });
+
+  it('still reports the enqueue\'s status when that read gets no answer', async () => {
+    const { fetchFn } = stubFetch([{ body: { data: { commandId: 'cmd-8', status: 'failed' } } }, 'throw']);
+
+    const res = await runDesktopOp(restartService, { fetchFn, sleep: immediateSleep });
+
+    expect(res).toEqual({
+      ok: true,
+      outcome: { status: 'failed', result: undefined, error: 'The desktop reported a failure.', commandId: 'cmd-8' },
+    });
+  });
 });
 
 describe('runDesktopOp poll outcomes', () => {

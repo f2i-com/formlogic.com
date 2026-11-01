@@ -153,6 +153,38 @@ function outcome(out: DesktopOpOutcome): DesktopOpRunResult {
   return { ok: true, outcome: out };
 }
 
+/** The status read of one op, or null when this answer isn't one. */
+function statusOf(poll: Awaited<ReturnType<typeof requestOp>>): OpStatusData | null {
+  const data: OpStatusData | null = asRecord(poll?.body?.data) ?? asRecord(poll?.body);
+  return data && typeof data.status === 'string' ? data : null;
+}
+
+/** The outcome a status read settles, or null while the op is still under way. */
+function settledOutcome(data: OpStatusData, commandId: string): DesktopOpRunResult | null {
+  // A server-marked uncertain verdict wins over the status word (the desktop may
+  // have acted; the backend could not confirm either way).
+  if (data.uncertain === true) {
+    return outcome({ status: 'uncertain', result: data.result, commandId });
+  }
+  if (data.status === 'done') {
+    return outcome({ status: 'done', result: data.result, commandId });
+  }
+  if (data.status === 'failed') {
+    const failed = asRecord(data.result);
+    return outcome({
+      status: 'failed',
+      result: data.result,
+      error: firstString(asRecord(data.error)?.message, data.error, failed?.message, failed?.error)
+        ?? 'The desktop reported a failure.',
+      commandId,
+    });
+  }
+  if (data.status === 'expired') {
+    return outcome({ status: 'expired', result: data.result, commandId });
+  }
+  return null;
+}
+
 /**
  * Enqueue one lifecycle op and poll it to a terminal outcome. Resolves a typed failure
  * only when the op never reached the queue (transport failure, auth, or a typed relay
@@ -220,7 +252,13 @@ export async function runDesktopOp(
     });
   }
   const enqueuedStatus = firstString(data?.status);
+  const opPath = `/desktop/ops/${encodeURIComponent(commandId)}`;
   if (enqueuedStatus === 'done' || enqueuedStatus === 'failed' || enqueuedStatus === 'expired') {
+    // The enqueue answer carries the status alone (as the connector relay's does), so a same-key
+    // retry that finds the op already finished has neither result nor reason: read the op once.
+    const read = statusOf(await requestOp(fetchFn, opPath, { method: 'GET' }));
+    const settled = read ? settledOutcome(read, commandId) : null;
+    if (settled) return settled;
     return outcome({
       status: enqueuedStatus,
       result: data?.result,
@@ -233,31 +271,11 @@ export async function runDesktopOp(
   let lastStatus: string = enqueuedStatus ?? 'pending';
   for (;;) {
     await sleep(pollMs);
-    const poll = await requestOp(fetchFn, `/desktop/ops/${encodeURIComponent(commandId)}`, { method: 'GET' });
-    const pollData: OpStatusData | null = asRecord(poll?.body?.data) ?? asRecord(poll?.body);
-    if (pollData && typeof pollData.status === 'string') {
-      lastStatus = pollData.status;
-      // A server-marked uncertain verdict wins over the status word (the desktop may
-      // have acted; the backend could not confirm either way).
-      if (pollData.uncertain === true) {
-        return outcome({ status: 'uncertain', result: pollData.result, commandId });
-      }
-      if (pollData.status === 'done') {
-        return outcome({ status: 'done', result: pollData.result, commandId });
-      }
-      if (pollData.status === 'failed') {
-        const pollError = asRecord(pollData.result);
-        return outcome({
-          status: 'failed',
-          result: pollData.result,
-          error: firstString(asRecord(pollData.error)?.message, pollData.error, pollError?.message, pollError?.error)
-            ?? 'The desktop reported a failure.',
-          commandId,
-        });
-      }
-      if (pollData.status === 'expired') {
-        return outcome({ status: 'expired', result: pollData.result, commandId });
-      }
+    const pollData = statusOf(await requestOp(fetchFn, opPath, { method: 'GET' }));
+    if (pollData) {
+      lastStatus = pollData.status as string;
+      const settled = settledOutcome(pollData, commandId);
+      if (settled) return settled;
     }
     if (now() - startedAt >= timeoutMs) {
       // Give-up semantics stay truthful: an op a desktop CLAIMED may have run — that is

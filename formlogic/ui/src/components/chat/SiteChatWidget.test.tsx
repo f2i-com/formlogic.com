@@ -13,6 +13,7 @@ import { chatPrivacyBadge, chatThreadTitle, chatToolLinkPath } from './siteChatV
 import { __resetChatStoresForTests, __setChatStoreIndexedDbForTests, getChatStore } from './chatStore';
 import type { ChatTurnOutcome, SendChatTurnOptions } from './chatEngine';
 import { useAuthStore } from '../../stores/authStore';
+import { useFormStore } from '../../stores/formStore';
 import { useToastStore } from '../../stores/toastStore';
 import { useUIStore } from '../../stores/uiStore';
 import { api } from '../../lib/api';
@@ -22,6 +23,7 @@ const h = vi.hoisted(() => ({
   sendChatTurn: vi.fn(),
   answerToolProposal: vi.fn(),
   getAiPreferences: vi.fn(),
+  downscaleChatImage: vi.fn(),
   demoAttach: vi.fn(),
   demoRespond: vi.fn(),
   lastLocation: '',
@@ -30,6 +32,12 @@ const h = vi.hoisted(() => ({
 vi.mock('./chatEngine', async () => {
   const actual = await vi.importActual<typeof import('./chatEngine')>('./chatEngine');
   return { ...actual, sendChatTurn: h.sendChatTurn, answerToolProposal: h.answerToolProposal };
+});
+
+// jsdom has no canvas to downscale on; the rest of chatImages is what these tests are after.
+vi.mock('./chatImages', async () => {
+  const actual = await vi.importActual<typeof import('./chatImages')>('./chatImages');
+  return { ...actual, downscaleChatImage: h.downscaleChatImage };
 });
 
 // The scripted demo director is its own unit (demoChatDirector.test.ts) — here it is a
@@ -475,6 +483,199 @@ describe('send path', () => {
   });
 });
 
+// A turn that never ends used to keep Send locked until a reload, whatever else the person did.
+describe('a turn that never answers', () => {
+  const stopButton = () => panel()!.querySelector<HTMLButtonElement>('button[aria-label="Stop"]');
+  const stopped = { ok: false, source: null, error: { code: 'stopped', message: 'Stopped.' } } satisfies ChatTurnOutcome;
+
+  /** A turn that goes on until it is stopped, or until the test finishes it. */
+  function hangingTurn() {
+    let finish!: (outcome: ChatTurnOutcome) => void;
+    h.sendChatTurn.mockImplementationOnce((opts: SendChatTurnOptions) => new Promise<ChatTurnOutcome>((resolve) => {
+      finish = resolve;
+      opts.signal?.addEventListener('abort', () => resolve(stopped));
+    }));
+    return (outcome: ChatTurnOutcome) => finish(outcome);
+  }
+
+  it('offers Stop while it runs, and Stop ends it with Retry and Send back', async () => {
+    await renderWidget();
+    await openPanel();
+    expect(stopButton()).toBeNull();
+    hangingTurn();
+    await send('are you there?');
+
+    await act(async () => stopButton()!.click());
+    await flush();
+
+    expect(stopButton()).toBeNull();
+    const error = panel()!.querySelector('[data-testid="chat-turn-error"]')!;
+    expect(error.textContent).toContain('Stopped.');
+    expect(error.textContent).toContain('Retry');
+    await send('and now?');
+    expect(h.sendChatTurn).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a turn that threw as an error with Retry, and lets go of Send', async () => {
+    await renderWidget();
+    await openPanel();
+    h.sendChatTurn.mockRejectedValueOnce(new Error('AI provider request template must render to valid JSON'));
+    await send('hello?');
+
+    const error = panel()!.querySelector('[data-testid="chat-turn-error"]')!;
+    expect(error.textContent).toContain('must render to valid JSON');
+    await act(async () => (error.querySelector('button') as HTMLButtonElement).click());
+    await flush();
+    expect(h.sendChatTurn).toHaveBeenCalledTimes(2);
+    expect(stopButton()).toBeNull();
+  });
+
+  it('lets go of Send on New chat, and the turn still saves its reply to its own thread', async () => {
+    await renderWidget();
+    await openPanel();
+    const finish = hangingTurn();
+    await send('first thread');
+
+    await act(async () => panel()!.querySelector<HTMLButtonElement>('button[aria-label="Chat history"]')!.click());
+    const newChat = Array.from(panel()!.querySelectorAll('button')).find((b) => b.textContent?.includes('New chat'))!;
+    await act(async () => newChat.click());
+    expect(stopButton()).toBeNull();
+
+    await send('second thread');
+    expect(h.sendChatTurn).toHaveBeenCalledTimes(2);
+    const before = await getChatStore('u1').listThreads();
+    expect(before).toHaveLength(2);
+
+    await act(async () => finish({ ok: true, source: 'site', content: 'late reply' }));
+    await flush();
+
+    const store = getChatStore('u1');
+    const first = before.find((t) => t.title === 'first thread')!;
+    expect((await store.listMessages(first.id)).messages.map((m) => m.content)).toEqual(['first thread', 'late reply']);
+    expect(panel()!.textContent).not.toContain('late reply');
+  });
+
+  it('lets go of Send on moving to another thread, and a late end does not take the next turn\'s lock', async () => {
+    const store = getChatStore('u1');
+    const other = await store.createThread('other thread');
+    await store.appendMessage(other.id, 'user', 'kept');
+    await renderWidget();
+    await openPanel();
+    await act(async () => panel()!.querySelector<HTMLButtonElement>('button[aria-label="Chat history"]')!.click());
+    const newChat = Array.from(panel()!.querySelectorAll('button')).find((b) => b.textContent?.includes('New chat'))!;
+    await act(async () => newChat.click());
+    const finish = hangingTurn();
+    await send('stuck here');
+
+    await act(async () => panel()!.querySelector<HTMLButtonElement>('button[aria-label="Chat history"]')!.click());
+    const row = Array.from(panel()!.querySelectorAll('button')).find((b) => b.textContent === 'other thread')!;
+    await act(async () => row.click());
+    await flush();
+    expect(stopButton()).toBeNull();
+
+    const finishNext = hangingTurn();
+    await send('next turn');
+    expect(stopButton()).not.toBeNull();
+
+    await act(async () => finish(stopped));
+    await flush();
+    expect(stopButton()).not.toBeNull();
+
+    await act(async () => finishNext({ ok: true, source: 'site', content: 'done' }));
+    await flush();
+    expect(stopButton()).toBeNull();
+  });
+
+  it('stops the turn of a thread being deleted: there is nowhere left for its reply', async () => {
+    await renderWidget();
+    await openPanel();
+    hangingTurn();
+    await send('delete me');
+
+    await act(async () => panel()!.querySelector<HTMLButtonElement>('button[aria-label="Chat history"]')!.click());
+    const remove = () => panel()!.querySelector<HTMLButtonElement>('button[aria-label^="Delete"], button[aria-label^="Confirm delete"]')!;
+    await act(async () => remove().click());
+    await act(async () => remove().click());
+    await flush();
+
+    const opts = h.sendChatTurn.mock.calls[0][0] as SendChatTurnOptions;
+    expect(opts.signal?.aborted).toBe(true);
+    expect(stopButton()).toBeNull();
+  });
+
+  it('holds Send during a compact too, and Stop ends it without an error', async () => {
+    const store = getChatStore('u1');
+    const thread = await store.createThread('long');
+    for (let i = 0; i < 30; i += 1) await store.appendMessage(thread.id, i % 2 === 0 ? 'user' : 'assistant', `turn ${i}`);
+    useToastStore.getState().clearToasts();
+    await renderWidget();
+    await openPanel();
+    hangingTurn();
+
+    await act(async () => panel()!.querySelector<HTMLButtonElement>('button[aria-label="Compact the conversation"]')!.click());
+    await flush();
+    expect(stopButton()).not.toBeNull();
+
+    await act(async () => stopButton()!.click());
+    await flush();
+
+    expect(stopButton()).toBeNull();
+    expect(useToastStore.getState().toasts).toEqual([]);
+  });
+});
+
+describe('attaching an image', () => {
+  async function attach(url: string) {
+    h.downscaleChatImage.mockResolvedValueOnce(url);
+    const input = panel()!.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const file = new File(['x'], 'photo.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+  }
+  const attached = () => panel()!.querySelectorAll('img[alt="Pending attachment"]').length;
+  const errors = () => useToastStore.getState().toasts.filter((t) => t.type === 'error');
+
+  beforeEach(() => useToastStore.getState().clearToasts());
+
+  it('refuses one too large for Desktop AI, in plain words, when it is attached', async () => {
+    h.getAiPreferences.mockResolvedValue({ ok: true, data: { ...PREFS, aiSource: 'desktop', desktopProviderId: 'p' } });
+    await renderWidget();
+    await openPanel();
+
+    await attach(`data:image/jpeg;base64,${'A'.repeat(262_000)}`);
+
+    expect(attached()).toBe(0);
+    expect(errors()).toEqual([expect.objectContaining({ title: 'That image is too large for FormLogic Desktop' })]);
+  });
+
+  it('counts what is already on the message: four small images can overflow one request together', async () => {
+    h.getAiPreferences.mockResolvedValue({ ok: true, data: { ...PREFS, aiSource: 'desktop', desktopProviderId: 'p' } });
+    await renderWidget();
+    await openPanel();
+    const url = `data:image/jpeg;base64,${'A'.repeat(100_000)}`;
+
+    await attach(url);
+    await attach(url);
+    await attach(url);
+
+    expect(attached()).toBe(2);
+    expect(errors()).toHaveLength(1);
+  });
+
+  it('takes the same image for Site AI, which has the room', async () => {
+    await renderWidget();
+    await openPanel();
+
+    await attach(`data:image/jpeg;base64,${'A'.repeat(262_000)}`);
+
+    expect(attached()).toBe(1);
+    expect(errors()).toEqual([]);
+  });
+});
+
 describe('Ask first / Auto toggle', () => {
   const toggle = () =>
     Array.from(panel()!.querySelectorAll('button')).find((b) => /^(Auto|Ask first)$/.test(b.textContent ?? ''))!;
@@ -525,6 +726,29 @@ describe('Ask first / Auto toggle', () => {
 });
 
 describe('tool cards', () => {
+  // update_form runs on the server. Left behind, the builder's copy has its next save refused as
+  // someone else's change, when the only one there is the person who asked the chat for it.
+  it('brings the builder up to date when the chat has changed a form', async () => {
+    const held = { id: 'f-77', title: 'F', fields: [], settings: {}, theme: {}, status: 'draft', fieldsRevision: 'before', _fieldsLoaded: true };
+    useFormStore.setState({ forms: [held as never], storageMode: 'api', savingFormIds: {}, saveErrors: {} });
+    const getForm = vi.spyOn(api, 'getForm').mockResolvedValue({ data: { form: { ...held, fieldsRevision: 'after' } as never } });
+    h.sendChatTurn.mockImplementation(async (opts: SendChatTurnOptions): Promise<ChatTurnOutcome> => {
+      opts.events?.onToolActivity?.({ id: 'act-1', name: 'update_form', status: 'running' });
+      expect(getForm).not.toHaveBeenCalled();
+      opts.events?.onToolActivity?.({ id: 'act-1', name: 'update_form', status: 'done', link: { kind: 'form', id: 'f-77' } });
+      return { ok: true, source: 'site', content: 'Added it.' };
+    });
+    await renderWidget();
+    await openPanel();
+    await send('add a phone field');
+    await flush();
+
+    expect(getForm).toHaveBeenCalledWith('f-77');
+    expect(useFormStore.getState().forms[0].fieldsRevision).toBe('after');
+    getForm.mockRestore();
+    useFormStore.setState({ forms: [], storageMode: 'local' });
+  });
+
   it('renders tool activity with a deep link and confirm-mode proposals with approve wiring', async () => {
     h.sendChatTurn.mockImplementation(async (opts: SendChatTurnOptions): Promise<ChatTurnOutcome> => {
       opts.events?.onToolActivity?.({ id: 'act-1', name: 'create_form', status: 'done', link: { kind: 'form', id: 'f-77' } });

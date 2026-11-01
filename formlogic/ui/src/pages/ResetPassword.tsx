@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { PasswordInput } from '../components/ui/PasswordInput';
@@ -8,7 +8,6 @@ import { Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 export function ResetPassword() {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const token = searchParams.get('token') || '';
 
   const [password, setPassword] = useState('');
@@ -31,14 +30,6 @@ export function ResetPassword() {
       setDone(true);
     }
   };
-
-  // Redirect to login shortly after success — via an effect so it's cancelled if the
-  // user navigates away first (no setState/navigate on an unmounted component).
-  useEffect(() => {
-    if (!done) return;
-    const t = setTimeout(() => navigate('/login'), 2000);
-    return () => clearTimeout(t);
-  }, [done, navigate]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-transparent flex items-center justify-center p-6 relative overflow-hidden">
@@ -63,7 +54,11 @@ export function ResetPassword() {
                 <CheckCircle2 className="h-6 w-6 text-green-500 dark:text-green-400" />
               </div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-white tracking-tight">Password reset</h1>
-              <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">Taking you to sign in…</p>
+              {/* Stays until they move on: a script or a linked app that stops working needs this said. */}
+              <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
+                Your API keys were turned off and linked apps such as OAIY were signed out. Make new keys and connect those apps again after you sign in.
+              </p>
+              <Link to="/login" className="inline-block mt-6 text-sm text-primary-600 dark:text-primary-400 hover:underline">Sign in</Link>
             </div>
           ) : (
             <>

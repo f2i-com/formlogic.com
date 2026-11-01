@@ -6,21 +6,26 @@
 // desktop source's per-turn tool grant + toolMode/toolGrant pass-through (a mint failure
 // degrades to an honest note, never a failed turn), tool proposal normalization +
 // answerToolProposal's postInput payload, and the demo account's tools-off behavior.
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   answerToolProposal,
   chatTextOf,
   createSiteChatSseParser,
+  DESKTOP_CHAT_LIMITS,
+  fitChatRequest,
   historyFor,
   normalizeToolActivity,
   normalizeToolProposal,
   sendChatTurn,
+  SITE_CHAT_LIMITS,
   sinceLastSummary,
   SUMMARY_PREFIX,
   type ChatEngineDeps,
+  type ChatEngineMessage,
   type ChatToolActivity,
   type ChatToolProposal,
   type ChatTurnError,
+  type ChatTurnOutcome,
   type SendChatTurnOptions,
 } from './chatEngine';
 import type { AiDefaultResult, AiPreferences } from '../../client-runtime/flows/aiDefault';
@@ -625,5 +630,289 @@ describe('image attachment plumbing', () => {
     );
     expect(out.ok).toBe(true);
     expect(tunnelChat.mock.calls[0][0].messages).toEqual(partMessages);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What a turn sends: the server's limits, kept on this side (AIService::CHAT_MAX_*, the 2 MiB
+// body limit, DesktopAiRelayService::MAX_ENVELOPE_BYTES). A thread past one of them used to fail
+// on every later turn, Retry and Compact included.
+// ---------------------------------------------------------------------------
+
+describe('fitChatRequest', () => {
+  const image = (chars: number) => `data:image/jpeg;base64,${'A'.repeat(chars - 23)}`;
+  const say = (role: string, content: string): ChatEngineMessage => ({ role, content });
+  const withImage = (text: string, url: string): ChatEngineMessage => ({
+    role: 'user',
+    content: [{ type: 'text', text }, { type: 'image_url', image_url: { url } }],
+  });
+  const conversation = (turns: number, words = 'word'): ChatEngineMessage[] =>
+    Array.from({ length: turns }, (_, i) => say(i % 2 === 0 ? 'user' : 'assistant', `${words} ${i}`));
+  const imageCount = (messages: ChatEngineMessage[]) =>
+    messages.flatMap((m) => (typeof m.content === 'string' ? [] : m.content.filter((p) => p.type === 'image_url'))).length;
+  const textBytes = (messages: ChatEngineMessage[]) =>
+    messages.reduce((sum, m) => sum + new TextEncoder().encode(chatTextOf(m.content)).length, 0);
+  const bodyBytes = (messages: ChatEngineMessage[]) => new TextEncoder().encode(JSON.stringify({ messages })).length;
+
+  it('sends a conversation inside the limits exactly as it is', () => {
+    const messages = conversation(10);
+    expect(fitChatRequest(messages, SITE_CHAT_LIMITS)).toBe(messages);
+  });
+
+  it('keeps the newest turns, and the system context where it sits, past the 50-message limit', () => {
+    const summary = say('system', 'Conversation summary (compacted): earlier work');
+    const page = say('system', 'Page context: the user is viewing form f-1');
+    const history = conversation(61);
+    const fitted = fitChatRequest([summary, ...history, page], SITE_CHAT_LIMITS)!;
+
+    expect(fitted).toHaveLength(49); // the first message kept would be an assistant's, and a turn opens with the person
+    expect(fitted[0]).toEqual(summary);
+    expect(fitted.at(-1)).toEqual(page);
+    expect(fitted.at(-2)).toEqual(history.at(-1));
+    expect(fitted[1].role).toBe('user');
+  });
+
+  it('counts text in bytes, as the server does', () => {
+    // 2 bytes a character: within 128,000 characters, over 128,000 bytes.
+    const fitted = fitChatRequest(conversation(30, 'é'.repeat(3000)), SITE_CHAT_LIMITS)!;
+    expect(textBytes(fitted)).toBeLessThanOrEqual(SITE_CHAT_LIMITS.textBytes);
+    expect(fitted.at(-1)?.content).toContain('29');
+  });
+
+  it('drops older images before older words, and says an image was there', () => {
+    const messages = [...Array.from({ length: 10 }, (_, i) => withImage(`photo ${i}`, image(100 + i))), say('user', 'and now?')];
+    const fitted = fitChatRequest(messages, SITE_CHAT_LIMITS)!;
+
+    expect(imageCount(fitted)).toBe(8);
+    expect(fitted).toHaveLength(11);
+    expect(chatTextOf(fitted[0].content)).toContain('photo 0');
+    expect(chatTextOf(fitted[0].content)).toContain('An image was attached here');
+    expect(fitted[0].content).toEqual(expect.any(String));
+    expect(imageCount(fitted.slice(2))).toBe(8);
+  });
+
+  it('stays under the body limit with images at the client\'s maximum size', () => {
+    const messages = [
+      ...Array.from({ length: 5 }, (_, i) => withImage(`photo ${i}`, image(480_000))),
+      withImage('this one', image(480_000)),
+    ];
+    const fitted = fitChatRequest(messages, SITE_CHAT_LIMITS)!;
+
+    expect(bodyBytes(fitted)).toBeLessThanOrEqual(2 * 1024 * 1024);
+    expect(fitted).toHaveLength(6);
+    expect(imageCount(fitted.slice(-1))).toBe(1);
+  });
+
+  it('leaves out the end of an older message over the 32,000-byte limit, not the whole turn', () => {
+    const fitted = fitChatRequest([say('user', 'é'.repeat(20_000)), say('assistant', 'ok'), say('user', 'and now?')], SITE_CHAT_LIMITS)!;
+
+    expect(fitted).toHaveLength(3);
+    const clipped = chatTextOf(fitted[0].content);
+    expect(new TextEncoder().encode(clipped).length).toBeLessThanOrEqual(32_000);
+    expect(clipped).toContain('left out of this request');
+    expect(clipped).not.toContain('�');
+  });
+
+  it('leaves an old image out of a Desktop request instead of failing every turn after it', () => {
+    const messages = [withImage('old photo', image(300_000)), say('assistant', 'nice'), say('user', 'and now?')];
+    const fitted = fitChatRequest(messages, DESKTOP_CHAT_LIMITS)!;
+
+    expect(bodyBytes(fitted)).toBeLessThanOrEqual(DESKTOP_CHAT_LIMITS.bodyBytes);
+    expect(fitted.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+    expect(chatTextOf(fitted[0].content)).toContain('old photo');
+    expect(chatTextOf(fitted[0].content)).toContain('An image was attached here');
+  });
+
+  it('gives the newest message\'s image room before older words on Desktop', () => {
+    const messages = [...conversation(40, 'w'.repeat(10_000)), withImage('look', image(200_000))];
+    const fitted = fitChatRequest(messages, DESKTOP_CHAT_LIMITS)!;
+
+    expect(imageCount(fitted)).toBe(1);
+    expect(bodyBytes(fitted)).toBeLessThanOrEqual(DESKTOP_CHAT_LIMITS.bodyBytes);
+  });
+
+  it('refuses a newest message that can\'t go even on its own', () => {
+    expect(fitChatRequest([say('user', 'x'.repeat(32_001))], SITE_CHAT_LIMITS)).toBeNull();
+    expect(fitChatRequest([withImage('look', image(300_000))], DESKTOP_CHAT_LIMITS)).toBeNull();
+    expect(fitChatRequest([say('user', 'x'.repeat(300_000))], DESKTOP_CHAT_LIMITS)).toBeNull();
+    expect(fitChatRequest([withImage('look', image(700_001))], SITE_CHAT_LIMITS)).toBeNull();
+  });
+
+  it('leaves out an older image over the server\'s size for one, keeping the turn', () => {
+    const fitted = fitChatRequest([withImage('too big', image(700_001)), say('assistant', 'hm'), say('user', 'and now?')], SITE_CHAT_LIMITS)!;
+
+    expect(fitted).toHaveLength(3);
+    expect(imageCount(fitted)).toBe(0);
+    expect(chatTextOf(fitted[0].content)).toContain('An image was attached here');
+  });
+
+  it('keeps at most four images on one older message, as the server does', () => {
+    const urls = Array.from({ length: 5 }, (_, i) => image(100 + i));
+    const crowded: ChatEngineMessage = { role: 'user', content: urls.map((url) => ({ type: 'image_url', image_url: { url } })) };
+    const fitted = fitChatRequest([crowded, say('assistant', 'hm'), say('user', 'and now?')], SITE_CHAT_LIMITS)!;
+
+    expect(imageCount(fitted)).toBe(4);
+    expect(chatTextOf(fitted[0].content)).toContain('An image was attached here');
+  });
+});
+
+describe('sendChatTurn inside the limits', () => {
+  const siteReply = () => sseResponse(['event: done\ndata: {"content":"short"}\n\n']);
+  const sentBody = (fetchFn: ReturnType<typeof vi.fn>) => JSON.parse(String((fetchFn.mock.calls[0][1] as RequestInit).body)) as { messages: ChatEngineMessage[] };
+  const longThread = (): ChatEngineMessage[] =>
+    Array.from({ length: 80 }, (_, i) => ({ role: i % 2 === 0 ? 'user' : 'assistant', content: `turn ${i}` }));
+
+  it('compacts a thread that is over the limit: the request goes, with the summarise prompt in it', async () => {
+    const fetchFn = vi.fn(async () => siteReply());
+    const prompt = { role: 'user', content: 'Summarise our conversation so far' };
+    const out = await sendChatTurn(turn({ messages: [...longThread(), prompt], noTools: true }), prefsDeps(prefs(), { fetchFn }));
+
+    expect(out).toMatchObject({ ok: true, content: 'short' });
+    const { messages } = sentBody(fetchFn);
+    expect(messages.length).toBeLessThanOrEqual(50);
+    expect(messages.at(-1)).toEqual(prompt);
+  });
+
+  it('trims after the page context is added, so the hint is counted and kept', async () => {
+    const fetchFn = vi.fn(async () => siteReply());
+    await sendChatTurn(turn({ messages: longThread().slice(0, 79), pageContext: { kind: 'form', id: 'f-1' } }), prefsDeps(prefs(), { fetchFn }));
+
+    const { messages } = sentBody(fetchFn);
+    expect(messages.length).toBeLessThanOrEqual(50);
+    expect(messages.at(-1)).toMatchObject({ role: 'system', content: expect.stringContaining('f-1') });
+  });
+
+  it('keeps a Desktop request inside the sealed envelope, tool grant and all', async () => {
+    const tunnelChat = okTunnel();
+    const grant = 'g'.repeat(1024);
+    const url = `data:image/jpeg;base64,${'A'.repeat(300_000)}`;
+    const messages: ChatEngineMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'old' }, { type: 'image_url', image_url: { url } }] },
+      { role: 'assistant', content: 'seen' },
+      { role: 'user', content: 'and now?' },
+    ];
+    await sendChatTurn(
+      turn({ messages }),
+      prefsDeps(prefs({ aiSource: 'desktop', desktopProviderId: 'p', desktopModel: 'm' }), {
+        tunnelChat,
+        mintToolGrant: vi.fn(async () => ({ data: { grantToken: grant, expiresAt: '' }, status: 200 })),
+      })
+    );
+
+    const options = tunnelChat.mock.calls[0][0] as ChatViaTunnelOptions & { toolMode?: string; toolGrant?: string };
+    const sealed = JSON.stringify({
+      v: 1, kind: 'chat', providerId: options.providerId, threadId: options.threadId, clientSeq: options.clientSeq,
+      model: options.model, messages: options.messages, toolMode: options.toolMode, toolGrant: options.toolGrant,
+    });
+    expect(options.toolGrant).toBe(grant);
+    expect(24 + 16 + new TextEncoder().encode(sealed).length).toBeLessThanOrEqual(262_144);
+  });
+
+  it('says in plain words when the newest message can\'t be sent, and sends nothing', async () => {
+    const fetchFn = vi.fn(async () => siteReply());
+    const out = await sendChatTurn(turn({ messages: [{ role: 'user', content: 'x'.repeat(40_000) }] }), prefsDeps(prefs(), { fetchFn }));
+
+    expect(out).toMatchObject({ ok: false, source: 'site', error: { code: 'too_large' } });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('leaves a custom service\'s history alone: its limits are its own', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ choices: [{ message: { content: 'ok' } }] }));
+    await sendChatTurn(turn({ messages: longThread() }), prefsDeps(prefs({ aiSource: 'custom', customProviderId: 'c' }), { fetchFn, resolveCustomProvider: async () => customProvider() }));
+
+    expect(sentBody(fetchFn).messages).toHaveLength(80);
+  });
+});
+
+function customProvider(overrides: Partial<Awaited<ReturnType<NonNullable<ChatEngineDeps['resolveCustomProvider']>>>> = {}) {
+  return {
+    name: 'My service',
+    kind: 'openai',
+    url: 'https://ai.test/v1/chat',
+    headers: { 'Content-Type': 'application/json' },
+    responsePath: 'choices.0.message.content',
+    ...overrides,
+  } as NonNullable<Awaited<ReturnType<NonNullable<ChatEngineDeps['resolveCustomProvider']>>>>;
+}
+
+describe('a turn that goes wrong ends, and says so', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A service that accepts the request and never answers, as a stalled connection does. */
+  const silentFetch = () =>
+    vi.fn((_url: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    }));
+  const customPrefs = prefs({ aiSource: 'custom', customProviderId: 'c' });
+
+  it('reports a request template that does not render as an error, sending nothing', async () => {
+    const fetchFn = silentFetch();
+    const out = await sendChatTurn(
+      turn(),
+      prefsDeps(customPrefs, { fetchFn, resolveCustomProvider: async () => customProvider({ requestTemplate: '{"messages": {{messages}},}' }) })
+    );
+
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.source).toBe('custom');
+      expect(out.error.message).toContain("'My service'");
+      expect(out.error.message).toContain('Settings');
+    }
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it.each([['Site', prefs()], ['Custom', customPrefs]] as const)('gives a %s turn 5 minutes', async (_label, chosen) => {
+    vi.useFakeTimers();
+    const fetchFn = silentFetch();
+    let settled: ChatTurnOutcome | null = null;
+    void sendChatTurn(turn(), prefsDeps(chosen, { fetchFn: fetchFn as typeof fetch, resolveCustomProvider: async () => customProvider() })).then((out) => { settled = out; });
+
+    await vi.advanceTimersByTimeAsync(299_000);
+    expect(settled).toBeNull();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(settled).toMatchObject({ ok: false, error: { code: 'timeout' } });
+    expect((fetchFn.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(true);
+  });
+
+  it('stops a Site turn as soon as it is asked to, aborting the request', async () => {
+    const fetchFn = silentFetch();
+    const stop = new AbortController();
+    const running = sendChatTurn(turn({ signal: stop.signal }), prefsDeps(prefs(), { fetchFn: fetchFn as typeof fetch }));
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalled());
+
+    stop.abort();
+
+    expect(await running).toMatchObject({ ok: false, error: { code: 'stopped' } });
+    expect((fetchFn.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(true);
+  });
+
+  it('stops a turn still waiting for something that can\'t be aborted', async () => {
+    const stop = new AbortController();
+    const running = sendChatTurn(turn({ signal: stop.signal }), { fetchPreferences: () => new Promise(() => {}) });
+
+    stop.abort();
+
+    expect(await running).toMatchObject({ ok: false, error: { code: 'stopped' } });
+  });
+
+  it('leaves a Desktop turn\'s deadline to the tunnel, which knows what to say about it', async () => {
+    vi.useFakeTimers();
+    let finish!: (result: DesktopTunnelResult<ChatViaTunnelSuccess>) => void;
+    const tunnelChat = vi.fn(() => new Promise<DesktopTunnelResult<ChatViaTunnelSuccess>>((resolve) => { finish = resolve; }));
+    let settled: ChatTurnOutcome | null = null;
+    void sendChatTurn(
+      turn(),
+      prefsDeps(prefs({ aiSource: 'desktop', desktopProviderId: 'p' }), { tunnelChat: tunnelChat as unknown as ChatEngineDeps['tunnelChat'], mintToolGrant: okGrant() })
+    ).then((out) => { settled = out; });
+
+    await vi.advanceTimersByTimeAsync(301_000);
+    expect(settled).toBeNull();
+
+    finish({ ok: false, error: { code: 'uncertain', message: 'Timed out waiting for the desktop; the request may still complete.' } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toMatchObject({ ok: false, source: 'desktop', error: { code: 'uncertain' } });
   });
 });

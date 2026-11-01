@@ -8,6 +8,7 @@ import { useUIStore } from '../../stores/uiStore';
 
 const h = vi.hoisted(() => ({
   downscaleChatImage: vi.fn(),
+  acceptChatImage: vi.fn(),
 }));
 
 vi.mock('../../client-runtime/flows/aiDefault', () => ({
@@ -17,6 +18,7 @@ vi.mock('../../client-runtime/flows/aiDefault', () => ({
 vi.mock('./chatImages', () => ({
   CHAT_IMAGES_PER_MESSAGE: 4,
   downscaleChatImage: h.downscaleChatImage,
+  acceptChatImage: h.acceptChatImage,
 }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -53,6 +55,7 @@ beforeEach(() => {
     chatLaunch: null,
   });
   h.downscaleChatImage.mockResolvedValue('data:image/jpeg;base64,REF');
+  h.acceptChatImage.mockResolvedValue(true);
 });
 
 afterEach(async () => {
@@ -114,5 +117,26 @@ describe('Dashboard creation composer', () => {
       text: '',
       images: ['data:image/jpeg;base64,REF'],
     });
+  });
+
+  it('asks about an image with what is already attached, and drops one that is refused', async () => {
+    await renderBand();
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const attach = async (name: string) => {
+      await act(async () => {
+        Object.defineProperty(fileInput, 'files', { configurable: true, value: [new File(['x'], name, { type: 'image/png' })] });
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        await Promise.resolve();
+      });
+    };
+    h.downscaleChatImage.mockResolvedValueOnce('data:image/jpeg;base64,ONE');
+    await attach('one.png');
+
+    h.downscaleChatImage.mockResolvedValueOnce('data:image/jpeg;base64,TWO');
+    h.acceptChatImage.mockResolvedValueOnce(false);
+    await attach('two.png');
+
+    expect(h.acceptChatImage).toHaveBeenLastCalledWith('data:image/jpeg;base64,TWO', ['data:image/jpeg;base64,ONE']);
+    expect(container.querySelectorAll('img[alt^="Attached reference"]')).toHaveLength(1);
   });
 });

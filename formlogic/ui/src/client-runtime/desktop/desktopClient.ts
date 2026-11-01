@@ -4,7 +4,8 @@
 // DesktopClientResult — it NEVER throws:
 //   - network failure / timeout / non-JSON  → {ok:false, error:{code:'connector_unavailable'},
 //     transportFailure:true} (the client-synthesised flavour — Desktop unreachable, safe
-//     for a caller to treat as "absent");
+//     for a caller to treat as "absent", except for a connector command, which may have run:
+//     connectors.request says connector_uncertain);
 //   - HTTP 401                              → {ok:false, error:{code:'auth_required'}} and the
 //     stored pairing token is dropped (contract: auth_required is desktop-transport-only and
 //     is handled HERE, before the connector layer — it never surfaces as a ConnectorError);
@@ -1283,6 +1284,18 @@ export const desktopClient = {
         invalidateConnectorCapability(connectorId);
         const fresh = await getConnectorCapability(connectorId);
         if (fresh) res = await send(fresh);
+      }
+      if (!res.ok && res.transportFailure) {
+        // A slow command is cut off by the fetch timeout while it runs, and a lost answer looks
+        // the same as a refusal before dispatch. Pressing again would send a second call or SMS,
+        // so this is never reported as not performed, as on the OAIY route.
+        return {
+          ...res,
+          error: {
+            code: 'connector_uncertain',
+            message: 'FormLogic Desktop did not respond — the command may have run. Check the device before retrying.',
+          },
+        };
       }
       if (!res.ok) return res;
       // Unwrap the connector-response success envelope to the command's data payload.

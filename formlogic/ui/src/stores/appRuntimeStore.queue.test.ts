@@ -8,19 +8,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../lib/api', () => ({
   api: {
     getAppRuntime: vi.fn(),
+    createAppResponse: vi.fn(),
     createAppResponseResult: vi.fn(),
     syncBatch: vi.fn(),
     onSessionExpired: vi.fn(),
     removeSessionExpiredCallback: vi.fn(),
     isDemoMode: () => false,
   },
-  newIdempotencyKey: () => 'key',
+  newIdempotencyKey: vi.fn(() => 'key'),
 }));
-vi.mock('../lib/sessionGeneration', () => ({ currentSessionOwner: () => 'u1' }));
+vi.mock('../lib/sessionGeneration', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/sessionGeneration')>()),
+  currentSessionOwner: () => 'u1',
+}));
 vi.mock('../client-runtime/desktop/desktopClient', () => ({ setConnectorCapabilityContext: vi.fn() }));
 vi.mock('../client-runtime/connectors/packConnectorDriver', () => ({ syncPackConnectors: vi.fn() }));
 
-import { api } from '../lib/api';
+import { api, newIdempotencyKey } from '../lib/api';
 import { enqueueSubmission, isFlushing, listQueue } from '../client-runtime/offlineQueue';
 import { useAppRuntimeStore } from './appRuntimeStore';
 
@@ -38,7 +42,12 @@ function memoryIndexedDB(): IDBFactory {
     delete: (id: string) => { rows.delete(id); return request(undefined); },
     getAll: () => request([...rows.values()].map((row) => structuredClone(row))),
   };
-  const db = { objectStoreNames: { contains: () => true }, createObjectStore: () => store, transaction: () => ({ objectStore: () => store }) };
+  const transaction = () => {
+    const tx = { objectStore: () => store, oncomplete: null as null | (() => void) };
+    setTimeout(() => tx.oncomplete?.());
+    return tx;
+  };
+  const db = { objectStoreNames: { contains: () => true }, createObjectStore: () => store, transaction };
   return {
     open: () => {
       const req = { result: db, error: null, onsuccess: null as null | (() => void), onerror: null, onupgradeneeded: null };
@@ -61,6 +70,7 @@ async function flushSettled() {
 beforeEach(() => {
   vi.stubGlobal('indexedDB', memoryIndexedDB());
   vi.mocked(api.getAppRuntime).mockReset();
+  vi.mocked(api.createAppResponse).mockReset();
   vi.mocked(api.createAppResponseResult).mockReset();
 });
 
@@ -110,5 +120,55 @@ describe('a submission made offline in the native runtime', () => {
     expect(result).toMatchObject({ id: 'n1', queued: true });
     expect(enqueue).toHaveBeenCalledWith({ appSlug: 'shop', formId: 'orders', idempotencyKey: 'key', answers: { item: 'tea' }, ownerUserId: 'u1' });
     expect(await listQueue()).toEqual([]);
+  });
+});
+
+// An online submit the server may have stored (a gateway answered 502) keeps its key for the retry.
+// Going offline before that retry must not change it: the two copies would both be stored.
+describe('a retry made offline', () => {
+  beforeEach(() => {
+    let keys = 0;
+    vi.mocked(newIdempotencyKey).mockImplementation(() => `key-${++keys}`);
+    useAppRuntimeStore.setState({ appSlug: 'shop' });
+    vi.stubGlobal('window', {});
+  });
+  afterEach(() => {
+    vi.mocked(newIdempotencyKey).mockImplementation(() => 'key');
+  });
+
+  async function failOnline(answers: Record<string, unknown>) {
+    vi.mocked(api.createAppResponse).mockResolvedValueOnce({ error: 'Bad gateway', status: 502 } as never);
+    await expect(useAppRuntimeStore.getState().createResponse('orders', answers)).rejects.toThrow('Bad gateway');
+  }
+
+  it('queues the same answers under the key of the attempt that failed', async () => {
+    await failOnline({ item: 'tea' });
+    const firstKey = vi.mocked(api.createAppResponse).mock.calls[0][2].idempotencyKey;
+
+    vi.stubGlobal('navigator', { onLine: false });
+    await useAppRuntimeStore.getState().createResponse('orders', { item: 'tea' });
+
+    const [row] = await listQueue();
+    expect(row.idempotencyKey).toBe(firstKey);
+  });
+
+  it('queues changed answers under a new key: that is a new submission', async () => {
+    await failOnline({ item: 'tea' });
+    const firstKey = vi.mocked(api.createAppResponse).mock.calls[0][2].idempotencyKey;
+
+    vi.stubGlobal('navigator', { onLine: false });
+    await useAppRuntimeStore.getState().createResponse('orders', { item: 'coffee' });
+
+    const [row] = await listQueue();
+    expect(row.idempotencyKey).not.toBe(firstKey);
+  });
+
+  it('does not reuse a key once its submission is queued: the same answers again are another submission', async () => {
+    vi.stubGlobal('navigator', { onLine: false });
+    await useAppRuntimeStore.getState().createResponse('orders', { item: 'tea' });
+    await useAppRuntimeStore.getState().createResponse('orders', { item: 'tea' });
+
+    const keys = (await listQueue()).map((row) => row.idempotencyKey);
+    expect(new Set(keys).size).toBe(2);
   });
 });
