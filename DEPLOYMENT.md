@@ -108,6 +108,12 @@ Work top to bottom before exposing the app publicly. Most of these live in
 - [ ] Backups configured (§2)
 - [ ] `GET /api/health/deep` (as a platform admin) returns `status: ok` (§5)
 - [ ] Dependency audits clean: `composer audit` (backend), `npm audit` (ui)
+- [ ] Behind a CDN such as Cloudflare, nothing caches `sw.js`, `registerSW.js` or `index.html`: the
+      site sends them `Cache-Control: no-cache`, so a cache rule is the only thing that can undo
+      it. A CDN holding `sw.js` keeps returning visitors on the old release's page after an update,
+      and that page can fail against the new server. An administrator's two-factor setup answers
+      "out of date" or "Incorrect password" without asking for a password. Purge those addresses
+      and reload.
 
 ---
 

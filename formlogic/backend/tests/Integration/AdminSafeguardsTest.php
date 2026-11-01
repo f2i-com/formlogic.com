@@ -489,6 +489,22 @@ class AdminSafeguardsTest extends TestCase
         $this->assertSame(200, $controller->mfaSetup($request->withParsedBody(['password' => 'the-right-password']), (new ResponseFactory())->createResponse())->getStatusCode());
     }
 
+    // A page kept from before setup needed a password never asks for one. "Incorrect password" sent
+    // an administrator, locked out of the admin panel, looking for what was wrong with theirs.
+    public function testAPageThatNeverAskedForThePasswordIsToldItIsOutOfDate(): void
+    {
+        $mfa = $this->createMock(MfaService::class);
+        $mfa->expects($this->never())->method('beginSetup');
+        $controller = new AuthController(self::$auth, [], 3600, null, null, '', null, null, null, null, null, $mfa);
+        $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://formlogic.example/api/auth/mfa/setup')
+            ->withAttribute('user', $this->owner())->withAttribute('userId', $this->ownerId);
+        $said = static fn ($response): string => (string) json_decode((string) $response->getBody(), true)['message'];
+
+        $this->assertStringContainsString('out of date', $said($controller->mfaSetup($request, (new ResponseFactory())->createResponse())));
+        $this->assertStringContainsString('out of date', $said($controller->mfaSetup($request->withParsedBody([]), (new ResponseFactory())->createResponse())));
+        $this->assertSame('Incorrect password', $said($controller->mfaSetup($request->withParsedBody(['password' => '']), (new ResponseFactory())->createResponse())));
+    }
+
     public function testTurningTwoFactorOnEndsEveryOtherSession(): void
     {
         $mfa = $this->createStub(MfaService::class);

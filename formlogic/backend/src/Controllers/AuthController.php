@@ -983,7 +983,13 @@ class AuthController
         if ($blocked = $this->blockIfDemo($request, $response)) {
             return $blocked;
         }
-        if (!$this->authService->verifyPassword($user->id, (string) (($request->getParsedBody() ?? [])['password'] ?? ''))) {
+        $body = $request->getParsedBody();
+        // A page from before setup needed a password sends none. "Incorrect password" had an
+        // administrator looking for what was wrong with a password nobody had asked them for.
+        if (!is_array($body) || !array_key_exists('password', $body)) {
+            return $this->jsonError($response, 'This page is out of date, so it did not ask for your password. Reload it and try again.', 403, 'password_required');
+        }
+        if (!$this->authService->verifyPassword($user->id, (string) $body['password'])) {
             return $this->jsonError($response, 'Incorrect password', 403, 'password_required');
         }
         try {

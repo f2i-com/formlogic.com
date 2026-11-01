@@ -137,10 +137,31 @@ Options -Indexes
 
   # SPA: serve real files (assets, index.html, service worker) as-is...
   RewriteRule ^index\.html$ - [L]
+  # A build file that isn't here is a page from an older release asking for it. Answered with the
+  # app shell it is an HTML "script", and a CDN keeps that under the script's name.
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteRule ^assets/ - [R=404,L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   # ...and hand every other path to the app shell for client-side routing.
   RewriteRule . /index.html [L]
+</IfModule>
+
+# ============================================================================
+# What a browser has to ask for every time.
+#
+# sw.js is how a browser learns that a release changed anything, and it keeps
+# running the page it has stored until this file differs. A file with no
+# Cache-Control is the CDN's to keep: Cloudflare holds .js for hours, so after an
+# update every returning visitor stayed on the old release's page, against the
+# new server. On v0.1.19 that page's two-factor setup sent no password, which
+# locked an administrator out of the admin panel. Every other script is named
+# after its content, so only these need saying.
+# ============================================================================
+<IfModule mod_headers.c>
+  <FilesMatch "^(sw\.js|registerSW\.js|index\.html)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
 </IfModule>
 
 # ============================================================================
