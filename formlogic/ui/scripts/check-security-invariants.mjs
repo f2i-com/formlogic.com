@@ -132,6 +132,37 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
       fail(`ui/public/.htaccess must not redirect or rewrite under the frame trees: ${rule}`);
     }
   }
+
+  // The nginx example in the README is what a site without Apache copies, and nothing runs it. It
+  // drifted from .htaccess until no /api/ request reached PHP and no embedded form could load.
+  const readme = readFileSync(resolve(root, '../README.md'), 'utf8').replace(/\r\n/g, '\n');
+  const nginx = readme.match(/```nginx\n([\s\S]*?)```/)?.[1] ?? '';
+  if (!nginx) fail('README.md must keep its nginx example, or this check must go with it');
+  const nginxBlock = (opening) => nginx.split(/\n(?=    (?:#|location ))/).find((block) => block.startsWith(`    location ${opening} `)) ?? '';
+  for (const name of ['/index.html', '/sw.js', '/registerSW.js']) {
+    if (!/<FilesMatch "\^\(sw\\\.js\|registerSW\\\.js\|index\\\.html\)\$">\s+Header set Cache-Control "no-cache"/.test(htaccess)) {
+      fail('.htaccess must send sw.js, registerSW.js and index.html with Cache-Control: no-cache: a CDN holds them otherwise, and returning visitors stay on the old release');
+    }
+    if (!new RegExp(`^\\s*${name.replace('.', '\\.')}\\s+"no-cache";`, 'm').test(nginx)) fail(`the nginx example must send ${name} with no-cache, as .htaccess does`);
+  }
+  if (!nginxBlock('/').includes('add_header Cache-Control $formlogic_cache')) fail('the nginx example must use $formlogic_cache in location /');
+  if (!/try_files \$uri =404;/.test(nginxBlock('^~ /assets/'))) fail('the nginx example must answer 404 for a missing build file, as .htaccess does');
+  const formBlock = nginxBlock('/form/');
+  if (formBlock.includes('try_files') || !formBlock.includes('rewrite ^ /index.html break;')) {
+    fail('the nginx example must serve /form/ by rewrite: try_files goes back through location /, whose headers refuse every frame');
+  }
+  if (formBlock.includes('X-Frame-Options') || !formBlock.includes('frame-ancestors *')) fail('the nginx example must let /form/ be embedded');
+  const apiBlock = nginxBlock('^~ /api/');
+  if (!/fastcgi_param SCRIPT_FILENAME \S+\/backend\/public\/index\.php;/.test(apiBlock) || /\balias\b|try_files/.test(apiBlock)) {
+    fail('the nginx example must hand all of /api/ to the front controller: alias with try_files never reaches PHP');
+  }
+  const rootPaths = ['manifest.json', '.well-known/formlogic-app.json', '.well-known/assetlinks.json', '.well-known/aokie-companion', '.well-known/aokie-companion.json', '.well-known/oauth-authorization-server', '.well-known/oauth-protected-resource', '.well-known/oauth-protected-resource/api/mcp'];
+  const apacheRoot = [...htaccess.matchAll(/^\s*RewriteRule (\^\S+\$) api\/public\/index\.php/gm)].map((match) => new RegExp(match[1]));
+  const nginxRoot = new RegExp(nginx.match(/location ~ (\^\/\(manifest\S+\$) \{/)?.[1] ?? '^$');
+  for (const path of rootPaths) {
+    if (!apacheRoot.some((rule) => rule.test(path))) fail(`.htaccess must hand /${path} to the backend`);
+    if (!nginxRoot.test(`/${path}`)) fail(`the nginx example must hand /${path} to the backend, as .htaccess does`);
+  }
 }
 
 // ── No page of the app shell is framed by the app shell ─────────────────────

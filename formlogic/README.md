@@ -240,6 +240,16 @@ npm run build     # output: ui/dist/
 <summary><strong>Example Nginx config (HTTPS)</strong></summary>
 
 ```nginx
+# What a browser has to ask for every time. sw.js is how it learns of a release, and a CDN keeps a
+# script sent with no Cache-Control, which leaves returning visitors on the old release's page.
+# As in the bundled .htaccess; an empty value sends no header.
+map $uri $formlogic_cache {
+    default        "";
+    /index.html    "no-cache";
+    /sw.js         "no-cache";
+    /registerSW.js "no-cache";
+}
+
 # Redirect all plain HTTP to HTTPS.
 server {
     listen 80;
@@ -258,18 +268,36 @@ server {
     root /var/www/formlogic/ui/dist;
     index index.html;
 
+    # nginx stops at 1 MB unless told. The app keeps ordinary requests far below this, and grants
+    # the full size to backup and upgrade uploads alone: see "Request-size layers" in DEPLOYMENT.md.
+    client_max_body_size 220m;
+
     # Frontend (SPA fallback). Nothing else may frame the shell, as in the bundled .htaccess.
     location / {
         try_files $uri $uri/ /index.html;
+        add_header Cache-Control $formlogic_cache;
         add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()" always;
         add_header X-Frame-Options "DENY" always;
         add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
     }
 
-    # The public form runtime is meant to be embedded.
-    location /form/ {
-        try_files $uri /index.html;
+    # A build file that isn't here is a page from an older release asking for it. Answered with the
+    # app shell it is an HTML "script", and a CDN keeps that under the script's name.
+    location ^~ /assets/ {
+        try_files $uri =404;
         add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    # The public form runtime is meant to be embedded. rewrite stays in this block, so these headers
+    # are the ones sent: try_files would go back through location /, which refuses every frame.
+    location /form/ {
+        rewrite ^ /index.html break;
+        add_header Cache-Control "no-cache";
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()" always;
         add_header Content-Security-Policy "frame-ancestors *; base-uri 'self'; object-src 'none'" always;
     }
 
@@ -287,7 +315,7 @@ server {
 
     # Static hosted runtime only; do not apply permissive CORS to /api.
     location ^~ /hosted-runtime/ {
-        try_files $uri =404;
+        try_files $uri $uri/ =404;
         add_header Access-Control-Allow-Origin "*" always;
         add_header X-Content-Type-Options "nosniff" always;
     }
@@ -307,16 +335,20 @@ server {
         add_header Content-Security-Policy "sandbox allow-scripts; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
     }
 
-    # Backend API — backend/public ONLY.
-    location /api/ {
-        alias /var/www/formlogic/backend/public/;
-        try_files $uri /api/index.php$is_args$args;
+    # Backend API: everything under /api/ goes to its one front controller, and no file is served.
+    location ^~ /api/ {
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME /var/www/formlogic/backend/public/index.php;
+    }
 
-        location ~ \.php$ {
-            fastcgi_pass unix:/run/php/php8.2-fpm.sock;
-            fastcgi_param SCRIPT_FILENAME $request_filename;
-            include fastcgi_params;
-        }
+    # The backend also answers at the domain root, per Host: custom-domain launch, the OAuth discovery
+    # the MCP connector flow reads, and Aokie Companion discovery. /oauth/authorize needs no rule: the
+    # consent page is an SPA route.
+    location ~ ^/(manifest\.json|\.well-known/((formlogic-app|assetlinks)\.json|aokie-companion(\.json)?|oauth-authorization-server|oauth-protected-resource(/.*)?))$ {
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME /var/www/formlogic/backend/public/index.php;
     }
 }
 ```
@@ -342,7 +374,7 @@ VITE_API_URL=/api
 
 > **One domain, no separate API host.** With `VITE_API_URL=/api` the SPA calls the backend on the **same origin**, so a single domain serves both — route `/api` to PHP and serve `ui/dist` for everything else. No second domain and no CORS config are needed. Only set a separate `VITE_API_URL` + `CORS_ORIGIN` if you deliberately host the API on its own domain.
 
-Custom app domains (running an app on a customer's own domain) additionally use three root-level paths — `/.well-known/formlogic-app.json`, `/manifest.json`, `/.well-known/assetlinks.json` — which the shipped `ui/public/.htaccess` already routes to the API on single-domain Apache deploys. See [docs/CUSTOM_APP_PLATFORM.md](../docs/CUSTOM_APP_PLATFORM.md#custom-domains--app-launch).
+Custom app domains (running an app on a customer's own domain) additionally use three root-level paths — `/.well-known/formlogic-app.json`, `/manifest.json`, `/.well-known/assetlinks.json` — which the shipped `ui/public/.htaccess` already routes to the API on single-domain Apache deploys, as the nginx example does. See [docs/CUSTOM_APP_PLATFORM.md](../docs/CUSTOM_APP_PLATFORM.md#custom-domains--app-launch).
 
 ### Distributable zip (packaged release)
 
