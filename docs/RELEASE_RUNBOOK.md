@@ -43,8 +43,8 @@ local review checks, not proof that a production deployment has been validated.
       `backend/logs`, and `.env` are **not** web-reachable.
 - [ ] `CORS_ORIGIN` matches the production frontend origin.
 - [ ] AI: `AI_ENABLED` / `AI_BASE_URL` set intentionally (or intentionally disabled).
-- [ ] Billing: `PAYPAL_ENV`/creds set for live, OR `CLOUD_PLAN_ENFORCED=false` for a self-host/free
-      instance. If `CLOUD_PLAN_ENFORCED=true`, PayPal creds are required or the app refuses to boot.
+- [ ] Billing: `PAYPAL_ENV`/creds set for live if the optional paid plan is on. Plan limits are off in
+      this release whatever `.env` says: `CLOUD_PLAN_ENFORCED` is not read (an open product decision).
 
 ## 2. Data & services
 
@@ -54,8 +54,9 @@ local review checks, not proof that a production deployment has been validated.
 - [ ] `GET /api/health/deep` returns healthy (DB, SQLite storage, writable dirs, migrations).
 - [ ] Webhook retry worker cron is scheduled and its last-run heartbeat is recent (see DEPLOYMENT.md).
 - [ ] Email verified: Doctor → **Email** check is green (or explicitly acknowledged as link-only).
-      Send a test invite / password reset to yourself and confirm delivery. If SMTP is configured but
-      `symfony/mailer` isn't installed, the check flags it — install it or fall back to link display.
+      Send a test invite / password reset to yourself and confirm delivery. A mail that could not be
+      sent shows there too. The release includes `symfony/mailer`; if a source checkout lacks it, the
+      check flags it, and `composer install` puts it back.
 
 ## 3. Backups & rollback
 

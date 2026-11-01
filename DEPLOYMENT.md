@@ -6,8 +6,8 @@ health/diagnostics endpoint. For first-time setup see the installer in
 **Upgrading an existing install to a new release?** Follow [docs/UPGRADING.md](docs/UPGRADING.md) —
 back up, replace files (keep `api/.env` + `api/storage/`), then run the `api/bin/upgrade.php` migration CLI.
 
-> FormLogic runs the same codebase self-hosted (no limits) or as a hosted multi-tenant
-> service (with plan limits). The hosted-only bits below are clearly marked.
+> FormLogic runs the same codebase self-hosted or as a hosted multi-tenant service. Neither has
+> plan limits at present (see Billing below). The hosted-only bits below are clearly marked.
 
 ---
 
@@ -87,7 +87,16 @@ Work top to bottom before exposing the app publicly. Most of these live in
 - [ ] `formlogic/backend/.env` is not web-readable
 
 **Email (optional but recommended)**
-- [ ] `MAIL_FROM_ADDRESS` (+ SMTP_* if using SMTP) set, and a test email sent (password reset / invite)
+- [ ] `MAIL_FROM_ADDRESS` (+ SMTP_* if using SMTP) set, and a test email sent (password reset / invite).
+      A release includes `symfony/mailer`, which SMTP needs. A source checkout gets it from
+      `composer install`. Without `SMTP_HOST`, mail goes through PHP `mail()`.
+- [ ] After that test, Doctor's `email` check shows no failed mail. Password resets, invitations and
+      new-response notifications go out after the visitor has their answer, and each step with the
+      mail server may take 5 seconds. A mail that can't be sent isn't retried: it goes in the audit
+      log as `mail.failed`, and Doctor reports the last 7 days' with the reason. The answer ends early
+      on PHP-FPM, LiteSpeed and mod_php. Plain FastCGI (mod_fcgid) holds a short answer until PHP
+      exits, so there the visitor waits for the send, and a forgot-password request takes longer for
+      an address with an account. Doctor says so if this site runs that way: use PHP-FPM if you can.
 
 **AI (optional)**
 - [ ] AI uses any OpenAI-compatible API via `AI_BASE_URL` (LM Studio / Ollama / vLLM / self-hosted /
@@ -100,8 +109,9 @@ Work top to bottom before exposing the app publicly. Most of these live in
 
 **Billing & plans (hosted SaaS only)**
 - [ ] See the PayPal go-live checklist in §4
-- [ ] If enforcing plans, `CLOUD_PLAN_ENFORCED=true` (requires PayPal configured — the app
-      refuses to boot otherwise) and `CLOUD_MAX_FORMS` / `CLOUD_MAX_STORAGE_BYTES` reviewed
+- Plan limits are off in this release, whatever `.env` says: `CLOUD_PLAN_ENFORCED` is not read, so
+  `CLOUD_MAX_FORMS` and `CLOUD_MAX_STORAGE_BYTES` limit nothing. Whether they return is an open
+  product decision.
 
 **Operations**
 - [ ] Scheduled jobs set up (§3), including the nightly `backup-accounts.php`
@@ -154,9 +164,10 @@ site use `bin/backup-accounts.php`, which takes a consistent snapshot of each da
 
 ## 3. Webhook retry worker
 
-Failed webhook deliveries are retried with exponential backoff (1m, 5m, 30m, 2h, 6h, up to 5
-attempts). SSRF guards are re-applied at send time, so deferred retries are safe. Schedule the
-worker so retries actually fire:
+A failed webhook delivery is retried 5 times, waiting 1m, 5m, 30m, 2h and 6h between tries. That is
+about 8½ hours in all, and a delivery still failing after that is marked `exhausted`. A permanent
+refusal, such as a 404, is not retried. SSRF guards are re-applied at send time, so deferred retries
+are safe. Schedule the worker so retries actually fire:
 
 ```cron
 # once a minute
@@ -183,7 +194,10 @@ Each run records a heartbeat, so `GET /api/health/deep` (and the Doctor view) re
 
 The install wizard and `INSTALL.txt` print the same list. `backup-accounts.php` also purges the
 recycle bin, clears abandoned uploads, applies each form's record retention and prunes the webhook
-log, so none of that happens without it.
+log, so none of that happens without it. It does these after a backup that failed too, and exits
+non-zero at the end. If another backup is running it only prunes the webhook log, because the others
+delete files that backup may be reading: a run started by this job does them when it finishes, and
+after one started from the admin panel they wait for the next night.
 
 ```cron
 * * * * *      php /path/to/backend/bin/webhook-worker.php >> /path/to/backend/logs/formlogic-webhooks.log 2>&1
@@ -204,6 +218,22 @@ neither works. Run them as the web server's user, so that every run of a job sha
 write to `logs/` as well. A job whose log it can't open never starts, so a log in `/var/log` won't do.
 The wizard, the release zip and `install.sh` make `logs/`. git doesn't carry it, so on a checkout set
 up by hand, create it first and give it to that user.
+
+### Settings for these jobs
+
+All optional, in `.env`:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `BACKUP_RETENTION_DAYS` | 7 | How many nightly backup folders to keep |
+| `BACKUP_INCLUDE_FILES` | true | `false` leaves uploaded files out of nightly backups |
+| `BACKUP_MAX_TOTAL_BYTES` | 1073741824 | Largest uncompressed total of an account backup zip uploaded for import |
+| `BACKUP_MAX_RESPONSES_PER_FORM` | 200000 | Most records per form in an account backup zip uploaded for import |
+| `TRASH_RETENTION_DAYS` | 30 | How long deleted forms, apps and flows stay in the recycle bin |
+| `FLOW_RUN_STALE_SECONDS` | 600 | When `flow-runs-reclaim.php` ends a flow run that started and never finished |
+| `DESKTOP_COMMANDS_RETENTION_DAYS` | 7 | When `desktop-commands-cleanup.php` removes finished desktop commands |
+| `PRIVACY_SWEEP_RETENTION_DAYS` | 30 | When `privacy-sweep.php` clears the IP address kept with a private form's records |
+| `DEMO_ENABLED` | true | `false` turns off the public no-signup demo |
 
 ---
 
@@ -237,10 +267,10 @@ Without credentials the `/billing` page degrades to "not configured" and no char
 - `GET /api/health` — public heartbeat (`{status, timestamp}`); use it for uptime/load-balancer checks.
 - `GET /api/health/deep` — **authenticated** "Doctor": checks DB connectivity, writable
   `storage/`+`logs/` dirs, the sandbox runtime (`bin/runtime/` launcher, built not committed, + prelude), billing config
-  (critical only when plan enforcement is on; warns on sandbox / missing webhook id), the
-  document-conversion tools (`pdftoppm`, `ghostscript`, `libreoffice`), the webhook retry-worker
-  heartbeat, and dual-store file drift. Returns `200` when all critical checks pass, `503`
-  otherwise. Run it after every deploy/restore.
+  (warns on sandbox / missing webhook id; never critical while plan limits are off), the
+  document-conversion tools (`pdftoppm`, `ghostscript`, `libreoffice`), how email is sent and what
+  couldn't be, the webhook retry-worker heartbeat, and dual-store file drift. Returns `200` when all
+  critical checks pass, `503` otherwise. Run it after every deploy/restore.
 
 > Rate limiting fails *open* if its table is unwritable (availability over strictness) — the
 > Doctor's `writable:*` checks make that condition visible.

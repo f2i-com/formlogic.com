@@ -13,6 +13,7 @@ use FormLogic\Helpers\IpResolver;
 use FormLogic\Helpers\AppUrl;
 use FormLogic\Middleware\CsrfMiddleware;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Support\AfterResponse;
 use FormLogic\Support\AppDomainSession;
 use FormLogic\Support\Environment;
 use FormLogic\Support\SessionOriginPolicy;
@@ -489,7 +490,16 @@ class AuthController
                 // from the request body (would let an attacker point a victim's
                 // valid reset token at their own domain = account takeover).
                 $base = AppUrl::frontendBase($request) . '/reset-password';
-                $this->authService->requestPasswordReset($email, $base, false);
+                // Finding the account, making the token and sending the mail all happen after
+                // the answer: up to here an address with an account and one without take the same
+                // path, so the time this takes says nothing about which it is.
+                AfterResponse::run(function () use ($email, $base): void {
+                    try {
+                        $this->authService->requestPasswordReset($email, $base, false);
+                    } catch (\Throwable $e) {
+                        $this->logger->error('Password reset request error', ['exception' => $e->getMessage()]);
+                    }
+                });
             } catch (\FormLogic\Services\RateLimiterUnavailableException $e) {
                 // High-risk limiter outage: fail closed, retryable (audit RATE-001).
                 // Safe to surface distinctly — it reveals an OPERATIONAL state,

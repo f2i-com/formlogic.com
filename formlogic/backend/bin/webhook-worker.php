@@ -13,7 +13,7 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
  * Webhook retry worker.
  *
  * Re-delivers webhook events that failed their initial (synchronous) attempt,
- * using exponential backoff (1m, 5m, 30m, 2h, 6h) up to 5 attempts. SSRF guards
+ * using exponential backoff: 5 retries, after 1m, 5m, 30m, 2h and 6h. SSRF guards
  * are re-applied at send time inside WebhookService, so deferred retries are safe.
  *
  * Run from cron, e.g. once a minute:

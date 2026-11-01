@@ -32,6 +32,9 @@ No GitHub token or release-signing key is required for this official online upda
    the immutable staged tree is fully re-verified immediately before any file is copied,
 5. stamps the version and reopens; schema migrations run automatically on the next request.
 
+With `opcache.validate_timestamps=0`, PHP never notices the new files: restart PHP after an update
+or a rollback, or the old code goes on answering. Migrations run once the new code does.
+
 If anything looks wrong afterwards, the same tab offers **one-click code rollback** from the
 backup (the database is deliberately NOT auto-restored — records created since the upgrade are
 kept; a separate, heavily-confirmed "Restore DB" exists for genuine corruption). The newest three
@@ -76,10 +79,12 @@ a tab from before v0.1.18 left open beside a newer one.
 ### Tabs left open across an update
 
 A tab left open goes on running the old code against the new server. API replies name the running
-release in an `X-FormLogic-Release` header. A page that sees another release, or whose service worker
-changes, shows **A new version is ready** with a Reload button. It never reloads by itself, because
-someone may be typing. Only pages newer than v0.1.20 do this, and only builds made by
-`scripts/package-dist.mjs` know their release. An older page gets the server's refusals instead, which
+release in an `X-FormLogic-Release` header. A page that sees another release shows **A new version is
+ready** with a Reload button. It never reloads by itself, because someone may be typing. Only pages
+newer than v0.1.20 do this, and only builds made by `scripts/package-dist.mjs` know their release.
+A server on v0.1.20 or older sends no such header, nor does a proxy that strips it, so after a
+rollback to one, or behind such a proxy, other open tabs are not told: they reload at their next route
+once the files they need have gone. An older page gets the server's refusals instead, which
 tell it to reload.
 
 The manual paths below remain fully supported and are what the wizard automates.
@@ -175,7 +180,8 @@ ways to apply it:
    instead of paying the migration cost inside a live web request (PHP-FPM time limits, no
    visibility, a slow first request on big tables). It also verifies the core tables afterwards and
    stamps a `schema_meta` table (`app_version`, `last_upgrade_at`, `upgrade_source`) so the install
-   records what it was upgraded to. It is idempotent — running it twice is safe.
+   records what it was upgraded to, and `schema_stamp` so the first request doesn't migrate
+   again. It is idempotent — running it twice is safe.
 3. **The wizard (`install.php` at the web root, shipped in every release zip)** — for operators
    without shell access: it detects the existing install (configured `api/.env` + core tables in
    the database) and offers **"Upgrade existing installation"**, which runs the exact same
@@ -197,6 +203,11 @@ mysqldump -u USER -p formlogic | gzip > backups/db-$(date +%F).sql.gz
 tar czf backups/storage-$(date +%F).tar.gz -C <web-root>/api storage
 cp <web-root>/api/.env backups/env-$(date +%F)     # secrets — store securely
 ```
+
+Stop the site for this `tar`, as [DEPLOYMENT.md §2](../DEPLOYMENT.md#2-backup--restore) says: a copy
+of a SQLite database and its `-wal` file made while the site runs can miss records or be damaged. If
+the site has to stay up, run `php <web-root>/api/bin/backup-accounts.php` instead, which takes a
+consistent snapshot of each database into `api/storage/backups/scheduled/`.
 
 ### 2. Replace the files — except `api/.env` and `api/storage/`
 
@@ -237,9 +248,11 @@ php <web-root>/api/bin/upgrade.php --check     # read-only drift report; writes 
 curl -fsS https://your-domain/api/health       # public heartbeat: {"status":"ok",...}
 ```
 
-`--check` lists every core table plus a set of recently-migrated columns/indexes and the
-`schema_meta` stamp. For a deeper post-upgrade diagnosis, `GET /api/health/deep` (authenticated)
-runs the full Doctor checks — see [DEPLOYMENT.md §5](../DEPLOYMENT.md#5-health--diagnostics).
+`--check` compares `schema_stamp` with this code: it matches once all of this code's migrations
+have run, so a database that missed an upgrade fails here. It then lists every core table, a set of
+recently-migrated columns/indexes and the `schema_meta` version stamp. For a deeper post-upgrade
+diagnosis, `GET /api/health/deep` (authenticated) runs the full Doctor checks — see
+[DEPLOYMENT.md §5](../DEPLOYMENT.md#5-health--diagnostics).
 
 ### 5. Rollback (if needed)
 
@@ -254,9 +267,9 @@ see [Rolling back below v0.1.18](#rolling-back-below-v0118).
 
 | Invocation | What it does |
 |---|---|
-| `php api/bin/upgrade.php --app-version=<v>` | Ensure schema + run all migrations, verify core tables, stamp `schema_meta` with `<v>` |
+| `php api/bin/upgrade.php --app-version=<v>` | Ensure schema + run all migrations, verify core tables, stamp `schema_meta` with `<v>` and with `schema_stamp`, so the first web request doesn't run them again |
 | `php api/bin/upgrade.php` | Same, version taken from the `api/VERSION` file (else `unknown`, which never overwrites a real stamp) |
-| `php api/bin/upgrade.php --check` | **Read-only**: report which core tables / recently-migrated columns/indexes exist. Writes nothing |
+| `php api/bin/upgrade.php --check` | **Read-only**: report whether this code's migrations have run (`schema_stamp`) and which core tables / recently-migrated columns/indexes exist. Writes nothing |
 | `php api/bin/upgrade.php --rollback=<id>` | Put back the code snapshot in `api/storage/backups/<id>`. The database is left as it is |
 | `php api/bin/upgrade.php --rollback=<id> --allow-downgrade` | The same, for a snapshot that can't read this site's encrypted data. Without the flag it says what would break, and exits 1 |
 | `php api/bin/upgrade.php --help` | Usage |
@@ -276,10 +289,11 @@ needed — if the app can reach the database, so can the CLI.
   ci && node ../../scripts/fetch-softn-release.mjs && npm run build`) — the release zip ships both pre-built.
 - **Idempotent by design**: every schema step is guarded, so re-running the CLI (or letting the web
   app re-run the same migrations) never double-applies anything.
-- `schema_meta` is only stamped by deliberate upgrades — `upgrade_source=cli` (this CLI) or
-  `upgrade_source=installer` (the wizard's upgrade mode); an install that has only ever
-  auto-migrated via the web app won't have it — `--check` reports that informationally, not as
-  drift.
+- `app_version`, `last_upgrade_at` and `upgrade_source` in `schema_meta` are only stamped by
+  deliberate upgrades — `upgrade_source=cli` (this CLI) or `upgrade_source=installer` (the wizard's
+  upgrade mode); an install that has only ever auto-migrated via the web app won't have them —
+  `--check` reports that informationally, not as drift. `schema_stamp` is different: the web
+  app writes it too, and `--check` fails without it. A fresh install has it after its first request.
 - **API keys limited to specific forms** reach only the `/forms` routes since v0.1.18. An integration
   that used one for `/flows`, `/flow-runs`, `/flow-kv` or `/app-logic` now gets `403`, and needs a key
   with no form restriction. See [API.md](API.md#authentication).

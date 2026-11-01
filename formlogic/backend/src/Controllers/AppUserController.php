@@ -13,6 +13,7 @@ use FormLogic\Constants\AppPermissions;
 use FormLogic\Helpers\IpResolver;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Support\AdminActingLimits;
+use FormLogic\Support\AfterResponse;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -408,7 +409,10 @@ class AppUserController
                         . "<p><a href=\"{$link}\">Accept your invitation</a></p>"
                         . "<p>Sign in (or create an account) with this email address to join. This invitation expires in 7 days.</p>";
                     // Subject is plaintext — use the raw name so HTML entities don't render literally.
-                    $this->emailService->send((string) $data['email'], "You're invited to {$rawAppName}", $html);
+                    // The inviter has the link already, and doesn't wait for the mail server.
+                    AfterResponse::run(function () use ($data, $rawAppName, $html): void {
+                        $this->emailService->send((string) $data['email'], "You're invited to {$rawAppName}", $html);
+                    });
                 } catch (\Throwable $e) {
                     // Email failure must not fail invitation creation.
                     error_log('Invitation email failed: ' . $e->getMessage());

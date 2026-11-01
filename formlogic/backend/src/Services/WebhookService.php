@@ -430,7 +430,7 @@ class WebhookService
                 // outlive the record, its deletion and the form's retention period.
                 'payload' => $status === 'failed' ? $payload : null,
                 'response_status' => $responseStatus,
-                'response_body' => $responseBody !== null ? substr($responseBody, 0, 2000) : null,
+                'response_body' => $responseBody !== null ? self::storableBody($responseBody) : null,
                 'duration_ms' => $durationMs,
                 'success' => $success ? 1 : 0,
                 'error_message' => $errorMessage,
@@ -455,11 +455,17 @@ class WebhookService
         return $stmt->rowCount();
     }
 
-    /** Exponential backoff schedule (seconds) for retry attempt N (1-based). */
+    /** Exponential backoff schedule (seconds) after attempt N (1-based). The first attempt is the send itself. */
     private function backoffSeconds(int $attempt): int
     {
         $schedule = [60, 300, 1800, 7200, 21600]; // 1m, 5m, 30m, 2h, 6h
         return $schedule[min(max($attempt, 1), count($schedule)) - 1];
+    }
+
+    /** The start of an endpoint's reply for the delivery log: it can be in any encoding, the column takes UTF-8. */
+    private static function storableBody(string $body): string
+    {
+        return mb_strcut(mb_scrub($body, 'UTF-8'), 0, 2000, 'UTF-8');
     }
 
     private function nextRetryTimestamp(int $attempt): string
@@ -471,11 +477,13 @@ class WebhookService
      * Drain failed webhook deliveries whose retry time has arrived. Intended to
      * be called by a cron worker (bin/webhook-worker.php). Re-applies the SSRF
      * guards at send time (so a deferred retry can't be exploited via DNS
-     * rebinding). Returns a small summary.
+     * rebinding). Returns a small summary. $maxAttempts counts the first send: six is that and a
+     * retry for each of the five steps in backoffSeconds, so the 6h step is reached and an
+     * endpoint down for an afternoon still gets the delivery.
      *
      * @return array{processed:int,sent:int,failed:int,abandoned:int}
      */
-    public function processPendingRetries(int $maxAttempts = 5, int $batchSize = 50): array
+    public function processPendingRetries(int $maxAttempts = 6, int $batchSize = 50): array
     {
         $maxAttempts = max(1, $maxAttempts);
         $batchSize = max(1, min(500, $batchSize));
@@ -675,7 +683,7 @@ class WebhookService
             $stmt->execute([
                 'success' => $success ? 1 : 0,
                 'rs' => $responseStatus,
-                'rb' => $responseBody !== null ? substr($responseBody, 0, 2000) : null,
+                'rb' => $responseBody !== null ? self::storableBody($responseBody) : null,
                 'dm' => $durationMs,
                 'err' => $errorMessage,
                 'status' => $status,

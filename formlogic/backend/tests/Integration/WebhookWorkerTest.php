@@ -91,7 +91,7 @@ final class WebhookWorkerTest extends TestCase
 
     public function testADeliveryWhoseWorkerDiedOnTheLastAttemptIsFinished(): void
     {
-        $id = $this->delivery('retrying', 5, 'DATE_SUB(NOW(), INTERVAL 1 MINUTE)');
+        $id = $this->delivery('retrying', 6, 'DATE_SUB(NOW(), INTERVAL 1 MINUTE)');
 
         $result = (new WebhookService(self::$mysql))->processPendingRetries();
 
@@ -102,9 +102,33 @@ final class WebhookWorkerTest extends TestCase
         self::assertSame(1, $result['abandoned']);
     }
 
+    public function testTheFifthRetryWaitsSixHoursAndOnlyTheSixthAttemptIsTheLast(): void
+    {
+        $service = new WebhookService(self::$mysql);
+
+        // hooks.example never resolves, so the send fails the way an endpoint that's down does.
+        $id = $this->delivery('failed', 3, 'DATE_SUB(NOW(), INTERVAL 1 MINUTE)');
+        $service->processPendingRetries();
+        $row = $this->row($id);
+        self::assertSame('failed', $row['status']);
+        self::assertEqualsWithDelta(7200, strtotime($row['next_retry_at'] . ' UTC') - time(), 60, 'the 2h step');
+
+        self::$pdo->prepare('UPDATE webhook_deliveries SET next_retry_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE id = ?')->execute([$id]);
+        $service->processPendingRetries();
+        $row = $this->row($id);
+        self::assertSame('failed', $row['status'], 'attempt 6 is still to come');
+        self::assertEqualsWithDelta(21600, strtotime($row['next_retry_at'] . ' UTC') - time(), 60, 'the 6h step');
+
+        self::$pdo->prepare('UPDATE webhook_deliveries SET next_retry_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE id = ?')->execute([$id]);
+        $service->processPendingRetries();
+        $row = $this->row($id);
+        self::assertSame('exhausted', $row['status']);
+        self::assertNull($row['next_retry_at']);
+    }
+
     public function testALastAttemptStillInProgressIsLeftAlone(): void
     {
-        $id = $this->delivery('retrying', 5, 'DATE_ADD(NOW(), INTERVAL 5 MINUTE)');
+        $id = $this->delivery('retrying', 6, 'DATE_ADD(NOW(), INTERVAL 5 MINUTE)');
 
         (new WebhookService(self::$mysql))->processPendingRetries();
 

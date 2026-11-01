@@ -9,10 +9,15 @@ use Psr\Log\NullLogger;
 
 /**
  * Transactional email sender. Degrades gracefully:
- *   1. SMTP via symfony/mailer when it's installed AND SMTP_HOST is configured.
+ *   1. SMTP via symfony/mailer when SMTP_HOST is configured.
  *   2. PHP mail() when a from-address is configured and mail() is available.
  *   3. Otherwise logs and no-ops (returns false) — callers must treat email as
  *      best-effort (e.g. invitations also surface a copyable link).
+ *
+ * send() waits for the mail server, so anything a visitor sets off goes through
+ * AfterResponse. A mail that can't be sent goes in the audit log, and Doctor reports it
+ * (recentFailureWarning): it isn't retried, because a reset or invitation link would have to be
+ * kept in the clear to send it again, and those are stored hashed.
  *
  * Configuration is read from the environment:
  *   MAIL_FROM_ADDRESS, MAIL_FROM_NAME,
@@ -40,6 +45,12 @@ class EmailService
         'notification' => ['accountHour' => 200, 'accountDay' => 1000, 'recipientDay' => 100],
     ];
 
+    /** How long one step of an SMTP conversation may take. PHP's default is a minute. */
+    public const SMTP_TIMEOUT_SECONDS = 5;
+
+    /** How far back Doctor looks for mail that could not be sent. */
+    private const FAILURE_REPORT_DAYS = 7;
+
     private LoggerInterface $logger;
     private string $fromAddress;
     private string $fromName;
@@ -50,15 +61,19 @@ class EmailService
     private string $smtpEncryption;
     /** @var array<string, array{accountHour:int, accountDay:int, recipientDay:int}> */
     private array $userMailLimits;
+    /** @var (\Closure(): AuditService)|null */
+    private ?\Closure $audit;
 
     /**
      * @param array<string, array{accountHour:int, accountDay:int, recipientDay:int}>|null $userMailLimits
      *        USER_MAIL_LIMITS unless given (tests give smaller ones)
+     * @param (\Closure(): AuditService)|null $audit gives the audit log a failed mail is recorded in
      */
-    public function __construct(?LoggerInterface $logger = null, ?array $userMailLimits = null)
+    public function __construct(?LoggerInterface $logger = null, ?array $userMailLimits = null, ?\Closure $audit = null)
     {
         $this->logger = $logger ?? new NullLogger();
         $this->userMailLimits = $userMailLimits ?? self::USER_MAIL_LIMITS;
+        $this->audit = $audit;
         $this->fromAddress = self::env('MAIL_FROM_ADDRESS', '');
         $this->fromName = self::env('MAIL_FROM_NAME', 'FormLogic');
         $this->smtpHost = self::env('SMTP_HOST', '');
@@ -111,14 +126,42 @@ class EmailService
                 return ['path' => 'smtp', 'configured' => true, 'warning' => null];
             }
             return ['path' => 'mail', 'configured' => true,
-                'warning' => 'SMTP_HOST is set but symfony/mailer is NOT installed — email silently falls back to PHP mail(). Run `composer require symfony/mailer` in formlogic/backend to actually use SMTP.'];
+                'warning' => 'SMTP_HOST is set but symfony/mailer is NOT installed — email silently falls back to PHP mail(). Release packages include it: on a source checkout run `composer install` in formlogic/backend.'];
         }
         if (function_exists('mail')) {
             return ['path' => 'mail', 'configured' => true,
-                'warning' => 'Using PHP mail() (no SMTP configured) — deliverability is unreliable. Configure SMTP_HOST + symfony/mailer for production.'];
+                'warning' => 'Using PHP mail() (no SMTP configured) — deliverability is unreliable. Configure SMTP_HOST for production.'];
         }
         return ['path' => 'none', 'configured' => false,
             'warning' => 'No SMTP configured and PHP mail() is unavailable — email cannot be sent.'];
+    }
+
+    /**
+     * What Doctor says about mail that could not be sent lately, or null when there was none.
+     * Reads the rows recordFailure writes.
+     */
+    public static function recentFailureWarning(\PDO $pdo): ?string
+    {
+        $days = self::FAILURE_REPORT_DAYS;
+        $since = gmdate('Y-m-d H:i:s', time() - $days * 86400);
+        $count = $pdo->prepare("SELECT COUNT(*) FROM audit_log WHERE action = 'mail.failed' AND created_at >= ?");
+        $count->execute([$since]);
+        $failed = (int) $count->fetchColumn();
+        if ($failed === 0) {
+            return null;
+        }
+        $last = $pdo->prepare("SELECT details, created_at FROM audit_log WHERE action = 'mail.failed' AND created_at >= ? ORDER BY created_at DESC, sequence_number DESC LIMIT 1");
+        $last->execute([$since]);
+        $row = $last->fetch(\PDO::FETCH_ASSOC);
+        $details = is_array($row) ? json_decode((string) $row['details'], true) : null;
+        return sprintf(
+            '%d email(s) could not be sent in the last %d days and were not retried. The last, %s UTC, to %s: %s',
+            $failed,
+            $days,
+            is_array($row) ? (string) $row['created_at'] : 'unknown time',
+            is_array($details) ? (string) ($details['to'] ?? 'unknown') : 'unknown',
+            is_array($details) ? (string) ($details['error'] ?? 'no reason recorded') : 'no reason recorded'
+        );
     }
 
     /**
@@ -257,6 +300,7 @@ class EmailService
                 return $this->sendViaSymfony($to, $subject, $htmlBody, $textBody);
             } catch (\Throwable $e) {
                 $this->logger->error('SMTP email send failed', ['error' => $e->getMessage()]);
+                $this->recordFailure($to, $subject, $e->getMessage());
                 return false;
             }
         }
@@ -275,11 +319,30 @@ class EmailService
             $ok = @mail($to, $safeSubject, $htmlBody, implode("\r\n", $headers));
             if (!$ok) {
                 $this->logger->warning('mail() returned false', ['to' => $to]);
+                $this->recordFailure($to, $subject, 'The server\'s mail() refused it');
             }
             return $ok;
         } catch (\Throwable $e) {
             $this->logger->error('mail() send failed', ['error' => $e->getMessage()]);
+            $this->recordFailure($to, $subject, $e->getMessage());
             return false;
+        }
+    }
+
+    /** Puts a mail that was not sent where an operator can see it. Never throws. */
+    private function recordFailure(string $to, string $subject, string $error): void
+    {
+        if ($this->audit === null) {
+            return;
+        }
+        try {
+            ($this->audit)()->log('mail.failed', 'email', null, null, null, [
+                'to' => $to,
+                'subject' => mb_strcut($subject, 0, 200, 'UTF-8'),
+                'error' => mb_strcut($error, 0, 300, 'UTF-8'),
+            ]);
+        } catch (\Throwable $e) {
+            $this->logger->error('A failed email could not be recorded', ['error' => $e->getMessage()]);
         }
     }
 
@@ -290,6 +353,12 @@ class EmailService
         $dsn = sprintf('%s://%s%s:%d', $scheme, $auth, $this->smtpHost, $this->smtpPort);
 
         $transport = \Symfony\Component\Mailer\Transport::fromDsn($dsn);
+        if ($transport instanceof \Symfony\Component\Mailer\Transport\Smtp\SmtpTransport) {
+            $stream = $transport->getStream();
+            if ($stream instanceof \Symfony\Component\Mailer\Transport\Smtp\Stream\SocketStream) {
+                $stream->setTimeout(self::SMTP_TIMEOUT_SECONDS);
+            }
+        }
         $mailer = new \Symfony\Component\Mailer\Mailer($transport);
 
         $email = (new \Symfony\Component\Mime\Email())

@@ -6,10 +6,3 @@ parameters:
     paths:
         - src
         - public/index.php
-    ignoreErrors:
-        # symfony/mailer is an OPTIONAL runtime dependency (self-host installs
-        # without SMTP never load it; the /doctor page reports its absence).
-        # EmailService only touches these classes behind class_exists guards.
-        -
-            identifier: class.notFound
-            path: src/Services/EmailService.php

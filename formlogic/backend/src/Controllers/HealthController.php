@@ -235,6 +235,12 @@ class HealthController
             if ($email['warning'] !== null) {
                 $checks['email']['warning'] = $email['warning'];
             }
+            // Mail that was lost: what gets it noticed, since nobody who was waiting for it knows.
+            $failed = \FormLogic\Services\EmailService::recentFailureWarning($this->db->getConnection());
+            $warning = trim(implode(' ', array_filter([$email['warning'], $failed, \FormLogic\Support\AfterResponse::limitation()])));
+            if ($warning !== '') {
+                $checks['email']['warning'] = $warning;
+            }
         } catch (\Throwable $e) {
             $checks['email'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
         }

@@ -8,8 +8,8 @@ use FormLogic\Services\EmailService;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The PHP mail() path is the one a default install uses (symfony/mailer is optional and not
- * installed), and mail() writes the subject it is given straight into the header. Subjects carry
+ * The PHP mail() path is the one an install with no SMTP_HOST uses, and mail() writes the subject
+ * it is given straight into the header. Subjects carry
  * an app's name or a form's title, which their owner chooses.
  */
 final class EmailServiceTest extends TestCase

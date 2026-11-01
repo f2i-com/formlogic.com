@@ -319,7 +319,7 @@ Slug-based app runtime. All methods verify app published + user is member.
 
 ### `ResponseService`
 - `createResponse()` — Execute script -> handle rejection -> INSERT SQLite -> apply computed/tags -> INSERT MySQL metadata -> update analytics -> dispatch webhook. Compensating deletes on failure
-- `importResponses()` — Batch CSV import with type coercion (number->float, checkboxes->comma-split). Max 1000 rows. Transactional
+- `importResponses()` — Batch CSV import with type coercion (number->float, choices by label or value, and back what the export changes). Max 1000 rows. Transactional
 - `formatResponses()` — Batch-loads computed fields and tags in 500-item chunks (N+1 prevention)
 
 ### `AppService`
