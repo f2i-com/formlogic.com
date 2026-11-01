@@ -1636,6 +1636,9 @@ function FormResponseContent() {
             // status the api layer's string is a raw transport message ("Failed to fetch"),
             // which means nothing to a visitor. Log it and say something actionable.
             logger.error('Response submit refused:', result.error);
+            // The server keeps this key's answer so nothing runs the form's script again by itself.
+            // A visitor who taps Submit again means to, so that goes under a new one.
+            if (result.scriptRan) submitIdemKeyRef.current = null;
             setSubmitError(
               result.status && (result.status < 500 || result.code === 'form_busy') && typeof result.error === 'string'
                 ? result.error

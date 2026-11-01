@@ -133,6 +133,18 @@ describe('failed submissions in the native queue', () => {
     expect(rows[0]).toMatchObject({ status: 'pending', attempts: 0, idempotencyKey: 'k1' });
   });
 
+  it('go under a new key when the form\'s script acted: the server stays closed to the old one', async () => {
+    const rows = [failedRow({ lastError: 'Your answers could not be saved, but this form\'s script has already run.' })];
+    const sync = runtime(rows);
+    vi.mocked(api.syncBatch).mockImplementation(async (_slug, items) => ({
+      data: { results: items.map((i) => ({ idempotencyKey: i.idempotencyKey, success: true })) },
+    }) as never);
+
+    expect(await retryNativeSubmission('q_1')).toBe('sent');
+
+    expect((sync.enqueueSubmission.mock.calls[0][0] as Record<string, unknown>).idempotencyKey).toBe('test-key');
+  });
+
   it('are not sent again when the server holds a different submission under the key', async () => {
     const rows = [failedRow({ lastError: 'This idempotency key was already used with a different submission.', attempts: 0 })];
     const sync = runtime(rows);

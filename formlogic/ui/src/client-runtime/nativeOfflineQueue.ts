@@ -29,7 +29,7 @@
 // expired waits for its own account instead of being sent under whoever signs in next. An item
 // without the field (queued before items carried it, or by a caller that did not stamp it) is
 // anyone's, as before. A runtime that predates the field drops it, and its items stay anyone's.
-import { api } from '../lib/api';
+import { api, newIdempotencyKey } from '../lib/api';
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from '../lib/sessionGeneration';
 import { flushBrowserQueue, isConflict, isScriptRan, isUnreachableStatus, notifyQueueChanged, type FailedSubmissionSummary, type RetryOutcome } from './offlineQueue';
 import type { FormLogicNativeBridge, NativeSyncFlushGroup, NativeSyncQueueItem } from './connectors/connectorTypes';
@@ -121,8 +121,8 @@ export async function listNativeFailedSubmissions(): Promise<FailedSubmissionSum
  * answers, idempotency key and creation time and no attempts used, the failed one is acknowledged
  * away, and the queue is flushed now. The fresh item is given no id, because the runtime keeps an
  * id the page supplies and acknowledging the old one would then remove both. A conflict is never
- * sent again (see retrySubmission). Only the signed-in account's items, and it is stamped on the
- * fresh one.
+ * sent again, and one whose form script acted goes under a new key (see retrySubmission). Only the
+ * signed-in account's items, and it is stamped on the fresh one.
  */
 export async function retryNativeSubmission(id: string): Promise<RetryOutcome> {
   const sync = nativeSync();
@@ -135,7 +135,7 @@ export async function retryNativeSubmission(id: string): Promise<RetryOutcome> {
     const fresh: Parameters<typeof sync.enqueueSubmission>[0] = {
       appSlug: item.appSlug,
       formId: item.formId,
-      idempotencyKey: item.idempotencyKey,
+      idempotencyKey: isScriptRan(item) ? newIdempotencyKey() : item.idempotencyKey,
       answers: item.answers,
       attempts: 0,
       ...(item.createdAt ? { createdAt: item.createdAt } : {}),

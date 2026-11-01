@@ -84,6 +84,8 @@ interface ApiResponse<T> {
   code?: string;
   /** Trusted hosted-action error identity, outside script-owned result data. */
   actor?: unknown;
+  /** A form's script acted and nothing was stored. The server keeps the answer under this idempotency key, so sending it again takes a new one. */
+  scriptRan?: true;
   /** No HTTP response was received; callers may offer a same-admission retry. */
   transportFailure?: true;
   /** Set when a 2xx arrived whose body is not JSON: not an answer from FormLogic (a captive
@@ -934,7 +936,7 @@ class ApiClient {
           const fieldMsgs = Object.values(d.errors as Record<string, unknown>).filter((v): v is string => typeof v === 'string');
           if (fieldMsgs.length > 0) message = `${message}: ${fieldMsgs.join('; ')}`;
         }
-        return { error: message, status: response.status, ...(typeof d?.code === 'string' ? { code: d.code } : {}), ...(d && Object.hasOwn(d, 'actor') ? { actor: d.actor } : {}) };
+        return { error: message, status: response.status, ...(typeof d?.code === 'string' ? { code: d.code } : {}), ...(d && Object.hasOwn(d, 'actor') ? { actor: d.actor } : {}), ...(d?.scriptRan === true ? { scriptRan: true as const } : {}) };
       }
 
       return { data };

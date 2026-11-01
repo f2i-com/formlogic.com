@@ -531,6 +531,15 @@ describe('DomainLaunchRouter', () => {
       expect(container.textContent).not.toContain('platform page');
     });
 
+    // Nothing about it is a customer's: the page someone is typing in stays where it is.
+    it('leaves FormLogic\'s own address its pages while the app\'s answer is out', async () => {
+      serverSays({ ...config('runtime_direct'), platformUrl: 'https://shop.acme.com' });
+      getNativeEntry.mockReturnValue(new Promise(() => {}));
+      rememberedHost.mockReturnValue({ kind: 'not-domain' });
+
+      expect(await show('/forms')).toBe('platform page');
+    });
+
     it('sends a password page on with the host\'s answer, whatever became of the app\'s', async () => {
       vi.useFakeTimers();
       serverSays({ ...config('launch_page'), platformUrl: 'https://forms.acme.com' });

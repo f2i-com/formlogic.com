@@ -422,7 +422,9 @@ export type RetryOutcome = 'sent' | 'waiting' | 'unrecognised' | 'failed' | 'con
  * Send a failed submission again: back to 'pending' with its attempts reset, then a flush now.
  * It keeps its idempotency key, so if the server did store it after all, this is answered as a
  * replay rather than stored twice. A conflict is never sent again (the server holds a different
- * submission under that key; only discarding it makes sense).
+ * submission under that key; only discarding it makes sense). One whose form script acted goes
+ * under a new key: the old one stays refused on the server, so that nothing else runs that script
+ * again, and this is the person choosing to.
  */
 export async function retrySubmission(id: string): Promise<RetryOutcome> {
   const row = (await listQueue()).find((i) => i.id === id);
@@ -432,6 +434,7 @@ export async function retrySubmission(id: string): Promise<RetryOutcome> {
     if (r.status !== 'failed') return null;
     // lastError too: what the retry is told comes from its own answer, not an earlier one.
     const next: QueuedSubmission = { ...r, status: 'pending', attempts: 0, lastError: null };
+    if (isScriptRan(r)) next.idempotencyKey = newIdempotencyKey();
     delete next.failedAt;
     delete next.failure;
     return next;

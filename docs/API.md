@@ -316,7 +316,11 @@ What happens server-side, in order — identical to a browser submission:
    (typically forwarded via `ctx.http`). A script that does not run to a verdict (it throws, or
    the engine stops it) refuses the submission → `503` with `code: "script_unavailable"`, and
    nothing is stored; your key is the form owner's, so the body also carries `detail`, the
-   script's error.
+   script's error. A script that made an `ctx.http` request first is different: what it did can't
+   be taken back. The answer then carries `scriptRan: true` (`409` when it stopped or the record
+   couldn't be stored, `422` when it refused), so don't retry it by itself. The same
+   `idempotencyKey` gets the same answer and doesn't run the script again; to send it again after
+   checking, use a new key.
 
 **Success** → `201`:
 
@@ -375,6 +379,7 @@ Each item runs the full pipeline independently; the response reports per-item su
 | `401` | Missing / invalid API key |
 | `403` | Key lacks the required scope (or the form isn't accepting responses) |
 | `404` | Form / response not found, or not accessible to this key |
+| `409` | `scriptRan: true`: the `onSubmit` script made an HTTP request, then stopped or the record couldn't be stored. Nothing was stored, and sending it again would run the script again |
 | `413` | Submission too large |
 | `422` | Submission rejected by the `onSubmit` script (`rejected: true`), or an answer nested too deeply / holding too many values (`code: "answer_too_deep"` / `"answer_too_many_values"`, `errors` names the field) |
 | `429` | Rate limit exceeded |

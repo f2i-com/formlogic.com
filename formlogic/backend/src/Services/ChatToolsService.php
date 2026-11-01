@@ -956,6 +956,11 @@ class ChatToolsService
                     (int) ($settings['quotaLimit'] ?? 0) ?: null
                 );
                 if ($result instanceof ScriptRejection) {
+                    // Told first, so that the model doesn't make the script's request a second time.
+                    if ($result->scriptActed && !$result->isRejected()) {
+                        throw new \Exception("The form's onSubmit script stopped after it made an HTTP request, so no record was created (" . $result->detail
+                            . "). Do not try again: that request may have taken effect, and a retry would make it again. Tell the user, so they can check first.");
+                    }
                     // The caller acts for the form's owner, so it is told why a script could not
                     // run, and what to change: every submission fails the same way until then.
                     if ($result->scriptFault) {

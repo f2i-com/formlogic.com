@@ -33,6 +33,10 @@ class SubmissionIdempotencyService
     /** Same threshold the flow-run reclaim uses: a pending row older than this is abandoned. */
     public const STALE_TAKEOVER_SECONDS = 600;
 
+    /** The row of a submission whose form script acted and left nothing stored (holdAfterScript). */
+    public const SCRIPT_RAN = 'script_ran';
+    public const SCRIPT_RAN_MESSAGE = "This form's script has already run for this submission, and nothing was stored. Please check with the form's owner before sending it again.";
+
     private ?PDO $mysql;
 
     public function __construct(?PDO $mysql)
@@ -154,6 +158,31 @@ class SubmissionIdempotencyService
                 "DELETE FROM {$table} WHERE id = :lease AND {$where} AND idempotency_key = :k AND status = 'pending'"
             );
             $stmt->execute(['lease' => $lease, 'k' => $key] + $scope);
+        } catch (\Throwable) {
+            // ignore
+        }
+    }
+
+    /**
+     * Keep the key of a submission whose form script acted and left nothing stored, on OUR lease
+     * only. Released, it would let the next copy run the script again by itself: a service worker's
+     * replay, a second tab's flush, a retry after a lost answer or Desktop's deterministic key. Every
+     * such copy is answered from this row instead, and a person who decides to send it again sends
+     * a new key. A failed write leaves it 'pending', which holds replays off until the takeover.
+     */
+    public function holdAfterScript(string $table, array $scope, string $key, string $lease): void
+    {
+        $cols = $this->scopeColumns($table, $scope);
+        if ($this->mysql === null || $cols === null) {
+            return;
+        }
+        try {
+            $where = implode(' AND ', array_map(static fn (string $c) => "{$c} = :{$c}", $cols));
+            $stmt = $this->mysql->prepare(
+                "UPDATE {$table} SET status = :held
+                 WHERE id = :lease AND {$where} AND idempotency_key = :k AND status = 'pending'"
+            );
+            $stmt->execute(['held' => self::SCRIPT_RAN, 'lease' => $lease, 'k' => $key] + $scope);
         } catch (\Throwable) {
             // ignore
         }

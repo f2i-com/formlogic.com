@@ -101,8 +101,11 @@ final class ResponseRouteAnswersTest extends E2eeTestCase
     private function afterTheScript(): ResponseService
     {
         return new class (self::$mysql, self::$sqlite) extends ResponseService {
+            public int $runs = 0;
+
             public function createResponse(string $formId, array $data, ?string $script = null, ?string $sourceRunId = null, ?int $quotaLimit = null): array|ScriptRejection
             {
+                $this->runs++;
                 throw new NotStoredAfterScript(new \PDOException('SQLSTATE[HY000]: General error: 5 database is locked'));
             }
         };
@@ -234,6 +237,39 @@ final class ResponseRouteAnswersTest extends E2eeTestCase
         $app = self::$apps->createApp(['name' => 'Routes', 'status' => 'published', 'formIds' => [$formId]], $this->userId);
 
         $this->assertNotSentAgain($this->appRoutes($this->afterTheScript())->createResponse($this->request('POST', '/x', ['answers' => ['name' => 'Ada']]), new SlimResponse(), ['slug' => $app['slug'], 'formId' => $formId]));
+    }
+
+    // A person's next try is a new key. Anything else with this one is a copy: the service worker's,
+    // a second tab's, or a retry after a lost answer, and none of those may run the script again.
+    public function testACopyOfASubmissionWhoseScriptActedIsAnsweredWithoutRunningIt(): void
+    {
+        $formId = $this->aForm();
+        $responses = $this->afterTheScript();
+        $routes = $this->publicRoutes($responses);
+        $submit = fn (string $key) => $routes->create($this->request('POST', '/x', ['answers' => ['name' => 'Ada'], 'idempotencyKey' => $key]), new SlimResponse(), ['formId' => $formId]);
+
+        $this->assertNotSentAgain($submit('one-submission'));
+        $this->assertNotSentAgain($submit('one-submission'));
+        $this->assertSame(1, $responses->runs);
+
+        $submit('the-person-sends-it-again');
+        $this->assertSame(2, $responses->runs);
+    }
+
+    public function testACopyOfAnAppSubmissionWhoseScriptActedIsAnsweredWithoutRunningIt(): void
+    {
+        $formId = $this->aForm();
+        $app = self::$apps->createApp(['name' => 'Routes', 'status' => 'published', 'formIds' => [$formId]], $this->userId);
+        $responses = $this->afterTheScript();
+        $routes = $this->appRoutes($responses);
+        $submit = fn (string $key) => $routes->createResponse($this->request('POST', '/x', ['answers' => ['name' => 'Ada'], 'idempotencyKey' => $key]), new SlimResponse(), ['slug' => $app['slug'], 'formId' => $formId]);
+
+        $this->assertNotSentAgain($submit('one-submission'));
+        $this->assertNotSentAgain($submit('one-submission'));
+        $this->assertSame(1, $responses->runs);
+
+        $submit('the-person-sends-it-again');
+        $this->assertSame(2, $responses->runs);
     }
 
     public function testAnotherDatabaseErrorOnThePublicRouteIsNotARetry(): void

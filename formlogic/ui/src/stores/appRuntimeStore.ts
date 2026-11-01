@@ -312,6 +312,9 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
             clearSubmitKey(formId);
             return { id: q.id, queued: true, answers, submittedAt: new Date(q.createdAt).toISOString() };
           }
+          // The server keeps this key's answer so nothing runs the form's script again by itself.
+          // A person sending it again means to, so that goes under a new one.
+          if (result.scriptRan) clearSubmitKey(formId);
           throw new Error(result.error); // definitive server answer — key retained for the retry
         }
         if (!result.data?.response) throw new Error('Submission failed: no response was returned.');

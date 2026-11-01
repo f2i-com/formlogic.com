@@ -53,7 +53,8 @@ async function askServer(host: string, isDomain: (config: LaunchConfig) => void)
   const { config, answered, platform } = await lookUpHost(host);
   if (!answered) return null;
   if (!config) return { config, platform };
-  isDomain(config);
+  // FormLogic's own address can still have an app connected from an older version. Its pages stay.
+  if (!config.platformUrl?.endsWith(`//${host}`)) isDomain(config);
   const entry = await Promise.race([
     api.getNativeEntry(config.app.slug),
     new Promise<null>((resolve) => setTimeout(() => resolve(null), ENTRY_TIMEOUT_MS)),

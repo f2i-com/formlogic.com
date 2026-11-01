@@ -538,6 +538,9 @@ class AppPublicController
                 // Completed replay — return the original response, create nothing new.
                 return ['status' => 200, 'payload' => ['response' => ['id' => $reserved['response_id']], 'idempotent' => true]];
             }
+            if (($reserved['status'] ?? '') === SubmissionIdempotencyService::SCRIPT_RAN) {
+                return ['status' => 409, 'payload' => ['error' => true, 'scriptRan' => true, 'message' => SubmissionIdempotencyService::SCRIPT_RAN_MESSAGE]];
+            }
             // Same payload, reservation still 'pending'. A YOUNG row means a concurrent submit is
             // genuinely in flight — ask the caller to retry. A STALE row is an ABANDONED reservation
             // (the owning request died between reserve and complete/release — crash, OOM, timeout);
@@ -571,6 +574,8 @@ class AppPublicController
             $respId = ($result['status'] === 201) ? ($result['payload']['response']['id'] ?? null) : null;
             if (is_string($respId) && $respId !== '') {
                 $this->idem()->complete('app_submission_idempotency', $scope, $key, $lease, $respId);
+            } elseif (($result['payload']['scriptRan'] ?? false) === true) {
+                $this->idem()->holdAfterScript('app_submission_idempotency', $scope, $key, $lease);
             } else {
                 // Validation / quota / rejection / error: release the reservation so a legitimate retry
                 // of a genuinely-failed submit isn't poisoned by a stale 'pending' row.

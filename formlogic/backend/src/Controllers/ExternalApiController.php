@@ -256,6 +256,10 @@ class ExternalApiController
                 if (is_string($reserved['response_id'] ?? null) && $reserved['response_id'] !== '') {
                     return $this->jsonResponse($response, ['response' => ['id' => $reserved['response_id']], 'idempotent' => true], 200);
                 }
+                if (($reserved['status'] ?? '') === \FormLogic\Services\SubmissionIdempotencyService::SCRIPT_RAN) {
+                    return $this->jsonResponse($response, ['error' => true, 'scriptRan' => true,
+                        'message' => \FormLogic\Services\SubmissionIdempotencyService::SCRIPT_RAN_MESSAGE], 409);
+                }
                 // Pending: young = a concurrent duplicate in flight; stale = an abandoned
                 // reservation (owner crashed mid-request) — the service retakes it atomically
                 // (like the public path) so a retried desktop effect can't wedge on 409 forever.
@@ -277,6 +281,7 @@ class ExternalApiController
         }
 
         $createdId = null;
+        $scriptRan = false;
         try {
             // Atomic quota enforcement: the count is checked again around the insert, under a
             // per-form lock, so concurrent submissions cannot both pass the earlier check and
@@ -284,6 +289,7 @@ class ExternalApiController
             $result = $this->responseService->createResponse($args['formId'], $data, $script, $sourceRunId, (int) ($settings['quotaLimit'] ?? 0) ?: null);
 
             if ($result instanceof ScriptRejection) {
+                $scriptRan = $result->scriptActed;
                 // The key is the form owner's (authorizeForm), so it is told why a script could not run.
                 return $this->jsonResponse($response, array_filter([
                     'error' => true,
@@ -318,6 +324,9 @@ class ExternalApiController
             return $e->busy
                 ? $this->jsonResponse($response, ['error' => true, 'retryable' => true, 'message' => $e->getMessage()], 503)
                 : $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 403);
+        } catch (\FormLogic\Services\NotStoredAfterScript $e) {
+            $scriptRan = true;
+            return $this->jsonResponse($response, ['error' => true, 'scriptRan' => true, 'message' => $e->getMessage()], 409);
         } catch (\FormLogic\Services\EncryptionEnablingException $e) {
             // Enable-race gate: mid-enable submissions fail closed with 409.
             return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\EncryptionEnablingException::ERROR_CODE);
@@ -332,6 +341,8 @@ class ExternalApiController
             if ($ownsReservation) {
                 if (is_string($createdId) && $createdId !== '') {
                     $this->idem()->complete('form_submission_idempotency', $idemScope, $idemKey, $idemLease, $createdId);
+                } elseif ($scriptRan) {
+                    $this->idem()->holdAfterScript('form_submission_idempotency', $idemScope, $idemKey, $idemLease);
                 } else {
                     // Validation / quota / rejection / error: release so a genuine
                     // retry isn't poisoned by a stale 'pending' row.
@@ -467,7 +478,7 @@ class ExternalApiController
             try {
                 $result = $this->responseService->createResponse($args['formId'], $item, $script, $sourceRunId);
                 if ($result instanceof ScriptRejection) {
-                    $results[] = array_filter(['index' => $index, 'success' => false, 'message' => $result->message, 'rejected' => $result->isRejected(), 'code' => $result->code, 'detail' => $result->detail], static fn ($v) => $v !== null);
+                    $results[] = array_filter(['index' => $index, 'success' => false, 'message' => $result->message, 'rejected' => $result->isRejected(), 'code' => $result->code, 'detail' => $result->detail, 'scriptRan' => $result->scriptActed ? true : null], static fn ($v) => $v !== null);
                 } else {
                     $stored = ($result['stored'] ?? true) !== false;
                     if ($stored) {
@@ -477,6 +488,8 @@ class ExternalApiController
                     $results[] = ['index' => $index, 'success' => true, 'responseId' => $result['id'] ?? null, 'stored' => $stored];
                     $this->audit($request, 'response.create', $result['id'] ?? '', ['formId' => $args['formId'], 'batch' => true, 'stored' => $stored]);
                 }
+            } catch (\FormLogic\Services\NotStoredAfterScript $e) {
+                $results[] = ['index' => $index, 'success' => false, 'scriptRan' => true, 'message' => $e->getMessage()];
             } catch (PrivateFormEncryptedException $e) {
                 // §9.2: batch drains are envelope-only for private forms.
                 $results[] = ['index' => $index, 'success' => false, 'message' => $e->getMessage(), 'code' => PrivateFormEncryptedException::ERROR_CODE];

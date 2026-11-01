@@ -180,6 +180,40 @@ class AppSubmissionIdempotencyTest extends TestCase
         $this->assertSame('completed', $found['status']);
     }
 
+    // A service worker's copy, a second tab, a lost answer: none of them may run the script again.
+    public function testAKeyHeldAfterAScriptStaysHeldForEveryCopy(): void
+    {
+        $svc = new SubmissionIdempotencyService(self::$pdo);
+        $table = 'app_submission_idempotency';
+        $scope = ['app_id' => $this->appId, 'form_id' => $this->formId];
+        $first = $svc->reserve($table, $scope, null, 'k-script', 'h');
+
+        $svc->holdAfterScript($table, $scope, 'k-script', $first['lease']);
+
+        $copy = $svc->reserve($table, $scope, null, 'k-script', 'h');
+        $this->assertSame('existing', $copy['state']);
+        $this->assertSame(SubmissionIdempotencyService::SCRIPT_RAN, $copy['status']);
+        $this->assertNull($copy['response_id']);
+
+        self::$pdo->prepare('UPDATE app_submission_idempotency SET created_at = DATE_SUB(NOW(), INTERVAL 2 DAY) WHERE idempotency_key = ?')->execute(['k-script']);
+        $this->assertNull($svc->takeOver($table, $scope, null, 'k-script', 'h', 1), 'a stale pending row is taken over, and this is not one');
+
+        $svc->release($table, $scope, 'k-script', $first['lease']);
+        $this->assertSame(SubmissionIdempotencyService::SCRIPT_RAN, $svc->find($table, $scope, 'k-script')['status'], 'and a late release does not undo it');
+    }
+
+    public function testADispossessedRequestCannotHoldItsSuccessorsKey(): void
+    {
+        $svc = new SubmissionIdempotencyService(self::$pdo);
+        $table = 'app_submission_idempotency';
+        $scope = ['app_id' => $this->appId, 'form_id' => $this->formId];
+        $svc->reserve($table, $scope, null, 'k-lease', 'h');
+
+        $svc->holdAfterScript($table, $scope, 'k-lease', 'a-lease-that-is-gone');
+
+        $this->assertSame('pending', $svc->find($table, $scope, 'k-lease')['status']);
+    }
+
     public function testReleaseAllowsRetryAfterAFailedSubmission(): void
     {
         $key = 'k-' . bin2hex(random_bytes(4));

@@ -179,6 +179,8 @@ describe('a submission the queue gave up on', () => {
 
     vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201, response: { id: 'r1' } });
     expect(await retrySubmission(row.id)).toBe('sent');
+    // The server stays closed to the old key, so anything else holding it can't run the script.
+    expect(api.createAppResponseResult).toHaveBeenLastCalledWith('shop', 'orders', { answers: { item: 'tea' }, idempotencyKey: 'key' });
   });
 
   it('can be discarded, with the copy Workbox may hold of it', async () => {

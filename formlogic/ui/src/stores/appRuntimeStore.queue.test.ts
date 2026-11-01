@@ -141,6 +141,17 @@ describe('a retry made offline', () => {
     await expect(useAppRuntimeStore.getState().createResponse('orders', answers)).rejects.toThrow('Bad gateway');
   }
 
+  it('goes under a new key once the form\'s script has acted: the server stays closed to the old one', async () => {
+    vi.mocked(api.createAppResponse).mockResolvedValueOnce({ error: 'Check first', status: 409, scriptRan: true } as never);
+    await expect(useAppRuntimeStore.getState().createResponse('orders', { item: 'tea' })).rejects.toThrow('Check first');
+    const firstKey = vi.mocked(api.createAppResponse).mock.calls[0][2].idempotencyKey;
+    vi.mocked(api.createAppResponse).mockResolvedValueOnce({ data: { response: { id: 'r1' } } } as never);
+
+    await useAppRuntimeStore.getState().createResponse('orders', { item: 'tea' });
+
+    expect(vi.mocked(api.createAppResponse).mock.calls[1][2].idempotencyKey).not.toBe(firstKey);
+  });
+
   it('queues the same answers under the key of the attempt that failed', async () => {
     await failOnline({ item: 'tea' });
     const firstKey = vi.mocked(api.createAppResponse).mock.calls[0][2].idempotencyKey;
