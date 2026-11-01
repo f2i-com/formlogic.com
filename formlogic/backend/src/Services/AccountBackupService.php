@@ -501,7 +501,7 @@ final class AccountBackupService
                 if (!$this->sqlite->formDatabaseExists($formId)) {
                     continue;
                 }
-                $staged = $stagingDir . '/' . $formId . '.sqlite';
+                $staged = $stagingDir . '/' . hash('sha256', $formId) . '.sqlite';
                 try {
                     $snap = $this->snapshots->snapshot($this->sqlite->getFormDbPath($formId), $staged, ['responses']);
                 } catch (SqliteSnapshotException $e) {
@@ -512,7 +512,7 @@ final class AccountBackupService
                 // archive, not whatever the live database held a moment later.
                 $responses = $this->snapshots->countRows($staged, 'responses');
                 $responseTotal += $responses;
-                $name = 'data/forms/' . $formId . '.sqlite';
+                $name = 'data/forms/' . self::entryId($formId) . '.sqlite';
                 $entries[$name] = $snap['sha256'];
                 $snapshots[$name] = $this->snapshotRecord($snap) + ['responses' => $responses];
                 $zip->addFile($staged, $name);
@@ -1140,9 +1140,32 @@ final class AccountBackupService
             if (is_file($dir . '/.pending/' . $name) || is_file($dir . '/.orphaned/' . $name)) {
                 continue;
             }
-            $out['files/' . $formId . '/' . $name] = $abs;
+            $out['files/' . self::entryId($formId) . '/' . $name] = $abs;
         }
         return $out;
+    }
+
+    /**
+     * What a form is called in an archive's entry names. Its id, unless older versions let that hold
+     * a slash or a way up, which there would be folders: a restore reads the id back from one
+     * segment of the name, and refuses an archive with a way up in it.
+     */
+    private static function entryId(string $formId): string
+    {
+        return preg_match('~[/\\\\\x00]|^\.\.?$~D', $formId) === 1 ? 'id-' . hash('sha256', $formId) : $formId;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $forms
+     * @return array<string, string> entryId => form id
+     */
+    private static function idsByEntry(array $forms): array
+    {
+        $ids = [];
+        foreach ($forms as $form) {
+            $ids[self::entryId((string) $form['id'])] = (string) $form['id'];
+        }
+        return $ids;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1236,15 +1259,16 @@ final class AccountBackupService
 
             // Extract + validate every shipped sqlite BEFORE anything is created.
             $stagedDbs = []; // oldFormId => staged path
+            $idsByEntry = self::idsByEntry($structure['forms']);
             foreach ($manifest['entries'] as $name => $sha) {
                 if (!str_starts_with($name, 'data/forms/') || !str_ends_with($name, '.sqlite')) {
                     continue;
                 }
-                $oldFormId = basename($name, '.sqlite');
-                $staged = $stagingDir . '/' . $oldFormId . '.sqlite';
+                $entryId = basename($name, '.sqlite');
+                $staged = $stagingDir . '/' . hash('sha256', $entryId) . '.sqlite';
                 $this->extractEntryStreaming($zip, $name, $staged);
                 $this->validateShippedSqlite($staged, $serverHeld);
-                $stagedDbs[$oldFormId] = $staged;
+                $stagedDbs[$idsByEntry[$entryId]] = $staged;
             }
 
             $nativePayloads = $this->stageNativePayloads($zip, $structure, $manifest['entries'], $stagingDir, $serverHeld);
@@ -1698,7 +1722,7 @@ final class AccountBackupService
             if (!is_string($id) || $id === '' || !is_string($f['title'] ?? null)) {
                 throw new \RuntimeException("backup.json form #{$i} is malformed");
             }
-            $formIds[$id] = true;
+            $formIds[self::entryId($id)] = true;
         }
         $nativeApps = [];
         foreach ($this->nativeAppsIn($structure) as $appId => $n) {
@@ -2454,12 +2478,13 @@ final class AccountBackupService
         // Uploaded files → storage/uploads/<new form id>/ (stored names preserved;
         // answers already point at them via the normalize url rewrite).
         $filesRestored = 0;
+        $idsByEntry = self::idsByEntry($structure['forms']);
         foreach ($entries as $name => $sha) {
             if (!str_starts_with($name, 'files/')) {
                 continue;
             }
-            [, $oldFormId, $basename] = explode('/', $name, 3);
-            $newFormId = $formIdMap[$oldFormId] ?? null;
+            [, $entryId, $basename] = explode('/', $name, 3);
+            $newFormId = $formIdMap[$idsByEntry[$entryId] ?? ''] ?? null;
             if ($newFormId === null) {
                 continue; // validateStructure guarantees this can't happen; belt and braces
             }

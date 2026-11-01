@@ -17,6 +17,7 @@ class HostedAppService
     private const COPY_BATCH = 200;
     private const MAX_RECORDS = 10000;
     private const MAX_RECORD_BYTES = 16384;
+    private const CHECKPOINT_TRIES = 3;
 
     public function __construct(private SandboxRunner $runner, private ?string $storagePath = null) {}
 
@@ -208,9 +209,16 @@ class HostedAppService
         // Plain text stays in the file's free pages until this, from this run or from an earlier
         // one that stopped before it got here, or from rows that normal writes have since replaced.
         if ($changed > 0 || (int) $db->query('PRAGMA freelist_count')->fetchColumn() > 0) $db->exec('VACUUM');
-        // It stays in the -wal too, for as long as any other connection keeps that file alive.
-        $db->query('PRAGMA wal_checkpoint(TRUNCATE)')->fetchAll();
-        return $changed;
+        // It stays in the -wal too, for as long as any other connection keeps that file alive. A
+        // read running now makes this say busy, and then the old pages are still on disk, so the
+        // run can't count as done and the next one comes back here. Each try waits a second.
+        $db->exec('PRAGMA busy_timeout=1000');
+        for ($try = 0; $try < self::CHECKPOINT_TRIES; $try++) {
+            if ((int) $db->query('PRAGMA wal_checkpoint(TRUNCATE)')->fetchAll(PDO::FETCH_NUM)[0][0] === 0) {
+                return $changed;
+            }
+        }
+        throw new RuntimeException('The app is being read, so its old pages are still on disk. Run this again.');
     }
 
     /**

@@ -11,9 +11,9 @@ use Slim\Psr7\Factory\ResponseFactory;
 use Slim\Psr7\Factory\ServerRequestFactory;
 
 /**
- * A logo and a background image travel inside a form's theme as data: URLs, each kept to about
- * 200KB by the editor. At 10KB a real logo stopped the form saving, and publishing, altogether,
- * because the theme goes out in the same save as the title, the status and the script.
+ * A logo and a background image travel inside a form's theme as data: URLs, kept small by the
+ * editor. At 10KB a real logo stopped the form saving, and publishing, altogether, because the
+ * theme goes out in the same save as the title, the status and the script.
  */
 final class FormThemeSizeTest extends E2eeTestCase
 {
@@ -56,7 +56,7 @@ final class FormThemeSizeTest extends E2eeTestCase
     public function testATwoImageThemeSavesWithWhatGoesOutBesideIt(): void
     {
         $formId = $this->aForm();
-        $theme = $this->themeWith(2, 200 * 1024);
+        $theme = $this->themeWith(2, 100 * 1024);
 
         [$status] = $this->save($formId, ['title' => 'Renamed', 'status' => 'published', 'theme' => $theme]);
 
@@ -71,17 +71,35 @@ final class FormThemeSizeTest extends E2eeTestCase
     {
         $formId = $this->aForm();
 
-        [$status, $body] = $this->save($formId, ['title' => 'Renamed', 'theme' => $this->themeWith(1, 600 * 1024)]);
+        [$status, $body] = $this->save($formId, ['title' => 'Renamed', 'theme' => $this->themeWith(1, 300 * 1024)]);
 
         $this->assertSame(422, $status);
-        $this->assertSame('Theme must be 512KB or smaller', $body['message']);
+        $this->assertSame('Theme must be 256KB or smaller', $body['message']);
         $this->assertSame('Themed', self::$forms->getForm($formId)['title']);
+    }
+
+    /** The builder sends the theme with every save, so a limit that came down mustn't lock a form. */
+    public function testAFormAlreadyHoldingALargerThemeCanStillBeSaved(): void
+    {
+        $formId = $this->aForm();
+        self::$forms->updateForm($formId, ['theme' => $this->themeWith(2, 190 * 1024)]);
+        $theme = self::$forms->getForm($formId)['theme'];
+
+        [$status] = $this->save($formId, ['title' => 'Renamed', 'theme' => array_reverse($theme, true)]);
+
+        $this->assertSame(200, $status);
+        $this->assertSame('Renamed', self::$forms->getForm($formId)['title']);
+        $this->assertTheSameTheme($theme, self::$forms->getForm($formId)['theme']);
+
+        [$status, $body] = $this->save($formId, ['theme' => $this->themeWith(2, 195 * 1024)]);
+        $this->assertSame(422, $status, 'a new one is held to the limit');
+        $this->assertSame('Theme must be 256KB or smaller', $body['message']);
     }
 
     public function testAVersionKeepsTheThemeAndRestoresIt(): void
     {
         $formId = $this->aForm();
-        $theme = $this->themeWith(2, 200 * 1024);
+        $theme = $this->themeWith(2, 100 * 1024);
         $this->assertSame(200, $this->save($formId, ['theme' => $theme])[0]);
 
         $versions = new FormVersionService(self::$mysql, self::$forms);
@@ -96,7 +114,7 @@ final class FormThemeSizeTest extends E2eeTestCase
     public function testADuplicateKeepsIt(): void
     {
         $formId = $this->aForm();
-        $theme = $this->themeWith(2, 200 * 1024);
+        $theme = $this->themeWith(2, 100 * 1024);
         $this->assertSame(200, $this->save($formId, ['theme' => $theme])[0]);
 
         $copy = self::$forms->duplicateForm($formId, $this->userId);
@@ -108,11 +126,11 @@ final class FormThemeSizeTest extends E2eeTestCase
     {
         $pack = fn (array $theme): array => ['formatVersion' => 1, 'packMeta' => ['name' => 'Pack'], 'forms' => [['packFormId' => 'one', 'title' => 'One', 'fields' => [], 'theme' => $theme]]];
 
-        PackService::validateDefinition($pack($this->themeWith(2, 200 * 1024)));
+        PackService::validateDefinition($pack($this->themeWith(2, 100 * 1024)));
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('theme exceeds 512KB limit');
-        PackService::validateDefinition($pack($this->themeWith(1, 600 * 1024)));
+        $this->expectExceptionMessage('theme exceeds 256KB limit');
+        PackService::validateDefinition($pack($this->themeWith(1, 300 * 1024)));
     }
 
     /** A private form's read names its revision too, or a list read from it is never checked. */

@@ -2169,10 +2169,12 @@ class ResponseService
      * @param string|null $sourceRunId The flow run that writes this record: the cloud runner's own
      *   run, or a client's `flowRunId` once runForRecordWrite has checked it. Never read from
      *   $data, which carries the client's body. The runs this record starts are its children.
-     * @param int|null $quotaLimit The form's cap on records. It is checked here, around the insert
-     *   alone, so that a slow script or webhook doesn't hold every other submission up.
+     * @param int|null $quotaLimit The form's cap on records. It is checked here, under the form's
+     *   lock, around the insert alone so that a webhook doesn't hold every other submission up.
+     *   With a script the lock starts before it: what a script does can't be taken back, so it
+     *   runs for someone who has a place, and a form with both takes them one at a time.
      * @return array|ScriptRejection The created response or a rejection
-     * @throws FormQuotaRefused when $quotaLimit turns the submission away; nothing was stored
+     * @throws FormQuotaRefused when $quotaLimit turns the submission away; nothing ran or was stored
      */
     public function createResponse(string $formId, array $data, ?string $script = null, ?string $sourceRunId = null, ?int $quotaLimit = null): array|ScriptRejection
     {
@@ -2219,87 +2221,90 @@ class ResponseService
 
         // 1. Execute script FIRST if exists (to allow rejection)
         $scriptResult = null;
-        if ($this->runtime !== null && $script !== null && trim($script) !== '') {
-            $scriptResult = $this->runtime->execute($script, [
-                'answers' => $data['answers'] ?? [],
-                'ipAddress' => $data['ipAddress'] ?? null,
-                'userAgent' => $data['userAgent'] ?? null,
-                'timestamp' => time(),
-                'responseId' => $id,
-                'formId' => $formId,
-            ]);
-
-            // Handle rejection
-            if ($scriptResult->isRejected()) {
-                return new ScriptRejection($scriptResult->rejectionMessage ?? 'Submission rejected');
-            }
-
-            // FAIL CLOSED when the script produced no verdict. An author who wrote
-            // an onSubmit script put a gate on this form — a reject rule, a
-            // {store:false} "I forward the data myself" — and an engine failure
-            // (runtime missing, watchdog kill, budget exhausted, host-call cap,
-            // transport error) must not be a way through that gate. Storing
-            // anyway, which is what happened before, meant a submitter whose
-            // answers pushed the script over budget got their record stored
-            // unjudged, and a store:false form kept plaintext it promised not to.
-            // Nothing has been written at this point, so a retry is safe.
-            if (!$scriptResult->success) {
-                $this->logger->error('onSubmit script did not run; submission refused', [
-                    'formId' => $formId,
-                    'error' => $scriptResult->error,
-                ]);
-                return $scriptResult->scriptFault
-                    ? ScriptRejection::scriptFailed($scriptResult->error ?? 'script error')
-                    : ScriptRejection::unavailable($scriptResult->error ?? 'script error');
-            }
-
-            // Script opted out of storage ({store:false}): the submission is
-            // ACCEPTED — the respondent sees the normal thank-you — but nothing
-            // persists anywhere: no SQLite row, no MySQL mirror, no links,
-            // webhooks or flow runs, and uploaded files stay uncommitted (the
-            // abandoned-upload sweeper reclaims them). The script owns the data
-            // (typically forwarded via ctx.http). Completion analytics still
-            // count, so the owner sees the form being used.
-            if ($scriptResult->success && !$scriptResult->store) {
-                try {
-                    $this->updateAnalytics($formId, 'completion');
-                } catch (\Throwable $analyticsErr) {
-                    $this->logger->error('Failed to update analytics after store:false submission', [
-                        'formId' => $formId,
-                        'error' => $analyticsErr->getMessage(),
-                    ]);
-                }
-                return [
-                    'id' => $id,
-                    'status' => 'submitted',
-                    'submittedAt' => $now,
-                    'updatedAt' => $now,
-                    'answers' => $data['answers'] ?? [],
-                    'stored' => false,
-                ];
-            }
-        }
-
-        // 2. Determine initial status (may be overridden by script)
-        $allowedStatuses = ['submitted', 'reviewed', 'approved', 'rejected', 'spam', 'archived'];
-        $status = 'submitted'; // Always default to 'submitted' — ignore client-supplied status
-        if ($scriptResult !== null && $scriptResult->success && $scriptResult->status !== null) {
-            $status = in_array($scriptResult->status, $allowedStatuses, true) ? $scriptResult->status : 'submitted';
-        }
-
-        // 3. Insert into SQLite
-        $stmt = $db->prepare("
-            INSERT INTO responses (id, answers, metadata, status, submitted_at, updated_at)
-            VALUES (:id, :answers, :metadata, :status, :submitted_at, :updated_at)
-        ");
-
-        // Steps 3-5 atomically: insert the response, then apply script results and
-        // log the execution in ONE SQLite transaction. Previously these ran in
-        // autocommit, so a throw in applyScriptResult/logScriptExecution left a
-        // committed response row with no MySQL metadata (dual-DB divergence) and a
-        // 500. Now any failure rolls the whole response back.
-        $quotaLock = $this->holdQuota($formId, $quotaLimit);
+        $runsScript = $this->runtime !== null && $script !== null && trim($script) !== '';
+        // Before the script, so that a form with no room, or no way to tell, refuses before it acts.
+        $quotaLock = $runsScript ? $this->holdQuota($formId, $quotaLimit) : null;
         try {
+            if ($runsScript) {
+                $scriptResult = $this->runtime->execute($script, [
+                    'answers' => $data['answers'] ?? [],
+                    'ipAddress' => $data['ipAddress'] ?? null,
+                    'userAgent' => $data['userAgent'] ?? null,
+                    'timestamp' => time(),
+                    'responseId' => $id,
+                    'formId' => $formId,
+                ]);
+
+                // Handle rejection
+                if ($scriptResult->isRejected()) {
+                    return new ScriptRejection($scriptResult->rejectionMessage ?? 'Submission rejected');
+                }
+
+                // FAIL CLOSED when the script produced no verdict. An author who wrote
+                // an onSubmit script put a gate on this form — a reject rule, a
+                // {store:false} "I forward the data myself" — and an engine failure
+                // (runtime missing, watchdog kill, budget exhausted, host-call cap,
+                // transport error) must not be a way through that gate. Storing
+                // anyway, which is what happened before, meant a submitter whose
+                // answers pushed the script over budget got their record stored
+                // unjudged, and a store:false form kept plaintext it promised not to.
+                // Nothing has been written at this point, so a retry is safe.
+                if (!$scriptResult->success) {
+                    $this->logger->error('onSubmit script did not run; submission refused', [
+                        'formId' => $formId,
+                        'error' => $scriptResult->error,
+                    ]);
+                    return $scriptResult->scriptFault
+                        ? ScriptRejection::scriptFailed($scriptResult->error ?? 'script error')
+                        : ScriptRejection::unavailable($scriptResult->error ?? 'script error');
+                }
+
+                // Script opted out of storage ({store:false}): the submission is
+                // ACCEPTED — the respondent sees the normal thank-you — but nothing
+                // persists anywhere: no SQLite row, no MySQL mirror, no links,
+                // webhooks or flow runs, and uploaded files stay uncommitted (the
+                // abandoned-upload sweeper reclaims them). The script owns the data
+                // (typically forwarded via ctx.http). Completion analytics still
+                // count, so the owner sees the form being used.
+                if ($scriptResult->success && !$scriptResult->store) {
+                    try {
+                        $this->updateAnalytics($formId, 'completion');
+                    } catch (\Throwable $analyticsErr) {
+                        $this->logger->error('Failed to update analytics after store:false submission', [
+                            'formId' => $formId,
+                            'error' => $analyticsErr->getMessage(),
+                        ]);
+                    }
+                    return [
+                        'id' => $id,
+                        'status' => 'submitted',
+                        'submittedAt' => $now,
+                        'updatedAt' => $now,
+                        'answers' => $data['answers'] ?? [],
+                        'stored' => false,
+                    ];
+                }
+            }
+
+            // 2. Determine initial status (may be overridden by script)
+            $allowedStatuses = ['submitted', 'reviewed', 'approved', 'rejected', 'spam', 'archived'];
+            $status = 'submitted'; // Always default to 'submitted' — ignore client-supplied status
+            if ($scriptResult !== null && $scriptResult->success && $scriptResult->status !== null) {
+                $status = in_array($scriptResult->status, $allowedStatuses, true) ? $scriptResult->status : 'submitted';
+            }
+
+            // 3. Insert into SQLite
+            $stmt = $db->prepare("
+                INSERT INTO responses (id, answers, metadata, status, submitted_at, updated_at)
+                VALUES (:id, :answers, :metadata, :status, :submitted_at, :updated_at)
+            ");
+
+            // Steps 3-5 atomically: insert the response, then apply script results and
+            // log the execution in ONE SQLite transaction. Previously these ran in
+            // autocommit, so a throw in applyScriptResult/logScriptExecution left a
+            // committed response row with no MySQL metadata (dual-DB divergence) and a
+            // 500. Now any failure rolls the whole response back.
+            $quotaLock ??= $this->holdQuota($formId, $quotaLimit);
             $db->beginTransaction();
             $stmt->execute([
                 'id' => $id,
@@ -2478,8 +2483,8 @@ class ResponseService
     }
 
     /**
-     * Takes the form's lock for one insert, when the form has a cap and room under it. Without the
-     * lock two submissions could both find one place left, so a lock that can't be had refuses.
+     * Takes the form's lock for one submission, when the form has a cap and room under it. Without
+     * the lock two submissions could both find one place left, so a lock that can't be had refuses.
      *
      * @return string|null the lock to release, or null when there is no cap
      * @throws FormQuotaRefused
@@ -2848,6 +2853,15 @@ class ResponseService
     }
 
     /**
+     * Answers are keyed by field id, which starts with a letter or an underscore, so no real answers
+     * read as a list. An empty list is an empty object once PHP has decoded it.
+     */
+    public static function isAnswersObject(mixed $answers): bool
+    {
+        return is_array($answers) && ($answers === [] || !array_is_list($answers));
+    }
+
+    /**
      * Update a response
      */
     /**
@@ -2858,6 +2872,11 @@ class ResponseService
      */
     public function updateResponse(string $formId, string $responseId, array $data, ?string $ifMatch = null): ?array
     {
+        // Stored as they are, they would take the place of the record, and its files would go.
+        if (isset($data['answers']) && !self::isAnswersObject($data['answers'])) {
+            throw new \InvalidArgumentException('Answers must be an object');
+        }
+
         // §9.2 gate: private-form updates are envelope CAS writes only
         // (updateEncryptedResponse) — the PATCH-merge plaintext path is refused.
         $this->assertNotPrivate($formId);

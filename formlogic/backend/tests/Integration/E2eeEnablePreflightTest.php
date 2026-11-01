@@ -163,6 +163,21 @@ class E2eeEnablePreflightTest extends E2eeTestCase
         $this->assertEnableBlocked((string) $form['id'], ['pending_uploads']);
     }
 
+    public function testPendingUploadsBlockFromTheFolderTheFileStoreKeepsThemIn(): void
+    {
+        $form = self::$forms->createForm([
+            'id' => 'team_intake_' . bin2hex(random_bytes(4)),
+            'title' => 'Intake',
+            'userId' => $this->userId,
+            'status' => 'draft',
+            'fields' => [['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => false]],
+        ]);
+        $pending = self::$uploadsPath . '/' . str_replace('_', '', (string) $form['id']) . '/.pending';
+        mkdir($pending, 0777, true);
+        file_put_contents($pending . '/file_1.bin', '{}');
+        $this->assertEnableBlocked((string) $form['id'], ['pending_uploads']);
+    }
+
     public function testWebhooksBlock(): void
     {
         $form = $this->makeDraftForm();

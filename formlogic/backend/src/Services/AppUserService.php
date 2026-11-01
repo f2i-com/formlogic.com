@@ -716,6 +716,23 @@ class AppUserService
 
     public function createInvitation(string $appId, string $email, string $roleId, string $invitedBy): array
     {
+        // Held across the checks and the insert: two requests could both find nothing waiting and
+        // each make one. Lower-cased, as the database finds an address in any case.
+        $lock = 'fl_invite_' . substr(hash('sha256', $appId . '|' . mb_strtolower($email)), 0, 40);
+        $take = $this->mysql->prepare('SELECT GET_LOCK(?, 5)');
+        $take->execute([$lock]);
+        if ((int) $take->fetchColumn() !== 1) {
+            throw new \RuntimeException('Another invitation to this address is being made. Please try again in a moment.');
+        }
+        try {
+            return $this->createInvitationLocked($appId, $email, $roleId, $invitedBy);
+        } finally {
+            $this->mysql->prepare('SELECT RELEASE_LOCK(?)')->execute([$lock]);
+        }
+    }
+
+    private function createInvitationLocked(string $appId, string $email, string $roleId, string $invitedBy): array
+    {
         // Prevent inviting users with the Owner system role
         $roleCheck = $this->mysql->prepare("SELECT name, is_system FROM app_roles WHERE id = :id AND app_id = :app_id");
         $roleCheck->execute(['id' => $roleId, 'app_id' => $appId]);

@@ -485,8 +485,9 @@ final class FormEncryptionService
             $reasons[] = 'has_responses';
         }
 
-        // No pending uploads: storage/uploads/<formId>/.pending must be empty or absent.
-        $pendingDir = $this->uploadsPath . '/' . $formId . '/.pending';
+        // No pending uploads: .pending in the form's uploads folder must be empty or absent. That
+        // folder has the name FileStorageService gives it, which is never the raw id.
+        $pendingDir = $this->uploadsPath . '/' . preg_replace('/[^a-zA-Z0-9\-]/', '', $formId) . '/.pending';
         if (is_dir($pendingDir)) {
             foreach (scandir($pendingDir) ?: [] as $entry) {
                 if ($entry !== '.' && $entry !== '..') {

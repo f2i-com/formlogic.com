@@ -440,7 +440,7 @@ plugin may send to any mobile party (never to itself). All endpoints gate on the
 
 **TTL + backpressure.** Frames are volatile signalling: rows older than **120 s** are excluded
 from every read and swept opportunistically on each POST. A per-app cap of **512 frames not yet
-delivered** produces a typed `429 relay_backpressure` (never a silent drop) when consumers stop
+delivered**, or 512 frames from one phone inside the TTL whether delivered or not, produces a typed `429 relay_backpressure` (never a silent drop) when consumers stop
 draining. A delivered frame stays until its TTL, so that a client reconnecting with its cursor can
 read it again; those count only towards a ceiling of **4096 stored frames** per app.
 
@@ -914,8 +914,19 @@ through `DomainLaunchRouter`, which asks the server what the host is:
   paths (`/app/:slug`, `/form/:id`) render the normal app.
 - **On any connected domain,** `/login`, `/signup`, password reset and `/accept-invite` leave for
   FormLogic's own address, and `/sign-in/complete` finishes the way back (see below).
-- **A host the server doesn't know:** its root says the domain isn't connected, and every other path
-  renders the normal app, because it may be a self-hosted FormLogic built without `VITE_PUBLIC_DOMAIN`.
+- **The site's own address:** the server says so (`platform: true` in its 404), and every page
+  renders the normal app. A self-hosted FormLogic built without `VITE_PUBLIC_DOMAIN` is one of these.
+- **A host that is neither:** its root says the domain isn't connected, and every other path renders
+  the normal app.
+
+Only a real answer says what a host is: a timeout, a 429, a 5xx or being offline says nothing. A
+lookup that fails is asked again for as long as the page is open, and a late answer takes over from
+whatever is showing. The browser keeps the last answer per host, a domain's with its launch config,
+and goes by it until there is a new one: a domain draws its pages from what is kept, and a host
+remembered as none shows its pages at once, but for up to 2.5 seconds at a sign-in, password or
+`/app/...` page. On a host it knows nothing of, only the platform's own pages show at once. Anything
+else waits, and after 8 seconds says it can't reach the site, so a sign-in form never shows on a real
+domain because the network was slow.
 
 A `?__flhost=<domain>` **dev override** previews a connected domain on a local host (`localhost`,
 `127.0.0.1`, `*.local`) without DNS. It works nowhere else: a link must not open somebody's app at
@@ -1007,7 +1018,9 @@ The panel can only prove ownership. Traffic for the domain still has to reach th
   localhost/private/internal/IP**, unique-domain, DNS-TXT verify, `resolveLaunchConfig`).
 - `AppDomainController` — owner-gated CRUD under `/api/apps/{id}/domains` (+`/verify`), and the public
   `GET /api/public/launch/by-host?host=…` returning **display/install metadata only** (never form
-  schemas, fields, reports, or scripts).
+  schemas, fields, reports, or scripts). A host with no app connected gets a 404, with
+  `"platform": true` when it is this site's own (`APP_URL`, `CORS_ORIGIN`, `CORS_ALLOWED_ORIGINS`), so
+  a self-hosted site with a real name shows itself and not "this domain isn't connected yet".
 - Dev verify: when `APP_ENV != production`, `verify` marks the domain active without a real DNS
   lookup so the flow is locally testable.
 

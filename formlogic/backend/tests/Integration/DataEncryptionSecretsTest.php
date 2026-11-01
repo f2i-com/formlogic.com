@@ -312,6 +312,43 @@ final class DataEncryptionSecretsTest extends TestCase
         }
     }
 
+    public function testARunThatCannotEmptyAnAppsWalIsNotCountedAsDoneAndTheNextOneFinishes(): void
+    {
+        $hosted = sys_get_temp_dir() . '/fl-migrate-' . bin2hex(random_bytes(6));
+        mkdir($hosted);
+        $path = HostedAppService::databasePath('app-a', $hosted);
+        $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $db->exec('PRAGMA journal_mode=WAL');
+        $db->exec('CREATE TABLE records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(collection,id))');
+        $db->exec("INSERT INTO records VALUES ('notes', 'one', '{\"text\":\"planted-note\"}', 'now')");
+        // A read action partway through, which keeps the plain text in the -wal.
+        $db->exec('BEGIN');
+        $db->query('SELECT COUNT(*) FROM records')->fetchAll();
+
+        try {
+            $interrupted = $this->migrator($hosted)->run(DataEncryption::fromEnvironment());
+
+            self::assertStringContainsString(basename($path), implode(' ', $interrupted['failed']));
+            self::assertStringContainsString('planted-note', (string) file_get_contents($path . '-wal'), 'what the run could not finish');
+            self::assertFalse(self::$pdo->query("SELECT 1 FROM system_meta WHERE meta_key = 'data_encryption_last_run'")->fetchColumn());
+            self::assertStringContainsString('bin/encrypt-data.php', $this->health()['warning'] ?? '');
+
+            $db->exec('COMMIT');
+            $finished = $this->migrator($hosted)->run(DataEncryption::fromEnvironment());
+
+            self::assertSame([], $finished['failed']);
+            self::assertNotFalse(self::$pdo->query("SELECT 1 FROM system_meta WHERE meta_key = 'data_encryption_last_run'")->fetchColumn());
+            self::assertStringNotContainsString('planted-note', (string) file_get_contents($path));
+            self::assertSame(0, is_file($path . '-wal') ? filesize($path . '-wal') : 0, 'the -wal has gone with what it held');
+        } finally {
+            $db = null;
+            foreach (glob($path . '*') ?: [] as $file) {
+                unlink($file);
+            }
+            rmdir($hosted);
+        }
+    }
+
     public function testTheMigrationMovesSecretsOntoANewKey(): void
     {
         $setup = self::$mfa->beginSetup($this->userId, 'x@test.local');

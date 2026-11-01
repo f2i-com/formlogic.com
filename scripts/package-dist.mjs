@@ -302,7 +302,7 @@ Scheduled tasks (optional but recommended)
 The wizard prints these ready-to-paste; the crontab lines are (use the full
 path to your PHP 8.2+ CLI binary if plain "php" isn't on cron's PATH). Add them
 to the crontab of the web server user: a job whose log it can't open never starts.
-  # webhook retry delivery (lock-guarded; or run once with --loop as a service)
+  # webhook retry delivery (lock-guarded; or run --loop as a service that restarts it)
   * * * * *  php <web-root>/api/bin/webhook-worker.php >> <web-root>/api/logs/formlogic-webhooks.log 2>&1
   # retry record events after an interrupted delivery
   * * * * *  php <web-root>/api/bin/native-record-dispatch.php >> <web-root>/api/logs/formlogic-native-records.log 2>&1

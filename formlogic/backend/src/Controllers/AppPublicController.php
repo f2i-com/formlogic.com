@@ -21,6 +21,7 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Constants\AppPermissions;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Support\SqlErrorText;
 use FormLogic\Services\RateLimiter;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -495,7 +496,8 @@ class AppPublicController
         $data['language'] = substr($request->getHeaderLine('Accept-Language'), 0, 120) ?: null;
 
         $result = $this->processSubmission($app, $formId, $data, $userId);
-        return $this->jsonResponse($response, $result['payload'], $result['status']);
+        $answer = $this->jsonResponse($response, $result['payload'], $result['status']);
+        return $result['status'] === 503 ? $answer->withHeader('Retry-After', '2') : $answer;
     }
 
     /**
@@ -709,6 +711,11 @@ class AppPublicController
             // \Throwable (not \Exception): an \Error escaping here would skip processSubmission's
             // reservation release and strand a 'pending' idempotency row (forever-409-processing until
             // the stale-takeover window). Returning a result keeps the release path on every failure.
+            // The guard can't tell from what goes out below, and nothing was stored: this can go again.
+            if ($e instanceof \PDOException && SqlErrorText::isBusy($e->getMessage())) {
+                return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true,
+                    'message' => 'The server is busy. Please try again in a moment.']];
+            }
             return ['status' => 500, 'payload' => ['error' => true, 'message' => 'Failed to save response']];
         }
     }

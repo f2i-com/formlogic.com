@@ -9,6 +9,9 @@ use PDO;
 
 class FormVersionService
 {
+    /** Each row holds the whole form, and every save makes one. */
+    private const KEPT_VERSIONS = 200;
+
     private PDO $mysql;
     private FormService $formService;
 
@@ -19,7 +22,9 @@ class FormVersionService
     }
 
     /**
-     * Create a new version snapshot of the current form state
+     * Create a new version snapshot of the current form state. With no changelog and nothing
+     * changed since the newest row, there is nothing to keep, and that row is what comes back.
+     * Only the newest KEPT_VERSIONS rows stay: a version number may not outlive them.
      */
     public function createVersion(string $formId, ?string $userId = null, ?string $changelog = null): array
     {
@@ -62,6 +67,14 @@ class FormVersionService
             $row = $stmt->fetch();
             $nextVersion = $row ? (int)$row['next_version'] : 1;
 
+            if ($changelog === null || trim($changelog) === '') {
+                $newest = $this->sameAsNewest($formId, $nextVersion - 1, $data);
+                if ($newest !== null) {
+                    $this->mysql->commit();
+                    return $newest;
+                }
+            }
+
             $stmt = $this->mysql->prepare("
                 INSERT INTO form_versions (id, form_id, version, data, created_by, changelog)
                 VALUES (:id, :form_id, :version, :data, :created_by, :changelog)
@@ -74,6 +87,14 @@ class FormVersionService
                 'created_by' => $userId,
                 'changelog' => $changelog,
             ]);
+
+            $oldestKept = $this->mysql->prepare("SELECT version FROM form_versions WHERE form_id = :form_id ORDER BY version DESC LIMIT 1 OFFSET " . (self::KEPT_VERSIONS - 1));
+            $oldestKept->execute(['form_id' => $formId]);
+            $cutoff = $oldestKept->fetchColumn();
+            if ($cutoff !== false) {
+                $this->mysql->prepare("DELETE FROM form_versions WHERE form_id = :form_id AND version < :version")
+                    ->execute(['form_id' => $formId, 'version' => $cutoff]);
+            }
 
             $this->mysql->commit();
         } catch (\Exception $e) {
@@ -88,6 +109,31 @@ class FormVersionService
             'changelog' => $changelog,
             'createdBy' => $userId,
             'createdAt' => date('Y-m-d H:i:s'),
+        ];
+    }
+
+    /**
+     * The newest row, as createVersion() answers, when it holds this data. Compared decoded: the
+     * column is JSON, and MySQL keeps its keys in an order of its own.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>|null
+     */
+    private function sameAsNewest(string $formId, int $version, array $data): ?array
+    {
+        $stmt = $this->mysql->prepare("SELECT * FROM form_versions WHERE form_id = :form_id AND version = :version");
+        $stmt->execute(['form_id' => $formId, 'version' => $version]);
+        $row = $stmt->fetch();
+        if (!$row || !FormService::sameJson(json_decode($row['data'], true), json_decode((string) json_encode($data), true))) {
+            return null;
+        }
+        return [
+            'id' => $row['id'],
+            'formId' => $formId,
+            'version' => $version,
+            'changelog' => $row['changelog'],
+            'createdBy' => $row['created_by'],
+            'createdAt' => $row['created_at'],
         ];
     }
 

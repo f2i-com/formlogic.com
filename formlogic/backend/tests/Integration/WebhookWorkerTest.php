@@ -111,7 +111,8 @@ final class WebhookWorkerTest extends TestCase
         self::assertSame('retrying', $this->row($id)['status']);
     }
 
-    public function testTheLoopExitsNonZeroWhenItsConnectionIsLost(): void
+    /** A worker on its loop, past the point where it could find another holding the lock. @return array{0: resource, 1: array<int, resource>} */
+    private function startLoop(): array
     {
         $env = [
             'DB_HOST' => self::$config['host'], 'DB_PORT' => self::$config['port'], 'DB_DATABASE' => self::$config['database'],
@@ -120,9 +121,11 @@ final class WebhookWorkerTest extends TestCase
         ];
         $pipes = [];
         $worker = dirname(__DIR__, 2) . '/bin/webhook-worker.php';
+        // To a file, not a pipe: on Windows a read of an empty pipe waits for the worker to end.
+        $this->errorLog = (string) tempnam(sys_get_temp_dir(), 'fl-worker-');
         $process = proc_open(
             [PHP_BINARY, '-d', 'variables_order=EGPCS', '-d', 'xdebug.mode=off', $worker, '--loop', '--interval=1'],
-            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            [1 => ['pipe', 'w'], 2 => ['file', $this->errorLog, 'a']],
             $pipes,
             null,
             $env
@@ -133,10 +136,75 @@ final class WebhookWorkerTest extends TestCase
         usleep(1200000);
         $status = proc_get_status($process);
         if (!$status['running']) {
-            $out = stream_get_contents($pipes[2]);
+            $out = (string) file_get_contents($this->errorLog);
             proc_close($process);
             self::markTestSkipped('A worker is already running here: ' . $out);
         }
+        return [$process, $pipes];
+    }
+
+    private string $errorLog = '';
+
+    private function errors(): string
+    {
+        return (string) file_get_contents($this->errorLog);
+    }
+
+    /** @param resource $process */
+    private function waitForExit($process, float $seconds): array
+    {
+        $deadline = microtime(true) + $seconds;
+        do {
+            usleep(100000);
+            $status = proc_get_status($process);
+        } while ($status['running'] && microtime(true) < $deadline);
+        return $status;
+    }
+
+    /**
+     * Not a deadlock, which can't be had to order from another process without changing the
+     * server's settings for everyone on it, but the same path: a pass that fails on the database
+     * with a connection that's still good. SqlErrorGuardMiddlewareTest holds busy and lost apart.
+     */
+    public function testAPassThatFailsDoesNotEndTheLoopAndThreeInARowDo(): void
+    {
+        [$process, $pipes] = $this->startLoop();
+        try {
+            self::$pdo->exec('RENAME TABLE webhook_deliveries TO webhook_deliveries_away');
+            $deadline = microtime(true) + 5;
+            while (substr_count($this->errors(), 'database error') < 1 && microtime(true) < $deadline) {
+                usleep(50000);
+            }
+            self::assertSame(1, substr_count($this->errors(), 'database error'), $this->errors());
+            self::$pdo->exec('RENAME TABLE webhook_deliveries_away TO webhook_deliveries');
+
+            // It carries on, and a pass that works starts the count again.
+            $status = $this->waitForExit($process, 2.5);
+            self::assertTrue($status['running'], $this->errors());
+            self::assertSame(1, substr_count($this->errors(), 'database error'), 'nothing is wrong any more');
+
+            self::$pdo->exec('RENAME TABLE webhook_deliveries TO webhook_deliveries_away');
+            $status = $this->waitForExit($process, 8);
+            self::assertFalse($status['running'], 'three in a row: something else has to look at this');
+            self::assertSame(1, $status['exitcode'], $this->errors());
+            self::assertSame(4, substr_count($this->errors(), 'database error'), $this->errors());
+        } finally {
+            $tables = self::$pdo->query("SHOW TABLES LIKE 'webhook_deliveries_away'")->fetchAll();
+            if ($tables !== []) {
+                self::$pdo->exec('RENAME TABLE webhook_deliveries_away TO webhook_deliveries');
+            }
+            if (proc_get_status($process)['running']) {
+                proc_terminate($process);
+            }
+            fclose($pipes[1]);
+            proc_close($process);
+            @unlink($this->errorLog);
+        }
+    }
+
+    public function testTheLoopExitsNonZeroWhenItsConnectionIsLost(): void
+    {
+        [$process, $pipes] = $this->startLoop();
 
         // What a MySQL restart does to it.
         $victims = self::$pdo->prepare('SELECT ID FROM information_schema.PROCESSLIST WHERE DB = ? AND ID <> CONNECTION_ID()');
@@ -145,23 +213,19 @@ final class WebhookWorkerTest extends TestCase
             self::$pdo->exec('KILL ' . (int) $victim);
         }
 
-        $deadline = microtime(true) + 8;
-        do {
-            usleep(100000);
-            $status = proc_get_status($process);
-        } while ($status['running'] && microtime(true) < $deadline);
+        $status = $this->waitForExit($process, 8);
 
         $stillRunning = $status['running'];
         if ($stillRunning) {
             proc_terminate($process);
         }
-        $err = (string) stream_get_contents($pipes[2]);
+        $err = $this->errors();
         fclose($pipes[1]);
-        fclose($pipes[2]);
         proc_close($process);
+        @unlink($this->errorLog);
 
         self::assertFalse($stillRunning, 'it stops, so that a supervisor or cron can start one that works');
         self::assertSame(1, $status['exitcode'], $err);
-        self::assertStringContainsString('database error', $err);
+        self::assertSame(1, substr_count($err, 'database error'), 'at the first failure, not the third: ' . $err);
     }
 }

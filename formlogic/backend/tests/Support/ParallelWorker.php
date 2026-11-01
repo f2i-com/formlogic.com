@@ -6,19 +6,22 @@ declare(strict_types=1);
  * One process of ParallelWritesTest: does what one of several parallel requests does, on the real
  * files and the real database, from a start time shared with the others. Prints what went wrong.
  *
- *   php ParallelWorker.php <edit|churn|report|submit|hold-app|hold-form> <job as JSON>
+ *   php ParallelWorker.php <edit|churn|report|submit|invite|hold-app|hold-form> <job as JSON>
  */
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppService;
+use FormLogic\Services\AppUserService;
 use FormLogic\Services\ChatToolsContext;
 use FormLogic\Services\ChatToolsService;
 use FormLogic\Services\FileStorageService;
+use FormLogic\Services\FormLogicRuntime;
 use FormLogic\Services\FormQuotaRefused;
 use FormLogic\Services\FormService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\ResponseVersionConflict;
+use FormLogic\Services\ScriptResult;
 
 require dirname(__DIR__, 2) . '/vendor/autoload.php';
 
@@ -30,7 +33,19 @@ $job = json_decode((string) ($argv[2] ?? '{}'), true, 32, JSON_THROW_ON_ERROR);
 $mysql = new MySQLConnection($job['mysql']);
 $sqlite = new SQLiteConnection($job['sqlite']);
 $forms = new FormService($mysql, $sqlite);
-$responses = new ResponseService($mysql, $sqlite, null, null, null, new FileStorageService(['storagePath' => $job['uploads']]));
+// Stands in for an onSubmit script that charges a card: each run leaves a line in a file.
+$runtime = isset($job['scriptLog']) ? new class ((string) $job['scriptLog']) extends FormLogicRuntime {
+    public function __construct(private string $log)
+    {
+    }
+
+    public function execute(string $script, array $context): ScriptResult
+    {
+        file_put_contents($this->log, $context['responseId'] . "\n", FILE_APPEND | LOCK_EX);
+        return new ScriptResult(true);
+    }
+} : null;
+$responses = new ResponseService($mysql, $sqlite, $runtime, null, null, new FileStorageService(['storagePath' => $job['uploads']]));
 
 $errors = [];
 $done = 0;
@@ -86,9 +101,19 @@ for ($i = 0; $i < (int) $job['rounds']; $i++) {
             ], new ChatToolsContext($job['userId']));
         } elseif ($mode === 'submit') {
             try {
-                $responses->createResponse($job['formId'], ['answers' => ['who' => $job['who']]], null, null, (int) $job['limit']);
+                $responses->createResponse($job['formId'], ['answers' => ['who' => $job['who']]], $runtime === null ? null : 'function onSubmit() {}', null, (int) $job['limit']);
             } catch (FormQuotaRefused $refused) {
                 if ($refused->busy) {
+                    throw $refused;
+                }
+                continue;
+            }
+        } elseif ($mode === 'invite') {
+            try {
+                $email = (int) substr($job['who'], 1) % 2 === 0 ? $job['email'] : strtoupper($job['email']);
+                (new AppUserService($mysql))->createInvitation($job['appId'], $email, $job['roleId'], $job['userId']);
+            } catch (\RuntimeException $refused) {
+                if (!str_contains($refused->getMessage(), 'already exists')) {
                     throw $refused;
                 }
                 continue;

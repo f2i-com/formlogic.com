@@ -157,10 +157,13 @@ worker so retries actually fire:
 * * * * * php /path/to/formlogic/backend/bin/webhook-worker.php >> /path/to/formlogic/backend/logs/formlogic-webhooks.log 2>&1
 ```
 
-On hosts without cron, run it continuously (sleeps 60s between passes):
+On hosts without cron, run it continuously (sleeps 60s between passes). A pass that fails is tried
+again on the next one, but the worker stops with exit code 1 if it loses its database connection or
+fails three passes in a row, so run it under something that starts it again: a systemd service with
+`Restart=always`, or a shell loop:
 
 ```bash
-php formlogic/backend/bin/webhook-worker.php --loop
+while true; do php formlogic/backend/bin/webhook-worker.php --loop; sleep 60; done
 ```
 
 If the worker isn't running, initial (synchronous) deliveries still happen, but failed ones

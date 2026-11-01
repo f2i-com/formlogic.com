@@ -2197,11 +2197,12 @@ $app->post('/api/public/forms/{id}/reports/run-batch', function ($request, $resp
 })->add($publicFormRateLimiter);
 
 // Public: resolve a custom-domain host to its branded launch config (display/install metadata only).
-// Every page load on a host the build doesn't know asks here, and in the forms' budget each one
-// would cost a form on the same address one of its opens.
+// Every page load on a host the build doesn't know asks here, so every page of a self-hosted site,
+// and an office shares one address. In the forms' budget each one would cost a form on the same
+// address one of its opens.
 $app->get('/api/public/launch/by-host', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\AppDomainController::class)->resolveByHost($request, $response);
-})->add(new RateLimitMiddleware($rateLimiter, 60, 60, 'launch_by_host'));
+})->add(new RateLimitMiddleware($rateLimiter, 300, 60, 'launch_by_host'));
 
 // Public: whether this server may obtain a certificate for a host (Caddy's on-demand TLS asks here).
 // Caddy asks from one address, once per new name, and a name costs a stranger nothing to send: in

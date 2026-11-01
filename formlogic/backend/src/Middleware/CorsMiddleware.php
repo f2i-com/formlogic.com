@@ -57,6 +57,12 @@ class CorsMiddleware implements MiddlewareInterface
         return $this->addCorsHeaders($response, $allowedOrigin);
     }
 
+    /** The headers this adds, for an answer made outside it (SqlErrorGuardMiddleware). */
+    public function withCorsHeaders(Request $request, Response $response): Response
+    {
+        return $this->addCorsHeaders($response, $this->validateOrigin($this->getRequestOrigin($request)));
+    }
+
     /**
      * Get the Origin header from the request
      */

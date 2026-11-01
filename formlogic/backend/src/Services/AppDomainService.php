@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Helpers\AppUrl;
 use FormLogic\Helpers\IpSafety;
 use FormLogic\Support\Environment;
 use PDO;
@@ -118,13 +119,33 @@ class AppDomainService
     /**
      * Whether this normalized name is this site's own. Connected to an app, it would turn every
      * sign-in here into one limited to that app, and a proven row for it would refuse them all.
-     * Other listed origins don't count: connecting one is how an operator who listed a customer's
-     * domain moves it off that list.
+     * The address AppUrl::configuredBase gives counts, so the two can't disagree: the page there
+     * takes itself for the main site. Other listed origins don't count: connecting one is how an
+     * operator who listed a customer's domain moves it off that list.
      */
     private function isThisSite(string $domain): bool
     {
-        foreach (['APP_URL', 'CORS_ORIGIN'] as $setting) {
-            if ($domain !== '' && $this->normalizeDomain((string) Environment::nonEmpty($setting, '')) === $domain) {
+        foreach ([Environment::nonEmpty('APP_URL', ''), Environment::nonEmpty('CORS_ORIGIN', ''), AppUrl::configuredBase()] as $address) {
+            if ($domain !== '' && $this->normalizeDomain((string) $address) === $domain) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a host nobody has connected is this site at all, which a browser can't tell for
+     * itself on a self-hosted site with a real name. Wider than isThisSite: until someone connects
+     * a listed origin, it is one more way in to this site. A wildcard entry names no host.
+     */
+    public function isPlatformHost(string $host): bool
+    {
+        $domain = $this->normalizeDomain($host);
+        if ($this->isThisSite($domain)) {
+            return true;
+        }
+        foreach (explode(',', (string) Environment::nonEmpty('CORS_ALLOWED_ORIGINS', '')) as $origin) {
+            if ($domain !== '' && $this->normalizeDomain($origin) === $domain) {
                 return true;
             }
         }

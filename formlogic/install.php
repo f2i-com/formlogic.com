@@ -1708,7 +1708,10 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
           Safe to run every minute (a lock file prevents overlapping runs):<br>
           <code>* * * * * php <?= $backendAbsHtml ?>/bin/webhook-worker.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-webhooks.log 2&gt;&amp;1</code><br>
           <span class="help-text">No cron on your host? Run it continuously instead:
-          <code>php <?= $backendRelHtml ?>/bin/webhook-worker.php --loop</code> (sleeps 60s between passes).</span>
+          <code>php <?= $backendRelHtml ?>/bin/webhook-worker.php --loop</code> (sleeps 60s between passes).
+          It stops if it loses the database or fails three passes in a row, so run it under something
+          that starts it again, such as a systemd service with <code>Restart=always</code>, or a shell loop:
+          <code>while true; do php <?= $backendRelHtml ?>/bin/webhook-worker.php --loop; sleep 60; done</code></span>
         </li>
         <li style="margin-bottom:10px;">
           <strong>Nightly backup and cleanup</strong> — account and site backups, then the recycle-bin

@@ -1626,7 +1626,7 @@ final class AokieCompanionAuthTest extends TestCase
 
         // Past the grace a client gets for its own parallel refresh.
         self::$pdo->prepare('UPDATE mcp_oauth_refresh_tokens SET rotated_at = ? WHERE token_hash = ?')
-            ->execute([date('Y-m-d H:i:s', time() - 31), hash('sha256', $oauth['refreshToken'])]);
+            ->execute([date('Y-m-d H:i:s', time() - 12), hash('sha256', $oauth['refreshToken'])]);
         $reuse = self::$oauth->redeemRefreshToken(
             $oauth['refreshToken'],
             McpOAuthService::AOKIE_COMPANION_CLIENT_ID,

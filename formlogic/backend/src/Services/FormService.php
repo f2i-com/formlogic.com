@@ -21,10 +21,26 @@ class FormService
     }
 
     /**
-     * A form's theme holds its logo and background image as data: URLs, each kept to about 200KB
-     * by the editor (ThemeEditor.tsx), so a save and a pack of the form take this much.
+     * A form's theme holds its logo and background image as data: URLs, kept small by the editor
+     * (ThemeEditor.tsx), so a save and a pack of the form take this much. It goes out with every
+     * list of forms. A form saved before the limit came down keeps what it has (FormController).
      */
-    public const MAX_THEME_BYTES = 524288;
+    public const MAX_THEME_BYTES = 262144;
+
+    /** Whether two decoded JSON values hold the same, in any order of keys and to the type. */
+    public static function sameJson(mixed $left, mixed $right): bool
+    {
+        return self::keysSorted($left) === self::keysSorted($right);
+    }
+
+    private static function keysSorted(mixed $value): mixed
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+        ksort($value);
+        return array_map([self::class, 'keysSorted'], $value);
+    }
 
     /**
      * Field-id slugs must not collide with the FormLogic expression prelude's globals

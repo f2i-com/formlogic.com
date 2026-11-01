@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Tests\Integration;
 
+use FormLogic\Controllers\PackController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AccountBackupService;
@@ -17,8 +18,11 @@ use FormLogic\Services\PackService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\TrashConflictException;
 use FormLogic\Services\TrashService;
+use FormLogic\Services\TrashSnapshotException;
 use PDO;
 use PHPUnit\Framework\TestCase;
+use Slim\Psr7\Factory\ServerRequestFactory;
+use Slim\Psr7\Response as SlimResponse;
 
 /**
  * Recycle-bin acceptance: delete = snapshot + the SAME hard delete; restore =
@@ -446,6 +450,196 @@ class TrashTest extends TestCase
         $again = $packs->uninstallPack($install(), $this->userId, $trash);
         $this->assertSame(0, $again['appsDeleted']);
         $this->assertFileExists($hosted);
+    }
+
+    private function claimAged(string $item, int $minutes): void
+    {
+        self::$pdo->prepare("UPDATE trash_items SET status = 'restoring', claimed_at = NOW() - INTERVAL {$minutes} MINUTE WHERE id = ?")->execute([$item]);
+    }
+
+    private function listed(string $item): array
+    {
+        return array_values(array_filter(self::$trash->listTrash($this->userId), static fn (array $row) => $row['id'] === $item))[0];
+    }
+
+    public function testAPurgeThatDiedLeavesAnItemThatCanBeUsed(): void
+    {
+        [$trash] = $this->binWithStorage();
+        $item = $this->trashApp1($trash);
+        $this->claimAged($item, 31);
+
+        $this->assertSame('trashed', $this->listed($item)['status'], 'the page greys out what it is told is taken');
+        $this->assertSame('trashed', self::$trash->getItem($item, $this->userId)['status']);
+
+        $this->assertTrue($trash->purgeItem($item, $this->userId));
+        $this->assertEmpty(array_filter($this->trashRows(), static fn (array $row) => $row['id'] === $item));
+    }
+
+    public function testAClaimStillInItsThirtyMinutesKeepsTheItem(): void
+    {
+        [$trash] = $this->binWithStorage();
+        $item = $this->trashApp1($trash);
+        $this->claimAged($item, 29);
+
+        $this->assertSame('restoring', $this->listed($item)['status']);
+        $this->assertFalse($trash->purgeItem($item, $this->userId));
+        $this->assertSame('restoring', $this->statusOf($item));
+    }
+
+    /** A bin that can't keep anything: its folder's place is taken by a file. */
+    private function binThatCannotKeepAnything(array $config = []): TrashService
+    {
+        $blocked = self::$tmpRoot . '/not-a-folder-' . bin2hex(random_bytes(4));
+        file_put_contents($blocked, '');
+        return new TrashService(
+            self::$mysql, self::$sqlite, self::$backup, self::$forms, self::$apps, self::$flows,
+            $config + ['retentionDays' => 30, 'dir' => $blocked]
+        );
+    }
+
+    private function packHolding(array $formIds, array $appIds): string
+    {
+        $id = 'inst-' . bin2hex(random_bytes(8));
+        self::$pdo->prepare("INSERT INTO pack_installations (id, user_id, pack_id, pack_name, form_ids, app_ids) VALUES (?, ?, 'test-pack', 'Test Pack', ?, ?)")
+            ->execute([$id, $this->userId, json_encode($formIds), json_encode($appIds)]);
+        return $id;
+    }
+
+    private function packStillInstalled(string $installationId): bool
+    {
+        $stmt = self::$pdo->prepare('SELECT 1 FROM pack_installations WHERE id = ?');
+        $stmt->execute([$installationId]);
+        return $stmt->fetchColumn() !== false;
+    }
+
+    private function packs(): PackService
+    {
+        return new PackService(self::$mysql, self::$forms, self::$apps, new AppUserService(self::$mysql));
+    }
+
+    public function testAnUninstallStopsBeforeAnythingGoesWhenTheBinCannotKeepAnApp(): void
+    {
+        [, $native, $hosted] = $this->binWithStorage();
+        $installation = $this->packHolding([$this->f1], [$this->app1]);
+
+        try {
+            $this->packs()->uninstallPack($installation, $this->userId, $this->binThatCannotKeepAnything());
+            $this->fail('Nothing stopped it');
+        } catch (TrashSnapshotException $e) {
+            $this->assertStringContainsString('Nothing was uninstalled', $e->getMessage());
+            $this->assertStringContainsString('recycle bin', $e->getMessage());
+            $this->assertStringContainsString('Could not create the trash directory', $e->getMessage(), 'and it says why');
+        }
+
+        $this->assertNotNull(self::$apps->getApp($this->app1));
+        $this->assertNotNull(self::$forms->getForm($this->f1));
+        $this->assertFileExists($native);
+        $this->assertFileExists($hosted);
+        $this->assertTrue($this->packStillInstalled($installation), 'it can be tried again');
+        $this->assertSame([], $this->trashRows());
+    }
+
+    public function testAnAppSecondInLineStopsTheFirstGoingToo(): void
+    {
+        $second = self::$apps->createApp(['name' => 'Second', 'status' => 'published'], $this->userId);
+        // The bin's read of the second app is what fails, as a full disk would fail its copy.
+        $apps = new class ((string) $second['id'], self::$mysql, self::$forms) extends AppService {
+            public function __construct(private string $refused, MySQLConnection $mysql, FormService $forms)
+            {
+                parent::__construct($mysql, $forms);
+            }
+
+            public function getApp(string $appId): ?array
+            {
+                if ($appId === $this->refused) {
+                    throw new \RuntimeException('No space left on device');
+                }
+                return parent::getApp($appId);
+            }
+        };
+        $trash = new TrashService(self::$mysql, self::$sqlite, self::$backup, self::$forms, $apps, self::$flows, ['retentionDays' => 30, 'dir' => self::$trashDir]);
+
+        try {
+            $this->packs()->uninstallPack($this->packHolding([], [$this->app1, $second['id']]), $this->userId, $trash);
+            $this->fail('Nothing stopped it');
+        } catch (TrashSnapshotException $e) {
+            $this->assertStringContainsString('No space left on device', $e->getMessage());
+        }
+
+        $this->assertNotNull(self::$apps->getApp($this->app1));
+        $this->assertSame([], $this->trashRows(), 'the first app\'s copy goes: it is still here');
+        $this->assertSame([], glob(self::$trashDir . '/' . $this->userId . '/*.zip') ?: []);
+    }
+
+    public function testADeleteThatFailsAfterTheCopyLeavesNoItem(): void
+    {
+        $apps = new class (self::$mysql, self::$forms) extends AppService {
+            public function deleteApp(string $appId): bool
+            {
+                throw new \RuntimeException('The app is busy.');
+            }
+        };
+        $trash = new TrashService(self::$mysql, self::$sqlite, self::$backup, self::$forms, $apps, self::$flows, ['retentionDays' => 30, 'dir' => self::$trashDir]);
+        $packs = new PackService(self::$mysql, self::$forms, $apps, new AppUserService(self::$mysql));
+
+        try {
+            $packs->uninstallPack($this->packHolding([], [$this->app1]), $this->userId, $trash);
+            $this->fail('The delete failed');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('Retry uninstall', $e->getMessage());
+        }
+
+        $this->assertNotNull(self::$apps->getApp($this->app1));
+        $this->assertSame([], $this->trashRows(), 'an item for an app that is still here would come back as a copy');
+    }
+
+    public function testAnUninstallKeepsACopyOfARecordBearingFormBeforeItGoes(): void
+    {
+        $trash = $this->binThatCannotKeepAnything();
+
+        $this->expectException(TrashSnapshotException::class);
+        $this->expectExceptionMessage('"Clients"');
+        $trash->captureRecordBearingForms($this->packHolding([$this->f1], []), $this->userId);
+    }
+
+    public function testACopyOfTheSecondFormFailingTakesTheFirstCopyOutToo(): void
+    {
+        // A snapshot that can't be made: the file holding the second form's records is ruined.
+        self::$sqlite->closeAll();
+        file_put_contents(self::$sqlite->getFormDbPath($this->f2), 'not a database');
+
+        try {
+            self::$trash->captureRecordBearingForms($this->packHolding([$this->f1, $this->f2], []), $this->userId);
+            $this->fail('Nothing stopped it');
+        } catch (TrashSnapshotException $e) {
+            $this->assertStringContainsString('"Jobs"', $e->getMessage());
+        }
+
+        $this->assertSame([], $this->trashRows());
+        $this->assertSame([], glob(self::$trashDir . '/' . $this->userId . '/*.zip') ?: []);
+    }
+
+    public function testTheRouteSaysWhyAndDeletesNothing(): void
+    {
+        $installation = $this->packHolding([$this->f1], [$this->app1]);
+        $controller = new PackController($this->packs(), null, null, null, $this->binThatCannotKeepAnything());
+        $request = (new ServerRequestFactory())->createServerRequest('DELETE', '/api/packs/' . $installation)->withAttribute('userId', $this->userId);
+
+        $response = $controller->uninstall($request, new SlimResponse(), ['installationId' => $installation]);
+
+        $this->assertSame(503, $response->getStatusCode(), (string) $response->getBody());
+        $body = json_decode((string) $response->getBody(), true);
+        $this->assertSame('bin_unavailable', $body['code']);
+        $this->assertStringContainsString('Nothing was uninstalled', $body['message']);
+        $this->assertNotNull(self::$apps->getApp($this->app1));
+        $this->assertNotNull(self::$forms->getForm($this->f1));
+        $this->assertTrue($this->packStillInstalled($installation));
+    }
+
+    public function testAnOrdinaryDeleteStillGoesThroughWhenTheBinCannotKeepIt(): void
+    {
+        $this->assertTrue($this->binThatCannotKeepAnything()->trashApp($this->app1, $this->userId), 'what was asked for is deleted, as it was');
+        $this->assertNull(self::$apps->getApp($this->app1));
     }
 
     public function testAnItemWhoseStorageCannotGoStaysForARetry(): void

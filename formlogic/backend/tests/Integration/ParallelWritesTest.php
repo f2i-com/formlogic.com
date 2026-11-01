@@ -582,21 +582,165 @@ final class ParallelWritesTest extends TestCase
         self::assertSame(1, $free, 'the webhook is sent after the lock has gone');
     }
 
-    public function testTheQuotaLockIsNotHeldWhileTheScriptRuns(): void
+    private const A_SCRIPT = 'function onSubmit() {}';
+
+    private function lockName(): string
     {
-        $name = 'fl_form_submit_' . substr(hash('sha256', $this->formId), 0, 40);
-        $other = $this->anotherConnection();
-        $free = null;
+        return 'fl_form_submit_' . substr(hash('sha256', $this->formId), 0, 40);
+    }
+
+    /** A runtime that notes whether the form's lock is free as its script runs, and answers $result. */
+    private function runtimeThatWatchesTheLock(PDO $other, ?int &$free, int &$runs, ?ScriptResult $result = null): FormLogicRuntime
+    {
+        $name = $this->lockName();
         $runtime = $this->createMock(FormLogicRuntime::class);
-        $runtime->method('execute')->willReturnCallback(static function () use ($other, $name, &$free): ScriptResult {
+        $runtime->method('execute')->willReturnCallback(static function () use ($other, $name, &$free, &$runs, $result): ScriptResult {
+            $runs++;
             $free = (int) $other->query("SELECT IS_FREE_LOCK('{$name}')")->fetchColumn();
-            return new ScriptResult(true);
+            return $result ?? new ScriptResult(true);
         });
+        return $runtime;
+    }
+
+    public function testACappedFormHoldsItsLockThroughTheScript(): void
+    {
+        $other = $this->anotherConnection();
+        [$free, $runs] = [null, 0];
+        $responses = new ResponseService(self::$mysql, self::$sqlite, $this->runtimeThatWatchesTheLock($other, $free, $runs));
+
+        self::assertIsArray($responses->createResponse($this->formId, ['answers' => []], self::A_SCRIPT, null, 3));
+
+        self::assertSame(0, $free, 'two people must not both be told there is one place left');
+        self::assertSame(1, (int) $other->query("SELECT IS_FREE_LOCK('{$this->lockName()}')")->fetchColumn());
+    }
+
+    public function testAFormWithNoCapTakesNoLockForItsScript(): void
+    {
+        $other = $this->anotherConnection();
+        [$free, $runs] = [null, 0];
+        $responses = new ResponseService(self::$mysql, self::$sqlite, $this->runtimeThatWatchesTheLock($other, $free, $runs));
+
+        self::assertIsArray($responses->createResponse($this->formId, ['answers' => []], self::A_SCRIPT));
+
+        self::assertSame(1, $runs);
+        self::assertSame(1, $free, 'nothing to count, so one slow script holds up nobody');
+    }
+
+    public function testAPersonRefusedByTheCapIsNotChargedByTheScript(): void
+    {
+        $other = $this->anotherConnection();
+        [$free, $runs] = [null, 0];
+        $responses = new ResponseService(self::$mysql, self::$sqlite, $this->runtimeThatWatchesTheLock($other, $free, $runs));
+        self::assertIsArray($responses->createResponse($this->formId, ['answers' => []], self::A_SCRIPT, null, 1));
+        self::assertSame(1, $runs);
+
+        try {
+            $responses->createResponse($this->formId, ['answers' => []], self::A_SCRIPT, null, 1);
+            self::fail('The form is full');
+        } catch (FormQuotaRefused $e) {
+            self::assertFalse($e->busy);
+        }
+
+        self::assertSame(1, $runs, 'the script of whoever is refused never ran');
+        self::assertSame(1, $responses->getResponseCount($this->formId));
+    }
+
+    public function testABusyAnswerComesBeforeTheScript(): void
+    {
+        $name = $this->lockName();
+        $other = $this->anotherConnection();
+        $other->query("SELECT GET_LOCK('{$name}', 0)")->fetchAll();
+        $runtime = $this->createMock(FormLogicRuntime::class);
+        $runtime->expects(self::never())->method('execute');
+        $responses = new class (self::$mysql, self::$sqlite, $runtime) extends ResponseService {
+            public function acquireFormLock(string $formId, int $timeoutSeconds = 5): ?string
+            {
+                return parent::acquireFormLock($formId, 0);
+            }
+        };
+        try {
+            $responses->createResponse($this->formId, ['answers' => []], self::A_SCRIPT, null, 3);
+            self::fail('Without the lock nobody can say that there is room');
+        } catch (FormQuotaRefused $e) {
+            self::assertTrue($e->busy, 'a retry is safe: the script has not acted');
+        } finally {
+            $other->query("SELECT RELEASE_LOCK('{$name}')")->fetchAll();
+        }
+    }
+
+    /** @return array<string, array{0: ScriptResult}> */
+    public static function scriptsThatStoreNothing(): array
+    {
+        return [
+            'a rejection' => [new ScriptResult(true, rejected: true, rejectionMessage: 'No')],
+            'a script that failed' => [new ScriptResult(false, 'it threw', scriptFault: true)],
+            'store:false' => [new ScriptResult(true, store: false)],
+        ];
+    }
+
+    /** @dataProvider scriptsThatStoreNothing */
+    public function testTheLockGoesWhenAScriptStoresNothing(ScriptResult $result): void
+    {
+        $other = $this->anotherConnection();
+        [$free, $runs] = [null, 0];
+        $responses = new ResponseService(self::$mysql, self::$sqlite, $this->runtimeThatWatchesTheLock($other, $free, $runs, $result));
+
+        $responses->createResponse($this->formId, ['answers' => []], self::A_SCRIPT, null, 3);
+
+        self::assertSame(0, $free);
+        self::assertSame(1, (int) $other->query("SELECT IS_FREE_LOCK('{$this->lockName()}')")->fetchColumn());
+    }
+
+    public function testTheLockGoesWhenAScriptThrows(): void
+    {
+        $runtime = $this->createMock(FormLogicRuntime::class);
+        $runtime->method('execute')->willThrowException(new \RuntimeException('The engine went away'));
         $responses = new ResponseService(self::$mysql, self::$sqlite, $runtime);
+        try {
+            $responses->createResponse($this->formId, ['answers' => []], self::A_SCRIPT, null, 3);
+            self::fail('It should have thrown');
+        } catch (\RuntimeException $e) {
+            self::assertSame('The engine went away', $e->getMessage());
+        }
+        self::assertSame(1, (int) $this->anotherConnection()->query("SELECT IS_FREE_LOCK('{$this->lockName()}')")->fetchColumn());
+    }
 
-        self::assertIsArray($responses->createResponse($this->formId, ['answers' => []], 'function onSubmit() {}', null, 3));
+    public function testACapHoldsAcrossProcessesAndOnlyThoseWithAPlaceRunTheScript(): void
+    {
+        $log = self::$sqlitePath . '-script-' . bin2hex(random_bytes(4));
 
-        self::assertSame(1, $free, 'one slow script used to hold up every other submission');
+        $reports = $this->runWorkers('submit', ['formId' => $this->formId, 'limit' => 5, 'rounds' => 8, 'scriptLog' => $log], 2);
+
+        foreach ($reports as $report) {
+            self::assertSame(0, $report['errorCount'], implode("\n", $report['errors']));
+        }
+        self::assertSame(5, (new ResponseService(self::$mysql, self::$sqlite))->getResponseCount($this->formId));
+        self::assertCount(5, file($log, FILE_IGNORE_NEW_LINES), 'sixteen tried, and five had a place');
+        unlink($log);
+    }
+
+    public function testTheBatchRouteHoldsTheLockThroughEveryScriptAndStopsAtTheCap(): void
+    {
+        $this->formId = $this->newForm(['quotaLimit' => 2]);
+        self::$pdo->prepare('UPDATE forms SET logic_script = ? WHERE id = ?')->execute([self::A_SCRIPT, $this->formId]);
+        $other = $this->anotherConnection();
+        [$free, $runs] = [null, 0];
+        $responses = new ResponseService(self::$mysql, self::$sqlite, $this->runtimeThatWatchesTheLock($other, $free, $runs));
+
+        $request = (new ServerRequestFactory())->createServerRequest('POST', '/api/v1/forms/' . $this->formId . '/responses/batch')
+            ->withAttribute('userId', $this->userId)
+            ->withAttribute('apiKeyScopes', ['responses:read', 'responses:manage'])
+            ->withParsedBody(['responses' => [['answers' => ['a' => '1']], ['answers' => ['a' => '2']], ['answers' => ['a' => '3']]]]);
+        $answer = (new ExternalApiController(self::$forms, $responses, new WebhookService(self::$mysql)))
+            ->batchSubmitResponses($request, new SlimResponse(), ['formId' => $this->formId]);
+
+        self::assertSame(200, $answer->getStatusCode(), (string) $answer->getBody());
+        $body = json_decode((string) $answer->getBody(), true);
+        self::assertSame(2, $body['succeeded']);
+        self::assertSame('Quota limit reached', $body['results'][2]['message']);
+        self::assertSame(2, $runs, 'the third script never ran');
+        self::assertSame(0, $free);
+        self::assertSame(1, (int) $other->query("SELECT IS_FREE_LOCK('{$this->lockName()}')")->fetchColumn());
     }
 
     public function testEveryRouteLetsTheInsertCountTheQuota(): void
@@ -642,6 +786,54 @@ final class ParallelWritesTest extends TestCase
         self::assertSame(201, $runtime->getStatusCode(), (string) $runtime->getBody());
 
         self::assertSame([9, 9, 9, 9], $seen->getArrayCopy());
+    }
+
+    // ── one invitation ────────────────────────────────────────────────────────
+
+    /** @return array{appId:string, roleId:string} */
+    private function appWithARole(): array
+    {
+        $app = $this->newApp();
+        $role = self::$pdo->prepare("SELECT id FROM app_roles WHERE app_id = ? AND name <> 'Owner' ORDER BY sort_order DESC LIMIT 1");
+        $role->execute([$app['id']]);
+        return ['appId' => $app['id'], 'roleId' => (string) $role->fetchColumn()];
+    }
+
+    public function testEightProcessesInvitingOneAddressMakeOneInvitation(): void
+    {
+        $app = $this->appWithARole();
+        $email = 'Sam-' . bin2hex(random_bytes(4)) . '@Example.com';
+
+        // One in two says it in capitals: the database finds them the same person.
+        $reports = $this->runWorkers('invite', $app + ['userId' => $this->userId, 'email' => $email, 'rounds' => 1], 8);
+
+        foreach ($reports as $report) {
+            self::assertSame(0, $report['errorCount'], implode("\n", $report['errors']));
+        }
+        self::assertSame(1, array_sum(array_column($reports, 'done')), 'one of them made it, and the rest were told');
+        $pending = self::$pdo->prepare("SELECT COUNT(*) FROM app_invitations WHERE app_id = ? AND email = ? AND status = 'pending'");
+        $pending->execute([$app['appId'], $email]);
+        self::assertSame(1, (int) $pending->fetchColumn());
+    }
+
+    public function testAnInvitationLetsItsLockGoWhicheverWayItEnds(): void
+    {
+        $app = $this->appWithARole();
+        $email = 'kim-' . bin2hex(random_bytes(4)) . '@example.com';
+        $name = 'fl_invite_' . substr(hash('sha256', $app['appId'] . '|' . $email), 0, 40);
+        $other = $this->anotherConnection();
+        $users = new AppUserService(self::$mysql);
+
+        $users->createInvitation($app['appId'], $email, $app['roleId'], $this->userId);
+        self::assertSame(1, (int) $other->query("SELECT IS_FREE_LOCK('{$name}')")->fetchColumn());
+
+        try {
+            $users->createInvitation($app['appId'], strtoupper($email), $app['roleId'], $this->userId);
+            self::fail('One is already waiting');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('already exists', $e->getMessage());
+        }
+        self::assertSame(1, (int) $other->query("SELECT IS_FREE_LOCK('{$name}')")->fetchColumn());
     }
 
     // ── two creations of one thing ────────────────────────────────────────────

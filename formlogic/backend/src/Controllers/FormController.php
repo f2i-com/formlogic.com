@@ -116,7 +116,7 @@ class FormController
         if (isset($data['theme'])) {
             $themeJson = json_encode($data['theme']);
             if ($themeJson !== false && strlen($themeJson) > FormService::MAX_THEME_BYTES) {
-                return 'Theme must be 512KB or smaller';
+                return 'Theme must be 256KB or smaller';
             }
         }
         if (isset($data['customScreen'])) {
@@ -383,6 +383,11 @@ class FormController
         }
         if (isset($data['icon']) && (!is_string($data['icon']) || mb_strlen($data['icon']) > 100)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Icon must be a string of 100 characters or fewer'], 422);
+        }
+        // The builder sends the theme with every save: one from before the limit came down would
+        // refuse the title and everything else saved beside it, for a theme nobody is changing.
+        if (isset($data['theme']) && FormService::sameJson($data['theme'], $form['theme'] ?? null)) {
+            unset($data['theme']);
         }
         $sizeError = $this->validateFieldSizes($data);
         if ($sizeError !== null) {

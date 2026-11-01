@@ -1064,25 +1064,18 @@ final class AokieCompanionRelayTest extends TestCase
     public function testBackpressureRefusesOverCapWithTyped429(): void
     {
         $batch = array_fill(0, AokieCompanionRelayService::MAX_FRAMES_PER_POST, ['v' => 2, 'kind' => 'flood']);
-        $phones = intdiv(
-            AokieCompanionRelayService::MAX_LIVE_FRAMES_PER_APP,
-            AokieCompanionRelayService::MAX_LIVE_FRAMES_PER_MOBILE,
-        );
         $posts = intdiv(
-            AokieCompanionRelayService::MAX_LIVE_FRAMES_PER_MOBILE,
+            AokieCompanionRelayService::MAX_LIVE_FRAMES_PER_APP,
             AokieCompanionRelayService::MAX_FRAMES_PER_POST,
         );
-        // Each phone stops at its own share, and that leaves room for the next.
-        for ($phone = 0; $phone < $phones; $phone++) {
-            $mobile = $this->mobileToken('device_' . bin2hex(random_bytes(4)));
-            for ($i = 0; $i < $posts; $i++) {
-                $ok = $this->post($mobile, ['to' => 'plugin', 'frames' => $batch]);
-                $this->assertSame(200, $ok->getStatusCode(), (string) $ok->getBody());
-            }
-            $over = $this->post($mobile, ['to' => 'plugin', 'frames' => [['v' => 2]]]);
-            $this->assertSame(429, $over->getStatusCode());
-            $this->assertSame('relay_backpressure', self::decode($over)['code']);
+        $mobile = $this->mobileToken('device_' . bin2hex(random_bytes(4)));
+        for ($i = 0; $i < $posts; $i++) {
+            $ok = $this->post($mobile, ['to' => 'plugin', 'frames' => $batch]);
+            $this->assertSame(200, $ok->getStatusCode(), (string) $ok->getBody());
         }
+        $over = $this->post($mobile, ['to' => 'plugin', 'frames' => [['v' => 2]]]);
+        $this->assertSame(429, $over->getStatusCode());
+        $this->assertSame('relay_backpressure', self::decode($over)['code']);
         // The app's mailbox is full now, for a phone that has sent nothing.
         $over = $this->post($this->mobileToken('device_' . bin2hex(random_bytes(4))), ['to' => 'plugin', 'frames' => [['v' => 2]]]);
         $this->assertSame(429, $over->getStatusCode());
@@ -1117,23 +1110,47 @@ final class AokieCompanionRelayTest extends TestCase
         $this->assertCount(AokieCompanionRelayService::MAX_FETCH_LIMIT, self::$relay->fetchSince($this->appId, $phone, 0), 'reconnecting from an old cursor loses nothing');
     }
 
-    public function testFramesAPluginHasReadStopCountingAgainstThePhoneThatSentThem(): void
+    public function testAPhoneWhoseFramesAreReadAtOnceStillStopsAtItsLimit(): void
     {
         $mobile = $this->mobileToken('device_' . bin2hex(random_bytes(4)));
         $batch = array_fill(0, AokieCompanionRelayService::MAX_FRAMES_PER_POST, ['v' => 2]);
         $cursor = 0;
-        // Eight posts are 512 frames in a few seconds, past a phone's 128 had nothing been read.
-        for ($post = 0; $post < 8; $post++) {
+        // As with a plugin that's connected: nothing is ever waiting.
+        for ($post = 0; $post < intdiv(AokieCompanionRelayService::MAX_FRAMES_PER_MOBILE, AokieCompanionRelayService::MAX_FRAMES_PER_POST); $post++) {
             $sent = $this->post($mobile, ['to' => 'plugin', 'frames' => $batch]);
             $this->assertSame(200, $sent->getStatusCode(), (string) $sent->getBody());
             $frames = self::$relay->fetchSince($this->appId, AokieCompanionRelayService::PARTY_PLUGIN, $cursor);
             $this->assertCount(AokieCompanionRelayService::MAX_FRAMES_PER_POST, $frames);
             $cursor = end($frames)['seq'];
         }
+
+        $over = $this->post($mobile, ['to' => 'plugin', 'frames' => [['v' => 2]]]);
+
+        $this->assertSame(429, $over->getStatusCode());
+        $this->assertSame('relay_backpressure', self::decode($over)['code']);
+        $this->assertStringContainsString('This device has sent too many', self::decode($over)['message'], 'nobody failed to read anything');
+
+        // The rest of the app isn't held up: the plugin's hellos and other phones still go through.
+        $other = $this->mobileToken('device_' . bin2hex(random_bytes(4)));
+        $this->assertSame(200, $this->post($other, ['to' => 'plugin', 'frames' => [['v' => 2]]])->getStatusCode());
+    }
+
+    public function testAFrameOutsideThePhonesWindowNoLongerCounts(): void
+    {
+        $phone = AokieCompanionRelayService::PARTY_MOBILE_PREFIX . self::PLUGIN_THUMBPRINT;
+        $batch = array_fill(0, AokieCompanionRelayService::MAX_FRAMES_PER_POST, '{"v":2}');
+        for ($post = 0; $post < intdiv(AokieCompanionRelayService::MAX_FRAMES_PER_MOBILE, AokieCompanionRelayService::MAX_FRAMES_PER_POST); $post++) {
+            self::$relay->append($this->appId, $phone, AokieCompanionRelayService::PARTY_PLUGIN, $batch);
+            self::$pdo->prepare('UPDATE aokie_companion_relay_frames SET delivered_at = NOW(3) WHERE app_id = ?')->execute([$this->appId]);
+        }
+        self::$pdo->prepare('UPDATE aokie_companion_relay_frames SET created_at = NOW(3) - INTERVAL 121 SECOND WHERE app_id = ?')->execute([$this->appId]);
+
+        $this->assertSame(1, self::$relay->append($this->appId, $phone, AokieCompanionRelayService::PARTY_PLUGIN, ['{"v":2}'])['accepted']);
     }
 
     public function testDeliveredFramesStillCountTowardsWhatAnAppMayKeep(): void
     {
+        // The plugin's own frames, which no phone's limit counts.
         $phone = AokieCompanionRelayService::PARTY_MOBILE_PREFIX . self::PLUGIN_THUMBPRINT;
         $batch = array_fill(0, AokieCompanionRelayService::MAX_FRAMES_PER_POST, '{"v":2}');
         $posts = intdiv(AokieCompanionRelayService::MAX_STORED_FRAMES_PER_APP, AokieCompanionRelayService::MAX_FRAMES_PER_POST);
@@ -1141,8 +1158,12 @@ final class AokieCompanionRelayTest extends TestCase
             self::$relay->append($this->appId, AokieCompanionRelayService::PARTY_PLUGIN, $phone, $batch);
             self::$pdo->prepare('UPDATE aokie_companion_relay_frames SET delivered_at = NOW(3) WHERE app_id = ?')->execute([$this->appId]);
         }
-        $this->expectException(\OverflowException::class);
-        self::$relay->append($this->appId, AokieCompanionRelayService::PARTY_PLUGIN, $phone, $batch);
+        try {
+            self::$relay->append($this->appId, AokieCompanionRelayService::PARTY_PLUGIN, $phone, $batch);
+            $this->fail('The app has kept all it may');
+        } catch (\OverflowException $e) {
+            $this->assertStringNotContainsString('draining', $e->getMessage(), 'they were read: nobody is behind');
+        }
     }
 
     public function testAnEndpointKeyIsOneInstallationsForGood(): void

@@ -214,6 +214,62 @@ class AppDomainClaimTest extends TestCase
         $this->assertTrue(self::$domains->provenByAnOwner($listed));
     }
 
+    public function testASiteKnownOnlyByItsFirstListedOriginKeepsItsSignIns(): void
+    {
+        // A hand-made .env: the example CORS_ORIGIN left in, and the real address in the list.
+        $this->setEnv('APP_URL', null);
+        $this->setEnv('APP_ENV', 'production');
+        $this->setEnv('CORS_ORIGIN', 'http://localhost:5173');
+        $this->setEnv('CORS_ALLOWED_ORIGINS', 'https://listed.formlogic-claim.com');
+        $this->ownNameRow('listed.formlogic-claim.com', 'active', true);
+
+        $this->assertSame('https://listed.formlogic-claim.com', \FormLogic\Helpers\AppUrl::configuredBase());
+        $this->assertFalse(self::$domains->provenByAnOwner('listed.formlogic-claim.com'), 'what names the site in one place does in the other');
+        $this->assertSame(200, $this->signIn('listed.formlogic-claim.com'));
+    }
+
+    /** @return array{0:int,1:array<string,mixed>} */
+    private function lookUp(string $host): array
+    {
+        $request = (new ServerRequestFactory())->createServerRequest('GET', 'http://localhost/api/public/launch/by-host')
+            ->withQueryParams(['host' => $host]);
+        $response = self::$ctrl->resolveByHost($request, new Response());
+        return [$response->getStatusCode(), json_decode((string) $response->getBody(), true)];
+    }
+
+    public function testTheLookupSaysWhenAnUnconnectedHostIsThisSiteItself(): void
+    {
+        $this->setEnv('CORS_ALLOWED_ORIGINS', 'https://first.formlogic-claim.com, https://second.formlogic-claim.com:8443');
+
+        foreach (['forms.formlogic-claim.com', 'FORMS.formlogic-claim.com:443', 'www.formlogic-claim.com', 'first.formlogic-claim.com', 'second.formlogic-claim.com:8443'] as $host) {
+            [$status, $body] = $this->lookUp($host);
+            $this->assertSame(404, $status, $host);
+            $this->assertSame('Domain not connected', $body['message'], $host);
+            $this->assertTrue($body['platform'], $host);
+        }
+    }
+
+    public function testTheLookupSaysNothingOfTheKindForAHostNobodyListed(): void
+    {
+        [$status, $body] = $this->lookUp($this->freshName());
+
+        $this->assertSame(404, $status);
+        $this->assertArrayNotHasKey('platform', $body);
+    }
+
+    public function testAListedOriginConnectedToAnAppIsThatApp(): void
+    {
+        $listed = $this->freshName();
+        $this->setEnv('CORS_ALLOWED_ORIGINS', 'https://' . $listed);
+        [, $created] = $this->create($listed);
+        $this->assertTrue($this->verify($created['domain']['id'])[1]['ok']);
+
+        [$status, $body] = $this->lookUp($listed);
+
+        $this->assertSame(200, $status);
+        $this->assertArrayNotHasKey('platform', $body);
+    }
+
     public function testADomainWaitsForAppUrl(): void
     {
         $name = $this->freshName();

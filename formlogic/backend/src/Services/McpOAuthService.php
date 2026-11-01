@@ -32,7 +32,7 @@ class McpOAuthService
     /** Refresh tokens last ~30 days (rotation for public clients keeps the family fresh). */
     public const REFRESH_TOKEN_TTL = 2592000;
     /** How long after a rotation the same client's reuse is a race, not theft. */
-    private const ROTATION_GRACE_SECONDS = 30;
+    private const ROTATION_GRACE_SECONDS = 10;
 
     private const CODE_PREFIX = 'mcpac_';
     private const REFRESH_PREFIX = 'mcprt_';

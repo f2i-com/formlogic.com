@@ -60,7 +60,7 @@ The [folder catalogue](PACK_PROJECTS.md) compiles `pack.json`, `install.json`, p
   "description": "…",                 // optional
   "icon": "FileText",                 // optional (≤ 100 chars)
   "settings": {},                     // object (≤ 10KB) — notifications are stripped on export + import
-  "theme": {},                        // object (≤ 10KB)
+  "theme": {},                        // object (≤ 256KB)
   "logicScript": "function onSubmit(ctx){…}", // optional (≤ 100KB), the ZIPP onSubmit script
   "customScreen": { /* see below */ }, // optional (≤ 512KB)
   "fields": [ /* ≤ 200 */             // required
@@ -223,6 +223,6 @@ owner/user ids, and all real UUIDs (only `@pack:` refs + fresh ids). An app expo
 
 ## Limits
 
-≤ 50 forms, ≤ 20 apps, ≤ 200 fields/form; `logicScript` ≤ 100KB, `fields` ≤ 500KB, `settings`/`theme` ≤ 10KB,
+≤ 50 forms, ≤ 20 apps, ≤ 200 fields/form; `logicScript` ≤ 100KB, `fields` ≤ 500KB, `settings` ≤ 10KB, `theme` ≤ 256KB,
 `customScreen` ≤ 512KB (app `navConfig`/`settings`/`theme` ≤ 10KB), app `reports` ≤ 256KB. Oversized packs
 are rejected with a clear message.

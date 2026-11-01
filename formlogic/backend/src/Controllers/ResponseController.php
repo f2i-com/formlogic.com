@@ -23,6 +23,7 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Database\SqliteSnapshot;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Support\SqlErrorText;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -471,8 +472,7 @@ class ResponseController
         // No key: run the pipeline directly — no idempotency guarantees, and no behavior change
         // from before idempotency support existed.
         if ($key === null) {
-            $result = $this->runCreatePipeline($request, $formId, $data);
-            return $this->jsonResponse($response, $result['payload'], $result['status']);
+            return $this->pipelineAnswer($response, $this->runCreatePipeline($request, $formId, $data));
         }
 
         // Reserve the key BEFORE any work, using the table's UNIQUE(form_id, idempotency_key)
@@ -526,7 +526,14 @@ class ResponseController
                 $this->idem()->release('form_submission_idempotency', $scope, $key, $lease);
             }
         }
-        return $this->jsonResponse($response, $result['payload'], $result['status']);
+        return $this->pipelineAnswer($response, $result);
+    }
+
+    /** @param array{status:int, payload:array<string,mixed>} $result */
+    private function pipelineAnswer(Response $response, array $result): Response
+    {
+        $answer = $this->jsonResponse($response, $result['payload'], $result['status']);
+        return $result['status'] === 503 ? $answer->withHeader('Retry-After', '2') : $answer;
     }
 
     /**
@@ -953,6 +960,11 @@ class ResponseController
             }
             // A PDOException is a RuntimeException, and its text is the SQL error.
             $this->logger->error('Response creation error', ['exception' => $e->getMessage()]);
+            // The guard can't tell from what goes out below, and nothing was stored: this can go again.
+            if (SqlErrorText::isBusy($e->getMessage())) {
+                return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true,
+                    'message' => 'The server is busy. Please try again in a moment.']];
+            }
             return ['status' => 500, 'payload' => [
                 'error' => true,
                 'message' => 'An unexpected error occurred',
@@ -1368,12 +1380,15 @@ class ResponseController
         // Normalize: an empty/non-JSON body parses to null, which would raise an
         // uncaught \TypeError (HTTP 500) when passed to the array-typed service.
         $data = $request->getParsedBody() ?? [];
+        if (isset($data['answers']) && !ResponseService::isAnswersObject($data['answers'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Answers must be an object'], 422);
+        }
 
         // Drop calculated/unknown-field answers so they can't be tampered on update,
         // then re-derive calculated fields — otherwise editing any answer would
         // permanently wipe every stored calculated value (create recomputes; the
         // update path previously stripped without recomputing).
-        if (isset($data['answers']) && is_array($data['answers'])) {
+        if (isset($data['answers'])) {
             $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
             $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], $formId);
             $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
@@ -1403,7 +1418,7 @@ class ResponseController
             }
 
             // Re-sync inverse linked_record links if answers changed.
-            if (isset($data['answers']) && is_array($data['answers'])) {
+            if (isset($data['answers'])) {
                 $this->responseService->syncResponseLinks($formId, $responseId, $form['fields'] ?? [], $data['answers']);
             }
 

@@ -1005,13 +1005,14 @@ class PackController
         }
 
         // Recycle bin: uninstallPack hard-deletes record-bearing forms, so their
-        // snapshots are captured FIRST; commitCapturedForms (finally) records a
-        // bin entry only for forms the uninstall actually removed and discards
-        // the rest. Apps go to the bin inside the uninstall.
-        $pendingTrash = $this->trashService !== null
-            ? $this->trashService->captureRecordBearingForms($installationId, $userId)
-            : [];
+        // snapshots go in the bin FIRST; commitCapturedForms (finally) keeps a bin
+        // entry only for forms the uninstall actually removed and takes back the
+        // rest. Apps go to the bin inside the uninstall.
+        $pendingTrash = [];
         try {
+            $pendingTrash = $this->trashService !== null
+                ? $this->trashService->captureRecordBearingForms($installationId, $userId)
+                : [];
             $result = $this->packService->uninstallPack($installationId, $userId, $this->trashService);
 
             // Audit the uninstall
@@ -1040,13 +1041,15 @@ class PackController
                 'appsDeleted' => $result['appsDeleted'],
             ]);
 
+        } catch (\FormLogic\Services\TrashSnapshotException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => \FormLogic\Services\TrashSnapshotException::ERROR_CODE, 'message' => $e->getMessage()], 503);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 404);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to uninstall pack'], 500);
         } finally {
             // Even on a partial failure: forms that DID get deleted keep their
-            // bin entries; forms still alive get their snapshots discarded.
+            // bin entries; forms still alive get their snapshots taken back.
             if ($pendingTrash !== []) {
                 $this->trashService?->commitCapturedForms($pendingTrash);
             }

@@ -146,7 +146,9 @@ class AppDomainController
 
     /**
      * Public: resolve an incoming host to a launch config. No auth. Returns safe metadata only,
-     * or 404 when the host isn't a connected+active domain of a published app.
+     * or 404 when the host isn't a connected+active domain of a published app. That 404 says
+     * `platform: true` when the host is this site's own, so a page there shows the site and not
+     * "this domain isn't connected yet".
      */
     public function resolveByHost(Request $request, Response $response): Response
     {
@@ -159,7 +161,8 @@ class AppDomainController
         }
         $config = $this->domains->resolveLaunchConfig($host);
         if (!$config) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Domain not connected'], 404);
+            $notConnected = ['error' => true, 'message' => 'Domain not connected'];
+            return $this->jsonResponse($response, $this->domains->isPlatformHost($host) ? $notConnected + ['platform' => true] : $notConnected, 404);
         }
         // Where a sign-in happens: never on the domain (AppDomainSignInService). A site from the
         // wizard may have only CORS_ORIGIN, and with no address here its members can't sign in.

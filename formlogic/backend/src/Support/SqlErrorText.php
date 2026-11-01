@@ -15,4 +15,14 @@ final class SqlErrorText
     {
         return preg_match('/SQLSTATE\[\w+\]:[^:]*: (?:1213|1205|5|6) /', $text) === 1;
     }
+
+    /**
+     * Whether the connection itself has gone, so nothing sent down it will work: a connection that
+     * failed (2002), a server gone away or lost mid-query (2006, 2013), one shutting down (1053),
+     * one that dropped an idle client (4031), or any error of SQLSTATE's connection class.
+     */
+    public static function isConnectionLost(string $text): bool
+    {
+        return preg_match('/^SQLSTATE\[(?:08\w+\]|\w+\](?::[^:]*:| \[) ?(?:2002|2006|2013|1053|4031)\b)/', $text) === 1;
+    }
 }

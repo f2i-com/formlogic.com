@@ -21,7 +21,9 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
  *
  * Or run continuously (for hosts without cron) — sleeps 60s between passes, or --interval=N:
  *   php bin/webhook-worker.php --loop
- * It exits 1 after a database error, for the supervisor or the next cron run to start a new one.
+ * A pass that fails is tried again on the next one. It exits 1 when its connection is lost or after
+ * 3 failed passes in a row, so run it under something that starts it again, such as a systemd
+ * service with Restart=always, or: while true; do php bin/webhook-worker.php --loop; sleep 60; done
  *
  * The DB schema (retry columns) is created automatically by the web app on boot;
  * this worker assumes the application has been deployed at least once.
@@ -34,6 +36,7 @@ date_default_timezone_set('UTC');
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Services\WebhookService;
+use FormLogic\Support\SqlErrorText;
 use Psr\Log\NullLogger;
 
 // Load environment + settings (mirrors public/index.php bootstrap).
@@ -68,6 +71,7 @@ foreach ($argv as $arg) {
     }
 }
 
+$failedPasses = 0;
 do {
     try {
         $result = $webhookService->processPendingRetries();
@@ -81,15 +85,18 @@ do {
                 $result['abandoned']
             ));
         }
-    } catch (\PDOException $e) {
-        fwrite(STDERR, sprintf("[%s] webhook worker database error: %s\n", date('c'), $e->getMessage()));
-        // This connection can't be trusted again: WebhookService keeps it, so every later pass
-        // would fail too while this process kept the lock and cron took it to be running. Let go
-        // of both, and whatever runs this next starts with a new connection.
-        flock($lockHandle, LOCK_UN);
-        exit(1);
+        $failedPasses = 0;
     } catch (\Throwable $e) {
-        fwrite(STDERR, sprintf("[%s] webhook worker error: %s\n", date('c'), $e->getMessage()));
+        $failedPasses++;
+        fwrite(STDERR, sprintf("[%s] webhook worker %serror: %s\n", date('c'), $e instanceof \PDOException ? 'database ' : '', $e->getMessage()));
+        // A deadlock or a lock wait passes, and what that pass had claimed comes up again when its
+        // lease ends. A lost connection doesn't come back: WebhookService keeps it, so every later
+        // pass would fail too while this process kept the lock and cron took it to be running. Let
+        // go of both, and whatever runs this next starts with a new connection.
+        if (!$loop || $failedPasses >= 3 || SqlErrorText::isConnectionLost($e->getMessage())) {
+            flock($lockHandle, LOCK_UN);
+            exit(1);
+        }
     }
 
     if ($loop) {

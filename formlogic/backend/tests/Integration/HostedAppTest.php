@@ -144,9 +144,10 @@ class HostedAppTest extends TestCase
         self::assertSame('delete', strtolower((string) (new \PDO('sqlite:' . $staged))->query('PRAGMA journal_mode')->fetchColumn()), $snapshot['method']);
         self::assertStringContainsString('only-in-the-wal', (string) file_get_contents($staged));
         self::assertFileDoesNotExist($staged . '-wal');
-        unlink($staged);
 
-        self::assertTrue(HostedAppService::restoreDatabase('app-b', $path, $this->root, false));
+        // A restore is handed a copy like this one: under a key, the live file's rows are sealed.
+        self::assertTrue(HostedAppService::restoreDatabase('app-b', $staged, $this->root, false));
+        unlink($staged);
         self::assertSame('only-in-the-wal', $this->host->run('app-b', 'list', [], 'owner', true)[0]['data']['text']);
     }
     public function testARestoreIsNotJoinedByAWalLeftBehind(): void
@@ -157,7 +158,9 @@ class HostedAppTest extends TestCase
         file_put_contents($target . '-wal', 'a leftover of the database that was here');
         file_put_contents($target . '-shm', 'and its index');
 
-        self::assertTrue(HostedAppService::restoreDatabase('app-b', HostedAppService::databasePath('app-a', $this->root), $this->root, false));
+        $copy = $this->host->snapshot('app-a');
+        self::assertTrue(HostedAppService::restoreDatabase('app-b', $copy, $this->root, false));
+        unlink($copy);
 
         self::assertFileDoesNotExist($target . '-shm');
         self::assertSame('kept', $this->host->run('app-b', 'list', [], 'owner', true)[0]['data']['text']);

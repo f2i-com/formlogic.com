@@ -1694,9 +1694,12 @@ class PackService
      * Uninstall a pack: delete all forms and apps created by it.
      *
      * With $trash, its apps go to the recycle bin as any deleted app does, and their databases stay
-     * on disk until the bin lets them go: those hold members' records, which the pack can't bring back.
+     * on disk until the bin lets them go: those hold members' records, which the pack can't bring
+     * back. Every app's copy is in the bin before the first delete, so that one that can't be kept
+     * stops the uninstall with nothing gone.
      *
      * @return array { formsDeleted: int, appsDeleted: int }
+     * @throws TrashSnapshotException when the bin can't keep an app; nothing was deleted
      */
     public function uninstallPack(string $installationId, string $userId, ?TrashService $trash = null): array
     {
@@ -1719,6 +1722,23 @@ class PackService
         $formsDeleted = 0;
         $appsDeleted = 0;
 
+        $kept = [];
+        if ($trash !== null) {
+            $owned = $this->mysql->prepare("SELECT 1 FROM apps WHERE id = :id AND owner_id = :owner");
+            foreach ($appIds as $appId) {
+                $owned->execute(['id' => $appId, 'owner' => $userId]);
+                if ($owned->fetchColumn() === false) continue;
+                try {
+                    $kept[$appId] = $trash->keepApp($appId, $userId);
+                } catch (TrashSnapshotException $e) {
+                    foreach ($kept as $copy) {
+                        $trash->takeBack($copy);
+                    }
+                    throw $e;
+                }
+            }
+        }
+
         // Delete apps first (they reference forms via app_forms)
         // Verify ownership before deleting to prevent deletion of other users' resources
         $failedApps = [];
@@ -1729,8 +1749,8 @@ class PackService
                 $owner = $checkStmt->fetchColumn();
                 if ($owner !== false && $owner !== $userId) continue;
                 if ($trash !== null) {
-                    if ($owner !== false) {
-                        $trash->trashApp($appId, $userId);
+                    if ($owner !== false && $this->appService->deleteApp($appId)) {
+                        unset($kept[$appId]);
                         $appsDeleted++;
                     }
                     // A retry finds this app's row gone because it is in the bin: its storage stays.
@@ -1743,6 +1763,10 @@ class PackService
                 ($this->native ??= new NativeAppService())->remove($appId);
                 if ($owner !== false && $trash === null) $appsDeleted++;
             } catch (\Throwable $e) { $failedApps[] = $appId; }
+        }
+        // What is still here isn't in the bin: a retry makes its own copy.
+        foreach ($kept as $copy) {
+            $trash?->takeBack($copy);
         }
         if ($failedApps) throw new \RuntimeException('Some app storage could not be removed yet. Retry uninstall to finish; the installation has been retained.');
 
@@ -1994,7 +2018,7 @@ class PackService
             if (isset($form['theme'])) {
                 $themeJson = json_encode($form['theme']);
                 if ($themeJson !== false && strlen($themeJson) > FormService::MAX_THEME_BYTES) {
-                    throw new \RuntimeException("Form '{$form['packFormId']}' theme exceeds 512KB limit");
+                    throw new \RuntimeException("Form '{$form['packFormId']}' theme exceeds 256KB limit");
                 }
             }
             if (isset($form['customScreen'])) {

@@ -16,6 +16,7 @@ use FormLogic\Services\ScriptRejection;
 use FormLogic\Services\EmailService;
 use FormLogic\Services\AuditService;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Support\SqlErrorText;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -478,6 +479,12 @@ class ExternalApiController
             } catch (PrivateFormEncryptedException $e) {
                 // §9.2: batch drains are envelope-only for private forms.
                 $results[] = ['index' => $index, 'success' => false, 'message' => $e->getMessage(), 'code' => PrivateFormEncryptedException::ERROR_CODE];
+            } catch (\PDOException $e) {
+                // A PDOException is a RuntimeException, and the batch answers 200, past the guard.
+                $this->logger->error('Batch response error', ['formId' => $args['formId'], 'exception' => $e->getMessage()]);
+                $results[] = SqlErrorText::isBusy($e->getMessage())
+                    ? ['index' => $index, 'success' => false, 'retryable' => true, 'message' => 'The server is busy. Please try again in a moment.']
+                    : ['index' => $index, 'success' => false, 'message' => 'Internal error processing response'];
             } catch (\RuntimeException | \InvalidArgumentException $e) {
                 $results[] = ['index' => $index, 'success' => false, 'message' => $e->getMessage()];
             } catch (\Exception $e) {
@@ -604,7 +611,10 @@ class ExternalApiController
         // Normalize: an empty/non-JSON body parses to null, which would raise an
         // uncaught \TypeError (HTTP 500) when passed to the array-typed service.
         $data = $request->getParsedBody() ?? [];
-        $partial = isset($data['answers']) && is_array($data['answers']);
+        if (isset($data['answers']) && !ResponseService::isAnswersObject($data['answers'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Answers must be an object'], 422);
+        }
+        $partial = isset($data['answers']);
 
         // Runs again over the record as it then is if another edit lands first (mergeEdit), so
         // that $data here stays what the caller sent.

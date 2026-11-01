@@ -583,13 +583,13 @@ class McpOAuthFlowTest extends TestCase
         $this->assertArrayNotHasKey('refresh_token', $loser['body']);
 
         // Still inside the window at its far end, and the winner's token goes on working.
-        $this->ageRotation($rt1, 25);
+        $this->ageRotation($rt1, 8);
         $this->assertSame(400, $refresh($rt1)['status']);
         $next = $refresh($winner['body']['refresh_token']);
         $this->assertSame(200, $next['status'], 'the winner keeps its link: ' . json_encode($next['body']));
 
         // The window has passed: the same reuse is theft, and takes the family.
-        $this->ageRotation($rt1, 31);
+        $this->ageRotation($rt1, 12);
         $this->assertSame(400, $refresh($rt1)['status']);
         $this->assertSame(400, $refresh($next['body']['refresh_token'])['status'], 'past the grace, reuse revokes the family');
     }

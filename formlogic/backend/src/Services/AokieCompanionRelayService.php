@@ -32,8 +32,11 @@ final class AokieCompanionRelayService
     public const MAX_FRAME_BYTES = 32768;
     /** Frames accepted per POST. */
     public const MAX_FRAMES_PER_POST = 64;
-    /** What one phone may have waiting, so a stalled or hostile one leaves the mailbox to the rest. */
-    public const MAX_LIVE_FRAMES_PER_MOBILE = 128;
+    /**
+     * What one phone may post in TTL_SECONDS, read or not: a connected plugin reads a frame within
+     * half a second, so a limit on what is waiting wouldn't stop a phone filling the app's share.
+     */
+    public const MAX_FRAMES_PER_MOBILE = 512;
     /** Frames returned per long-poll/SSE fetch. */
     public const MAX_FETCH_LIMIT = 128;
     /** Mirrors the admission signer's hard scope-list bound. */
@@ -128,21 +131,26 @@ final class AokieCompanionRelayService
         );
         $live->execute([$appId]);
         $count = $live->fetch(PDO::FETCH_ASSOC);
-        if ((int) $count['waiting'] + count($frames) > self::MAX_LIVE_FRAMES_PER_APP
-            || (int) $count['kept'] + count($frames) > self::MAX_STORED_FRAMES_PER_APP) {
+        if ((int) $count['waiting'] + count($frames) > self::MAX_LIVE_FRAMES_PER_APP) {
             throw new \OverflowException(
                 'The relay mailbox for this app is full — consumers are not draining frames',
             );
         }
+        if ((int) $count['kept'] + count($frames) > self::MAX_STORED_FRAMES_PER_APP) {
+            throw new \OverflowException(
+                'This app has sent too many frames through the relay in the last two minutes — try again shortly',
+            );
+        }
         if ($fromParty !== self::PARTY_PLUGIN) {
+            // The sweep above leaves only rows inside the TTL, delivered or not.
             $sent = $this->mysql->prepare(
                 'SELECT COUNT(*) FROM aokie_companion_relay_frames
-                 WHERE app_id = ? AND from_party = ? AND delivered_at IS NULL',
+                 WHERE app_id = ? AND from_party = ?',
             );
             $sent->execute([$appId, $fromParty]);
-            if ((int) $sent->fetchColumn() + count($frames) > self::MAX_LIVE_FRAMES_PER_MOBILE) {
+            if ((int) $sent->fetchColumn() + count($frames) > self::MAX_FRAMES_PER_MOBILE) {
                 throw new \OverflowException(
-                    'This device has too many frames waiting — consumers are not draining them',
+                    'This device has sent too many frames in the last two minutes — try again shortly',
                 );
             }
         }

@@ -41,6 +41,13 @@ final class TrashService
 {
     private const PURGE_STAMP_KEY = 'trash_purge_last_run';
 
+    /**
+     * An item nobody has, or whose claim has lapsed: a worker killed in a restore or a purge never
+     * lets go, and the item would be stuck until it expires. A restore gets ten minutes
+     * (importAccount); this is well past it.
+     */
+    private const USABLE = "(status = 'trashed' OR claimed_at IS NULL OR claimed_at < NOW() - INTERVAL 30 MINUTE)";
+
     private PDO $pdo;
     private string $trashDir;
     private int $retentionDays;
@@ -195,13 +202,14 @@ final class TrashService
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Capture snapshots of an installation's RECORD-BEARING forms before
-     * uninstallPack deletes them (it puts apps in the bin itself; recordless
-     * forms aren't worth a bin entry). Call
-     * commitCapturedForms() with the result AFTER the uninstall: each pending
-     * capture commits only if its form is actually gone.
+     * Put copies of an installation's RECORD-BEARING forms in the bin before
+     * uninstallPack deletes them (recordless forms aren't worth a bin entry).
+     * Call commitCapturedForms() with the result AFTER the uninstall: each copy
+     * stays only if its form is actually gone. One that can't be saved takes
+     * back the others and stops the uninstall here, while everything still is.
      *
-     * @return array[] pending capture handles
+     * @return array[] saved capture handles
+     * @throws TrashSnapshotException
      */
     public function captureRecordBearingForms(string $installationId, string $userId): array
     {
@@ -212,24 +220,72 @@ final class TrashService
             return [];
         }
         $formIds = json_decode($raw, true);
-        $pendings = [];
+        $saved = [];
         foreach (is_array($formIds) ? $formIds : [] as $formId) {
+            $title = (string) $formId;
+            $pending = null;
             try {
-                $owned = $this->pdo->prepare('SELECT 1 FROM forms WHERE id = :id AND user_id = :u');
+                $owned = $this->pdo->prepare('SELECT title FROM forms WHERE id = :id AND user_id = :u');
                 $owned->execute(['id' => (string) $formId, 'u' => $userId]);
-                if ($owned->fetchColumn() === false || !$this->formHasResponses((string) $formId)) {
+                $title = $owned->fetchColumn();
+                if ($title === false || !$this->formHasResponses((string) $formId)) {
                     continue;
                 }
                 $pending = $this->capturePendingForm((string) $formId, $userId);
                 if ($pending !== null) {
-                    $pendings[] = $pending;
+                    $this->storePending($pending);
+                    $saved[] = $pending;
                 }
             } catch (\Throwable $e) {
-                // A failed capture must not block the uninstall the user asked for.
-                $this->logger->warning('Trash: pack-form capture failed', ['formId' => $formId, 'error' => $e->getMessage()]);
+                foreach ($pending === null ? $saved : [...$saved, $pending] as $copy) {
+                    $this->takeBack($copy);
+                }
+                throw $this->copyRefused((string) $title, $e);
             }
         }
-        return $pendings;
+        return $saved;
+    }
+
+    /**
+     * An app's copy, in the bin before uninstallPack deletes the app. The ordinary delete saves
+     * its copy afterwards and goes through whatever happens to it, because that was asked for
+     * outright. An uninstall deletes what the person may not have thought about, so it stops.
+     *
+     * @return array{zipTmp:string, row:array} for takeBack(), if the app stays after all
+     * @throws TrashSnapshotException
+     */
+    public function keepApp(string $appId, string $userId): array
+    {
+        $name = $appId;
+        $pending = null;
+        try {
+            $app = $this->appService->getApp($appId);
+            $name = (string) ($app['name'] ?? $appId);
+            $pending = $this->capture('app', $appId, $userId, $name, ['slug' => $app['slug'] ?? null]);
+            $this->storePending($pending);
+            return $pending;
+        } catch (\Throwable $e) {
+            if ($pending !== null) {
+                $this->takeBack($pending);
+            }
+            throw $this->copyRefused($name, $e);
+        }
+    }
+
+    /** Removes a copy saved ahead of a delete that didn't happen: it isn't a deleted thing. */
+    public function takeBack(array $pending): void
+    {
+        $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $pending['row']['id']]);
+        $this->discardPending($pending);
+        @unlink($this->trashDir . '/' . $this->zipPath($pending['row']));
+    }
+
+    /** What a database said stays in the log. */
+    private function copyRefused(string $name, \Throwable $e): TrashSnapshotException
+    {
+        $this->logger->error('Trash: could not save a copy, so the uninstall stopped', ['name' => $name, 'error' => $e->getMessage()]);
+        $why = $e instanceof \PDOException ? 'The database refused it.' : $e->getMessage();
+        return new TrashSnapshotException("Nothing was uninstalled: a copy of \"{$name}\" could not be saved to the recycle bin. {$why}", 0, $e);
     }
 
     /** Whether this deleted app is in the user's bin, which keeps its storage for an undelete. */
@@ -240,17 +296,16 @@ final class TrashService
         return $stmt->fetchColumn() !== false;
     }
 
-    /** @param array[] $pendings from captureRecordBearingForms() */
-    public function commitCapturedForms(array $pendings): void
+    /** @param array[] $saved from captureRecordBearingForms() */
+    public function commitCapturedForms(array $saved): void
     {
-        foreach ($pendings as $pending) {
+        foreach ($saved as $pending) {
             $exists = $this->pdo->prepare('SELECT 1 FROM forms WHERE id = :id');
             $exists->execute(['id' => $pending['row']['original_id']]);
             if ($exists->fetchColumn() === false) {
-                $this->commitPending($pending); // uninstall really deleted it
-                $this->formEncryptionLifecycle('trash', (string) $pending['row']['original_id']);
+                $this->formEncryptionLifecycle('trash', (string) $pending['row']['original_id']); // uninstall really deleted it
             } else {
-                $this->discardPending($pending); // skipped/failed — form still live
+                $this->takeBack($pending); // skipped/failed — form still live
             }
         }
     }
@@ -263,7 +318,7 @@ final class TrashService
     public function listTrash(string $userId): array
     {
         $this->purgeExpiredThrottled();
-        $stmt = $this->pdo->prepare('SELECT * FROM trash_items WHERE user_id = :u ORDER BY deleted_at DESC');
+        $stmt = $this->pdo->prepare('SELECT *, ' . self::USABLE . ' AS usable FROM trash_items WHERE user_id = :u ORDER BY deleted_at DESC');
         $stmt->execute(['u' => $userId]);
         return array_map([$this, 'formatItem'], $stmt->fetchAll(PDO::FETCH_ASSOC));
     }
@@ -277,7 +332,7 @@ final class TrashService
 
     public function getItem(string $trashId, string $userId): ?array
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM trash_items WHERE id = :id AND user_id = :u');
+        $stmt = $this->pdo->prepare('SELECT *, ' . self::USABLE . ' AS usable FROM trash_items WHERE id = :id AND user_id = :u');
         $stmt->execute(['id' => $trashId, 'u' => $userId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row === false ? null : $this->formatItem($row);
@@ -301,13 +356,7 @@ final class TrashService
             throw new \RuntimeException('Recycle bin item not found');
         }
 
-        // A worker killed in a restore never releases its claim, and the item would then be
-        // stuck until it expires. A restore gets ten minutes (importAccount); this is well past it.
-        $claim = $this->pdo->prepare("
-            UPDATE trash_items SET status = 'restoring', claimed_at = NOW()
-            WHERE id = :id AND user_id = :u
-              AND (status = 'trashed' OR claimed_at IS NULL OR claimed_at < NOW() - INTERVAL 30 MINUTE)
-        ");
+        $claim = $this->pdo->prepare("UPDATE trash_items SET status = 'restoring', claimed_at = NOW() WHERE id = :id AND user_id = :u AND " . self::USABLE);
         $claim->execute(['id' => $trashId, 'u' => $userId]);
         if ($claim->rowCount() !== 1) {
             throw new TrashConflictException('This item is already being restored');
@@ -385,7 +434,7 @@ final class TrashService
     /** "Delete forever". False when the item doesn't exist or is mid-restore. */
     public function purgeItem(string $trashId, string $userId): bool
     {
-        $stmt = $this->pdo->prepare("SELECT zip_path, kind, original_id FROM trash_items WHERE id = :id AND user_id = :u AND status = 'trashed'");
+        $stmt = $this->pdo->prepare('SELECT zip_path, kind, original_id FROM trash_items WHERE id = :id AND user_id = :u AND ' . self::USABLE);
         $stmt->execute(['id' => $trashId, 'u' => $userId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!is_array($row) || !is_string($row['zip_path'])) {
@@ -393,7 +442,7 @@ final class TrashService
         }
         // Claimed first, as a restore claims it: erasing the app's storage while a restore has
         // the item would leave the restored app with no data. Whoever wins the row goes on.
-        $claim = $this->pdo->prepare("UPDATE trash_items SET status = 'restoring', claimed_at = NOW() WHERE id = :id AND user_id = :u AND status = 'trashed'");
+        $claim = $this->pdo->prepare("UPDATE trash_items SET status = 'restoring', claimed_at = NOW() WHERE id = :id AND user_id = :u AND " . self::USABLE);
         $claim->execute(['id' => $trashId, 'u' => $userId]);
         if ($claim->rowCount() !== 1) {
             return false;
@@ -444,11 +493,9 @@ final class TrashService
     public function purgeExpired(): array
     {
         $items = 0;
-        // Not an item a restore has, unless the worker holding that claim died: restore() gives a
-        // claim thirty minutes, and an expired item whose claim has lapsed goes like any other.
-        $free = "(status = 'trashed' OR claimed_at IS NULL OR claimed_at < NOW() - INTERVAL 30 MINUTE)";
-        $stmt = $this->pdo->query("SELECT id, zip_path, kind, original_id FROM trash_items WHERE expires_at < NOW() AND {$free}");
-        $claim = $this->pdo->prepare("UPDATE trash_items SET status = 'restoring', claimed_at = NOW() WHERE id = :id AND {$free}");
+        // Not an item a restore has, unless the worker holding that claim died.
+        $stmt = $this->pdo->query('SELECT id, zip_path, kind, original_id FROM trash_items WHERE expires_at < NOW() AND ' . self::USABLE);
+        $claim = $this->pdo->prepare("UPDATE trash_items SET status = 'restoring', claimed_at = NOW() WHERE id = :id AND " . self::USABLE);
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             // Claimed as purgeItem claims it: a restore may have taken the item since the SELECT.
             $claim->execute(['id' => $row['id']]);
@@ -620,52 +667,64 @@ final class TrashService
     }
 
     /**
-     * Move the snapshot into the bin + insert the row. Called AFTER the delete
-     * succeeded, so a failure here must not fail the request (the resource IS
-     * deleted) — it logs loudly and leaves the zip for the orphan sweep.
+     * Records a snapshot taken for a delete. Called AFTER the delete succeeded,
+     * so a failure here must not fail the request (the resource IS deleted) —
+     * it logs loudly and leaves the zip for the orphan sweep.
      */
     private function commitPending(array $pending): void
     {
         $row = $pending['row'];
         try {
-            $userDir = $this->trashDir . '/' . $this->safeSegment((string) $row['user_id']);
-            if (!is_dir($userDir) && !mkdir($userDir, 0700, true) && !is_dir($userDir)) {
-                throw new \RuntimeException('Could not create the trash directory');
-            }
-            $rel = $this->safeSegment((string) $row['user_id']) . '/' . $row['id'] . '.zip';
-            $dest = $this->trashDir . '/' . $rel;
-            // A snapshot holds an app's records plain, so it stays encrypted for as long as it waits here.
-            $crypto = DataEncryption::fromEnvironment();
-            if ($crypto->enabled()) {
-                BackupEnvelope::seal($pending['zipTmp'], $dest, ['server' => $crypto]);
-                @unlink($pending['zipTmp']);
-            } elseif (!@rename($pending['zipTmp'], $dest)) {
-                // Cross-device or locked-handle fallback.
-                if (!copy($pending['zipTmp'], $dest)) {
-                    throw new \RuntimeException('Could not move the snapshot into the trash directory');
-                }
-                @unlink($pending['zipTmp']);
-            }
-
-            $stmt = $this->pdo->prepare('
-                INSERT INTO trash_items (id, user_id, kind, original_id, name, zip_path, size_bytes, meta, status, expires_at)
-                VALUES (:id, :u, :kind, :oid, :name, :zip, :size, :meta, \'trashed\', DATE_ADD(NOW(), INTERVAL ' . $this->retentionDays . ' DAY))
-            ');
-            $stmt->execute([
-                'id' => $row['id'],
-                'u' => $row['user_id'],
-                'kind' => $row['kind'],
-                'oid' => $row['original_id'],
-                'name' => $row['name'],
-                'zip' => $rel,
-                'size' => $row['size_bytes'],
-                'meta' => json_encode($row['meta'], JSON_UNESCAPED_SLASHES),
-            ]);
+            $this->storePending($pending);
         } catch (\Throwable $e) {
             $this->logger->error('Trash: could not record the snapshot — the delete succeeded but the item will NOT appear in the recycle bin', [
                 'kind' => $row['kind'], 'originalId' => $row['original_id'], 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    private function zipPath(array $row): string
+    {
+        return $this->safeSegment((string) $row['user_id']) . '/' . $row['id'] . '.zip';
+    }
+
+    /** Move the snapshot into the bin + insert the row. */
+    private function storePending(array $pending): void
+    {
+        $row = $pending['row'];
+        $userDir = $this->trashDir . '/' . $this->safeSegment((string) $row['user_id']);
+        if (!is_dir($userDir) && !@mkdir($userDir, 0700, true) && !is_dir($userDir)) {
+            throw new \RuntimeException('Could not create the trash directory');
+        }
+        $rel = $this->zipPath($row);
+        $dest = $this->trashDir . '/' . $rel;
+        // A snapshot holds an app's records plain, so it stays encrypted for as long as it waits here.
+        $crypto = DataEncryption::fromEnvironment();
+        if ($crypto->enabled()) {
+            BackupEnvelope::seal($pending['zipTmp'], $dest, ['server' => $crypto]);
+            @unlink($pending['zipTmp']);
+        } elseif (!@rename($pending['zipTmp'], $dest)) {
+            // Cross-device or locked-handle fallback.
+            if (!copy($pending['zipTmp'], $dest)) {
+                throw new \RuntimeException('Could not move the snapshot into the trash directory');
+            }
+            @unlink($pending['zipTmp']);
+        }
+
+        $stmt = $this->pdo->prepare('
+            INSERT INTO trash_items (id, user_id, kind, original_id, name, zip_path, size_bytes, meta, status, expires_at)
+            VALUES (:id, :u, :kind, :oid, :name, :zip, :size, :meta, \'trashed\', DATE_ADD(NOW(), INTERVAL ' . $this->retentionDays . ' DAY))
+        ');
+        $stmt->execute([
+            'id' => $row['id'],
+            'u' => $row['user_id'],
+            'kind' => $row['kind'],
+            'oid' => $row['original_id'],
+            'name' => $row['name'],
+            'zip' => $rel,
+            'size' => $row['size_bytes'],
+            'meta' => json_encode($row['meta'], JSON_UNESCAPED_SLASHES),
+        ]);
     }
 
     private function discardPending(array $pending): void
@@ -754,7 +813,8 @@ final class TrashService
             'name' => $row['name'],
             'sizeBytes' => (int) $row['size_bytes'],
             'meta' => is_array($meta) ? $meta : [],
-            'status' => $row['status'],
+            // A claim that has lapsed holds nothing: the page greys out what it hears is taken.
+            'status' => ($row['usable'] ?? null) ? 'trashed' : $row['status'],
             'deletedAt' => $row['deleted_at'],
             'expiresAt' => $row['expires_at'],
             'daysRemaining' => max(0, (int) ceil(($expiresTs - time()) / 86400)),

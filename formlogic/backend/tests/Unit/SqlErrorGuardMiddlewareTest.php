@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Tests\Unit;
 
+use FormLogic\Middleware\CorsMiddleware;
 use FormLogic\Middleware\SqlErrorGuardMiddleware;
 use FormLogic\Support\SqlErrorText;
 use PDO;
@@ -85,7 +86,7 @@ final class SqlErrorGuardMiddlewareTest extends TestCase
         self::assertStringNotContainsString('SQLSTATE', $body);
         self::assertStringContainsString('try again', $body);
         self::assertSame('https://a.example', $answer->getHeaderLine('Access-Control-Allow-Origin'));
-        self::assertStringContainsString('database is locked', (string) $this->logger->records[0]['context']['body'], 'the original is logged');
+        self::assertStringContainsString('database is locked', (string) $this->logger->records[0]['context']['message'], 'the original is logged');
     }
 
     public function testADeadlockAndALockWaitSayToTryAgain(): void
@@ -142,6 +143,112 @@ final class SqlErrorGuardMiddlewareTest extends TestCase
         self::assertSame([], $this->logger->records);
     }
 
+    public function testARecordHoldingTheWordsIsNotADatabaseError(): void
+    {
+        $record = ['error' => true, 'code' => 'version_conflict', 'message' => 'The record has changed since it was read; nothing was written.',
+            'response' => ['answers' => ['note' => 'SQLSTATE[HY000]: General error: 5 database is locked']]];
+
+        $answer = $this->send('/api/v1/forms/f1/responses/r1', static fn (Response $response) => self::json($response, $record, 412));
+
+        self::assertSame(412, $answer->getStatusCode());
+        self::assertSame($record, json_decode((string) $answer->getBody(), true));
+        self::assertSame([], $this->logger->records, 'and none of it goes into a log');
+    }
+
+    public function testAMessageThatMerelyMentionsItIsReadOnlyAtTheTop(): void
+    {
+        foreach ([['error' => ['message' => 'SQLSTATE[42S22]: nested']], ['errors' => ['name' => 'SQLSTATE[42S22]: a field']]] as $body) {
+            $answer = $this->send('/api/forms', static fn (Response $response) => self::json($response, $body, 400));
+            self::assertSame(400, $answer->getStatusCode(), json_encode($body));
+        }
+        self::assertSame([], $this->logger->records);
+    }
+
+    public function testAnErrorFieldHoldingSqlIsCaught(): void
+    {
+        $answer = $this->send('/api/forms', static fn (Response $response) => self::json($response, ['error' => 'SQLSTATE[42S22]: Column not found: 1054 Unknown column'], 400));
+
+        self::assertSame(500, $answer->getStatusCode());
+        self::assertStringNotContainsString('SQLSTATE', (string) $answer->getBody());
+    }
+
+    public function testATextAnswerHoldingTheWordsPassesUntouched(): void
+    {
+        $answer = $this->send('/api/forms', static function (Response $response): Response {
+            $response->getBody()->write('SQLSTATE[HY000] is what my tutorial is about');
+            return $response->withStatus(400)->withHeader('Content-Type', 'text/plain');
+        });
+
+        self::assertSame(400, $answer->getStatusCode());
+        self::assertSame('SQLSTATE[HY000] is what my tutorial is about', (string) $answer->getBody());
+    }
+
+    public function testOnlyTheMessageIsLogged(): void
+    {
+        $sql = 'SQLSTATE[42S22]: Column not found: 1054 Unknown column';
+        $this->send('/api/forms', static fn (Response $response) => self::json($response, ['error' => true, 'message' => $sql, 'answers' => ['card' => '4242 4242']], 400));
+
+        self::assertCount(1, $this->logger->records);
+        self::assertSame($sql, $this->logger->records[0]['context']['message']);
+        self::assertStringNotContainsString('4242', (string) json_encode($this->logger->records));
+    }
+
+    /** A database error thrown from middleware that sits outside Slim's error handler. */
+    private function sendThrough(\Throwable $thrown): Response
+    {
+        $app = AppFactory::create();
+        $app->any('/api/forms', static fn (Request $request, Response $response) => $response);
+        $app->add(static function (Request $request, $handler) use ($thrown): Response {
+            throw $thrown;
+        });
+        $app->add(new SqlErrorGuardMiddleware($this->logger));
+        return $app->handle((new ServerRequestFactory())->createServerRequest('POST', '/api/forms'));
+    }
+
+    public function testABusyDatabaseThrownThroughItSaysToTryAgain(): void
+    {
+        $answer = $this->sendThrough(new \PDOException('SQLSTATE[HY000]: General error: 1205 Lock wait timeout exceeded; try restarting transaction'));
+
+        self::assertSame(503, $answer->getStatusCode());
+        self::assertSame('2', $answer->getHeaderLine('Retry-After'));
+        self::assertStringNotContainsString('SQLSTATE', (string) $answer->getBody());
+        self::assertSame('application/json', $answer->getHeaderLine('Content-Type'));
+        self::assertStringContainsString('1205', (string) $this->logger->records[0]['context']['message']);
+    }
+
+    public function testAnyOtherDatabaseErrorThrownThroughItIsAPlainServerError(): void
+    {
+        $answer = $this->sendThrough(new \PDOException('SQLSTATE[42S22]: Column not found: 1054 Unknown column'));
+
+        self::assertSame(500, $answer->getStatusCode());
+        self::assertSame(['error' => true, 'message' => 'An unexpected error occurred'], json_decode((string) $answer->getBody(), true));
+    }
+
+    public function testAnAnswerMadeOutsideCorsStillCarriesItsHeaders(): void
+    {
+        CorsMiddleware::setActive(new CorsMiddleware('https://a.example'));
+        try {
+            $app = AppFactory::create();
+            $app->any('/api/forms', static fn (Request $request, Response $response) => $response);
+            $app->add(static function (Request $request, $handler): Response {
+                throw new \PDOException('SQLSTATE[42S22]: Column not found');
+            });
+            $app->add(new SqlErrorGuardMiddleware($this->logger));
+            $answer = $app->handle((new ServerRequestFactory())->createServerRequest('POST', '/api/forms')->withHeader('Origin', 'https://a.example'));
+        } finally {
+            CorsMiddleware::setActive(null);
+        }
+
+        self::assertSame('https://a.example', $answer->getHeaderLine('Access-Control-Allow-Origin'), 'or the browser can\'t read it');
+    }
+
+    public function testSomethingElseThrownThroughItIsNotItsToAnswer(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('not a database');
+        $this->sendThrough(new \RuntimeException('not a database'));
+    }
+
     public function testAnErrorTooBigToBeOneIsNotRead(): void
     {
         $large = str_repeat('x', 1048577) . 'SQLSTATE[HY000]';
@@ -158,6 +265,29 @@ final class SqlErrorGuardMiddlewareTest extends TestCase
         self::assertFalse(SqlErrorText::isBusy('database is locked'));
         self::assertFalse(SqlErrorText::isBusy("SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry '5 ' for key 'x'"));
         self::assertFalse(SqlErrorText::isBusy('SQLSTATE[HY000]: General error: 1 no such table: t'));
+    }
+
+    public function testALostConnectionIsToldFromABusyOne(): void
+    {
+        foreach ([
+            'SQLSTATE[HY000]: General error: 2006 MySQL server has gone away',
+            'SQLSTATE[HY000]: General error: 2013 Lost connection to MySQL server during query',
+            'SQLSTATE[HY000] [2002] Connection refused',
+            'SQLSTATE[08S01]: Communication link failure: 1053 Server shutdown in progress',
+            'SQLSTATE[HY000]: General error: 4031 The client was disconnected by the server because of inactivity',
+        ] as $lost) {
+            self::assertTrue(SqlErrorText::isConnectionLost($lost), $lost);
+            self::assertFalse(SqlErrorText::isBusy($lost), $lost);
+        }
+        foreach ([
+            'SQLSTATE[40001]: Serialization failure: 1213 Deadlock found when trying to get lock; try restarting transaction',
+            'SQLSTATE[HY000]: General error: 1205 Lock wait timeout exceeded; try restarting transaction',
+            "SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry '2006 ' for key 'x'",
+            'SQLSTATE[42S02]: Base table or view not found: 1146 Table gone',
+            '2006 MySQL server has gone away',
+        ] as $notLost) {
+            self::assertFalse(SqlErrorText::isConnectionLost($notLost), $notLost);
+        }
     }
 
     public function testTheGuardIsTheOutermostMiddlewareOnTheSite(): void
