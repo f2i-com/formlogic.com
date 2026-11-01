@@ -452,11 +452,12 @@ class PackageV2InstallService
         $removedTypes = array_values(array_diff($currentTypes, $nextTypes));
         $addedTypes = array_values(array_diff($nextTypes, $currentTypes));
 
-        // Which flows compiled against this package, and against which of its types.
+        // Which flows compiled against this package, and against which of its types: the revision
+        // each flow runs now, which is the one an update can break.
         $rows = $this->mysql->prepare('
             SELECT fd.id AS flow_id, fd.name, v.definition_locks_json
             FROM flow_definition_versions v
-            JOIN flow_definitions fd ON fd.id = v.flow_definition_id
+            JOIN flow_definitions fd ON fd.id = v.flow_definition_id AND v.version = fd.version
             WHERE v.definition_locks_json IS NOT NULL
               AND (fd.owner_user_id = ? OR fd.app_id IN (SELECT id FROM apps WHERE owner_id = ?))
         ');
@@ -480,11 +481,7 @@ class PackageV2InstallService
             $types = array_values(array_unique($types));
             sort($types);
             $flowId = (string) $row['flow_id'];
-            // A flow already listed (an older revision) keeps its first entry — the current
-            // revision is what matters and rows arrive newest-relevant per flow id.
-            if (!isset($affected[$flowId])) {
-                $affected[$flowId] = ['flowId' => $flowId, 'name' => (string) $row['name'], 'types' => $types];
-            }
+            $affected[$flowId] = ['flowId' => $flowId, 'name' => (string) $row['name'], 'types' => $types];
         }
 
         // A flow BREAKS if any type it compiled against is going away.

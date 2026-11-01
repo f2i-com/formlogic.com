@@ -547,13 +547,64 @@ class McpOAuthFlowTest extends TestCase
         $this->assertNotSame($rt1, $rt2, 'public-client refresh must ROTATE');
         $this->assertStringStartsWith('flm_oauth_', $refreshed['body']['access_token']);
 
-        // Reusing the ROTATED rt1 is theft evidence: invalid_grant + the whole family dies.
+        // Reusing the ROTATED rt1, past the grace for a client's own parallel refresh, is theft
+        // evidence: invalid_grant + the whole family dies.
+        $this->ageRotation($rt1, 31);
         $reuse = $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $rt1, 'client_id' => $client['client_id']]);
         $this->assertSame(400, $reuse['status']);
         $this->assertSame('invalid_grant', $reuse['body']['error']);
         $dead = $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $rt2, 'client_id' => $client['client_id']]);
         $this->assertSame(400, $dead['status']);
         $this->assertSame('invalid_grant', $dead['body']['error'], 'reuse revokes the whole family, including the newest token');
+    }
+
+    /** As if this token's rotation happened $seconds ago. */
+    private function ageRotation(string $refreshToken, int $seconds): void
+    {
+        self::$pdo->prepare('UPDATE mcp_oauth_refresh_tokens SET rotated_at = ? WHERE token_hash = ?')
+            ->execute([date('Y-m-d H:i:s', time() - $seconds), hash('sha256', $refreshToken)]);
+    }
+
+    public function testAClientsOwnParallelRefreshUnlinksNothing(): void
+    {
+        $client = $this->register(['client_name' => 'CLI', 'token_endpoint_auth_method' => 'none', 'redirect_uris' => ['http://127.0.0.1:33418/callback']]);
+        $first = $this->fullExchange($client);
+        $rt1 = $first['body']['refresh_token'];
+        $refresh = fn (string $token): array => $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $token, 'client_id' => $client['client_id']]);
+
+        $winner = $refresh($rt1);
+        $this->assertSame(200, $winner['status'], json_encode($winner['body']));
+
+        // The other thread, moments later: refused, with nothing issued and nothing revoked.
+        $loser = $refresh($rt1);
+        $this->assertSame(400, $loser['status']);
+        $this->assertSame('invalid_grant', $loser['body']['error']);
+        $this->assertArrayNotHasKey('access_token', $loser['body']);
+        $this->assertArrayNotHasKey('refresh_token', $loser['body']);
+
+        // Still inside the window at its far end, and the winner's token goes on working.
+        $this->ageRotation($rt1, 25);
+        $this->assertSame(400, $refresh($rt1)['status']);
+        $next = $refresh($winner['body']['refresh_token']);
+        $this->assertSame(200, $next['status'], 'the winner keeps its link: ' . json_encode($next['body']));
+
+        // The window has passed: the same reuse is theft, and takes the family.
+        $this->ageRotation($rt1, 31);
+        $this->assertSame(400, $refresh($rt1)['status']);
+        $this->assertSame(400, $refresh($next['body']['refresh_token'])['status'], 'past the grace, reuse revokes the family');
+    }
+
+    public function testTheGraceIsForTheSameClientAlone(): void
+    {
+        $client = $this->register(['client_name' => 'CLI', 'token_endpoint_auth_method' => 'none', 'redirect_uris' => ['http://127.0.0.1:33418/callback']]);
+        $rt1 = $this->fullExchange($client)['body']['refresh_token'];
+        $winner = $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $rt1, 'client_id' => $client['client_id']]);
+        $this->assertSame(200, $winner['status'], json_encode($winner['body']));
+
+        // Another client's hands on this token is theft however soon it comes.
+        $other = $this->register(['client_name' => 'Other', 'token_endpoint_auth_method' => 'none', 'redirect_uris' => ['http://127.0.0.1:33419/callback']]);
+        $this->assertSame(400, $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $rt1, 'client_id' => $other['client_id']])['status']);
+        $this->assertSame(400, $this->token(['grant_type' => 'refresh_token', 'refresh_token' => $winner['body']['refresh_token'], 'client_id' => $client['client_id']])['status']);
     }
 
     public function testConfidentialRefreshKeepsSameToken(): void

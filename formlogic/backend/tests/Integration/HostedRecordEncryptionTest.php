@@ -93,9 +93,12 @@ final class HostedRecordEncryptionTest extends TestCase
         return (string) $stmt->fetchColumn();
     }
 
+    /** The database is its file and its -wal: a commit is in the -wal until a checkpoint moves it. */
     private function fileHolds(string $text, string $appId = 'app-a'): bool
     {
-        return str_contains((string) file_get_contents(HostedAppService::databasePath($appId, $this->root)), $text);
+        $path = HostedAppService::databasePath($appId, $this->root);
+        $wal = is_file($path . '-wal') ? (string) file_get_contents($path . '-wal') : '';
+        return str_contains((string) file_get_contents($path) . $wal, $text);
     }
 
     public function testRecordsAreEncryptedOnDiskAndReadBackInTheApp(): void

@@ -41,7 +41,7 @@ if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {
 }
 $config = require __DIR__ . '/../config/settings.php';
 $mysql = new MySQLConnection($config['settings']['mysql']);
-$mysql->runMigrations();
+$mysql->ensureSchemaCurrent();
 
 $crypto = DataEncryption::fromEnvironment();
 if (!$crypto->enabled()) {

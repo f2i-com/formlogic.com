@@ -6,7 +6,9 @@ namespace FormLogic\Tests\Integration;
 
 use FormLogic\Controllers\FormController;
 use FormLogic\Controllers\ResponseController;
+use FormLogic\Services\FormLogicRuntime;
 use FormLogic\Services\ResponseService;
+use FormLogic\Services\ScriptResult;
 use FormLogic\Services\WebhookService;
 use Slim\Psr7\Factory\ResponseFactory;
 use Slim\Psr7\Factory\ServerRequestFactory;
@@ -168,25 +170,60 @@ final class DataLifecycleTest extends E2eeTestCase
         $this->assertSame(2, $result['created']);
     }
 
-    public function testASubmitterSeesNothingAScriptStored(): void
+    /** @return callable(?string): array{0: int, 1: array<string, mixed>} a POST of the public route, as this caller. */
+    private function submitter(string $formId, ScriptResult $script): callable
     {
-        $formId = $this->aForm();
-        $controller = new ResponseController(self::$responses, self::$forms, self::$sqlite);
-        $submit = function (?string $userId) use ($controller, $formId): array {
+        $runtime = $this->createStub(FormLogicRuntime::class);
+        $runtime->method('execute')->willReturn($script);
+        $controller = new ResponseController(new ResponseService(self::$mysql, self::$sqlite, $runtime), self::$forms, self::$sqlite);
+        return static function (?string $userId) use ($controller, $formId): array {
             $request = (new ServerRequestFactory())->createServerRequest('POST', 'http://localhost/x')
-                ->withParsedBody(['answers' => ['name' => 'someone']]);
+                ->withParsedBody(['answers' => ['name' => 'someone', 'ref' => 'forged', 'ghost' => 'not a field']]);
             if ($userId !== null) {
                 $request = $request->withAttribute('userId', $userId);
             }
             $response = $controller->create($request, (new ResponseFactory())->createResponse(), ['formId' => $formId]);
             $response->getBody()->rewind();
-            return json_decode((string) $response->getBody(), true)['response'];
+            return [$response->getStatusCode(), json_decode((string) $response->getBody(), true)['response']];
         };
+    }
 
-        $public = $submit(null);
+    private function aQuiz(): string
+    {
+        return (string) self::$forms->createForm([
+            'title' => 'Quiz', 'userId' => $this->userId, 'status' => 'published', 'logicScript' => 'function onSubmit(ctx) { return {}; }',
+            'fields' => [
+                ['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => false],
+                ['id' => 'ref', 'type' => 'hidden', 'label' => 'Ref', 'required' => false, 'properties' => ['defaultValue' => 'staff-only']],
+            ],
+        ])['id'];
+    }
+
+    public function testASubmitterGetsBackWhatTheySentAndNothingAScriptStored(): void
+    {
+        $submit = $this->submitter($this->aQuiz(), ScriptResult::success(fields: ['fetched' => 'private'], tags: ['vip'], status: 'reviewed'));
+
+        [$status, $public] = $submit(null);
+        $this->assertSame(201, $status);
+        $this->assertEqualsCanonicalizing(['id', 'status', 'submittedAt', 'updatedAt', 'answers'], array_keys($public));
         $this->assertNotEmpty($public['id']);
-        $this->assertSame([], array_diff(array_keys($public), ['id', 'formId', 'status', 'stored', 'submittedAt', 'updatedAt']));
-        $this->assertArrayHasKey('answers', $submit($this->userId), 'the owner still gets the record');
+        $this->assertSame('reviewed', $public['status']);
+        $this->assertSame(['name' => 'someone'], $public['answers'], 'not what the server filled in, nor what it dropped');
+
+        [, $owner] = $submit($this->userId);
+        $this->assertSame('staff-only', $owner['answers']['ref'], 'the owner still gets the record');
+        $this->assertSame(['fetched' => 'private'], $owner['computed']);
+        $this->assertSame(['vip'], $owner['tags']);
+    }
+
+    public function testASubmitterIsToldNothingWasStored(): void
+    {
+        $submit = $this->submitter($this->aQuiz(), ScriptResult::success(store: false));
+
+        [$status, $public] = $submit(null);
+        $this->assertSame(201, $status);
+        $this->assertFalse($public['stored']);
+        $this->assertSame(['name' => 'someone'], $public['answers']);
     }
 
     public function testASaveFromAnOlderCopyOfTheFieldsIsRefused(): void

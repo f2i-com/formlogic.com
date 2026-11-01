@@ -154,7 +154,8 @@ final class AokieReceptionistUpgradeTest extends TestCase
         $this->assertSame([], $dryRun['skipped']);
         $this->assertSame($before, $this->comparable($appId, $owner), 'a dry run writes nothing');
 
-        $applied = self::$upgrade->run($appId, $record, true);
+        // What the operator reads in the dry run and names, having asked the owner.
+        $applied = self::$upgrade->run($appId, $record, true, null, $dryRun['connectorGrantsHeldBack']);
         $this->assertTrue($applied['applied']);
         $this->assertSame([], $applied['skipped']);
         $this->assertNotEmpty($applied['snapshots']);
@@ -247,7 +248,7 @@ final class AokieReceptionistUpgradeTest extends TestCase
         self::$pdo->prepare('DELETE FROM app_role_permissions WHERE role_id = ? AND permission = ?')
             ->execute([$roles['Device Admin']['id'], 'connector.aokie.dongle.reset']);
 
-        $applied = self::$upgrade->run($appId, $record, true);
+        $applied = self::$upgrade->run($appId, $record, true, null, self::$upgrade->run($appId, $record, false)['connectorGrantsHeldBack']);
         $this->assertTrue($applied['applied']);
         $this->assertSame(['connector.aokie.dongle.reset'], $applied['changes']['roles']['Device Admin']['permissionsAdded']);
 
@@ -280,6 +281,40 @@ final class AokieReceptionistUpgradeTest extends TestCase
         $this->assertContains('connector.aokie.dongle.reset', $deviceAdmin);
 
         $this->assertFalse(self::$upgrade->run($appId, $record, true)['applied']);
+    }
+
+    public function testAConnectorGrantAnOwnerDeclinedStaysOutUntilTheOperatorNamesIt(): void
+    {
+        $record = $this->bundledRecord();
+        $appId = $this->install($this->oldRecord('1.1.0')['pack'], $this->newUser());
+        $first = self::$upgrade->run($appId, $record, true, null, self::$upgrade->run($appId, $record, false)['connectorGrantsHeldBack']);
+        $this->assertTrue($first['applied']);
+
+        // The owner turned these down: on the role, and in the app's logic.
+        $declined = 'connector.aokie.dongle.reset';
+        $roles = [];
+        foreach (self::$appUsers->getRoles($appId) as $role) {
+            $roles[$role['name']] = $role;
+        }
+        self::$pdo->prepare('DELETE FROM app_role_permissions WHERE role_id = ? AND permission = ?')
+            ->execute([$roles['Device Admin']['id'], $declined]);
+        $logic = self::$apps->getApp($appId)['customLogic'];
+        $logic['permissions'] = array_values(array_diff($logic['permissions'], [$declined]));
+        self::$apps->updateApp($appId, ['customLogic' => $logic]);
+
+        $dryRun = self::$upgrade->run($appId, $record, false);
+        $this->assertSame([$declined], $dryRun['connectorGrantsHeldBack'], 'the plan names what it would add');
+
+        $run = self::$upgrade->run($appId, $record, true);
+        $this->assertSame([$declined], $run['connectorGrantsHeldBack']);
+        $this->assertSame([], $run['changes']['roles']);
+        $this->assertNotContains($declined, self::$apps->getApp($appId)['customLogic']['permissions']);
+        $this->assertNotContains($declined, array_column(self::$appUsers->getRolePermissions($roles['Device Admin']['id']), 'permission'));
+
+        $named = self::$upgrade->run($appId, $record, true, null, [$declined]);
+        $this->assertSame([], $named['connectorGrantsHeldBack']);
+        $this->assertContains($declined, self::$apps->getApp($appId)['customLogic']['permissions']);
+        $this->assertContains($declined, array_column(self::$appUsers->getRolePermissions($roles['Device Admin']['id']), 'permission'));
     }
 
     public function testSkipsWhatItCannotSafelyTouchAndUpgradesTheRest(): void

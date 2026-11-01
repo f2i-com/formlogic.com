@@ -30,8 +30,11 @@ class AppResponseService
         $this->formService = $formService;
     }
 
-    /** @param string|null $sourceRunId the checked flow run writing the record (ResponseService::createResponse) */
-    public function createResponse(string $appId, string $formId, array $data, string $userId, ?string $script = null, ?string $sourceRunId = null): array|ScriptRejection
+    /**
+     * @param string|null $sourceRunId the checked flow run writing the record (ResponseService::createResponse)
+     * @param int|null $quotaLimit the form's cap on records (ResponseService::createResponse)
+     */
+    public function createResponse(string $appId, string $formId, array $data, string $userId, ?string $script = null, ?string $sourceRunId = null, ?int $quotaLimit = null): array|ScriptRejection
     {
         // Set the server-controlled submitter at the top level where
         // ResponseService::createResponse() reads it, preventing client spoofing.
@@ -40,7 +43,7 @@ class AppResponseService
         // ResponseService rebuilds the metadata object from scratch.)
         $data['submittedByUserId'] = $userId;
 
-        $result = $this->responseService->createResponse($formId, $data, $script, $sourceRunId);
+        $result = $this->responseService->createResponse($formId, $data, $script, $sourceRunId, $quotaLimit);
 
         // Write response links for linked_record fields ({store:false} script
         // submissions persist nothing, so there is no source row to link from)
@@ -66,9 +69,10 @@ class AppResponseService
         return $this->responseService->getResponse($formId, $responseId);
     }
 
-    public function updateResponse(string $formId, string $responseId, array $data): ?array
+    /** @param string|null $ifMatch the version to write over (ResponseService::updateResponse) */
+    public function updateResponse(string $formId, string $responseId, array $data, ?string $ifMatch = null): ?array
     {
-        $result = $this->responseService->updateResponse($formId, $responseId, $data);
+        $result = $this->responseService->updateResponse($formId, $responseId, $data, $ifMatch);
 
         // Re-sync response links if answers were updated
         if ($result && isset($data['answers'])) {

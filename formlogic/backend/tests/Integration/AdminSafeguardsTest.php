@@ -114,7 +114,7 @@ class AdminSafeguardsTest extends TestCase
         return self::$auth->getUserById($this->ownerId);
     }
 
-    private function controller(?MfaService $mfa = null, ?EmailService $email = null, ?FormService $forms = null): AdminController
+    private function controller(?MfaService $mfa = null, ?EmailService $email = null, ?FormService $forms = null, ?FlowService $flows = null): AdminController
     {
         return new AdminController(
             self::$admin,
@@ -123,7 +123,7 @@ class AdminSafeguardsTest extends TestCase
             $this->createStub(UpgradeService::class),
             $forms ?? $this->createStub(FormService::class),
             $this->createStub(AppService::class),
-            $this->createStub(FlowService::class),
+            $flows ?? $this->createStub(FlowService::class),
             $this->createStub(ResponseService::class),
             self::$audit,
             null,
@@ -449,6 +449,27 @@ class AdminSafeguardsTest extends TestCase
             $refused = $this->controller()->updateFlow($this->adminRequest('/x', ['flowJson' => ['nodes' => []]]), (new ResponseFactory())->createResponse(), ['id' => $flowId]);
             $this->assertSame(403, $refused->getStatusCode());
             $this->assertSame('admin_support_access_required', self::decode($refused)['code']);
+        } finally {
+            self::$pdo->prepare('DELETE FROM flow_definitions WHERE id = ?')->execute([$flowId]);
+        }
+    }
+
+    public function testAnAdministratorPausesARunawayFlowWithoutTheOwner(): void
+    {
+        $flowId = 'flow-' . bin2hex(random_bytes(6));
+        self::$pdo->prepare("INSERT INTO flow_definitions (id, owner_user_id, name, slug, flow_json) VALUES (?, ?, 'F', ?, '{}')")->execute([$flowId, $this->ownerId, $flowId]);
+        $flows = $this->createMock(FlowService::class);
+        $flows->expects($this->once())->method('updateWorkspaceFlow')->with($this->ownerId, $flowId, ['enabled' => false])->willReturn(['id' => $flowId, 'enabled' => false]);
+        $put = fn (array $body) => $this->controller(null, null, null, $flows)->updateFlow($this->adminRequest('/x', $body), (new ResponseFactory())->createResponse(), ['id' => $flowId]);
+        try {
+            foreach ([['enabled' => true], ['enabled' => 'false'], ['enabled' => false, 'name' => 'Renamed'], ['enabled' => false, 'flowJson' => ['nodes' => []]]] as $body) {
+                $this->assertSame(403, $put($body)->getStatusCode(), json_encode($body));
+            }
+            $this->assertSame(200, $put(['enabled' => false])->getStatusCode());
+
+            $audited = self::$pdo->prepare("SELECT COUNT(*) FROM audit_log WHERE action = 'admin.update_flow' AND resource_id = ?");
+            $audited->execute([$flowId]);
+            $this->assertSame(1, (int) $audited->fetchColumn());
         } finally {
             self::$pdo->prepare('DELETE FROM flow_definitions WHERE id = ?')->execute([$flowId]);
         }

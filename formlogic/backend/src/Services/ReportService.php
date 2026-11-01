@@ -94,7 +94,7 @@ class ReportService
      */
     public function runReport(array $spec, array $fields, string $formId, string $scope, ?string $userId, array $joins = [], string $timezone = 'UTC', ?array $resolvableFormIds = [], ?array $ownOnlyFormIds = null): array
     {
-        $viz = in_array($spec['viz'] ?? 'table', self::VIZ, true) ? (string) $spec['viz'] : 'table';
+        $viz = in_array($spec['viz'] ?? null, self::VIZ, true) ? (string) $spec['viz'] : 'table';
 
         // §9.2: refuse before any SQLite work — base form and every joined form.
         $this->assertNotPrivateForm($formId);

@@ -36,7 +36,7 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
  * cron cadence).
  *
  * Run from cron, e.g. once a day:
- *   23 3 * * * php /path/to/formlogic/backend/bin/desktop-commands-cleanup.php >> /var/log/formlogic-desktop-commands.log 2>&1
+ *   23 3 * * * php /path/to/formlogic/backend/bin/desktop-commands-cleanup.php >> /path/to/formlogic/backend/logs/formlogic-desktop-commands.log 2>&1
  *
  * Options:
  *   --days=N     override the retention window (else DESKTOP_COMMANDS_RETENTION_DAYS, else 7)
@@ -140,10 +140,9 @@ $dryRun = in_array('--dry-run', $argvSafe, true);
 $days = desktopCommandsRetentionDays($argvSafe, $_ENV);
 
 $mysql = new MySQLConnection($mysqlConfig);
-// Ensure the table exists even if this runs before the web app booted (both idempotent).
+// Ensure the table exists even if this runs before the web app booted (under its migration lock).
 try {
-    $mysql->initializeSchema();
-    $mysql->runMigrations();
+    $mysql->ensureSchemaCurrent();
 } catch (\Throwable $e) {
     fwrite(STDERR, sprintf("[%s] schema init failed: %s\n", date('c'), $e->getMessage()));
 }

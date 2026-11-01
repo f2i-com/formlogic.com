@@ -24,6 +24,9 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
  *   Receptionist Settings, Live Call and Device Setup screens of an install
  *   retrofitted by hand (trust owner, empty provenance), each only when it is
  *   byte-for-byte that release's screen.
+ *   Add --approve-grant=<connector grant>, once per grant, to add a connector
+ *   grant the app lacks. The owner may have declined it, and nothing records
+ *   that, so the run lists the ones it held back in connectorGrantsHeldBack.
  */
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -45,10 +48,11 @@ $usage = static function (int $exitCode): never {
     fwrite($stream, "  php bin/upgrade-aokie-receptionist.php --app=<uuid> --dry-run\n");
     fwrite($stream, "  php bin/upgrade-aokie-receptionist.php --app=<uuid> --apply\n");
     fwrite($stream, "  Optional: --accept-known-legacy-screen-sha256=<sha256>\n");
+    fwrite($stream, "  Optional: --approve-grant=<connector grant>, once per grant\n");
     exit($exitCode);
 };
 
-$options = getopt('', ['app:', 'dry-run', 'apply', 'accept-known-legacy-screen-sha256:', 'help']);
+$options = getopt('', ['app:', 'dry-run', 'apply', 'accept-known-legacy-screen-sha256:', 'approve-grant:', 'help']);
 if (!is_array($options)) {
     $options = [];
 }
@@ -95,7 +99,8 @@ try {
         $apps,
         $appUsers
     );
-    $result = $service->run($appId, $record, $apply, $acceptedLegacyScreenSha256);
+    $approvedGrants = array_values(array_filter((array) ($options['approve-grant'] ?? []), 'is_string'));
+    $result = $service->run($appId, $record, $apply, $acceptedLegacyScreenSha256, $approvedGrants);
     fwrite(STDOUT, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
     exit(0);
 } catch (\PDOException $e) {

@@ -6,6 +6,7 @@ namespace FormLogic\Tests\Integration;
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Services\AuthService;
+use FormLogic\Services\EmailService;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
@@ -130,6 +131,22 @@ class PasswordResetSingleUseTest extends TestCase
         } finally {
             self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$other]);
         }
+    }
+
+    public function testTheResetEmailSaysWhatTheResetWillEnd(): void
+    {
+        $sent = '';
+        $email = $this->createMock(EmailService::class);
+        $email->expects($this->once())->method('send')->willReturnCallback(static function (string $to, string $subject, string $html) use (&$sent): bool {
+            $sent = $html;
+            return true;
+        });
+        $auth = new AuthService(self::$mysql, ['secret' => 'test-secret-test-secret-test-secret!', 'issuer' => 't', 'audience' => 't'], [], $email);
+
+        $auth->requestPasswordReset($this->userId . '@test.local', 'https://forms.example.com/reset-password', false);
+
+        $this->assertStringContainsString('turns off your API keys', $sent);
+        $this->assertStringContainsString('linked apps such as OAIY', $sent);
     }
 
     public function testChangingThePasswordEndsAResetLinkAlreadySent(): void

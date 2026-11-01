@@ -257,7 +257,9 @@ generator and the MCP tools emit/accept this shape natively.
 App-runtime `code` screens (owner/verified trust ONLY — every bridge action below is
 TRUSTED_ONLY in `sdkRuntime.ts`, including the subscription lifecycle actions) get typed,
 bounded bridge methods on `window.FormLogic` beyond the original submit/records/record/related
-set (`components/custom-screen/screenBridge.ts` + `screenSubscriptions.ts`):
+set (`components/custom-screen/screenBridge.ts` + `screenSubscriptions.ts`). On a public link,
+`submit` gives a visitor back their own answers and not the whole record: see
+[APP_SECTIONS_SPEC.md](APP_SECTIONS_SPEC.md).
 
 - `connector(connectorId, command, payload?)` — invokes a connector command the app has **declared**
   (`connector.<id>.<command>` grant, the same gate as `useConnector`). Routing is **transparent**:
@@ -437,8 +439,10 @@ plugin may send to any mobile party (never to itself). All endpoints gate on the
   deployments should prefer the long-poll fallback.
 
 **TTL + backpressure.** Frames are volatile signalling: rows older than **120 s** are excluded
-from every read and swept opportunistically on each POST. A per-app live cap of **512 frames**
-produces a typed `429 relay_backpressure` (never a silent drop) when consumers stop draining.
+from every read and swept opportunistically on each POST. A per-app cap of **512 frames not yet
+delivered** produces a typed `429 relay_backpressure` (never a silent drop) when consumers stop
+draining. A delivered frame stays until its TTL, so that a client reconnecting with its cursor can
+read it again; those count only towards a ceiling of **4096 stored frames** per app.
 
 ### Deferred
 An npm-published `@formlogic/sdk`; SDK version negotiation in the client manifest.

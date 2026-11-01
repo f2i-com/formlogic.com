@@ -13,6 +13,7 @@ use FormLogic\Services\AppUserService;
 use FormLogic\Services\FlowService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\NativeAppService;
+use FormLogic\Services\PackService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\TrashConflictException;
 use FormLogic\Services\TrashService;
@@ -333,6 +334,117 @@ class TrashTest extends TestCase
         $this->assertTrue($trash->purgeItem($item, $this->userId));
 
         $this->assertFileExists($native);
+        $this->assertFileExists($hosted);
+    }
+
+    private function statusOf(string $item): string
+    {
+        $stmt = self::$pdo->prepare('SELECT status FROM trash_items WHERE id = ?');
+        $stmt->execute([$item]);
+        return (string) $stmt->fetchColumn();
+    }
+
+    /** A bin whose eraser notes the item's status at the moment it erases. */
+    private function binNotingStatusAtErase(?string &$status, string &$item): TrashService
+    {
+        $eraser = $this->createMock(AppStorageEraser::class);
+        $eraser->method('erase')->willReturnCallback(function () use (&$status, &$item): void {
+            $status = $this->statusOf($item);
+        });
+        return new TrashService(
+            self::$mysql, self::$sqlite, self::$backup, self::$forms, self::$apps, self::$flows,
+            ['retentionDays' => 30, 'dir' => self::$trashDir], null, null, $eraser,
+        );
+    }
+
+    public function testDeleteForeverHasTheItemBeforeItErasesAnything(): void
+    {
+        $status = null;
+        $item = '';
+        $trash = $this->binNotingStatusAtErase($status, $item);
+        $item = $this->trashApp1($trash);
+
+        $this->assertTrue($trash->purgeItem($item, $this->userId));
+
+        $this->assertSame('restoring', $status, 'a restore can no longer take it');
+    }
+
+    public function testExpiryHasTheItemBeforeItErasesAnything(): void
+    {
+        $status = null;
+        $item = '';
+        $trash = $this->binNotingStatusAtErase($status, $item);
+        $item = $this->trashApp1($trash);
+        self::$pdo->prepare('UPDATE trash_items SET expires_at = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE id = ?')->execute([$item]);
+
+        $trash->purgeExpired();
+
+        $this->assertSame('restoring', $status);
+    }
+
+    public function testExpiryLeavesAnItemARestoreIsWorkingOn(): void
+    {
+        [$trash, $native, $hosted] = $this->binWithStorage();
+        $item = $this->trashApp1($trash);
+        self::$pdo->prepare("UPDATE trash_items SET status = 'restoring', claimed_at = NOW(), expires_at = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE id = ?")->execute([$item]);
+
+        $trash->purgeExpired();
+
+        $this->assertFileExists($native);
+        $this->assertFileExists($hosted);
+        $this->assertNotEmpty(array_filter($this->trashRows(), static fn (array $row) => $row['id'] === $item));
+    }
+
+    public function testExpiryTakesAnItemWhoseRestoreDied(): void
+    {
+        [$trash, $native, $hosted] = $this->binWithStorage();
+        $item = $this->trashApp1($trash);
+        self::$pdo->prepare("UPDATE trash_items SET status = 'restoring', claimed_at = DATE_SUB(NOW(), INTERVAL 1 HOUR), expires_at = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE id = ?")->execute([$item]);
+
+        $trash->purgeExpired();
+
+        $this->assertFileDoesNotExist($native);
+        $this->assertFileDoesNotExist($hosted);
+        $this->assertSame([], array_filter($this->trashRows(), static fn (array $row) => $row['id'] === $item));
+    }
+
+    public function testAPurgeThatFailsHandsTheItemBack(): void
+    {
+        $eraser = $this->createMock(AppStorageEraser::class);
+        $eraser->method('erase')->willThrowException(new \RuntimeException('The app is busy.'));
+        $trash = new TrashService(
+            self::$mysql, self::$sqlite, self::$backup, self::$forms, self::$apps, self::$flows,
+            ['retentionDays' => 30, 'dir' => self::$trashDir], null, null, $eraser,
+        );
+        $item = $this->trashApp1($trash);
+
+        $this->assertFalse($trash->purgeItem($item, $this->userId));
+
+        $this->assertSame('trashed', $this->statusOf($item), 'it can be tried again, or restored');
+    }
+
+    public function testUninstallingAPackPutsItsAppInTheBinWithItsStorage(): void
+    {
+        [$trash, $native, $hosted] = $this->binWithStorage();
+        $packs = new PackService(self::$mysql, self::$forms, self::$apps, new AppUserService(self::$mysql));
+        $install = function (): string {
+            $id = 'inst-' . bin2hex(random_bytes(8));
+            self::$pdo->prepare("INSERT INTO pack_installations (id, user_id, pack_id, pack_name, form_ids, app_ids) VALUES (?, ?, 'test-pack', 'Test Pack', '[]', ?)")
+                ->execute([$id, $this->userId, json_encode([$this->app1])]);
+            return $id;
+        };
+
+        $result = $packs->uninstallPack($install(), $this->userId, $trash);
+
+        $this->assertSame(1, $result['appsDeleted']);
+        $this->assertNull(self::$apps->getApp($this->app1));
+        $this->assertFileExists($native, 'members\' records are in this: the pack can\'t bring them back');
+        $this->assertFileExists($hosted);
+        $this->assertNotEmpty(array_filter($this->trashRows(), fn (array $row) => $row['original_id'] === $this->app1));
+
+        // A retry finds the row gone and must not take that for storage left behind.
+        $again = $packs->uninstallPack($install(), $this->userId, $trash);
+        $this->assertSame(0, $again['appsDeleted']);
         $this->assertFileExists($hosted);
     }
 

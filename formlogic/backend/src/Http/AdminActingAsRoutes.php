@@ -51,6 +51,8 @@ final class AdminActingAsRoutes
     public const REDACT_RUNS = 'redactRuns';
     /** Writes code that runs on records later, so it needs the owner's leave (AdminActingLimits). */
     public const WRITES_CODE = 'writesCode';
+    /** A WRITES_CODE route on which pausing the flow alone needs no leave. */
+    public const FLOW_SWITCH = 'flowSwitch';
 
     /**
      * [method, pattern, controller class, controller method, flags[]]
@@ -108,7 +110,7 @@ final class AdminActingAsRoutes
         ['GET',    '/apps/{id}/flows',                         FlowController::class,      'listFlows'],
         ['POST',   '/apps/{id}/flows',                         FlowController::class,      'createFlow', [self::WRITES_CODE]],
         ['GET',    '/apps/{id}/flows/{flowId}',                FlowController::class,      'getFlow'],
-        ['PUT',    '/apps/{id}/flows/{flowId}',                FlowController::class,      'updateFlow', [self::WRITES_CODE]],
+        ['PUT',    '/apps/{id}/flows/{flowId}',                FlowController::class,      'updateFlow', [self::WRITES_CODE, self::FLOW_SWITCH]],
         ['DELETE', '/apps/{id}/flows/{flowId}',                FlowController::class,      'deleteFlow'],
         ['POST',   '/apps/{id}/flows/{flowId}/test-run',       FlowController::class,      'testRun', [self::REDACT_RUNS, self::WRITES_CODE]],
         ['GET',    '/apps/{id}/flow-bindings',                 FlowController::class,      'listBindings'],
@@ -155,7 +157,7 @@ final class AdminActingAsRoutes
         ['POST',   '/flows',                                   FlowController::class,      'createWorkspaceFlow', [self::WRITES_CODE]],
         ['GET',    '/flows/{flowId}/bindings',                 FlowController::class,      'listFlowBindingsForFlow'],
         ['GET',    '/flows/{flowId}',                          FlowController::class,      'getWorkspaceFlow'],
-        ['PUT',    '/flows/{flowId}',                          FlowController::class,      'updateWorkspaceFlow', [self::WRITES_CODE]],
+        ['PUT',    '/flows/{flowId}',                          FlowController::class,      'updateWorkspaceFlow', [self::WRITES_CODE, self::FLOW_SWITCH]],
         ['DELETE', '/flows/{flowId}',                          FlowController::class,      'deleteWorkspaceFlow'],
 
         // ── Owner-wide run history + completion (REDACTED; no /queued, no /claim) ──
@@ -172,7 +174,6 @@ final class AdminActingAsRoutes
     public static function register(RouteCollectorProxy $group, ContainerInterface $container): void
     {
         $redactor = new AdminRunLogRedactionMiddleware();
-        $codeGate = new AdminCodeEditGate();
         foreach (self::ROUTES as $row) {
             [$method, $pattern, $class, $fn] = $row;
             $flags = $row[4] ?? [];
@@ -186,7 +187,7 @@ final class AdminActingAsRoutes
                 $route->add($redactor);
             }
             if (in_array(self::WRITES_CODE, $flags, true)) {
-                $route->add($codeGate);
+                $route->add(new AdminCodeEditGate(in_array(self::FLOW_SWITCH, $flags, true)));
             }
         }
     }

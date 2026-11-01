@@ -7,12 +7,16 @@ namespace FormLogic\Tests\Integration;
 use FormLogic\Controllers\AppDomainController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Middleware\CsrfMiddleware;
 use FormLogic\Services\AppDomainService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\FormService;
 use FormLogic\Support\Environment;
 use PDO;
 use PHPUnit\Framework\TestCase;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
 use Slim\Psr7\Factory\ServerRequestFactory;
 use Slim\Psr7\Response;
 
@@ -78,7 +82,7 @@ class AppDomainClaimTest extends TestCase
         if (self::$mysql === null) {
             $this->markTestSkipped('No test database');
         }
-        foreach (['APP_URL', 'CORS_ORIGIN', 'APP_ENV'] as $key) {
+        foreach (['APP_URL', 'CORS_ORIGIN', 'CORS_ALLOWED_ORIGINS', 'APP_ENV'] as $key) {
             $this->saved[$key] = Environment::get($key);
         }
         $this->setEnv('APP_URL', self::PLATFORM);
@@ -145,6 +149,69 @@ class AppDomainClaimTest extends TestCase
             $this->assertStringContainsString('not allowed', $body['message']);
         }
         $this->assertSame(201, $this->create($this->freshName())[0]);
+    }
+
+    /** What a v0.1.17 site could hold: a row for its own name, made before createDomain refused it. */
+    private function ownNameRow(string $name, string $status, bool $proven): string
+    {
+        $id = bin2hex(random_bytes(16));
+        self::$pdo->prepare('INSERT INTO app_domains (id, app_id, owner_id, domain, normalized_domain, mode, status, verification_method, verification_token, verified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            ->execute([$id, $this->appId, $this->ownerId, $name, $name, 'launch_page', $status, 'dns_txt', 'fl-domain-verification=old', $proven ? date('Y-m-d H:i:s') : null]);
+        return $id;
+    }
+
+    /** What logging in on this host gets from the real middleware, as index.php builds it. */
+    private function signIn(string $host): int
+    {
+        $middleware = new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', 'formlogic_auth', 'a-secret', ['https://' . $host], null, true,
+            static fn (string $name): bool => self::$domains->provenByAnOwner($name));
+        $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://' . $host . '/api/auth/login')
+            ->withHeader('Host', $host)->withHeader('Origin', 'https://' . $host)->withHeader('Content-Type', 'application/json');
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new Response(200);
+            }
+        };
+        return $middleware->process($request, $handler)->getStatusCode();
+    }
+
+    public function testASiteWhoseOwnNameWasConnectedKeepsItsSignIns(): void
+    {
+        $this->ownNameRow('forms.formlogic-claim.com', 'active', true);
+        $this->ownNameRow('www.formlogic-claim.com', 'active', true);
+        $customer = 'shop-' . bin2hex(random_bytes(4)) . '.formlogic-claim-tests.com';
+        $this->ownNameRow($customer, 'active', true);
+
+        $this->assertFalse(self::$domains->provenByAnOwner('forms.formlogic-claim.com'));
+        $this->assertFalse(self::$domains->provenByAnOwner('WWW.formlogic-claim.com:443'), "CORS_ORIGIN's host is this site's too");
+        $this->assertTrue(self::$domains->provenByAnOwner($customer));
+
+        $this->assertSame(200, $this->signIn('forms.formlogic-claim.com'));
+        $this->assertSame(403, $this->signIn($customer), 'a customer domain is still refused, listed or not');
+    }
+
+    public function testVerifyingCannotProveThisSitesOwnName(): void
+    {
+        $id = $this->ownNameRow('forms.formlogic-claim.com', 'pending', false);
+        [$status, $body] = $this->verify($id);
+
+        $this->assertSame(200, $status);
+        $this->assertFalse($body['ok']);
+        $this->assertStringContainsString('not allowed', $body['message']);
+        $row = self::$domains->getDomain($id, $this->ownerId);
+        $this->assertSame('pending', $row['status']);
+        $this->assertNull($row['verifiedAt']);
+    }
+
+    public function testAnotherListedOriginStaysAClaimableCustomerDomain(): void
+    {
+        $listed = $this->freshName();
+        $this->setEnv('CORS_ALLOWED_ORIGINS', 'https://' . $listed);
+        [$status, $created] = $this->create($listed);
+        $this->assertSame(201, $status);
+        $this->assertTrue($this->verify($created['domain']['id'])[1]['ok']);
+        $this->assertTrue(self::$domains->provenByAnOwner($listed));
     }
 
     public function testADomainWaitsForAppUrl(): void

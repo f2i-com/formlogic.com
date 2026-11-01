@@ -31,7 +31,7 @@ final class AppEngineCallerAdmissionTest extends TestCase
             'policy' => ['default' => 'zipp-web-python', 'allowed' => ['zipp-web-python', 'zipp-web', 'host-js'], 'revision' => 1, 'torch' => false],
             'installed' => ['zipp-web-python', 'zipp-web', 'host-js'], 'features' => ['python-logic/1'],
             'owner' => ['verifiedAt' => 'synthetic-verification', 'isDemo' => false], 'stored' => null,
-            'resolverFailure' => false, 'runArguments' => [], 'resolverLanguages' => [],
+            'resolverFailure' => false, 'runArguments' => [], 'resolverLanguages' => [], 'torchRefused' => false,
         ];
         $apps = $this->createMock(AppService::class);
         $apps->method('getApp')->willReturnCallback(static fn() => $state->app);
@@ -60,6 +60,9 @@ final class AppEngineCallerAdmissionTest extends TestCase
             if (!RuntimeEngineService::featuresRun($state->features, $languages)) throw new \RuntimeException('Synthetic Python feature unavailable');
         });
         $engines->method('ownerPolicy')->willReturnCallback(static fn() => $state->policy + ['installed' => $state->installed]);
+        $engines->method('assertTorchAllowed')->willReturnCallback(static function () use ($state): void {
+            if ($state->torchRefused) throw new \RuntimeException('This app uses torch, which this site does not allow.', 403);
+        });
         $controller = new HostedAppController(
             $apps, $users, $this->observeHostedService(HostedAppService::class, $hosting),
             $this->observeHostedService(RuntimeEngineService::class, $engines),
@@ -121,6 +124,16 @@ final class AppEngineCallerAdmissionTest extends TestCase
         $this->assertHostedServiceCalls(RuntimeEngineService::class, 'assertInstalledRuns', 1);
         $this->assertHostedServiceCalls(RuntimeEngineService::class, 'assertTorchAllowed', 1);
         $this->assertHostedServiceCalls(HostedAppService::class, 'get', 1);
+        $this->assertHostedServiceCalls(HostedAppService::class, 'run', 0);
+    }
+
+    public function testAnAppRefusedForTorchSaysSoAndIsNotCalledUnavailable(): void
+    {
+        [$controller, $state] = $this->fixture();
+        $state->torchRefused = true;
+        $body = $this->body($this->call($controller, $this->request($state)), 403);
+        self::assertSame('This app uses torch, which this site does not allow.', $body['message']);
+        self::assertSame(HostedControllerRequest::SESSION, $body['actor']['sessionId']);
         $this->assertHostedServiceCalls(HostedAppService::class, 'run', 0);
     }
 

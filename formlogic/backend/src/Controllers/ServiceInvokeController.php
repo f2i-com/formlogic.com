@@ -351,11 +351,13 @@ class ServiceInvokeController
             $policy[$k] = (bool) $raw[$k];
         }
         $appId = (string) $app['id'];
-        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
-        $companion = is_array($settings['aokieCompanion'] ?? null) ? $settings['aokieCompanion'] : [];
-        $companion['remoteConsent'] = $policy;
-        $settings['aokieCompanion'] = $companion;
-        $this->appService->updateApp($appId, ['settings' => $settings]);
+        $this->appService->updateAppLocked($appId, static function (array $current) use ($policy): array {
+            $settings = is_array($current['settings'] ?? null) ? $current['settings'] : [];
+            $companion = is_array($settings['aokieCompanion'] ?? null) ? $settings['aokieCompanion'] : [];
+            $companion['remoteConsent'] = $policy;
+            $settings['aokieCompanion'] = $companion;
+            return ['settings' => $settings];
+        });
         $this->audit?->log(
             'aokie.companion.policy.updated',
             'app',

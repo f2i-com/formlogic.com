@@ -54,6 +54,10 @@ class HostedAppService
         $staged = $path . '.restore-' . bin2hex(random_bytes(4));
         try {
             self::copyRows($appId, $snapshot, $staged, $validate);
+            // SQLite replays a -wal it finds beside a database, whichever database wrote it.
+            foreach (['-wal', '-shm', '-journal'] as $sidecar) {
+                if (is_file($path . $sidecar) && !unlink($path . $sidecar)) throw new RuntimeException('Cannot restore the app database');
+            }
             if (!rename($staged, $path)) throw new RuntimeException('Cannot restore the app database');
         } finally {
             if (is_file($staged)) unlink($staged);
@@ -113,6 +117,11 @@ class HostedAppService
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ]);
         $db->exec('PRAGMA busy_timeout=2000');
+        // Readers don't wait for a writer, or a writer for readers, as with forms and native apps.
+        // Every copy of this file is one read of the database (VACUUM INTO, SqliteSnapshot), so
+        // the -wal is in it, and nothing copies the file itself. Changing over needs the file to
+        // itself: an app that's busy now stays as it is, and the next connection tries again.
+        try { $db->exec('PRAGMA journal_mode=WAL'); } catch (\PDOException) {}
         $db->exec('PRAGMA max_page_count=' . self::MAX_PAGES);
         $db->exec('PRAGMA secure_delete=ON');
         self::createTables($db);
@@ -129,7 +138,9 @@ class HostedAppService
     public static function eraseStorage(string $appId, ?string $storagePath = null): void
     {
         $path = self::databasePath($appId, $storagePath);
-        foreach ([$path, $path . '-wal', $path . '-shm', $path . '-journal'] as $file) {
+        // The database goes last: left on its own it's still whole, and a retry finds it, while a
+        // -wal left behind with nothing beside it holds records nothing would look for.
+        foreach ([$path . '-wal', $path . '-shm', $path . '-journal', $path] as $file) {
             if (is_file($file) && !unlink($file)) throw new RuntimeException('Cannot remove app deployment');
         }
     }
@@ -197,6 +208,8 @@ class HostedAppService
         // Plain text stays in the file's free pages until this, from this run or from an earlier
         // one that stopped before it got here, or from rows that normal writes have since replaced.
         if ($changed > 0 || (int) $db->query('PRAGMA freelist_count')->fetchColumn() > 0) $db->exec('VACUUM');
+        // It stays in the -wal too, for as long as any other connection keeps that file alive.
+        $db->query('PRAGMA wal_checkpoint(TRUNCATE)')->fetchAll();
         return $changed;
     }
 
@@ -371,17 +384,38 @@ class HostedAppService
         return $this->get($appId, true);
     }
 
+    /** The named action as published, if this caller may run it. */
+    private function action(PDO $db, string $actionName, bool $owner): array
+    {
+        $raw = $db->query('SELECT package FROM deployment WHERE id=1')->fetchColumn();
+        $package = $raw ? json_decode($raw, true, 64, JSON_THROW_ON_ERROR) : [];
+        $action = $package['actions'][$actionName] ?? null;
+        if (!$action || (!$owner && $action['access'] !== 'member')) throw new RuntimeException('Action not found or access denied', 404);
+        return $action;
+    }
+
     /** Entire action is one transaction; any host error poisons it even if guest code catches that error. */
     public function run(string $appId, string $actionName, array $input, string $userId, bool $owner): mixed
     {
         if (strlen(json_encode($input, JSON_THROW_ON_ERROR)) > 32768) throw new InvalidArgumentException('Action input exceeds 32 KB');
         $db = $this->database($appId);
-        $db->exec('BEGIN IMMEDIATE');
+        // By hand, not inTransaction(): before PHP 8.4, PDO can't see a transaction opened by exec().
+        $open = false;
         try {
-            $raw = $db->query('SELECT package FROM deployment WHERE id=1')->fetchColumn();
-            $package = $raw ? json_decode($raw, true, 64, JSON_THROW_ON_ERROR) : [];
-            $action = $package['actions'][$actionName] ?? null;
-            if (!$action || (!$owner && $action['access'] !== 'member')) throw new RuntimeException('Action not found or access denied', 404);
+            // A read action takes no lock, so any number run at once, and stays in this one read:
+            // what it sees doesn't move under it. A write action starts again, because a
+            // transaction that has read can't wait for the write lock: SQLite refuses it at once.
+            // The action is read again under the lock, as a publish may have changed it since.
+            $db->exec('BEGIN');
+            $open = true;
+            $action = $this->action($db, $actionName, $owner);
+            if ($action['mode'] === 'write') {
+                $db->exec('ROLLBACK');
+                $open = false;
+                $db->exec('BEGIN IMMEDIATE');
+                $open = true;
+                $action = $this->action($db, $actionName, $owner);
+            }
             $calls = 0;
             $failed = false;
             $reason = 'Backend action failed';
@@ -424,9 +458,11 @@ LOGIC;
             $result = $done['result'] ?? null;
             if (strlen(json_encode($result, JSON_THROW_ON_ERROR)) > 262144) throw new RuntimeException('Action result exceeds 256 KB', 422);
             $db->exec('COMMIT');
+            $open = false;
             return $result;
         } catch (\Throwable $e) {
-            if ($db->inTransaction()) $db->exec('ROLLBACK');
+            // SQLite can have ended the transaction itself, and then there is nothing to roll back.
+            if ($open) { try { $db->exec('ROLLBACK'); } catch (\PDOException) {} }
             throw $e;
         }
     }

@@ -338,15 +338,14 @@ class ChatToolsService
                         $upd[$k] = $args[$k];
                     }
                 }
+                $settingsChange = [];
                 if (array_key_exists('hideNav', $args)) {
-                    $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
-                    $settings['hideNav'] = (bool) $args['hideNav'];
-                    $upd['settings'] = $settings;
+                    $settingsChange['hideNav'] = (bool) $args['hideNav'];
                 }
                 if (array_key_exists('hostedDashboard', $args)) {
                     if (!is_bool($args['hostedDashboard'])) throw new \InvalidArgumentException('hostedDashboard must be boolean.');
                     if ($args['hostedDashboard'] && (!$this->hosting || !$this->hosting->get((string)$args['appId']))) throw new \InvalidArgumentException('Publish an app project before making it the home dashboard.');
-                    $upd['settings'] = array_merge($upd['settings'] ?? $app['settings'] ?? [], ['hostedDashboard' => $args['hostedDashboard']]);
+                    $settingsChange['hostedDashboard'] = $args['hostedDashboard'];
                 }
                 if (array_key_exists('customLogic', $args) && is_array($args['customLogic'])) {
                     $this->requireConnectorScopeIf($ctx, self::logicHoldsConnectorPermissions($args['customLogic']));
@@ -356,7 +355,12 @@ class ChatToolsService
                     }
                     $upd['customLogic'] = $bundle;
                 }
-                $data = $this->appService->updateApp((string) $args['appId'], $upd);
+                $data = $this->appService->updateAppLocked((string) $args['appId'], static function (array $app) use ($upd, $settingsChange): array {
+                    if ($settingsChange !== []) {
+                        $upd['settings'] = array_merge(is_array($app['settings'] ?? null) ? $app['settings'] : [], $settingsChange);
+                    }
+                    return $upd;
+                });
                 $ctx->audit('update_app', ['appId' => $args['appId'] ?? null]);
                 break;
             case 'get_app':
@@ -605,10 +609,12 @@ class ChatToolsService
                 }
                 $item = ['id' => 'rep_' . bin2hex(random_bytes(6)), 'name' => (string) ($args['name'] ?? 'Report'), 'type' => 'builder', 'spec' => $spec];
                 if (!empty($args['description'])) { $item['description'] = (string) $args['description']; }
-                $reports = is_array($app['reports'] ?? null) ? $app['reports'] : [];
-                $reports[] = $item;
-                if (strlen((string) json_encode($reports)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
-                $this->appService->updateApp($appId, ['reports' => $reports]);
+                $this->appService->updateAppLocked($appId, static function (array $app) use ($item): array {
+                    $reports = is_array($app['reports'] ?? null) ? $app['reports'] : [];
+                    $reports[] = $item;
+                    if (strlen((string) json_encode($reports)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
+                    return ['reports' => $reports];
+                });
                 $data = $item;
                 $ctx->audit('create_report', ['appId' => $appId, 'reportId' => $item['id']]);
                 break;
@@ -617,33 +623,36 @@ class ChatToolsService
                 // Add a PDF document (text + chart blocks referencing existing reports) to the app.
                 $appId = (string) ($args['appId'] ?? '');
                 $this->assertAppScope($ctx, $appId);
-                $app = $this->ownApp($appId, $userId);
-                $reports = is_array($app['reports'] ?? null) ? $app['reports'] : [];
-                $existingIds = [];
-                foreach ($reports as $r) { if (!empty($r['id'])) { $existingIds[(string) $r['id']] = true; } }
-                $blocks = [];
-                foreach ((is_array($args['blocks'] ?? null) ? $args['blocks'] : []) as $b) {
-                    $kind = $b['kind'] ?? '';
-                    if ($kind === 'text') {
-                        $blocks[] = ['id' => 'blk_' . bin2hex(random_bytes(5)), 'kind' => 'text', 'title' => $b['title'] ?? null, 'body' => (string) ($b['body'] ?? '')];
-                    } elseif ($kind === 'report') {
-                        $rid = (string) ($b['reportId'] ?? '');
-                        if (!isset($existingIds[$rid])) { throw new \Exception("Document references unknown reportId '{$rid}' — create the chart report first"); }
-                        $blocks[] = ['id' => 'blk_' . bin2hex(random_bytes(5)), 'kind' => 'report', 'reportId' => $rid, 'caption' => $b['caption'] ?? null];
+                $this->ownApp($appId, $userId);
+                $item = null;
+                $this->appService->updateAppLocked($appId, function (array $app) use ($args, $appId, &$item): array {
+                    $reports = is_array($app['reports'] ?? null) ? $app['reports'] : [];
+                    $existingIds = [];
+                    foreach ($reports as $r) { if (!empty($r['id'])) { $existingIds[(string) $r['id']] = true; } }
+                    $blocks = [];
+                    foreach ((is_array($args['blocks'] ?? null) ? $args['blocks'] : []) as $b) {
+                        $kind = $b['kind'] ?? '';
+                        if ($kind === 'text') {
+                            $blocks[] = ['id' => 'blk_' . bin2hex(random_bytes(5)), 'kind' => 'text', 'title' => $b['title'] ?? null, 'body' => (string) ($b['body'] ?? '')];
+                        } elseif ($kind === 'report') {
+                            $rid = (string) ($b['reportId'] ?? '');
+                            if (!isset($existingIds[$rid])) { throw new \Exception("Document references unknown reportId '{$rid}' — create the chart report first"); }
+                            $blocks[] = ['id' => 'blk_' . bin2hex(random_bytes(5)), 'kind' => 'report', 'reportId' => $rid, 'caption' => $b['caption'] ?? null];
+                        }
                     }
-                }
-                if (!$blocks) { throw new \Exception('A document needs at least one block (text or report)'); }
-                $item = ['id' => 'doc_' . bin2hex(random_bytes(6)), 'name' => (string) ($args['name'] ?? 'Document'), 'type' => 'document', 'blocks' => $blocks];
-                if (!empty($args['description'])) { $item['description'] = (string) $args['description']; }
-                $reports[] = $item;
-                // Defense-in-depth: sanitize the whole set against the app (drops broken refs, clamps text).
-                if ($this->reportValidator !== null) {
-                    $reports = $this->reportValidator->sanitizeReports($reports, $appId);
-                }
-                if (strlen((string) json_encode($reports)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
-                $this->appService->updateApp($appId, ['reports' => $reports]);
+                    if (!$blocks) { throw new \Exception('A document needs at least one block (text or report)'); }
+                    $item = ['id' => 'doc_' . bin2hex(random_bytes(6)), 'name' => (string) ($args['name'] ?? 'Document'), 'type' => 'document', 'blocks' => $blocks];
+                    if (!empty($args['description'])) { $item['description'] = (string) $args['description']; }
+                    $reports[] = $item;
+                    // Defense-in-depth: sanitize the whole set against the app (drops broken refs, clamps text).
+                    if ($this->reportValidator !== null) {
+                        $reports = $this->reportValidator->sanitizeReports($reports, $appId);
+                    }
+                    if (strlen((string) json_encode($reports)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
+                    return ['reports' => $reports];
+                });
                 $data = $item;
-                $ctx->audit('create_document', ['appId' => $appId, 'documentId' => $item['id']]);
+                $ctx->audit('create_document', ['appId' => $appId, 'documentId' => $item['id'] ?? null]);
                 break;
             }
             case 'list_flows': {
@@ -939,26 +948,13 @@ class ChatToolsService
                 }
                 $answers = $this->preparedAnswers($form, $args['answers']);
                 // Atomic quota enforcement, mirroring the external API path (fail closed, retryable).
-                $quotaLock = null;
-                if (!empty($settings['quotaLimit'])) {
-                    $quotaLock = $this->responseService->acquireFormLock($formId);
-                    if ($quotaLock === null) {
-                        throw new \Exception('The form is busy — please retry in a moment.');
-                    }
-                    if ($this->responseService->getResponseCount($formId) >= (int) $settings['quotaLimit']) {
-                        $this->responseService->releaseFormLock($quotaLock);
-                        throw new \Exception('This form has reached its maximum number of responses.');
-                    }
-                }
-                try {
-                    $result = $this->responseService->createResponse(
-                        $formId,
-                        ['answers' => $answers, 'ipAddress' => $ctx->ip, 'userAgent' => $ctx->userAgent],
-                        $form['logicScript'] ?? null
-                    );
-                } finally {
-                    $this->responseService->releaseFormLock($quotaLock);
-                }
+                $result = $this->responseService->createResponse(
+                    $formId,
+                    ['answers' => $answers, 'ipAddress' => $ctx->ip, 'userAgent' => $ctx->userAgent],
+                    $form['logicScript'] ?? null,
+                    null,
+                    (int) ($settings['quotaLimit'] ?? 0) ?: null
+                );
                 if ($result instanceof ScriptRejection) {
                     // The caller acts for the form's owner, so it is told why a script could not
                     // run, and what to change: every submission fails the same way until then.
@@ -989,26 +985,32 @@ class ChatToolsService
                 if (!$existing) {
                     throw new \Exception('Response not found');
                 }
-                $upd = [];
-                if (isset($args['answers']) && is_array($args['answers'])) {
-                    // PATCH semantics: merge the patch over the STORED answers before validating,
-                    // so a partial update isn't rejected for omitting an unrelated required field
-                    // (mirrors the external API and AppPublicController::updateResponseById).
-                    $existingAnswers = is_array($existing['answers'] ?? null) ? $existing['answers'] : [];
-                    $upd['answers'] = $this->preparedAnswers($form, array_merge($existingAnswers, $args['answers']));
-                }
-                if (array_key_exists('status', $args)) {
-                    $upd['status'] = $args['status'];
-                }
-                if ($upd === []) {
+                $partial = isset($args['answers']) && is_array($args['answers']);
+                if (!$partial && !array_key_exists('status', $args)) {
                     throw new \Exception('Nothing to update — provide answers (a partial patch) and/or status');
                 }
-                $data = $this->responseService->updateResponse($formId, $responseId, $upd);
+                // Runs again over the record as it then is if another edit lands first (mergeEdit).
+                $edit = function (array $stored, ?string $version) use ($args, $form, $formId, $responseId, $partial): ?array {
+                    $upd = [];
+                    if ($partial) {
+                        // PATCH semantics: merge the patch over the STORED answers before validating,
+                        // so a partial update isn't rejected for omitting an unrelated required field
+                        // (mirrors the external API and AppPublicController::updateResponseById).
+                        $existingAnswers = is_array($stored['answers'] ?? null) ? $stored['answers'] : [];
+                        $upd['answers'] = $this->preparedAnswers($form, array_merge($existingAnswers, $args['answers']));
+                    }
+                    if (array_key_exists('status', $args)) {
+                        $upd['status'] = $args['status'];
+                    }
+                    $updated = $this->responseService->updateResponse($formId, $responseId, $upd, $version);
+                    if ($updated && $partial) {
+                        $this->responseService->syncResponseLinks($formId, $responseId, $form['fields'] ?? [], $upd['answers']);
+                    }
+                    return $updated;
+                };
+                $data = $partial ? $this->responseService->mergeEdit($formId, $responseId, $edit) : $edit($existing, null);
                 if (!$data) {
                     throw new \Exception('Response not found');
-                }
-                if (isset($upd['answers'])) {
-                    $this->responseService->syncResponseLinks($formId, $responseId, $form['fields'] ?? [], $upd['answers']);
                 }
                 $ctx->audit('update_response', ['formId' => $formId, 'responseId' => $responseId]);
                 break;

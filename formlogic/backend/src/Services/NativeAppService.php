@@ -105,7 +105,8 @@ class NativeAppService
     /**
      * Workers across every app here, and how many of them any one app may hold. A worker is held
      * for a whole request, and a query can run for about twenty seconds, so without the second
-     * number one app's visitors could turn every other app away.
+     * number one app's visitors could turn every other app away. A site with one busy app can
+     * raise it with NATIVE_WORKERS_PER_APP.
      */
     private const WORKERS = 4;
     private const WORKERS_PER_APP = 2;
@@ -1661,12 +1662,14 @@ class NativeAppService
         };
         $appSlot = null;
         $slot = null;
+        $perApp = filter_var(Environment::nonEmpty('NATIVE_WORKERS_PER_APP'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $perApp = min(self::WORKERS, $perApp === false ? self::WORKERS_PER_APP : $perApp);
         // A request waits up to three seconds for a slot before it is turned away: most run in
         // well under a second, so a burst (a screen loading four lists at once) is served, not
         // answered busy.
         $waitUntil = microtime(true) + 3;
         while (true) {
-            $appSlot ??= $take(basename($root) . '-', self::WORKERS_PER_APP);
+            $appSlot ??= $take(basename($root) . '-', $perApp);
             if ($appSlot) $slot = $take('', self::WORKERS);
             if ($slot || microtime(true) >= $waitUntil) break;
             usleep(50000);

@@ -35,6 +35,8 @@ class AppDomainService
     // whoever typed a name first would keep its real owner out for good.
     private const UNPROVEN_CLAIM_HOURS = 72;
 
+    private const NOT_ALLOWED = 'That domain is not allowed (localhost, private, or reserved).';
+
     public function __construct(MySQLConnection $mysql)
     {
         $this->mysql = $mysql->getConnection();
@@ -108,9 +110,25 @@ class AppDomainService
             throw new \InvalidArgumentException('Enter a valid domain, e.g. app.yourcompany.com');
         }
         if (!$this->isPublicDomain($domain)) {
-            throw new \InvalidArgumentException('That domain is not allowed (localhost, private, or reserved).');
+            throw new \InvalidArgumentException(self::NOT_ALLOWED);
         }
         return $domain;
+    }
+
+    /**
+     * Whether this normalized name is this site's own. Connected to an app, it would turn every
+     * sign-in here into one limited to that app, and a proven row for it would refuse them all.
+     * Other listed origins don't count: connecting one is how an operator who listed a customer's
+     * domain moves it off that list.
+     */
+    private function isThisSite(string $domain): bool
+    {
+        foreach (['APP_URL', 'CORS_ORIGIN'] as $setting) {
+            if ($domain !== '' && $this->normalizeDomain((string) Environment::nonEmpty($setting, '')) === $domain) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function claimProof(string $domain, string $ownerId): string
@@ -146,13 +164,8 @@ class AppDomainService
     public function createDomain(string $appId, string $ownerId, string $host, string $mode = 'launch_page'): array
     {
         $domain = $this->assertValidPublicDomain($host);
-        // This site's own name, connected to an app, would turn every sign-in here into one
-        // limited to that app. Other listed origins stay claimable: connecting one is how an
-        // operator who listed a customer's domain moves it off that list.
-        foreach (['APP_URL', 'CORS_ORIGIN'] as $setting) {
-            if ($this->normalizeDomain((string) Environment::nonEmpty($setting, '')) === $domain) {
-                throw new \InvalidArgumentException('That domain is not allowed (localhost, private, or reserved).');
-            }
+        if ($this->isThisSite($domain)) {
+            throw new \InvalidArgumentException(self::NOT_ALLOWED);
         }
         if (!in_array($mode, self::MODES, true)) {
             $mode = 'launch_page';
@@ -291,6 +304,10 @@ class AppDomainService
         }
 
         $domain = $row['normalized_domain'];
+        // A claim from before createDomain refused this name: nothing here may prove it.
+        if ($this->isThisSite($domain)) {
+            return ['ok' => false, 'status' => 'failed', 'message' => self::NOT_ALLOWED, 'domain' => $this->getDomain($domainId, $ownerId)];
+        }
         $token = $row['verification_token'];
         $verified = false;
         $error = null;
@@ -454,12 +471,17 @@ class AppDomainService
     /**
      * Whether some app's owner has proven this host, at any point: a lapsed or unpublished domain
      * is still a name they can point elsewhere. Pending claims don't count, or anyone could
-     * squat a name to refuse sign-in on it.
+     * squat a name to refuse sign-in on it. Nor does this site's own name, which older versions
+     * let an owner prove: everyone here would be locked out, with no main site to go to.
      */
     public function provenByAnOwner(string $host): bool
     {
+        $domain = $this->normalizeDomain($host);
+        if ($this->isThisSite($domain)) {
+            return false;
+        }
         $stmt = $this->mysql->prepare("SELECT 1 FROM app_domains WHERE normalized_domain = :d AND verified_at IS NOT NULL LIMIT 1");
-        $stmt->execute(['d' => $this->normalizeDomain($host)]);
+        $stmt->execute(['d' => $domain]);
         return $stmt->fetchColumn() !== false;
     }
 

@@ -7,6 +7,7 @@ namespace FormLogic\Controllers;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\{AppService, AppUserService, AuditService, HostedAppService, NativeAppService, RuntimeEngineService};
 use FormLogic\Support\HostedActorContext;
+use FormLogic\Support\SqlErrorText;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -248,8 +249,11 @@ class HostedAppController
         }
         catch (\InvalidArgumentException $e) { return $this->actorError($response, $actor, $e->getMessage(), 400); }
         catch (\RuntimeException $e) {
-            if (in_array($e->getCode(), [404, 409, 422], true)) return $this->actorError($response, $actor, $e->getMessage(), $e->getCode());
+            if (in_array($e->getCode(), [403, 404, 409, 422], true)) return $this->actorError($response, $actor, $e->getMessage(), $e->getCode());
             error_log('Hosted app failure: ' . $e->getMessage());
+            if (SqlErrorText::isBusy($e->getMessage())) {
+                return $this->actorError($response->withHeader('Retry-After', '2'), $actor, 'This app is busy. Please try again in a moment.', 503, 'app_busy');
+            }
             return $this->actorError($response, $actor, 'App hosting is temporarily unavailable', 503);
         }
         catch (\Throwable $e) {

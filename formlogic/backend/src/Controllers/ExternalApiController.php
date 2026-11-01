@@ -277,28 +277,10 @@ class ExternalApiController
 
         $createdId = null;
         try {
-            // Atomic quota enforcement: re-check the count under a per-form lock so
-            // concurrent submissions cannot both pass the earlier check and overshoot
-            // the cap (the lock fails open under contention).
-            $quotaLock = null;
-            if (!empty($settings['quotaLimit'])) {
-                $quotaLock = $this->responseService->acquireFormLock($args['formId']);
-                if ($quotaLock === null) {
-                    // Audit FL-004/C-11: no mutex → concurrent submissions could overshoot
-                    // the hard cap. Fail closed + retryable.
-                    return $this->jsonResponse($response, ['error' => true, 'retryable' => true,
-                        'message' => 'The form is busy — please retry in a moment.'], 503);
-                }
-                if ($this->responseService->getResponseCount($args['formId']) >= (int)$settings['quotaLimit']) {
-                    $this->responseService->releaseFormLock($quotaLock);
-                    return $this->jsonResponse($response, ['error' => true, 'message' => 'This form has reached its maximum number of responses.'], 403);
-                }
-            }
-            try {
-                $result = $this->responseService->createResponse($args['formId'], $data, $script, $sourceRunId);
-            } finally {
-                $this->responseService->releaseFormLock($quotaLock);
-            }
+            // Atomic quota enforcement: the count is checked again around the insert, under a
+            // per-form lock, so concurrent submissions cannot both pass the earlier check and
+            // overshoot the cap.
+            $result = $this->responseService->createResponse($args['formId'], $data, $script, $sourceRunId, (int) ($settings['quotaLimit'] ?? 0) ?: null);
 
             if ($result instanceof ScriptRejection) {
                 // The key is the form owner's (authorizeForm), so it is told why a script could not run.
@@ -329,6 +311,11 @@ class ExternalApiController
                 unset($created['etag']);
             }
             return $this->jsonResponse($response, ['response' => $created], 201);
+        } catch (\FormLogic\Services\FormQuotaRefused $e) {
+            // Audit FL-004/C-11: no mutex → concurrent submissions could overshoot the hard cap.
+            return $e->busy
+                ? $this->jsonResponse($response, ['error' => true, 'retryable' => true, 'message' => $e->getMessage()], 503)
+                : $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 403);
         } catch (\FormLogic\Services\EncryptionEnablingException $e) {
             // Enable-race gate: mid-enable submissions fail closed with 409.
             return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\EncryptionEnablingException::ERROR_CODE);
@@ -617,57 +604,61 @@ class ExternalApiController
         // Normalize: an empty/non-JSON body parses to null, which would raise an
         // uncaught \TypeError (HTTP 500) when passed to the array-typed service.
         $data = $request->getParsedBody() ?? [];
+        $partial = isset($data['answers']) && is_array($data['answers']);
 
-        // Validate answers if provided
-        if (isset($data['answers']) && is_array($data['answers'])) {
-            // PATCH semantics: callers (API clients, FormLogic Desktop app-logic + flow output
-            // actions) send only the fields they change. Merge the patch over the STORED answers
-            // before validating so a partial update like {status, ended_at} isn't rejected for
-            // omitting an unrelated required field. Mirrors AppPublicController::updateResponseById.
-            $existing = $this->responseService->getResponse($args['formId'], $args['id']);
-            // Not there (deleted): say so, rather than validating a merge over nothing
-            // ("Validation failed" for fields the client never meant to send).
-            if (!$existing) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
-            }
-            // The answers the change sends are held to the shape a submission is, first and by
-            // name. Only those: a record stored before the limits stays editable (the merged
-            // validation below does not count its stored answer against the change).
-            $patch = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
-            if ($refusal = $this->responseService->answerShapeRefusal($form['fields'] ?? [], $patch)) {
-                return $this->jsonResponse($response, $refusal, 422);
-            }
-            $existingAnswers = is_array($existing['answers'] ?? null) ? $existing['answers'] : [];
-            $data['answers'] = array_merge($existingAnswers, $data['answers']);
-            // Drop calculated/unknown-field answers before validating/persisting.
-            $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
-            $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
-            $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
-            // Owner programmatic update → owner attachment rules (FILE-PRIV-001).
-            $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''), [
-                'isOwner' => true,
-                'existingResponseId' => (string) ($args['id'] ?? ''),
-            ]);
-            if (!empty($__fe)) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
-            }
-            if ($this->responseService->answersTooLarge($data['answers'])) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
-            }
-            $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
-            foreach (array_keys(ResponseService::answerShapeProblems($data['answers'])) as $storedOnly) {
-                if (!array_key_exists($storedOnly, $patch)) {
-                    unset($validationErrors[$storedOnly]);
+        // Runs again over the record as it then is if another edit lands first (mergeEdit), so
+        // that $data here stays what the caller sent.
+        $edit = function (array $stored, ?string $version) use ($args, $form, $data, $partial, $response): array|Response|null {
+            $patch = [];
+            if ($partial) {
+                // PATCH semantics: callers (API clients, FormLogic Desktop app-logic + flow output
+                // actions) send only the fields they change. Merge the patch over the STORED answers
+                // before validating so a partial update like {status, ended_at} isn't rejected for
+                // omitting an unrelated required field. Mirrors AppPublicController::updateResponseById.
+                // The answers the change sends are held to the shape a submission is, first and by
+                // name. Only those: a record stored before the limits stays editable (the merged
+                // validation below does not count its stored answer against the change).
+                $patch = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
+                if ($refusal = $this->responseService->answerShapeRefusal($form['fields'] ?? [], $patch)) {
+                    return $this->jsonResponse($response, $refusal, 422);
+                }
+                $existingAnswers = is_array($stored['answers'] ?? null) ? $stored['answers'] : [];
+                $data['answers'] = array_merge($existingAnswers, $data['answers']);
+                // Drop calculated/unknown-field answers before validating/persisting.
+                $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
+                $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+                $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
+                // Owner programmatic update → owner attachment rules (FILE-PRIV-001).
+                $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''), [
+                    'isOwner' => true,
+                    'existingResponseId' => (string) ($args['id'] ?? ''),
+                ]);
+                if (!empty($__fe)) {
+                    return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
+                }
+                if ($this->responseService->answersTooLarge($data['answers'])) {
+                    return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
+                }
+                $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
+                foreach (array_keys(ResponseService::answerShapeProblems($data['answers'])) as $storedOnly) {
+                    if (!array_key_exists($storedOnly, $patch)) {
+                        unset($validationErrors[$storedOnly]);
+                    }
+                }
+                if (!empty($validationErrors)) {
+                    return $this->jsonResponse($response, [
+                        'error' => true,
+                        'message' => 'Validation failed',
+                        'errors' => $validationErrors,
+                    ], 400);
                 }
             }
-            if (!empty($validationErrors)) {
-                return $this->jsonResponse($response, [
-                    'error' => true,
-                    'message' => 'Validation failed',
-                    'errors' => $validationErrors,
-                ], 400);
+            $updated = $this->responseService->updateResponse($args['formId'], $args['id'], $data, $version);
+            if ($updated && $partial) {
+                $this->responseService->syncResponseLinks($args['formId'], $args['id'], $form['fields'] ?? [], $data['answers']);
             }
-        }
+            return $updated;
+        };
 
         // Only echo the full record (response contents / PII) when the key ALSO holds
         // responses:read. A responses:manage-only key gets just an acknowledgement, so the update
@@ -675,19 +666,30 @@ class ExternalApiController
         $scopes = $request->getAttribute('apiKeyScopes');
         $canRead = is_array($scopes) && in_array('responses:read', $scopes, true);
 
+        // If-Match: <etag> writes only over the version the client read.
+        $ifMatch = self::ifMatch($request);
         try {
-            // If-Match: <etag> writes only over the version the client read.
-            $formResponse = $this->responseService->updateResponse($args['formId'], $args['id'], $data, self::ifMatch($request));
+            // Not there (deleted): mergeEdit says so, rather than validating a merge over nothing
+            // ("Validation failed" for fields the client never meant to send).
+            $formResponse = $partial
+                ? $this->responseService->mergeEdit($args['formId'], $args['id'], $edit, $ifMatch)
+                : $edit([], $ifMatch);
+            if ($formResponse instanceof Response) {
+                return $formResponse;
+            }
             if (!$formResponse) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
-            }
-            if (isset($data['answers']) && is_array($data['answers'])) {
-                $this->responseService->syncResponseLinks($args['formId'], $args['id'], $form['fields'] ?? [], $data['answers']);
             }
             return $this->jsonResponse($response, $canRead
                 ? ['response' => $this->sanitizeResponseData($formResponse)]
                 : ['success' => true, 'id' => $args['id']]);
         } catch (ResponseVersionConflict $e) {
+            if ($ifMatch === null) {
+                // This client named no version: others got in first on every attempt, and
+                // nothing is wrong with the edit.
+                return $this->jsonResponse($response->withHeader('Retry-After', '2'), ['error' => true, 'retryable' => true,
+                    'message' => 'This record is being changed by others. Please try again.'], 503);
+            }
             $body = ['error' => true, 'code' => ResponseVersionConflict::ERROR_CODE,
                 'message' => 'The record has changed since it was read; nothing was written.'];
             if ($canRead) {

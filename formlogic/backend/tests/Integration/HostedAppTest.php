@@ -2,7 +2,10 @@
 declare(strict_types=1);
 namespace FormLogic\Tests\Integration;
 
+use FormLogic\Controllers\HostedAppController;
+use FormLogic\Database\SqliteSnapshot;
 use FormLogic\Services\{HostedAppService, SandboxRunner};
+use FormLogic\Support\SqlErrorText;
 use PHPUnit\Framework\TestCase;
 
 class HostedAppTest extends TestCase
@@ -44,6 +47,131 @@ class HostedAppTest extends TestCase
         self::assertStringNotContainsString('private', json_encode($this->host->get('app-a')));
         $this->host->publish('app-a', $this->package(), 1);
         self::assertSame(1, $this->host->get('app-a', true)['recordCount']);
+    }
+    private function connection(string $appId = 'app-a'): \PDO
+    {
+        $db = new \PDO('sqlite:' . HostedAppService::databasePath($appId, $this->root), null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
+        $db->exec('PRAGMA busy_timeout=0');
+        return $db;
+    }
+    public function testAppDatabasesUseWal(): void
+    {
+        $this->host->publish('app-a', $this->package(), 0);
+        self::assertSame('wal', strtolower((string) $this->connection()->query('PRAGMA journal_mode')->fetchColumn()));
+    }
+    public function testAReadActionRunsWhileAWriterHoldsTheLock(): void
+    {
+        $this->host->publish('app-a', $this->package(), 0);
+        $this->host->run('app-a', 'save', ['id' => 'one', 'text' => 'kept'], 'owner', true);
+        $writer = $this->connection();
+        $writer->exec('BEGIN IMMEDIATE');
+        $writer->exec("UPDATE records SET updated_at = 'not committed'");
+        $started = microtime(true);
+        $rows = $this->host->run('app-a', 'list', [], 'member', false);
+        self::assertLessThan(1.5, microtime(true) - $started, 'it waits for nothing');
+        self::assertSame('kept', $rows[0]['data']['text']);
+        self::assertNotSame('not committed', $rows[0]['updatedAt']);
+        $writer->exec('ROLLBACK');
+    }
+    public function testAWriteActionGoesAheadWhileAReadIsOpen(): void
+    {
+        $this->host->publish('app-a', $this->package(), 0);
+        $reader = $this->connection();
+        $reader->exec('BEGIN');
+        $reader->query('SELECT COUNT(*) FROM records')->fetchAll();
+        self::assertSame(['id' => 'one'], $this->host->run('app-a', 'save', ['id' => 'one', 'text' => 'kept'], 'owner', true));
+        $reader->exec('COMMIT');
+    }
+    public function testAReadActionStillCannotWrite(): void
+    {
+        $p = $this->package();
+        $p['actions']['sneak'] = ['access' => 'member', 'mode' => 'read', 'source' => 'function onRequest(ctx) { return ctx.db.put("notes","x",{}); }'];
+        $this->host->publish('app-a', $p, 0);
+        try {
+            $this->host->run('app-a', 'sneak', [], 'member', false);
+            self::fail('A read action writes nothing');
+        } catch (\RuntimeException $refused) {
+            self::assertStringContainsString('read only', $refused->getMessage());
+        }
+        self::assertSame([], $this->host->run('app-a', 'list', [], 'owner', true));
+    }
+    public function testAWriteActionThatCannotGetTheLockIsBusyAndNotARefusal(): void
+    {
+        $this->host->publish('app-a', $this->package(), 0);
+        $writer = $this->connection();
+        $writer->exec('BEGIN IMMEDIATE');
+        try {
+            $this->host->run('app-a', 'save', ['id' => 'one', 'text' => 'text'], 'owner', true);
+            self::fail('The lock is taken');
+        } catch (\PDOException $busy) {
+            self::assertTrue(SqlErrorText::isBusy($busy->getMessage()), $busy->getMessage());
+        }
+        $writer->exec('ROLLBACK');
+        self::assertSame([], $this->host->run('app-a', 'list', [], 'owner', true));
+    }
+    public function testABusyDatabaseAnswersSomethingAClientCanRetry(): void
+    {
+        $controller = (new \ReflectionClass(HostedAppController::class))->newInstanceWithoutConstructor();
+        $respond = new \ReflectionMethod(HostedAppController::class, 'respond');
+        $busy = static function (): array {
+            throw new \PDOException('SQLSTATE[HY000]: General error: 5 database is locked');
+        };
+        $answer = $respond->invoke($controller, new \Slim\Psr7\Response(), $busy, ['id' => 'actor']);
+        self::assertSame(503, $answer->getStatusCode());
+        self::assertSame('2', $answer->getHeaderLine('Retry-After'));
+        $body = json_decode((string) $answer->getBody(), true);
+        self::assertSame('app_busy', $body['code']);
+        self::assertStringNotContainsString('SQLSTATE', (string) $answer->getBody());
+    }
+    public function testEveryCopyHoldsWhatIsStillInTheWal(): void
+    {
+        $this->host->publish('app-a', $this->package(), 0);
+        // An open connection keeps the -wal, so the record is in it and not yet in the file.
+        $open = $this->connection();
+        $open->query('SELECT COUNT(*) FROM records')->fetchAll();
+        $this->host->run('app-a', 'save', ['id' => 'one', 'text' => 'only-in-the-wal'], 'owner', true);
+        $path = HostedAppService::databasePath('app-a', $this->root);
+        self::assertStringNotContainsString('only-in-the-wal', (string) file_get_contents($path));
+
+        $download = $this->host->snapshot('app-a');
+        self::assertStringContainsString('only-in-the-wal', (string) file_get_contents($download));
+        unlink($download);
+
+        $staged = $this->root . '/staged.bak';
+        $snapshot = (new SqliteSnapshot())->snapshot($path, $staged, ['deployment', 'records'], static function (string $copy): void {
+            HostedAppService::decryptCopy($copy, 'app-a');
+        });
+        self::assertSame('delete', strtolower((string) (new \PDO('sqlite:' . $staged))->query('PRAGMA journal_mode')->fetchColumn()), $snapshot['method']);
+        self::assertStringContainsString('only-in-the-wal', (string) file_get_contents($staged));
+        self::assertFileDoesNotExist($staged . '-wal');
+        unlink($staged);
+
+        self::assertTrue(HostedAppService::restoreDatabase('app-b', $path, $this->root, false));
+        self::assertSame('only-in-the-wal', $this->host->run('app-b', 'list', [], 'owner', true)[0]['data']['text']);
+    }
+    public function testARestoreIsNotJoinedByAWalLeftBehind(): void
+    {
+        $this->host->publish('app-a', $this->package(), 0);
+        $this->host->run('app-a', 'save', ['id' => 'one', 'text' => 'kept'], 'owner', true);
+        $target = HostedAppService::databasePath('app-b', $this->root);
+        file_put_contents($target . '-wal', 'a leftover of the database that was here');
+        file_put_contents($target . '-shm', 'and its index');
+
+        self::assertTrue(HostedAppService::restoreDatabase('app-b', HostedAppService::databasePath('app-a', $this->root), $this->root, false));
+
+        self::assertFileDoesNotExist($target . '-shm');
+        self::assertSame('kept', $this->host->run('app-b', 'list', [], 'owner', true)[0]['data']['text']);
+    }
+    public function testErasingAnAppTakesItsWalWithIt(): void
+    {
+        $this->host->publish('app-a', $this->package(), 0);
+        $path = HostedAppService::databasePath('app-a', $this->root);
+        file_put_contents($path . '-wal', 'records');
+        file_put_contents($path . '-shm', 'index');
+        HostedAppService::eraseStorage('app-a', $this->root);
+        foreach ([$path, $path . '-wal', $path . '-shm'] as $file) {
+            self::assertFileDoesNotExist($file);
+        }
     }
     public function testMemberCannotCallOwnerAction(): void
     {

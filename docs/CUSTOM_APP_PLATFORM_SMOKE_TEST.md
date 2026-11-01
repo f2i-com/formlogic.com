@@ -201,7 +201,7 @@ Retention: `--days=N` wins, else env `IDEMPOTENCY_RETENTION_DAYS`, else 30 (clam
 Safe to re-run (batched deletes + a lock file prevents overlapping cron ticks). Cron example:
 
 ```
-17 3 * * * php /path/to/formlogic/backend/bin/idempotency-cleanup.php >> /var/log/formlogic-idempotency.log 2>&1
+17 3 * * * php /path/to/formlogic/backend/bin/idempotency-cleanup.php >> /path/to/formlogic/backend/logs/formlogic-idempotency.log 2>&1
 ```
 
 ---

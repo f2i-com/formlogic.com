@@ -56,15 +56,30 @@ final class AppUrl
         );
     }
 
-    /** This site's own address when there's no request to go on: only ever what the server was told. */
+    /**
+     * This site's own address when there's no request to go on: only ever what the server was told.
+     * A loopback CORS origin is the .env.example default, not an address, and outside development
+     * nobody could reach it: better no sign-in address for a domain than a dead one.
+     */
     public static function configuredBase(): ?string
     {
-        foreach ([self::env('APP_URL'), self::env('CORS_ORIGIN'), self::allowedOrigins()[0] ?? ''] as $base) {
-            if ($base !== '') {
+        $appUrl = self::env('APP_URL');
+        if ($appUrl !== '') {
+            return rtrim($appUrl, '/');
+        }
+        $development = self::env('APP_ENV') === 'development';
+        foreach ([self::env('CORS_ORIGIN'), self::allowedOrigins()[0] ?? ''] as $base) {
+            if ($base !== '' && ($development || !self::isLoopback($base))) {
                 return rtrim($base, '/');
             }
         }
         return null;
+    }
+
+    private static function isLoopback(string $origin): bool
+    {
+        $host = strtolower((string) parse_url($origin, PHP_URL_HOST));
+        return $host === 'localhost' || str_ends_with($host, '.localhost') || $host === '[::1]' || preg_match('/^127(\.\d{1,3}){3}$/D', $host) === 1;
     }
 
     /** @return string[] */

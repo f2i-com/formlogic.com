@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace FormLogic\Tests\Unit;
 
 use FormLogic\Controllers\AuthController;
+use FormLogic\Services\AccountErasureService;
+use FormLogic\Services\AppService;
+use FormLogic\Services\AppStorageEraser;
 use FormLogic\Services\AuthService;
 use FormLogic\Services\FormService;
 use PHPUnit\Framework\TestCase;
@@ -141,6 +144,63 @@ final class AccountErasureTruthfulnessTest extends TestCase
         $this->assertSame(1, $body['pendingCleanup'] ?? null);
         $this->assertSame([], $forms->inventory, 'listed forms still deleted normally');
         $this->assertSame([], $auth->deletedUsers, 'account must survive while deleted-form data may remain on disk');
+    }
+
+    /**
+     * An app's row is all that lists what it holds on disk. If the row went first, a storage erase
+     * that failed left nothing for the retry to find, and it then reported the erasure complete
+     * with the app's database and keys still there.
+     */
+    public function testAppStorageThatCannotGoKeepsTheAppListedForTheRetry(): void
+    {
+        $apps = new class () extends AppService {
+            /** @var array<string,bool> */
+            public array $rows = ['app-1' => true];
+            public function __construct()
+            {
+                // no DB needed
+            }
+            public function getAllApps(string $userId): array
+            {
+                return array_map(static fn (string $id) => ['id' => $id, 'ownerId' => 'user-1'], array_keys($this->rows));
+            }
+            public function deleteApp(string $appId): bool
+            {
+                unset($this->rows[$appId]);
+                return true;
+            }
+        };
+        $storage = new class () extends AppStorageEraser {
+            public bool $busy = true;
+            /** @var string[] */
+            public array $erased = [];
+            public function __construct()
+            {
+                // nothing on disk
+            }
+            public function erase(string $appId): void
+            {
+                if ($this->busy) {
+                    throw new \RuntimeException('The app is busy.', 409);
+                }
+                $this->erased[] = $appId;
+            }
+        };
+        $auth = $this->authStub();
+        $erasure = new AccountErasureService($auth, null, $apps, null, null, null, $storage);
+
+        $first = $erasure->erase('user-1');
+        $this->assertFalse($first['completed']);
+        $this->assertSame(1, $first['failedApps']);
+        $this->assertArrayHasKey('app-1', $apps->rows, 'the row stays, or the retry finds nothing to erase');
+        $this->assertSame([], $auth->deletedUsers);
+
+        $storage->busy = false;
+        $second = $erasure->erase('user-1');
+        $this->assertTrue($second['completed']);
+        $this->assertSame(['app-1'], $storage->erased);
+        $this->assertSame([], $apps->rows);
+        $this->assertSame(['user-1'], $auth->deletedUsers);
     }
 
     /** A retry AFTER the failure cause is fixed completes — resumable by construction. */

@@ -55,10 +55,11 @@ class AccountErasureService
                 $owner = $app['ownerId'] ?? $app['owner_id'] ?? null;
                 if ($owner === $userId && !empty($app['id'])) {
                     try {
-                        $this->appService->deleteApp((string) $app['id']);
-                        // Erasure keeps no bin entry, so this is the app's last moment:
-                        // what it holds on disk goes now, or the erasure did not complete.
+                        // Erasure keeps no bin entry, so this is the app's last moment: what it
+                        // holds on disk goes now, or the erasure did not complete. First, because
+                        // the row is all that lists the app, and a retry finds what is left by it.
                         $this->appStorage->erase((string) $app['id']);
+                        $this->appService->deleteApp((string) $app['id']);
                     } catch (\Throwable $e) {
                         $failedApps++;
                         $this->logger->error('Account erasure: failed to delete app', ['appId' => $app['id'], 'userId' => $userId, 'error' => $e->getMessage()]);

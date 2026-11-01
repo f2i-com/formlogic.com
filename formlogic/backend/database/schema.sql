@@ -182,6 +182,7 @@ CREATE TABLE `aokie_companion_relay_frames` (
   `admission_grants` json DEFAULT NULL,
   `frame` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `delivered_at` datetime(3) DEFAULT NULL,
   PRIMARY KEY (`seq`),
   KEY `idx_aokie_relay_inbox` (`app_id`,`to_party`,`seq`),
   KEY `idx_aokie_relay_expiry` (`created_at`),
@@ -197,7 +198,7 @@ CREATE TABLE `aokie_companion_routing_groups` (
   `policy` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '1',
   `round_robin_cursor` bigint unsigned NOT NULL DEFAULT '0',
-  `created_by_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_by_user_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -205,7 +206,7 @@ CREATE TABLE `aokie_companion_routing_groups` (
   KEY `created_by_user_id` (`created_by_user_id`),
   KEY `idx_aokie_routing_enabled` (`app_id`,`enabled`),
   CONSTRAINT `aokie_companion_routing_groups_ibfk_1` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `aokie_companion_routing_groups_ibfk_2` FOREIGN KEY (`created_by_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+  CONSTRAINT `aokie_companion_routing_groups_ibfk_2` FOREIGN KEY (`created_by_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;

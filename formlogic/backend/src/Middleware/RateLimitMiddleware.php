@@ -55,6 +55,8 @@ class RateLimitMiddleware implements MiddlewareInterface
      *                                  is counted by address; refusing it is the controller's.
      * @param bool $perApp              Count each /api/app/{slug} apart, so a frame that spends a
      *                                  viewer's budget in its own app leaves them the others.
+     * @param bool $demoPostsRead       These POST routes only read, so the demo account's split by
+     *                                  address (see getClientKey) covers them as it does a GET.
      */
     public function __construct(
         RateLimiter $limiter,
@@ -64,7 +66,8 @@ class RateLimitMiddleware implements MiddlewareInterface
         bool $keyByUser = false,
         bool $failClosed = false,
         ?ApiKeyService $apiKeys = null,
-        private bool $perApp = false
+        private bool $perApp = false,
+        private bool $demoPostsRead = false
     ) {
         $this->limiter = $limiter;
         $this->maxRequests = $maxRequests;
@@ -152,7 +155,8 @@ class RateLimitMiddleware implements MiddlewareInterface
      * (same demo detection as JsonResponseTrait::isDemoRequest). The few writes
      * the demo may still make (DemoReadOnlyMiddleware's allowlist, e.g. minting
      * MCP tokens) keep the one shared account budget, so rotating addresses
-     * cannot buy fresh credential-management budgets (RATE-001).
+     * cannot buy fresh credential-management budgets (RATE-001). A route of POSTs that only read
+     * (reports carry their query in the body) opts in with $demoPostsRead.
      */
     private function getClientKey(Request $request): string
     {
@@ -171,7 +175,8 @@ class RateLimitMiddleware implements MiddlewareInterface
             $userId = $request->getAttribute('userId');
             if (is_string($userId) && $userId !== '') {
                 $user = $request->getAttribute('user');
-                if (in_array(strtoupper($request->getMethod()), ['GET', 'HEAD', 'OPTIONS'], true) && is_object($user) && isset($user->email) && $user->email === ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local')) {
+                $readsOnly = $this->demoPostsRead || in_array(strtoupper($request->getMethod()), ['GET', 'HEAD', 'OPTIONS'], true);
+                if ($readsOnly && is_object($user) && isset($user->email) && $user->email === ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local')) {
                     return $this->keyPrefix . ':u:' . hash('sha256', $userId) . ':' . hash('sha256', IpResolver::rateLimitSubject($this->ipResolver->getClientIp($request)));
                 }
                 return $this->keyPrefix . ':u:' . hash('sha256', $userId);

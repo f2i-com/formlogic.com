@@ -276,7 +276,7 @@ global `FormLogic` SDK, which is already injected (do not redefine it):
 
   await FormLogic.context()            -> { formId, title, fields: [{ id, label, type }] }
   await FormLogic.records({ limit })   -> [{ id, answers: {<fieldId>: value}, submittedAt, status, tags }]  // this form's saved records, newest first
-  await FormLogic.submit(answers)      -> saves a record (answers is an object keyed by FIELD ID); returns the saved record. Runs server validation + the form's onSubmit script.
+  await FormLogic.submit(answers)      -> saves a record (answers is an object keyed by FIELD ID). Runs server validation + the form's onSubmit script. Returns { id, status, submittedAt, updatedAt, answers }, and answers holds only the fields this person sent. A visitor on a public link never gets `computed` or `tags`, nor calculated or hidden fields: they appear only for the form's owner and app members, so never read them from the result. To show a visitor a score, work it out in this screen. onSubmit cannot send a result back to a visitor: all it can say is a refusal, `return { reject: true, message }`, which saves nothing and makes submit() throw with that message.
   await FormLogic.currentUser()        -> { id, name, email } | null
   FormLogic.toast.success(message)     // small success toast
   FormLogic.toast.error(message)       // small error toast

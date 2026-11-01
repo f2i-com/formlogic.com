@@ -1282,6 +1282,9 @@ $app->add(function ($request, $handler) use ($oauthPublicPaths) {
         ->withoutHeader('Access-Control-Allow-Credentials'); // '*' + credentials is an invalid CORS combo
 });
 
+// Added last, so outermost: it sees every answer, and keeps the headers those above have set.
+$app->add(new \FormLogic\Middleware\SqlErrorGuardMiddleware($appLogger));
+
 // Create auth middleware instances
 $appDomainSessions = new \FormLogic\Support\AppDomainSession(
     $connectedApp,
@@ -2033,8 +2036,9 @@ $app->get('/api/forms/{formId}/app-contexts', function ($request, $response) use
 
 // Owner-scoped report execution — powers form section-screen widget dashboards in the builder
 // preview / play route / standalone (non-app) forms. Read-only; the owner sees all their responses.
-// A report runs on the form's database, and a batch is up to 40 of them.
-$reportRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'reports', true);
+// A report runs on the form's database, and a batch is up to 40 of them. Demo visitors are all one
+// account: by address, or one busy visitor would refuse everyone's charts.
+$reportRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'reports', true, demoPostsRead: true);
 $app->post('/api/forms/{id}/reports/run', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\FormReportController::class)->runOwner($request, $response, $getArgs($request));
 })->add($reportRateLimiter)->add($authRequired);
@@ -2193,9 +2197,11 @@ $app->post('/api/public/forms/{id}/reports/run-batch', function ($request, $resp
 })->add($publicFormRateLimiter);
 
 // Public: resolve a custom-domain host to its branded launch config (display/install metadata only).
+// Every page load on a host the build doesn't know asks here, and in the forms' budget each one
+// would cost a form on the same address one of its opens.
 $app->get('/api/public/launch/by-host', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\AppDomainController::class)->resolveByHost($request, $response);
-})->add($publicFormRateLimiter);
+})->add(new RateLimitMiddleware($rateLimiter, 60, 60, 'launch_by_host'));
 
 // Public: whether this server may obtain a certificate for a host (Caddy's on-demand TLS asks here).
 // Caddy asks from one address, once per new name, and a name costs a stranger nothing to send: in

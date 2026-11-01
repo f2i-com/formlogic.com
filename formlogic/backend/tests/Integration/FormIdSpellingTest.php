@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace FormLogic\Tests\Integration;
 
+use FormLogic\Services\AccountBackupService;
+use FormLogic\Services\TrashService;
+
 /**
  * MySQL's collation finds a form under spellings of its id that aren't its id: a trailing space, an
  * accent, another case. To the file store each is another database, with no fields in it, so an
@@ -95,5 +98,113 @@ final class FormIdSpellingTest extends E2eeTestCase
 
         $this->assertInstanceOf(\PDO::class, self::$sqlite->getFormDatabase($id));
         $this->assertTrue(self::$sqlite->formDatabaseExists($id));
+    }
+
+    /** @return array<string, array{0: string}> */
+    public static function olderIds(): array
+    {
+        return ['a dot' => ['survey.2026-'], 'a space' => ['old form '], 'a plus' => ['old+form-'], 'an accent' => ["caf\u{00E9}-"]];
+    }
+
+    /** A form as older versions left it: its row, and the fields its owner saved. */
+    private function anOlderForm(string $prefix): string
+    {
+        $id = $prefix . bin2hex(random_bytes(4));
+        self::$pdo->prepare("INSERT INTO forms (id, user_id, title, status, settings, theme) VALUES (?, ?, 'Old', 'published', '{}', '{}')")->execute([$id, $this->userId]);
+        self::$forms->updateForm($id, ['fields' => [['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => true]]]);
+        // A new connection, as the next request would have.
+        self::$sqlite->closeAll();
+        return $id;
+    }
+
+    private function backup(): AccountBackupService
+    {
+        return new AccountBackupService(self::$mysql, self::$sqlite, self::$forms, self::$apps, self::$appUsers, self::$flows, self::$responses, [], self::$tmpRoot . '/sqlite', self::$uploadsPath);
+    }
+
+    private function trash(): TrashService
+    {
+        $dir = self::$tmpRoot . '/trash';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+        return new TrashService(self::$mysql, self::$sqlite, $this->backup(), self::$forms, self::$apps, self::$flows, ['retentionDays' => 30, 'dir' => $dir]);
+    }
+
+    /** @dataProvider olderIds */
+    public function testAnOlderIdOpensAndTakesAnswers(string $prefix): void
+    {
+        $id = $this->anOlderForm($prefix);
+
+        $this->assertSame('name', self::$forms->getForm($id)['fields'][0]['id'] ?? null);
+        $this->assertNotEmpty(self::$responses->createResponse($id, ['answers' => ['name' => 'Ada']], null)['id']);
+    }
+
+    /** @dataProvider olderIds */
+    public function testTheOwnerStillSavesAnOlderIdThroughCreate(string $prefix): void
+    {
+        $id = $this->anOlderForm($prefix);
+
+        $saved = self::$forms->createForm(['id' => $id, 'userId' => $this->userId, 'title' => 'Renamed']);
+        $this->assertSame($id, $saved['id']);
+        $this->assertSame('Renamed', self::$forms->getForm($id)['title']);
+
+        $this->expectExceptionMessage('A form with this ID already exists');
+        self::$forms->createForm(['id' => $id, 'userId' => $this->makeUser(), 'title' => 'Theirs']);
+    }
+
+    /** @dataProvider olderIds */
+    public function testAnOlderIdIsNotNewlyAvailable(string $prefix): void
+    {
+        $this->expectExceptionMessage('Invalid form id');
+        self::$forms->createForm(['id' => $prefix . bin2hex(random_bytes(4)), 'userId' => $this->userId, 'title' => 'New']);
+    }
+
+    /** @dataProvider olderIds */
+    public function testAnOlderIdComesBackFromTheBin(string $prefix): void
+    {
+        $id = $this->anOlderForm($prefix);
+        self::$responses->createResponse($id, ['answers' => ['name' => 'Ada']], null);
+        $trash = $this->trash();
+        $this->assertTrue($trash->trashForm($id, $this->userId)['trashed'] ?? false);
+        $this->assertNull(self::$forms->getForm($id));
+        $this->assertFalse(self::$sqlite->formDatabaseExists($id));
+
+        $item = $this->row('SELECT id FROM trash_items WHERE original_id = ? AND user_id = ?', [$id, $this->userId]);
+        $restored = $trash->restore((string) $item['id'], $this->userId);
+
+        $this->assertSame($id, $restored['restored']['forms'][0]['id'] ?? null);
+        $this->assertSame($id, self::$forms->getForm($id)['id']);
+        $this->assertSame(1, self::$responses->getResponseCount($id));
+        self::$sqlite->closeAll();
+    }
+
+    /** What the bin may bring back, an upload may not: an archive says what it likes. */
+    public function testAnUploadedArchiveIsStillHeldToTheFormat(): void
+    {
+        $id = $this->anOlderForm('old form ');
+        $this->assertTrue($this->trash()->trashForm($id, $this->userId)['trashed'] ?? false);
+        $snapshot = self::$tmpRoot . '/trash/' . $this->row('SELECT zip_path FROM trash_items WHERE original_id = ?', [$id])['zip_path'];
+
+        try {
+            $this->backup()->importAccount($snapshot, $this->userId, ['preserveIds' => true]);
+            $this->fail('an archive chose an id');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('Invalid form id', $e->getMessage());
+        }
+        $this->assertNull(self::$forms->getForm($id));
+    }
+
+    public function testASpellingOfAnOlderIdIsNotTheForm(): void
+    {
+        $id = $this->anOlderForm('old form ');
+        $before = $this->databases();
+        try {
+            self::$sqlite->getFormDatabase($id . ' ');
+            $this->fail('a trailing space found its way to a file');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertSame('Invalid form id', $e->getMessage());
+        }
+        $this->assertSame($before, $this->databases());
     }
 }

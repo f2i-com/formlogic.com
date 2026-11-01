@@ -107,13 +107,25 @@ final class DataOperationLogService
             $columns[(string) $col['name']] = true;
         }
         if (!isset($columns['row_version'])) {
-            $db->exec("ALTER TABLE responses ADD COLUMN row_version INTEGER NOT NULL DEFAULT 1");
+            $this->addColumn($db, "row_version INTEGER NOT NULL DEFAULT 1");
         }
         if (!isset($columns['lifecycle_state'])) {
-            $db->exec("ALTER TABLE responses ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active'");
+            $this->addColumn($db, "lifecycle_state TEXT NOT NULL DEFAULT 'active'");
         }
         if (!isset($columns['trashed_at'])) {
-            $db->exec('ALTER TABLE responses ADD COLUMN trashed_at TEXT');
+            $this->addColumn($db, 'trashed_at TEXT');
+        }
+    }
+
+    /** Two first requests can both find a column missing: the one that adds it second has its schema. */
+    private function addColumn(\PDO $db, string $column): void
+    {
+        try {
+            $db->exec('ALTER TABLE responses ADD COLUMN ' . $column);
+        } catch (\PDOException $e) {
+            if (!str_contains($e->getMessage(), 'duplicate column name')) {
+                throw $e;
+            }
         }
     }
 

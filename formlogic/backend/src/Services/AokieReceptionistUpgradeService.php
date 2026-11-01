@@ -101,6 +101,12 @@ final class AokieReceptionistUpgradeService
     /** @var list<array{item:string,reason:string}> */
     private array $skipped = [];
 
+    /** @var array<string,true> connector grants this run's operator named */
+    private array $approvedGrants = [];
+
+    /** @var array<string,true> connector grants this run left out, for the operator to see */
+    private array $heldBackGrants = [];
+
     public function __construct(
         MySQLConnection $mysql,
         private FormService $forms,
@@ -118,13 +124,16 @@ final class AokieReceptionistUpgradeService
     /**
      * Inspect (dry run) or apply the upgrade.
      *
+     * @param list<string> $approvedGrants connector grants the app lacks that the operator names
+     *        to add. The summary's connectorGrantsHeldBack lists the rest.
      * @return array<string,mixed> bounded, content-free operator summary
      */
     public function run(
         string $appId,
         array $marketplaceRecord,
         bool $apply,
-        ?string $acceptedLegacyScreenSha256 = null
+        ?string $acceptedLegacyScreenSha256 = null,
+        array $approvedGrants = []
     ): array {
         if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $appId)) {
             throw new \InvalidArgumentException('A canonical app UUID is required');
@@ -139,6 +148,8 @@ final class AokieReceptionistUpgradeService
             }
         }
         $this->skipped = [];
+        $this->approvedGrants = array_fill_keys($approvedGrants, true);
+        $this->heldBackGrants = [];
 
         $source = $this->validateSourcePack($marketplaceRecord);
         $installed = $this->resolveInstalledApp($appId, $source['packFormIds']);
@@ -183,6 +194,8 @@ final class AokieReceptionistUpgradeService
             || ($installed['installation']['pack_description'] ?? null) !== $source['packDescription'];
 
         $changes = $this->describeChanges($formPlans, $appPlan, $rolePlans, $flowPlans, $bindingPlans, $versionChanges);
+        $heldBack = array_keys($this->heldBackGrants);
+        sort($heldBack);
         $summary = [
             'mode' => $apply ? 'apply' : 'dry-run',
             'packId' => self::PACK_ID,
@@ -191,6 +204,7 @@ final class AokieReceptionistUpgradeService
             'appId' => $appId,
             'legacyScreenAccepted' => $legacyScreenAccepted,
             'changes' => $changes,
+            'connectorGrantsHeldBack' => $heldBack,
             'skipped' => $this->skipped,
             'snapshots' => [],
             'applied' => false,
@@ -820,11 +834,15 @@ final class AokieReceptionistUpgradeService
             }
             $merged['scripts'] = $scripts;
             $currentPermissions = is_array($current['permissions'] ?? null) ? $current['permissions'] : [];
-            $permissions = is_array($packLogic['permissions'] ?? null) ? array_values($packLogic['permissions']) : [];
-            foreach ($permissions as $permission) {
+            $permissions = [];
+            foreach (is_array($packLogic['permissions'] ?? null) ? array_values($packLogic['permissions']) : [] as $permission) {
                 if (!in_array($permission, $currentPermissions, true)) {
+                    if ($this->holdsBackGrant((string) $permission)) {
+                        continue;
+                    }
                     $plan['permissionsAdded'][] = (string) $permission;
                 }
+                $permissions[] = $permission;
             }
             foreach ($currentPermissions as $permission) {
                 if (!in_array($permission, $permissions, true)) {
@@ -971,6 +989,7 @@ final class AokieReceptionistUpgradeService
                     $this->skip("role {$name}", 'the built-in role is missing');
                     continue;
                 }
+                $wanted = array_values(array_filter($wanted, fn (array $perm): bool => !$this->holdsBackGrant($perm['permission'])));
                 $plans[$name] = [
                     'roleId' => null,
                     'description' => $packRole['description'] ?? null,
@@ -990,7 +1009,7 @@ final class AokieReceptionistUpgradeService
             $added = [];
             foreach ($wanted as $perm) {
                 $key = ($perm['formId'] ?? '') . '|' . $perm['permission'];
-                if (!isset($have[$key])) {
+                if (!isset($have[$key]) && !$this->holdsBackGrant($perm['permission'])) {
                     $have[$key] = true;
                     $permissions[] = $perm;
                     $added[] = $perm['permission'];
@@ -1372,6 +1391,20 @@ final class AokieReceptionistUpgradeService
             || $changes['flows']['created'] !== [] || $changes['flows']['updated'] !== []
             || $changes['bindings']['created'] !== [] || $changes['bindings']['updated'] !== []
             || $changes['installationVersion'];
+    }
+
+    /**
+     * A connector grant the app lacks may be one its owner declined at install or took away later,
+     * and nothing records that, so it looks the same as one this version brings. Only someone who
+     * can ask the owner can tell them apart: the operator names what to add, and the rest stay out.
+     */
+    private function holdsBackGrant(string $permission): bool
+    {
+        if (!str_starts_with($permission, 'connector.') || isset($this->approvedGrants[$permission])) {
+            return false;
+        }
+        $this->heldBackGrants[$permission] = true;
+        return true;
     }
 
     private function skip(string $item, string $reason): void

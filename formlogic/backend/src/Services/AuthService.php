@@ -848,6 +848,7 @@ class AuthService
             $html = "<p>Hi {$name},</p>"
                 . "<p>We received a request to reset your FormLogic password. Click the link below to choose a new one. This link expires in 1 hour.</p>"
                 . "<p><a href=\"{$safeLink}\">Reset your password</a></p>"
+                . "<p>Resetting it also turns off your API keys and signs out linked apps such as OAIY. You'll need to make new keys and connect those apps again.</p>"
                 . "<p>If you didn't request this, you can safely ignore this email.</p>";
             $this->emailService->send((string) $email, 'Reset your FormLogic password', $html);
         }

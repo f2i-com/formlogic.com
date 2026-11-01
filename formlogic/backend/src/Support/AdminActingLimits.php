@@ -54,6 +54,15 @@ final class AdminActingLimits
     }
 
     /**
+     * Whether this flow edit does nothing but stop the flow. Pausing a runaway is an operator's
+     * job and writes no code, so it needs no leave. Anything else in the same body does.
+     */
+    public static function onlyPausesFlow(mixed $body): bool
+    {
+        return $body === ['enabled' => false];
+    }
+
+    /**
      * The refusal to send when an administrator without the owner's permission is changing code
      * here, or null. Whole-form saves carry the code along, so only a change counts.
      *

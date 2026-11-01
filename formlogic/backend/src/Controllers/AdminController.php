@@ -767,10 +767,10 @@ class AdminController
         if ($owner === null) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Flow not found'], 404);
         }
-        if ($this->auth->supportAccessUntil($owner) === null) {
+        $body = $request->getParsedBody() ?? [];
+        if ($this->auth->supportAccessUntil($owner) === null && !AdminActingLimits::onlyPausesFlow($body)) {
             return $this->jsonResponse($response, AdminActingLimits::SUPPORT_ACCESS_REFUSAL, 403);
         }
-        $body = $request->getParsedBody() ?? [];
         $input = [];
         foreach (['name', 'slug', 'description', 'flowJson', 'nodeCapabilities', 'enabled'] as $k) {
             if (array_key_exists($k, $body)) {

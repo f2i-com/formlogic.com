@@ -18,7 +18,7 @@ use Slim\Psr7\Response as SlimResponse;
  */
 final class DomainSignInAddressTest extends TestCase
 {
-    private const KEYS = ['APP_URL', 'CORS_ORIGIN', 'CORS_ALLOWED_ORIGINS'];
+    private const KEYS = ['APP_URL', 'CORS_ORIGIN', 'CORS_ALLOWED_ORIGINS', 'APP_ENV'];
     /** @var array<string, array{0:string|false,1:mixed}> */
     private array $saved = [];
 
@@ -27,7 +27,7 @@ final class DomainSignInAddressTest extends TestCase
         foreach (self::KEYS as $key) {
             $this->saved[$key] = [getenv($key), $_ENV[$key] ?? null];
             putenv($key);
-            unset($_ENV[$key]);
+            unset($_ENV[$key], $_SERVER[$key]);
         }
     }
 
@@ -35,6 +35,7 @@ final class DomainSignInAddressTest extends TestCase
     {
         foreach ($this->saved as $key => [$env, $server]) {
             putenv($env === false ? $key : "{$key}={$env}");
+            unset($_SERVER[$key]);
             if ($server === null) {
                 unset($_ENV[$key]);
             } else {
@@ -77,5 +78,38 @@ final class DomainSignInAddressTest extends TestCase
     public function testTheRequestNeverChoosesTheAddress(): void
     {
         $this->assertNull($this->platformUrl(), 'nothing configured: no address, not the domain\'s own');
+    }
+
+    public function testTheExampleCorsOriginIsNotALiveSitesAddress(): void
+    {
+        foreach (['http://localhost:5173', 'http://127.0.0.1:8080', 'http://[::1]:5173', 'http://app.localhost'] as $origin) {
+            $this->set('CORS_ORIGIN', $origin);
+            $this->assertNull($this->platformUrl(), $origin);
+        }
+        $this->set('APP_ENV', 'production');
+        $this->assertNull($this->platformUrl());
+    }
+
+    public function testALoopbackOriginStepsAsideForARealOne(): void
+    {
+        $this->set('CORS_ORIGIN', 'http://localhost:5173');
+        $this->set('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,https://forms.example.com');
+        $this->assertNull($this->platformUrl(), 'only the first listed origin was ever the fallback');
+
+        $this->set('CORS_ALLOWED_ORIGINS', 'https://forms.example.com,http://localhost:3000');
+        $this->assertSame('https://forms.example.com', $this->platformUrl());
+    }
+
+    public function testDevelopmentKeepsItsLoopbackAddress(): void
+    {
+        $this->set('APP_ENV', 'development');
+        $this->set('CORS_ORIGIN', 'http://localhost:5173');
+        $this->assertSame('http://localhost:5173', $this->platformUrl());
+    }
+
+    public function testAnAddressTheOperatorSetIsTakenAsItIs(): void
+    {
+        $this->set('APP_URL', 'http://localhost:8080');
+        $this->assertSame('http://localhost:8080', $this->platformUrl());
     }
 }

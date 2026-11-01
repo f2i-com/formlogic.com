@@ -16,14 +16,18 @@ use PDO;
  * interprets or rewrites a frame. It only addresses rows to one party and
  * serves them back in insertion order (the AUTO_INCREMENT `seq` is the
  * cursor). Frames are volatile signalling with a short TTL; expired rows are
- * swept opportunistically on every append.
+ * swept opportunistically on every append. A delivered frame stays until then:
+ * delivery can't prove that it arrived, and a client that reconnects with its
+ * cursor has to find whatever it didn't get.
  */
 final class AokieCompanionRelayService
 {
     /** Frames are volatile signalling — anything older than this is garbage. */
     public const TTL_SECONDS = 120;
-    /** Per-app live-frame cap. Over cap = typed 429, never a silent drop. */
+    /** Per-app cap on frames nobody has been given yet. Over cap = typed 429, never a silent drop. */
     public const MAX_LIVE_FRAMES_PER_APP = 512;
+    /** What an app can store at all, delivered frames included: its share of the table. */
+    public const MAX_STORED_FRAMES_PER_APP = 4096;
     /** Serialized (compact JSON) per-frame byte cap. */
     public const MAX_FRAME_BYTES = 32768;
     /** Frames accepted per POST. */
@@ -119,18 +123,21 @@ final class AokieCompanionRelayService
         $subjectId = self::boundedSubjectId($subjectId);
         $this->sweepExpired();
         $live = $this->mysql->prepare(
-            'SELECT COUNT(*) FROM aokie_companion_relay_frames WHERE app_id = ?',
+            'SELECT COUNT(*) AS kept, COALESCE(SUM(delivered_at IS NULL), 0) AS waiting
+             FROM aokie_companion_relay_frames WHERE app_id = ?',
         );
         $live->execute([$appId]);
-        $liveCount = (int) $live->fetchColumn();
-        if ($liveCount + count($frames) > self::MAX_LIVE_FRAMES_PER_APP) {
+        $count = $live->fetch(PDO::FETCH_ASSOC);
+        if ((int) $count['waiting'] + count($frames) > self::MAX_LIVE_FRAMES_PER_APP
+            || (int) $count['kept'] + count($frames) > self::MAX_STORED_FRAMES_PER_APP) {
             throw new \OverflowException(
                 'The relay mailbox for this app is full — consumers are not draining frames',
             );
         }
         if ($fromParty !== self::PARTY_PLUGIN) {
             $sent = $this->mysql->prepare(
-                'SELECT COUNT(*) FROM aokie_companion_relay_frames WHERE app_id = ? AND from_party = ?',
+                'SELECT COUNT(*) FROM aokie_companion_relay_frames
+                 WHERE app_id = ? AND from_party = ? AND delivered_at IS NULL',
             );
             $sent->execute([$appId, $fromParty]);
             if ((int) $sent->fetchColumn() + count($frames) > self::MAX_LIVE_FRAMES_PER_MOBILE) {
@@ -167,7 +174,8 @@ final class AokieCompanionRelayService
 
     /**
      * Live (unexpired) frames addressed to $party with seq > $sinceSeq,
-     * oldest first.
+     * oldest first. Marks them delivered, so they no longer count against the
+     * mailbox: a healthy consumer drains it, though they can still be read.
      *
      * @return list<array{seq:int,from:string,subjectId:?string,grants:list<string>,frame:string}>
      */
@@ -175,7 +183,7 @@ final class AokieCompanionRelayService
     {
         $limit = max(1, min($limit, self::MAX_FETCH_LIMIT));
         $statement = $this->mysql->prepare(
-            'SELECT seq, from_party, admission_subject_id, admission_grants, frame
+            'SELECT seq, from_party, admission_subject_id, admission_grants, frame, delivered_at
              FROM aokie_companion_relay_frames
              WHERE app_id = :app AND to_party = :party AND seq > :since
                AND created_at >= (NOW(3) - INTERVAL ' . self::TTL_SECONDS . ' SECOND)
@@ -184,7 +192,11 @@ final class AokieCompanionRelayService
         );
         $statement->execute(['app' => $appId, 'party' => $party, 'since' => $sinceSeq]);
         $rows = [];
+        $undelivered = [];
         foreach ($statement->fetchAll(PDO::FETCH_ASSOC) ?: [] as $row) {
+            if ($row['delivered_at'] === null) {
+                $undelivered[] = (int) $row['seq'];
+            }
             $rows[] = [
                 'seq' => (int) $row['seq'],
                 'from' => (string) $row['from_party'],
@@ -196,6 +208,12 @@ final class AokieCompanionRelayService
                 'grants' => self::boundedGrants($row['admission_grants'] ?? null),
                 'frame' => (string) $row['frame'],
             ];
+        }
+        if ($undelivered !== []) {
+            $this->mysql->exec(
+                'UPDATE aokie_companion_relay_frames SET delivered_at = NOW(3)
+                 WHERE seq IN (' . implode(',', $undelivered) . ') AND delivered_at IS NULL',
+            );
         }
         return $rows;
     }

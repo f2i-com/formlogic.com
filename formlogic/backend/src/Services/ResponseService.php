@@ -123,8 +123,9 @@ class ResponseService
      */
     private function compensateEncryptedCreate(\PDO $db, string $id, ?array $opContext): void
     {
-        $db->beginTransaction();
         try {
+            // rollbackAppend reads the head before it writes.
+            SQLiteConnection::beginWrite($db);
             if ($opContext !== null && $this->dataOperationLog !== null) {
                 if (!$this->dataOperationLog->rollbackAppend($db, $opContext)) {
                     // Head moved: never rewind, never delete the row the chain
@@ -336,6 +337,7 @@ class ResponseService
                     $rv = $db->prepare('SELECT row_version FROM responses WHERE id = :id');
                     $rv->execute(['id' => $responseId]);
                     $newRowVersion = (int) $rv->fetchColumn();
+                    $rv->closeCursor();
                     $this->dataOperationLog->appendEnvelopePut(
                         $db, $formId, $placement, $envelope, $answersJson, $expectedRev, $newRowVersion, $now,
                     );
@@ -1487,6 +1489,9 @@ class ResponseService
 
     private const RETENTION_BATCH = 500;
 
+    /** How many times mergeEdit merges an edit over the stored record before giving up. */
+    private const MERGE_ATTEMPTS = 5;
+
     /** How long a deleted record's tombstone is kept. */
     public const TOMBSTONE_DAYS = 180;
 
@@ -2164,9 +2169,12 @@ class ResponseService
      * @param string|null $sourceRunId The flow run that writes this record: the cloud runner's own
      *   run, or a client's `flowRunId` once runForRecordWrite has checked it. Never read from
      *   $data, which carries the client's body. The runs this record starts are its children.
+     * @param int|null $quotaLimit The form's cap on records. It is checked here, around the insert
+     *   alone, so that a slow script or webhook doesn't hold every other submission up.
      * @return array|ScriptRejection The created response or a rejection
+     * @throws FormQuotaRefused when $quotaLimit turns the submission away; nothing was stored
      */
-    public function createResponse(string $formId, array $data, ?string $script = null, ?string $sourceRunId = null): array|ScriptRejection
+    public function createResponse(string $formId, array $data, ?string $script = null, ?string $sourceRunId = null, ?int $quotaLimit = null): array|ScriptRejection
     {
         // §9.2 gate: a private form NEVER takes the plaintext pipeline — every entry
         // point (public controller, external API, app runtime, chat/MCP tools, cloud
@@ -2290,8 +2298,9 @@ class ResponseService
         // autocommit, so a throw in applyScriptResult/logScriptExecution left a
         // committed response row with no MySQL metadata (dual-DB divergence) and a
         // 500. Now any failure rolls the whole response back.
-        $db->beginTransaction();
+        $quotaLock = $this->holdQuota($formId, $quotaLimit);
         try {
+            $db->beginTransaction();
             $stmt->execute([
                 'id' => $id,
                 'answers' => json_encode($data['answers'] ?? []),
@@ -2324,6 +2333,9 @@ class ResponseService
                 $db->rollBack();
             }
             throw $e;
+        } finally {
+            // The count reads this database, so from here on the record is counted.
+            $this->releaseFormLock($quotaLock);
         }
 
         // 6. Also insert metadata into MySQL for global querying.
@@ -2463,6 +2475,29 @@ class ResponseService
             'updatedAt' => $now,
             'answers' => $data['answers'] ?? [],
         ];
+    }
+
+    /**
+     * Takes the form's lock for one insert, when the form has a cap and room under it. Without the
+     * lock two submissions could both find one place left, so a lock that can't be had refuses.
+     *
+     * @return string|null the lock to release, or null when there is no cap
+     * @throws FormQuotaRefused
+     */
+    private function holdQuota(string $formId, ?int $quotaLimit): ?string
+    {
+        if ($quotaLimit === null || $quotaLimit <= 0) {
+            return null;
+        }
+        $lock = $this->acquireFormLock($formId);
+        if ($lock === null) {
+            throw FormQuotaRefused::busy();
+        }
+        if ($this->getResponseCount($formId) >= $quotaLimit) {
+            $this->releaseFormLock($lock);
+            throw FormQuotaRefused::full();
+        }
+        return $lock;
     }
 
     /**
@@ -2838,6 +2873,10 @@ class ResponseService
             $cur = $db->prepare("SELECT * FROM responses WHERE id = :id");
             $cur->execute(['id' => $responseId]);
             $expected = $cur->fetch(PDO::FETCH_ASSOC) ?: null;
+            // Closed before the UPDATE below, as $fetchAns is: a read left open keeps this
+            // connection on its snapshot, and SQLite refuses a write from a snapshot that has
+            // gone stale at once, without waiting. Two people saving together got a 500 that way.
+            $cur->closeCursor();
             if ($expected === null) {
                 return null;
             }
@@ -2855,6 +2894,7 @@ class ResponseService
             $fetchAns = $db->prepare("SELECT answers FROM responses WHERE id = :id");
             $fetchAns->execute(['id' => $responseId]);
             $ansRow = $fetchAns->fetch(PDO::FETCH_ASSOC);
+            $fetchAns->closeCursor();
             if ($ansRow && !empty($ansRow['answers'])) {
                 $decodedOld = json_decode($ansRow['answers'], true);
                 if (is_array($decodedOld)) {
@@ -2973,6 +3013,38 @@ class ResponseService
     }
 
     /**
+     * Applies a partial edit, which is merged over a stored record: $edit gets the record and the
+     * version to pass updateResponse, and works from those alone. When another edit lands first,
+     * $edit runs again over the record as it now is, so both edits stay. It can run more than once.
+     *
+     * With $ifMatch, the caller named the version they mean: $edit gets it, and a conflict is
+     * theirs to see. ResponseVersionConflict also means that the attempts ran out. Null when the
+     * record isn't there.
+     *
+     * @template T
+     * @param callable(array<string, mixed>, string): T $edit
+     * @return T|null
+     */
+    public function mergeEdit(string $formId, string $responseId, callable $edit, ?string $ifMatch = null): mixed
+    {
+        for ($attempt = 1; ; $attempt++) {
+            $stored = $this->getResponse($formId, $responseId);
+            if ($stored === null) {
+                return null;
+            }
+            try {
+                return $edit($stored, $ifMatch ?? self::etagOf($stored));
+            } catch (ResponseVersionConflict $conflict) {
+                if ($ifMatch !== null || $attempt >= self::MERGE_ATTEMPTS) {
+                    throw $conflict;
+                }
+                // Edits that collide tend to arrive together: spread them out.
+                usleep(random_int(1000, 15000) * $attempt);
+            }
+        }
+    }
+
+    /**
      * Delete a response
      */
     /**
@@ -2990,7 +3062,9 @@ class ResponseService
             $hour = (string) intdiv(time(), 3600);
             $stmt = $db->prepare("SELECT value FROM form_data WHERE key = 'retention_purged_hour'");
             $stmt->execute();
-            if ((string) $stmt->fetchColumn() === $hour) {
+            $purgedHour = (string) $stmt->fetchColumn();
+            $stmt->closeCursor();
+            if ($purgedHour === $hour) {
                 return 0;
             }
 
@@ -3179,6 +3253,7 @@ class ResponseService
             $fetchStmt = $db->prepare("SELECT answers FROM responses WHERE id = :id");
             $fetchStmt->execute(['id' => $responseId]);
             $row = $fetchStmt->fetch(PDO::FETCH_ASSOC);
+            $fetchStmt->closeCursor();
             if ($row && !empty($row['answers'])) {
                 $decoded = json_decode($row['answers'], true);
                 if (is_array($decoded)) {

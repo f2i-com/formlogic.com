@@ -413,24 +413,37 @@ class AppService
                 VALUES (:id, :owner_id, :name, :slug, :description, :logo_url, :status, :settings, :theme, :nav_config, :custom_screen, :custom_screen_trust, :custom_screen_provenance, :custom_logic, :created_at, :updated_at)
             ");
 
-            $stmt->execute([
-                'id' => $id,
-                'owner_id' => $ownerId,
-                'name' => $data['name'] ?? 'Untitled App',
-                'slug' => $slug,
-                'description' => $data['description'] ?? null,
-                'logo_url' => $data['logoUrl'] ?? null,
-                'status' => $data['status'] ?? 'draft',
-                'settings' => json_encode($settings),
-                'theme' => json_encode($data['theme'] ?? []),
-                'nav_config' => json_encode($data['navConfig'] ?? []),
-                'custom_screen' => !empty($customScreen) ? json_encode($customScreen) : null,
-                'custom_screen_trust' => 'owner',
-                'custom_screen_provenance' => !empty($customScreen) ? json_encode(['source' => 'owner']) : null,
-                'custom_logic' => !empty($data['customLogic']) ? json_encode($data['customLogic']) : null,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
+            for ($attempt = 1; ; $attempt++) {
+                try {
+                    $stmt->execute([
+                        'id' => $id,
+                        'owner_id' => $ownerId,
+                        'name' => $data['name'] ?? 'Untitled App',
+                        'slug' => $slug,
+                        'description' => $data['description'] ?? null,
+                        'logo_url' => $data['logoUrl'] ?? null,
+                        'status' => $data['status'] ?? 'draft',
+                        'settings' => json_encode($settings),
+                        'theme' => json_encode($data['theme'] ?? []),
+                        'nav_config' => json_encode($data['navConfig'] ?? []),
+                        'custom_screen' => !empty($customScreen) ? json_encode($customScreen) : null,
+                        'custom_screen_trust' => 'owner',
+                        'custom_screen_provenance' => !empty($customScreen) ? json_encode(['source' => 'owner']) : null,
+                        'custom_logic' => !empty($data['customLogic']) ? json_encode($data['customLogic']) : null,
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ]);
+                    break;
+                } catch (\PDOException $e) {
+                    // Two creations can both find a slug free, and the key settles it. The one
+                    // that lost takes a generated slug, as if the slug had been taken all along.
+                    // A failed INSERT undoes only itself, so an outer transaction is unharmed.
+                    if ($attempt >= 3 || !self::isDuplicateSlug($e)) {
+                        throw $e;
+                    }
+                    $slug = $this->generateSlug($data['name'] ?? 'untitled');
+                }
+            }
 
             // Create default system roles
             $ownerRoleId = $this->createSystemRole($id, 'Owner', 'Full access to the app', 0);
@@ -708,6 +721,35 @@ class AppService
         }
 
         return $this->getApp($appId);
+    }
+
+    /**
+     * Changes an app from what it holds now: $change gets the app with its row locked, and answers
+     * the fields for updateApp. For anything built from a stored document (settings, reports), where
+     * two writers working from one read each drop the other's change. Null when there's no such app.
+     *
+     * @param callable(array<string, mixed>): array<string, mixed> $change
+     */
+    public function updateAppLocked(string $appId, callable $change): ?array
+    {
+        $this->mysql->beginTransaction();
+        try {
+            // Before anything else reads: the transaction's view of the row starts at its first
+            // plain read, and it has to start after the other writer has finished.
+            $lock = $this->mysql->prepare('SELECT 1 FROM apps WHERE id = :id FOR UPDATE');
+            $lock->execute(['id' => $appId]);
+            $found = $lock->fetchColumn() !== false;
+            $lock->closeCursor();
+            $app = $found ? $this->getApp($appId) : null;
+            $updated = $app === null ? null : $this->updateApp($appId, $change($app));
+            $this->mysql->commit();
+            return $updated;
+        } catch (\Throwable $e) {
+            if ($this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
+        }
     }
 
     /**
@@ -1475,6 +1517,12 @@ class AppService
         }
 
         return $slug;
+    }
+
+    /** MySQL's 1062 on the slug key: "Duplicate entry 'x' for key 'apps.slug'". */
+    private static function isDuplicateSlug(\PDOException $e): bool
+    {
+        return ($e->errorInfo[1] ?? null) === 1062 && preg_match("/for key '(?:apps\\.)?\\w*slug\\w*'/i", $e->getMessage()) === 1;
     }
 
     private function slugExists(string $slug): bool

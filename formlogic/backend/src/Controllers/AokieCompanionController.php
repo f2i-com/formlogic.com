@@ -194,7 +194,7 @@ final class AokieCompanionController
             $admission['iceServers'] = $ice['servers'];
             $admission['relayOnly'] = $ice['relayOnly'];
             $admission['turnCredentialExpiresAt'] = $ice['expiresAt'];
-            $this->devices->recordActivity(
+            $this->devices->recordAdmission(
                 (string) $session['userId'],
                 $appId,
                 $deviceId,
@@ -390,7 +390,7 @@ final class AokieCompanionController
             $admission['iceServers'] = $ice['servers'];
             $admission['relayOnly'] = $ice['relayOnly'];
             $admission['turnCredentialExpiresAt'] = $ice['expiresAt'];
-            $this->devices->recordActivity(
+            $this->devices->recordAdmission(
                 $userId,
                 $appId,
                 $pluginId,
@@ -1022,15 +1022,16 @@ final class AokieCompanionController
         } catch (\InvalidArgumentException $error) {
             return $this->error($response, 400, 'invalid_remote_consent', $error->getMessage());
         }
-        $app = $this->apps->getApp($appId);
-        if ($app === null) {
+        $updated = $this->apps->updateAppLocked($appId, static function (array $app) use ($policy): array {
+            $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+            $companion = is_array($settings['aokieCompanion'] ?? null) ? $settings['aokieCompanion'] : [];
+            $companion['remoteConsent'] = $policy;
+            $settings['aokieCompanion'] = $companion;
+            return ['settings' => $settings];
+        });
+        if ($updated === null) {
             return $this->error($response, 404, 'app_not_found', 'App not found');
         }
-        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
-        $companion = is_array($settings['aokieCompanion'] ?? null) ? $settings['aokieCompanion'] : [];
-        $companion['remoteConsent'] = $policy;
-        $settings['aokieCompanion'] = $companion;
-        $this->apps->updateApp($appId, ['settings' => $settings]);
         $this->audit?->log(
             'aokie.companion.policy.updated',
             'app',
@@ -1050,7 +1051,16 @@ final class AokieCompanionController
         if (!is_string($userId) || $this->publishedAppForMember($userId, $appId) === null) {
             return $this->error($response, 403, 'forbidden', 'The app is unavailable to this account');
         }
-        return $this->jsonResponse($response, ['groups' => $this->devices->listRoutingGroups($appId)]);
+        // Whoever manages the groups saves them by device id, so they read those ids back.
+        if ($this->canManage($userId, $appId)) {
+            return $this->jsonResponse($response, ['groups' => $this->devices->listRoutingGroups($appId)]);
+        }
+        // Everyone else gets what the phone gets. This is the staff roster: a portal customer is
+        // a member too, and internal account and device ids stay private.
+        if (!in_array('state_read', $this->roleGatewayGrants($userId, $appId), true)) {
+            return $this->error($response, 403, 'forbidden', 'The current app role does not permit Companion access');
+        }
+        return $this->jsonResponse($response, ['groups' => $this->mobileRoutingGroups($appId, $userId, null)]);
     }
 
     public function createRoutingGroup(Request $request, Response $response): Response
@@ -1287,6 +1297,12 @@ final class AokieCompanionController
             return $this->error($response, 400, 'invalid_routing_group', $error->getMessage());
         } catch (\DomainException $error) {
             return $this->error($response, 404, 'routing_group_not_found', $error->getMessage());
+        } catch (\PDOException $error) {
+            // A name is unique within an app, whatever its case.
+            if (($error->errorInfo[1] ?? null) === 1062) {
+                return $this->error($response, 409, 'routing_group_name_taken', 'This app already has a routing group with that name');
+            }
+            throw $error;
         }
     }
 

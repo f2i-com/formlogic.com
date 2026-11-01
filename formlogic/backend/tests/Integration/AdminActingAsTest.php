@@ -553,6 +553,43 @@ class AdminActingAsTest extends TestCase
         $this->assertSame(403, $this->send('PUT', $form, ['logicScript' => 'function onSubmit() { /* again */ }'], $admin)->getStatusCode());
     }
 
+    public function testAnAdministratorPausesARunawayFlowWithoutTheOwner(): void
+    {
+        $admin = $this->tokenFor($this->adminId);
+        $routes = [
+            "/api/admin/users/{$this->ownerId}/apps/{$this->appId}/flows/{$this->appFlowId}" => fn () => self::$flows->getFlow($this->appId, $this->appFlowId),
+            "/api/admin/users/{$this->ownerId}/flows/{$this->wsFlowId}" => fn () => self::$flows->getWorkspaceFlow($this->ownerId, $this->wsFlowId),
+        ];
+        foreach ($routes as $path => $flow) {
+            $bodies = [['enabled' => true], ['enabled' => 0], ['enabled' => false, 'name' => 'Renamed'], ['enabled' => false, 'flowJson' => ['nodes' => []]], ['enabled' => false, 'nodeCapabilities' => []]];
+            foreach ($bodies as $body) {
+                $refused = $this->send('PUT', $path, $body, $admin);
+                $this->assertSame(403, $refused->getStatusCode(), json_encode($body));
+                $this->assertSame('admin_support_access_required', $this->json($refused)['code'] ?? null);
+            }
+            $this->assertTrue($flow()['enabled'], 'a refused request changes nothing');
+
+            $this->assertSame(200, $this->send('PUT', $path, ['enabled' => false], $admin)->getStatusCode());
+            $this->assertFalse($flow()['enabled']);
+        }
+
+        // Audited as any other edit on an owner's behalf.
+        $stmt = self::$pdo->prepare("SELECT details FROM audit_log WHERE action = 'admin.on_behalf' AND user_id = ? AND resource_id = ?");
+        $stmt->execute([$this->adminId, $this->ownerId]);
+        $details = array_map(static fn (string $row): array => json_decode($row, true), $stmt->fetchAll(PDO::FETCH_COLUMN));
+        $this->assertCount(2, $details);
+        $this->assertSame([['enabled'], ['enabled']], array_column($details, 'bodyKeys'));
+
+        // A binding starts a flow as surely, but the switch stops at the flow itself.
+        foreach (AdminActingAsRoutes::ROUTES as $row) {
+            $this->assertSame(
+                in_array($row[3], ['updateFlow', 'updateWorkspaceFlow'], true),
+                in_array(AdminActingAsRoutes::FLOW_SWITCH, $row[4] ?? [], true),
+                $row[1]
+            );
+        }
+    }
+
     public function testRestoringAVersionWithOtherCodeWaitsForTheOwner(): void
     {
         $admin = $this->tokenFor($this->adminId);

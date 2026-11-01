@@ -1572,6 +1572,29 @@ final class AokieCompanionAuthTest extends TestCase
         $this->assertNotContains('end_caller', $policyNarrowed['scopes']);
     }
 
+    public function testASecondRoutingGroupOfOneNameIsAConflict(): void
+    {
+        $save = function (string $name, ?string $id = null): ResponseInterface {
+            $request = $this->request($id === null ? 'POST' : 'PUT', '/api/aokie-companion/routing-groups')
+                ->withParsedBody(['appId' => $this->appId, 'name' => $name, 'policy' => 'all', 'members' => []]);
+            return $id === null
+                ? self::$controller->createRoutingGroup($request, (new ResponseFactory())->createResponse())
+                : self::$controller->updateRoutingGroup($request, (new ResponseFactory())->createResponse(), ['id' => $id]);
+        };
+        $this->assertSame(201, $save('Sales')->getStatusCode());
+        $other = $save('Support');
+        $this->assertSame(201, $other->getStatusCode());
+
+        foreach ([$save('Sales'), $save('sales'), $save('SALES', self::decode($other)['group']['id'])] as $taken) {
+            $this->assertSame(409, $taken->getStatusCode());
+            $this->assertSame('routing_group_name_taken', self::decode($taken)['code']);
+            $this->assertStringNotContainsString('SQLSTATE', self::decode($taken)['message']);
+        }
+        $this->assertFalse(self::$pdo->inTransaction(), 'the refused save is rolled back');
+        $names = array_column((new AokieCompanionDeviceService(self::$mysql))->listRoutingGroups($this->appId), 'name');
+        $this->assertEqualsCanonicalizing(['Sales', 'Support'], $names);
+    }
+
     public function testRefreshTokenReuseRevokesEveryAccessSessionInTheFamily(): void
     {
         $deviceId = 'refresh_family_' . bin2hex(random_bytes(5));
@@ -1601,6 +1624,9 @@ final class AokieCompanionAuthTest extends TestCase
         );
         $this->assertNotNull(self::$tokens->validate($descendant['access_token']));
 
+        // Past the grace a client gets for its own parallel refresh.
+        self::$pdo->prepare('UPDATE mcp_oauth_refresh_tokens SET rotated_at = ? WHERE token_hash = ?')
+            ->execute([date('Y-m-d H:i:s', time() - 31), hash('sha256', $oauth['refreshToken'])]);
         $reuse = self::$oauth->redeemRefreshToken(
             $oauth['refreshToken'],
             McpOAuthService::AOKIE_COMPANION_CLIENT_ID,
@@ -2156,6 +2182,134 @@ final class AokieCompanionAuthTest extends TestCase
         );
         $this->assertSame(404, $deniedDetail->getStatusCode());
         $this->assertSame('call_record_not_found', self::decode($deniedDetail)['code']);
+    }
+
+    /** An active app member whose role holds these permissions. */
+    private function memberWith(array $permissions): string
+    {
+        $memberId = 'staff-' . bin2hex(random_bytes(8));
+        $this->extraUsers[] = $memberId;
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'Staff Member')")
+            ->execute([$memberId, $memberId . '@aokie.test']);
+        $roleId = 'role-' . bin2hex(random_bytes(8));
+        self::$pdo->prepare("INSERT INTO app_roles (id, app_id, name, is_system, sort_order) VALUES (?, ?, ?, 0, 9)")
+            ->execute([$roleId, $this->appId, 'Role ' . bin2hex(random_bytes(4))]);
+        foreach ($permissions as $permission) {
+            self::$pdo->prepare('INSERT INTO app_role_permissions (id, role_id, form_id, permission) VALUES (?, ?, NULL, ?)')
+                ->execute(['p-' . bin2hex(random_bytes(8)), $roleId, $permission]);
+        }
+        self::$pdo->prepare("INSERT INTO app_users (id, app_id, user_id, role_id, status, joined_at) VALUES (?, ?, ?, ?, 'active', NOW())")
+            ->execute(['au-' . bin2hex(random_bytes(8)), $this->appId, $memberId, $roleId]);
+        return $memberId;
+    }
+
+    /** One group, holding a device of the owner's. */
+    private function routingGroupOfTheOwner(?string $createdBy = null): string
+    {
+        $service = new AokieCompanionDeviceService(self::$mysql);
+        $subject = 'roster_device_' . bin2hex(random_bytes(4));
+        $device = $service->enrollOrTouch($this->userId, $this->appId, $subject, 'mobile', 'Front Desk', ['state_read'], ['holderKeyThumbprint' => $this->mobileHolder($subject)]);
+        return (string) $service->saveRoutingGroup($createdBy ?? $this->userId, $this->appId, [
+            'name' => 'Reception ' . bin2hex(random_bytes(4)),
+            'policy' => 'all',
+            'members' => [['deviceId' => $device['id'], 'priority' => 10]],
+        ])['id'];
+    }
+
+    private function rosterAs(string $userId): ResponseInterface
+    {
+        $request = (new ServerRequestFactory())->createServerRequest('GET', self::BASE . '/api/aokie-companion/routing-groups?appId=' . $this->appId)
+            ->withAttribute('userId', $userId)
+            ->withQueryParams(['appId' => $this->appId]);
+        return self::$controller->listRoutingGroups($request, new \Slim\Psr7\Response());
+    }
+
+    public function testAMemberWithNoCompanionPermissionDoesNotReadTheRoster(): void
+    {
+        $this->routingGroupOfTheOwner();
+        $answer = $this->rosterAs($this->memberWith([]));
+        $this->assertSame(403, $answer->getStatusCode());
+        $this->assertStringNotContainsString('Front Desk', (string) $answer->getBody());
+    }
+
+    public function testAMemberWhoSeesCompanionStateGetsTheRosterThePhoneGets(): void
+    {
+        $this->routingGroupOfTheOwner();
+        $answer = $this->rosterAs($this->memberWith([AppPermissions::AOKIE_COMPANION_STATE]));
+        $body = self::decode($answer);
+        $this->assertSame(200, $answer->getStatusCode(), json_encode($body));
+        $member = $body['groups'][0]['members'][0];
+        $this->assertArrayHasKey('displayName', $member);
+        foreach (['deviceId', 'userId', 'subjectId'] as $private) {
+            $this->assertArrayNotHasKey($private, $member);
+        }
+        $this->assertStringNotContainsString($this->userId, (string) json_encode($body));
+    }
+
+    public function testWhoeverManagesTheGroupsReadsTheIdsTheySaveThemBy(): void
+    {
+        $this->routingGroupOfTheOwner();
+        $body = self::decode($this->rosterAs($this->userId));
+        $this->assertArrayHasKey('deviceId', $body['groups'][0]['members'][0]);
+    }
+
+    public function testErasingAnAccountLeavesTheGroupsItMade(): void
+    {
+        $staff = $this->memberWith([]);
+        $group = $this->routingGroupOfTheOwner($staff);
+
+        self::$pdo->prepare('DELETE FROM app_users WHERE user_id = ?')->execute([$staff]);
+        self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$staff]);
+
+        $row = self::$pdo->prepare('SELECT created_by_user_id FROM aokie_companion_routing_groups WHERE id = ?');
+        $row->execute([$group]);
+        $kept = $row->fetch(PDO::FETCH_ASSOC);
+        $this->assertIsArray($kept, 'the app keeps its routing');
+        $this->assertNull($kept['created_by_user_id']);
+    }
+
+    public function testThePolicyUpdateHoldsTheRow(): void
+    {
+        $apps = new class (self::$mysql, new \FormLogic\Services\FormService(self::$mysql, self::$sqlite)) extends AppService {
+            public int $held = 0;
+
+            public function updateAppLocked(string $appId, callable $change): ?array
+            {
+                $this->held++;
+                return parent::updateAppLocked($appId, $change);
+            }
+        };
+        $controller = new AokieCompanionController(self::$tokens, $apps, new AokieCompanionDeviceService(self::$mysql), null);
+        $policy = array_fill_keys(['remoteMonitoring', 'remoteConsult', 'remoteTakeover', 'remoteCaptions', 'remoteAssistance'], false);
+        $request = (new ServerRequestFactory())->createServerRequest('PUT', self::BASE . '/api/aokie-companion/policy')
+            ->withAttribute('userId', $this->userId)
+            ->withParsedBody(['appId' => $this->appId, 'remoteConsent' => $policy]);
+
+        $answer = $controller->updatePolicy($request, new \Slim\Psr7\Response());
+
+        $this->assertSame(200, $answer->getStatusCode(), (string) $answer->getBody());
+        $this->assertSame(1, $apps->held);
+        $this->assertFalse(self::$apps->getApp($this->appId)['settings']['aokieCompanion']['remoteConsent']['remoteTakeover']);
+    }
+
+    public function testARepeatedAdmissionAddsNoActivity(): void
+    {
+        $subject = 'admit_' . bin2hex(random_bytes(5));
+        $oauth = $this->authorizeCompanion($subject);
+        $count = function () use ($subject): int {
+            $stmt = self::$pdo->prepare("SELECT COUNT(*) FROM aokie_companion_activity WHERE app_id = ? AND subject_id = ? AND event_type = 'admission_issued'");
+            $stmt->execute([$this->appId, $subject]);
+            return (int) $stmt->fetchColumn();
+        };
+
+        for ($i = 0; $i < 3; $i++) {
+            $this->assertSame(200, $this->mobileAdmission($oauth['accessToken'], $subject)->getStatusCode());
+        }
+        $this->assertSame(1, $count());
+
+        self::$pdo->prepare("UPDATE aokie_companion_activity SET created_at = DATE_SUB(NOW(), INTERVAL 2 HOUR) WHERE app_id = ? AND subject_id = ?")->execute([$this->appId, $subject]);
+        $this->assertSame(200, $this->mobileAdmission($oauth['accessToken'], $subject)->getStatusCode());
+        $this->assertSame(2, $count(), 'an hour on, it is news again');
     }
 
     public function testRoutingTargetsCurrentMembersAndPushOutboxStaysPrivate(): void

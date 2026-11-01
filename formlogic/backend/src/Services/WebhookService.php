@@ -480,6 +480,8 @@ class WebhookService
         $maxAttempts = max(1, $maxAttempts);
         $batchSize = max(1, min(500, $batchSize));
 
+        $abandoned = $this->finishDiedAttempts($maxAttempts);
+
         // Candidates: failed-and-due, OR rows left 'retrying' by a crashed worker
         // whose lease (next_retry_at) has expired (self-healing).
         $stmt = $this->mysql->prepare("
@@ -505,7 +507,6 @@ class WebhookService
 
         $sent = 0;
         $failed = 0;
-        $abandoned = 0;
         $processed = 0;
         foreach ($rows as $row) {
             $claim->execute(['id' => $row['id']]);
@@ -525,6 +526,35 @@ class WebhookService
 
         $this->recordWorkerHeartbeat();
         return ['processed' => $processed, 'sent' => $sent, 'failed' => $failed, 'abandoned' => $abandoned];
+    }
+
+    /**
+     * A worker that dies mid-send on the last attempt leaves its row 'retrying' with no attempts
+     * left, so the query above never picks it up again, and the row kept its copy of the answers
+     * until the deliveries were purged. Once its lease is up it failed like any other last attempt.
+     *
+     * @return int rows finished
+     */
+    private function finishDiedAttempts(int $maxAttempts): int
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT id, attempt FROM webhook_deliveries
+            WHERE status = 'retrying' AND attempt >= " . (int) $maxAttempts . "
+              AND next_retry_at IS NOT NULL AND next_retry_at <= NOW()
+        ");
+        $stmt->execute();
+        $finish = $this->mysql->prepare("
+            UPDATE webhook_deliveries
+            SET status = 'exhausted', success = 0, next_retry_at = NULL, payload = NULL,
+                error_message = 'The worker stopped during the last attempt'
+            WHERE id = :id AND status = 'retrying' AND next_retry_at <= NOW()
+        ");
+        $finished = 0;
+        foreach ($stmt->fetchAll() as $row) {
+            $finish->execute(['id' => $row['id']]);
+            $finished += $finish->rowCount();
+        }
+        return $finished;
     }
 
     /**

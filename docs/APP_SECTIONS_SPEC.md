@@ -31,6 +31,18 @@ on every pack section. JS budget ≤ ~10KB per screen (kit subset + section code
 Form-scoped SDK limits: `records({limit})` (this form only), `context()` → `{formId,title,fields}`,
 `submit(answers)`, `currentUser()`, `escapeHtml`, `openForm()`. No cross-form data, no navigate.
 
+What `submit(answers)` resolves to depends on who is submitting:
+
+- The form's owner, and a member inside an app, get the whole record.
+- A visitor on a public link or embed gets `{id, status, submittedAt, updatedAt, answers}`, plus
+  `stored: false` if the script kept nothing. `answers` holds only the fields they sent, as stored.
+  `computed`, `tags`, and calculated and hidden fields stay with the owner, because a script may have
+  fetched something private.
+
+A screen that shows a visitor a score has to work it out itself. `onSubmit` has no way to send a
+result back on a successful save. The only script text a visitor sees is a refusal:
+`return {reject: true, message}` saves nothing, and `submit()` rejects with that message.
+
 ## Per-app specs (purpose → section intents)
 
 The authoritative form list is each pack file; sections not named here get the default template.

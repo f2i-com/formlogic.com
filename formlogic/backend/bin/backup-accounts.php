@@ -19,7 +19,7 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
  *
  * Schedule it DAILY:
  *   Linux cron:
- *     15 2 * * * php /path/to/formlogic/backend/bin/backup-accounts.php >> /var/log/formlogic-backup.log 2>&1
+ *     15 2 * * * php /path/to/formlogic/backend/bin/backup-accounts.php >> /path/to/formlogic/backend/logs/formlogic-backup.log 2>&1
  *   Windows (Task Scheduler, this dev box):
  *     schtasks /Create /TN "FormLogic nightly backup" /SC DAILY /ST 02:15 ^
  *       /TR "php C:\wamp64\www\formlogic-app\formlogic\backend\bin\backup-accounts.php"
@@ -56,8 +56,7 @@ $settings = $config['settings'];
 
 $mysql = new MySQLConnection($settings['mysql']);
 try {
-    $mysql->initializeSchema();
-    $mysql->runMigrations();
+    $mysql->ensureSchemaCurrent();
 } catch (\Throwable $e) {
     fwrite(STDERR, sprintf("[%s] schema init failed: %s\n", date('c'), $e->getMessage()));
 }

@@ -318,10 +318,12 @@ unwritable hosted-app storage. Back up its contents and preserve them during upg
 
 ### Follow-up performance and retry work
 
-Hosted actions currently reserve a write transaction with `BEGIN IMMEDIATE`, including reads,
-with a two-second SQLite busy timeout. Read/write concurrency at 1, 5, 10 and 25 callers should
-be benchmarked before changing this transaction policy. Record latency percentiles, busy errors
-and rollbacks. A read-only transaction change must preserve enforcement of action modes.
+An app's database uses SQLite's WAL mode, as form databases do. A read action takes no lock: it
+reads one snapshot, waits for no writer and holds none up, and a write from it is still refused. A
+write action holds the write lock for its whole transaction, so an app's writes run one at a time.
+One that can't get the lock in two seconds answers `503` with `Retry-After` and `code: app_busy`.
+It has written nothing, so a client can send it again. Latency at 1, 5, 10 and 25 callers has not
+been measured yet. Record percentiles, busy errors and rollbacks.
 
 `ctx.requestId` identifies an invocation; it is not stable across retries. Before adding automatic
 write retries, design explicit client operation IDs and duplicate-result handling for bookings

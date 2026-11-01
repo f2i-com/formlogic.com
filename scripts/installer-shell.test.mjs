@@ -72,3 +72,19 @@ test('the wizard, INSTALL.txt and the deployment guide list the same scheduled j
   const listed = guide.slice(guide.indexOf('### Every scheduled job'), guide.indexOf('## 4. PayPal'));
   for (const job of expected) assert.ok(listed.includes(`bin/${job}.php`), job);
 });
+
+test('every scheduled job logs where the web server user can write, or it would never start', () => {
+  for (const file of ['formlogic/install.php', 'scripts/package-dist.mjs', 'DEPLOYMENT.md']) {
+    const text = readFileSync(resolve(root, file), 'utf8');
+    const lines = text.split(/\r?\n/).filter((line) => /(?:\*|[\d/-]+)(?: (?:\*|\d+)){4}\s+php\b.*\bbin\/[a-z-]+\.php/.test(line));
+    assert.ok(lines.length >= 10, file);
+    for (const line of lines) assert.match(line, /(?:>>|&gt;&gt;) .*\/logs\/formlogic-[a-z-]+\.log 2(?:>|&gt;)&(?:amp;)?1/, line);
+    assert.doesNotMatch(text, />> \/var\/log\/|&gt;&gt; \/var\/log\//, file);
+  }
+});
+
+test('the manual install sets the address sign-ins and reset links go to', () => {
+  const dist = readFileSync(resolve(root, 'scripts/package-dist.mjs'), 'utf8');
+  const manual = dist.slice(dist.indexOf('Manual install (no wizard)'), dist.indexOf('Scheduled tasks (optional but recommended)'));
+  assert.match(manual, /^\s+APP_URL\s/m);
+});

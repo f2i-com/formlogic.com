@@ -42,9 +42,10 @@ class SQLiteConnection
     }
 
     /**
-     * Whether this can name a form that already exists. Wider than a new id may be: older
-     * versions let the API choose ids such as survey.2026. What it keeps out are the spellings the
-     * database folds onto a real id, a trailing space or an accent, which would each get a file.
+     * Whether this may become a form's file when nothing says it is a form. Wider than a new id may
+     * be: older versions let the API choose ids such as survey.2026. What it keeps out are the
+     * spellings the database folds onto a real id, a trailing space or an accent, which would each
+     * get a file. It is no guard on the path, which is hashed from the id (getFormDbPath).
      */
     public static function mayNameForm(string $formId): bool
     {
@@ -55,19 +56,21 @@ class SQLiteConnection
      * Get or create a SQLite database for a specific form
      *
      * Opening one that isn't there creates it, and MySQL's collation finds a form under spellings
-     * its id doesn't have (a trailing space, an accent). So nothing else may become a file.
+     * its id doesn't have (a trailing space, an accent). So nothing else may become a file. A file
+     * that is there, or a caller holding the form's own row ($formExists), says the id is real
+     * whatever it looks like: older versions let the API choose ids with spaces too.
      */
-    public function getFormDatabase(string $formId): PDO
+    public function getFormDatabase(string $formId, bool $formExists = false): PDO
     {
         if (isset($this->connections[$formId])) {
             return $this->connections[$formId];
         }
-        if (!self::mayNameForm($formId)) {
-            throw new \InvalidArgumentException('Invalid form id');
-        }
 
         $dbPath = $this->getFormDbPath($formId);
         $isNew = !file_exists($dbPath);
+        if ($isNew && !$formExists && !self::mayNameForm($formId)) {
+            throw new \InvalidArgumentException('Invalid form id');
+        }
 
         // Two first requests must not both build a form's file: the second would hit the first's
         // lock, and its cleanup below would delete a database the first is writing to.
@@ -101,7 +104,7 @@ class SQLiteConnection
             if ($isNew) {
                 $this->initializeFormSchema($pdo);
             } else {
-                $this->ensureSchemaUpToDate($pdo);
+                $this->ensureSchemaUpToDate($pdo, $dbPath);
             }
 
             $this->connections[$formId] = $pdo;
@@ -160,7 +163,7 @@ class SQLiteConnection
      */
     public function formDatabaseExists(string $formId): bool
     {
-        return self::mayNameForm($formId) && file_exists($this->getFormDbPath($formId));
+        return file_exists($this->getFormDbPath($formId));
     }
 
     /**
@@ -370,6 +373,25 @@ class SQLiteConnection
     }
 
     /**
+     * Opens a transaction that holds the write lock from its first statement. For a transaction
+     * that reads before it writes: a connection holding a read can't wait for the write lock, so
+     * SQLite refuses it at once with "database is locked", whatever busy_timeout says.
+     *
+     * A write is what takes the lock because a transaction has to be one PDO opened: before PHP
+     * 8.4 it can't see exec('BEGIN IMMEDIATE'), so commit() throws and inTransaction() says no.
+     */
+    public static function beginWrite(PDO $pdo): void
+    {
+        $pdo->beginTransaction();
+        try {
+            $pdo->exec('DELETE FROM form_data WHERE 0');
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    /**
      * Run migrations on an existing form database.
      * Kept for backward compatibility — delegates to version-based migration.
      */
@@ -380,14 +402,33 @@ class SQLiteConnection
 
     /**
      * Check schema version and apply any pending migrations.
+     *
+     * Every request that opens the form sees the old version. One migrates and the rest wait for
+     * it here: building an index on a large form can outlast busy_timeout, which failed them, reads
+     * included. $dbPath names the lock; without it the caller has an open, checked form already.
      */
-    private function ensureSchemaUpToDate(PDO $pdo): void
+    private function ensureSchemaUpToDate(PDO $pdo, ?string $dbPath = null): void
     {
         $version = $this->getSchemaVersion($pdo);
         if ($version >= self::SCHEMA_VERSION) {
             return;
         }
-        $this->applyMigrations($pdo, $version);
+        $lock = $dbPath !== null ? @fopen($dbPath . '.migrate', 'c') : false;
+        if ($lock !== false) {
+            flock($lock, LOCK_EX);
+        }
+        try {
+            $version = $this->getSchemaVersion($pdo);
+            if ($version < self::SCHEMA_VERSION) {
+                $this->applyMigrations($pdo, $version);
+            }
+        } finally {
+            if ($lock !== false) {
+                flock($lock, LOCK_UN);
+                fclose($lock);
+                @unlink($dbPath . '.migrate');
+            }
+        }
     }
 
     /**

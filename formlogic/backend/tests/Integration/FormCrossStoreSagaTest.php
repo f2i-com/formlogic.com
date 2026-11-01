@@ -24,7 +24,7 @@ class SagaFailingSqliteConnection extends SQLiteConnection
     public int $failOpenAfter = -1;
     public bool $failDelete = false;
 
-    public function getFormDatabase(string $formId): PDO
+    public function getFormDatabase(string $formId, bool $formExists = false): PDO
     {
         if ($this->failOpenAfter >= 0) {
             if ($this->failOpenAfter === 0) {
@@ -32,7 +32,7 @@ class SagaFailingSqliteConnection extends SQLiteConnection
             }
             $this->failOpenAfter--;
         }
-        return parent::getFormDatabase($formId);
+        return parent::getFormDatabase($formId, $formExists);
     }
 
     public function deleteFormDatabase(string $formId): bool

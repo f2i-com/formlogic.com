@@ -671,29 +671,11 @@ class AppPublicController
         }
 
         try {
-            // Atomic quota enforcement: re-check the count under a per-form lock so
-            // concurrent submissions cannot both pass the earlier check and overshoot
-            // quotaLimit (the lock fails open under contention).
-            $quotaLock = null;
-            if ($form && !empty($settings['quotaLimit'])) {
-                $quotaLock = $this->responseService->acquireFormLock($formId);
-                if ($quotaLock === null) {
-                    // Audit FL-004/C-11: without the mutex, concurrent submissions can
-                    // both pass the re-check and overshoot a HARD cap — fail closed.
-                    return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true,
-                        'message' => 'The form is busy — please retry in a moment.']];
-                }
-                if ($this->responseService->getResponseCount($formId) >= (int) $settings['quotaLimit']) {
-                    $this->responseService->releaseFormLock($quotaLock);
-                    $closedMessage = $settings['closedMessage'] ?? 'This form has reached its maximum number of responses.';
-                    return ['status' => 403, 'payload' => ['error' => true, 'message' => $closedMessage]];
-                }
-            }
-            try {
-                $result = $this->appResponseService->createResponse($app['id'], $formId, $data, $userId, $script, $sourceRunId);
-            } finally {
-                $this->responseService->releaseFormLock($quotaLock);
-            }
+            // Atomic quota enforcement: the count is checked again around the insert, under a
+            // per-form lock, so concurrent submissions cannot both pass the earlier check and
+            // overshoot quotaLimit.
+            $quotaLimit = $form ? ((int) ($settings['quotaLimit'] ?? 0) ?: null) : null;
+            $result = $this->appResponseService->createResponse($app['id'], $formId, $data, $userId, $script, $sourceRunId, $quotaLimit);
 
             if ($result instanceof \FormLogic\Services\ScriptRejection) {
                 $payload = [
@@ -709,6 +691,13 @@ class AppPublicController
             }
 
             return ['status' => 201, 'payload' => ['response' => $result]];
+        } catch (\FormLogic\Services\FormQuotaRefused $e) {
+            // Audit FL-004/C-11: without the mutex, concurrent submissions can both pass the
+            // re-check and overshoot a HARD cap — fail closed.
+            if ($e->busy) {
+                return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true, 'message' => $e->getMessage()]];
+            }
+            return ['status' => 403, 'payload' => ['error' => true, 'message' => $settings['closedMessage'] ?? $e->getMessage()]];
         } catch (\FormLogic\Services\EncryptionEnablingException $e) {
             // Enable-race gate: mid-enable submissions fail closed with 409.
             return ['status' => 409, 'payload' => ['error' => true, 'message' => $e->getMessage(), 'code' => \FormLogic\Services\EncryptionEnablingException::ERROR_CODE]];
@@ -1210,27 +1199,31 @@ class AppPublicController
         }
 
         // Validate answers against form fields if answers are being updated
+        $form = null;
         if (isset($data['answers'])) {
             if (!is_array($data['answers'])) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Answers must be an object'], 422);
             }
             $form = $this->formService->getForm($formId);
+        }
+
+        // Runs again over the record as it then is if another edit lands first (mergeEdit), so
+        // that $data here stays what the caller sent.
+        $edit = function (array $stored, ?string $version) use ($data, $form, $formId, $responseId, $userId, $response): array|Response|null {
             if ($form) {
                 // PATCH semantics: callers (record editors, app-logic effects, flow output
                 // actions) may send only the fields they change. Merge over the STORED
                 // answers before validating, so a partial update like {status, ended_at}
                 // isn't rejected for omitting an unrelated required field. Required fields
                 // can still only be cleared by an explicit empty value, never by omission.
-                if (is_array($data['answers'])) {
-                    // The answers being changed are held to the shape a submission is (see
-                    // runSubmissionPipeline). Only those: a record stored before the limits
-                    // must stay editable, and the evaluation below withholds what it holds.
-                    if ($refusal = $this->answerShapeRefusal($form['fields'] ?? [], $data['answers'])) {
-                        return $this->jsonResponse($response, $refusal, 422);
-                    }
-                    $existingAnswers = is_array($existingResp['answers'] ?? null) ? $existingResp['answers'] : [];
-                    $data['answers'] = array_merge($existingAnswers, $data['answers']);
+                // The answers being changed are held to the shape a submission is (see
+                // runSubmissionPipeline). Only those: a record stored before the limits
+                // must stay editable, and the evaluation below withholds what it holds.
+                if ($refusal = $this->answerShapeRefusal($form['fields'] ?? [], $data['answers'])) {
+                    return $this->jsonResponse($response, $refusal, 422);
                 }
+                $existingAnswers = is_array($stored['answers'] ?? null) ? $stored['answers'] : [];
+                $data['answers'] = array_merge($existingAnswers, $data['answers']);
                 // Drop non-input/unknown field answers before validating/persisting
                 $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
                 $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], $formId);
@@ -1257,15 +1250,25 @@ class AppPublicController
                     ], 400);
                 }
             }
-        }
+            return $this->appResponseService->updateResponse($formId, $responseId, $data, $version);
+        };
 
         try {
-            $updated = $this->appResponseService->updateResponse($formId, $responseId, $data);
+            $updated = $form
+                ? $this->responseService->mergeEdit($formId, $responseId, $edit)
+                : $edit($existingResp, null);
+        } catch (\FormLogic\Services\ResponseVersionConflict) {
+            // Others got in first on every attempt. Nothing is wrong with this edit.
+            return $this->jsonResponse($response->withHeader('Retry-After', '2'), ['error' => true, 'retryable' => true,
+                'message' => 'This record is being changed by others. Please try again.'], 503);
         } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
             // §9.2: PATCH-merge over ciphertext is impossible — typed refusal.
             return $this->jsonError($response, $e->getMessage(), 400, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);
         }
 
+        if ($updated instanceof Response) {
+            return $updated;
+        }
         if (!$updated) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
         }

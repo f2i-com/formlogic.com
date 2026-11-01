@@ -58,14 +58,13 @@ $mysqlConn = new MySQLConnection($conf);
 $pdo = $mysqlConn->getConnection();
 $sqlite = new SQLiteConnection(__DIR__ . '/../' . ($_ENV['SQLITE_STORAGE_PATH'] ?? 'storage/forms'));
 
-// Bring the schema fully current BEFORE touching anything: the same guarded, idempotent
-// initializeSchema() + runMigrations() the web app runs on boot. This script used to keep its own
+// Bring the schema fully current BEFORE touching anything: the same check, under the same lock,
+// that the web app runs on boot. This script used to keep its own
 // ad-hoc column ensures (screenshot/screenshots/reports) — that whack-a-mole broke the moment a
 // fresh install imported a stale database/schema.sql and provisioned before the first web request
 // (pack_catalog.item_type missing → publishPack fatal). One canonical path, no drift.
 echo "Ensuring schema + migrations are current...\n";
-$mysqlConn->initializeSchema();
-$mysqlConn->runMigrations();
+$mysqlConn->ensureSchemaCurrent();
 
 $forms = new FormService($mysqlConn, $sqlite);
 $apps = new AppService($mysqlConn, $forms);

@@ -31,6 +31,8 @@ class McpOAuthService
     public const AOKIE_COMPANION_ACCESS_TOKEN_TTL = 600;
     /** Refresh tokens last ~30 days (rotation for public clients keeps the family fresh). */
     public const REFRESH_TOKEN_TTL = 2592000;
+    /** How long after a rotation the same client's reuse is a race, not theft. */
+    private const ROTATION_GRACE_SECONDS = 30;
 
     private const CODE_PREFIX = 'mcpac_';
     private const REFRESH_PREFIX = 'mcprt_';
@@ -762,6 +764,10 @@ class McpOAuthService
      * and a new one (same family) is returned; presenting an already-rotated token is theft evidence
      * and revokes the WHOLE family. Confidential clients keep their token (no rotation).
      *
+     * For ROTATION_GRACE_SECONDS after a rotation the same client's reuse is only refused: two
+     * threads or windows of one client refreshing together is ordinary use, and it would otherwise
+     * unlink the client until its owner consents again. That second request is given nothing.
+     *
      * @return array ['ok'=>true,'userId','appId','scopes','resource','newRefreshToken'=>?string]
      *               or ['ok'=>false,'error','error_description']
      */
@@ -779,6 +785,9 @@ class McpOAuthService
             return $err('Refresh token has been revoked');
         }
         if ($row['rotated_at'] !== null) {
+            if ((string) $row['client_id'] === $clientId && time() - (int) strtotime((string) $row['rotated_at']) <= self::ROTATION_GRACE_SECONDS) {
+                return $err('Refresh token was just replaced — use the newer one');
+            }
             // Reuse of a rotated token => the family is compromised; kill every descendant.
             $this->revokeRefreshFamily((string) $row['family_id']);
             return $err('Refresh token reuse detected — all sessions for this grant were revoked');
@@ -802,12 +811,12 @@ class McpOAuthService
             'newRefreshToken' => null,
         ];
         if ($isPublicClient) {
-            // Atomic rotation claim — a concurrent redeem of the same token means reuse: revoke family.
+            // Atomic rotation claim. Losing it means this client redeemed the token twice at once
+            // (the same token went past the checks above a moment ago), or it was just revoked.
             $claim = $this->db()->prepare("UPDATE mcp_oauth_refresh_tokens SET rotated_at = :now WHERE id = :id AND rotated_at IS NULL AND revoked_at IS NULL");
             $claim->execute(['now' => date('Y-m-d H:i:s'), 'id' => $row['id']]);
             if ($claim->rowCount() === 0) {
-                $this->revokeRefreshFamily((string) $row['family_id']);
-                return $err('Refresh token reuse detected — all sessions for this grant were revoked');
+                return $err('Refresh token was just replaced — use the newer one');
             }
             $result['newRefreshToken'] = $this->mintRefreshToken(
                 $result['userId'],

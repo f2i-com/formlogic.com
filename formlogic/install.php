@@ -1696,7 +1696,8 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
     <div class="next-steps" style="margin-top:16px;">
       <h3>Scheduled tasks (optional but recommended)</h3>
       <p style="font-size:13px;color:#64748b;margin:0 0 10px;">
-        Add these to the crontab on the server (<code>crontab -e</code> on Linux). If plain
+        Add these to the crontab of the user the web server runs as, who can write to
+        <code><?= $backendRelHtml ?>/logs</code> (<code>crontab -u www-data -e</code> on most Linux servers). If plain
         <code>php</code> isn't on cron's PATH, use the full path to the PHP <em>CLI</em> binary
         (find it with <code>which php</code> — it must be PHP 8.2+ with the same extensions as the
         web PHP). On Windows, use Task Scheduler to run the same commands.
@@ -1705,7 +1706,7 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
         <li style="margin-bottom:10px;">
           <strong>Webhook retries</strong> — re-delivers failed webhook events with exponential backoff.
           Safe to run every minute (a lock file prevents overlapping runs):<br>
-          <code>* * * * * php <?= $backendAbsHtml ?>/bin/webhook-worker.php &gt;&gt; /var/log/formlogic-webhooks.log 2&gt;&amp;1</code><br>
+          <code>* * * * * php <?= $backendAbsHtml ?>/bin/webhook-worker.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-webhooks.log 2&gt;&amp;1</code><br>
           <span class="help-text">No cron on your host? Run it continuously instead:
           <code>php <?= $backendRelHtml ?>/bin/webhook-worker.php --loop</code> (sleeps 60s between passes).</span>
         </li>
@@ -1713,48 +1714,48 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
           <strong>Nightly backup and cleanup</strong> — account and site backups, then the recycle-bin
           purge, upload cleanup, record retention and the webhook log prune, none of which run
           without it:<br>
-          <code>15 2 * * * php <?= $backendAbsHtml ?>/bin/backup-accounts.php &gt;&gt; /var/log/formlogic-backup.log 2&gt;&amp;1</code>
+          <code>15 2 * * * php <?= $backendAbsHtml ?>/bin/backup-accounts.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-backup.log 2&gt;&amp;1</code>
         </li>
         <li style="margin-bottom:10px;">
           <strong>Native app record events</strong> — retries record events after an interrupted delivery:<br>
-          <code>* * * * * php <?= $backendAbsHtml ?>/bin/native-record-dispatch.php &gt;&gt; /var/log/formlogic-native-records.log 2&gt;&amp;1</code>
+          <code>* * * * * php <?= $backendAbsHtml ?>/bin/native-record-dispatch.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-native-records.log 2&gt;&amp;1</code>
         </li>
         <li style="margin-bottom:10px;">
           <strong>Offline-sync ledger cleanup</strong> — nightly prune of idempotency rows older than
           30 days (replayed offline submissions no longer need them):<br>
-          <code>17 3 * * * php <?= $backendAbsHtml ?>/bin/idempotency-cleanup.php &gt;&gt; /var/log/formlogic-idempotency.log 2&gt;&amp;1</code>
+          <code>17 3 * * * php <?= $backendAbsHtml ?>/bin/idempotency-cleanup.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-idempotency.log 2&gt;&amp;1</code>
         </li>
         <li style="margin-bottom:10px;">
           <strong>Desktop command relay cleanup</strong> — nightly prune of completed/expired
           desktop-command relay rows older than 7 days (also promptly expires any command a desktop
           claimed but crashed/lost connectivity before completing):<br>
-          <code>23 3 * * * php <?= $backendAbsHtml ?>/bin/desktop-commands-cleanup.php &gt;&gt; /var/log/formlogic-desktop-commands.log 2&gt;&amp;1</code>
+          <code>23 3 * * * php <?= $backendAbsHtml ?>/bin/desktop-commands-cleanup.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-desktop-commands.log 2&gt;&amp;1</code>
         </li>
         <li style="margin-bottom:10px;">
           <strong>Stuck flow-run reclaim</strong> — every 5 minutes, reverts any flow run left at
           'running' for more than 10 minutes (the claiming FormLogic Desktop/browser runtime crashed
           or lost connectivity) to 'error' so anything waiting on it can retry:<br>
-          <code>0-59/5 * * * * php <?= $backendAbsHtml ?>/bin/flow-runs-reclaim.php &gt;&gt; /var/log/formlogic-flow-runs-reclaim.log 2&gt;&amp;1</code>
+          <code>0-59/5 * * * * php <?= $backendAbsHtml ?>/bin/flow-runs-reclaim.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-flow-runs-reclaim.log 2&gt;&amp;1</code>
         </li>
         <li style="margin-bottom:10px;">
           <strong>Flow outcome recovery</strong> — every 5 minutes, finishes outcome events a crash left pending:<br>
-          <code>0-59/5 * * * * php <?= $backendAbsHtml ?>/bin/flow-outcome-dispatch.php &gt;&gt; /var/log/formlogic-flow-outcomes.log 2&gt;&amp;1</code>
+          <code>0-59/5 * * * * php <?= $backendAbsHtml ?>/bin/flow-outcome-dispatch.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-flow-outcomes.log 2&gt;&amp;1</code>
         </li>
         <li style="margin-bottom:10px;">
           <strong>Flow artifact cleanup</strong> — hourly, removes expired artifacts:<br>
-          <code>11 * * * * php <?= $backendAbsHtml ?>/bin/artifact-sweep.php &gt;&gt; /var/log/formlogic-artifacts.log 2&gt;&amp;1</code>
+          <code>11 * * * * php <?= $backendAbsHtml ?>/bin/artifact-sweep.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-artifacts.log 2&gt;&amp;1</code>
         </li>
         <li style="margin-bottom:10px;">
           <strong>Private-form privacy sweep</strong> — nightly null-out of respondent IP addresses
           on end-to-end encrypted (private) forms once they pass the 30-day abuse-forensics window
           (plan §12; skipped entirely when no private forms exist):<br>
-          <code>41 3 * * * php <?= $backendAbsHtml ?>/bin/privacy-sweep.php &gt;&gt; /var/log/formlogic-privacy-sweep.log 2&gt;&amp;1</code>
+          <code>41 3 * * * php <?= $backendAbsHtml ?>/bin/privacy-sweep.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-privacy-sweep.log 2&gt;&amp;1</code>
         </li>
         <li>
           <strong>Data drift report</strong> — weekly read-only consistency check between MySQL and the
           per-form response databases (exit 1 = drift found; review the log, then run it manually with
           <code>--fix</code> to apply the safe repairs):<br>
-          <code>0 4 * * 1 php <?= $backendAbsHtml ?>/bin/reconcile.php &gt;&gt; /var/log/formlogic-reconcile.log 2&gt;&amp;1</code>
+          <code>0 4 * * 1 php <?= $backendAbsHtml ?>/bin/reconcile.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-reconcile.log 2&gt;&amp;1</code>
         </li>
       </ol>
     </div>

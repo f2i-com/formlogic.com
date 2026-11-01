@@ -22,7 +22,7 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
  * the identical cutoff/batch logic.
  *
  * Run from cron, e.g. once a day:
- *   17 3 * * * php /path/to/formlogic/backend/bin/idempotency-cleanup.php >> /var/log/formlogic-idempotency.log 2>&1
+ *   17 3 * * * php /path/to/formlogic/backend/bin/idempotency-cleanup.php >> /path/to/formlogic/backend/logs/formlogic-idempotency.log 2>&1
  *
  * Options:
  *   --days=N     override the retention window (else IDEMPOTENCY_RETENTION_DAYS, else 30)
@@ -85,10 +85,10 @@ $dryRun = in_array('--dry-run', $argvSafe, true);
 $days = idempotencyRetentionDays($argvSafe, $_ENV);
 
 $mysql = new MySQLConnection($mysqlConfig);
-// Ensure the table + created_at index exist even if this runs before the web app booted (both idempotent).
+// Ensure the table + created_at index exist even if this runs before the web app booted (under its
+// migration lock).
 try {
-    $mysql->initializeSchema();
-    $mysql->runMigrations();
+    $mysql->ensureSchemaCurrent();
 } catch (\Throwable $e) {
     fwrite(STDERR, sprintf("[%s] schema init failed: %s\n", date('c'), $e->getMessage()));
 }

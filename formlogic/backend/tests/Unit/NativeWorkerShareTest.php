@@ -24,6 +24,7 @@ final class NativeWorkerShareTest extends TestCase
 
     protected function tearDown(): void
     {
+        unset($_ENV['NATIVE_WORKERS_PER_APP']);
         $this->remove($this->storage);
     }
 
@@ -74,6 +75,37 @@ final class NativeWorkerShareTest extends TestCase
         self::assertTrue($this->refusedAsBusy('app-a'), 'A third request of app A has to wait its turn');
         self::assertFalse($this->refusedAsBusy('app-b'), 'and app B still gets one of the two left');
         unset($held);
+    }
+
+    public function testASiteWithOneBusyAppCanGiveItMore(): void
+    {
+        $_ENV['NATIVE_WORKERS_PER_APP'] = '4';
+        $held = $this->hold('app-a-0', 'app-a-1', 'app-a-2', '0', '1', '2');
+        self::assertFalse($this->refusedAsBusy('app-a'), 'A fourth request of app A gets the last worker');
+        unset($held);
+    }
+
+    public function testTheShareCannotPassTheWorkersThereAre(): void
+    {
+        $_ENV['NATIVE_WORKERS_PER_APP'] = '50';
+        $held = $this->hold('app-a-0', 'app-a-1', 'app-a-2', 'app-a-3');
+        self::assertTrue($this->refusedAsBusy('app-a'), 'Four is the most an app can hold, whatever the setting says');
+        unset($held);
+    }
+
+    /** @dataProvider unusableShares */
+    public function testAnUnusableSettingLeavesTheDefault(string $value): void
+    {
+        $_ENV['NATIVE_WORKERS_PER_APP'] = $value;
+        $held = $this->hold('app-a-0', 'app-a-1');
+        self::assertTrue($this->refusedAsBusy('app-a'), 'Two, as if it were not set');
+        unset($held);
+    }
+
+    /** @return array<string, array{0: string}> */
+    public static function unusableShares(): array
+    {
+        return ['zero' => ['0'], 'negative' => ['-1'], 'words' => ['lots']];
     }
 
     public function testEveryWorkerBusyTurnsAnAppAway(): void

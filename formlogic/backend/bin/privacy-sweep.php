@@ -20,7 +20,7 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
  * non-private forms are untouched.
  *
  * Schedule with the nightly maintenance jobs, e.g.:
- *   41 3 * * * php /path/to/formlogic/backend/bin/privacy-sweep.php >> /var/log/formlogic-privacy-sweep.log 2>&1
+ *   41 3 * * * php /path/to/formlogic/backend/bin/privacy-sweep.php >> /path/to/formlogic/backend/logs/formlogic-privacy-sweep.log 2>&1
  *
  * Options:
  *   --days=N     override the retention window (else PRIVACY_SWEEP_RETENTION_DAYS, else 30)
@@ -83,10 +83,9 @@ $dryRun = in_array('--dry-run', $argvSafe, true);
 $days = privacySweepRetentionDays($argvSafe, $_ENV);
 
 $mysql = new MySQLConnection($mysqlConfig);
-// Ensure the E2EE tables exist even if this runs before the web app booted (idempotent).
+// Ensure the E2EE tables exist even if this runs before the web app booted (under its migration lock).
 try {
-    $mysql->initializeSchema();
-    $mysql->runMigrations();
+    $mysql->ensureSchemaCurrent();
 } catch (\Throwable $e) {
     fwrite(STDERR, sprintf("[%s] schema init failed: %s\n", date('c'), $e->getMessage()));
 }

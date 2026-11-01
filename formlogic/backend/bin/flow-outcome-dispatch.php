@@ -38,8 +38,7 @@ $config = require __DIR__ . '/../config/settings.php';
 
 $mysql = new MySQLConnection($config['settings']['mysql']);
 try {
-    $mysql->initializeSchema();
-    $mysql->runMigrations();
+    $mysql->ensureSchemaCurrent();
 } catch (\Throwable $e) {
     fwrite(STDERR, sprintf("[%s] schema init failed: %s\n", date('c'), $e->getMessage()));
 }

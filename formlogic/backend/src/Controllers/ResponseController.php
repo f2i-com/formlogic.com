@@ -817,6 +817,8 @@ class ResponseController
 
         // Sanitize answers: strip non-input fields and unknown field IDs
         $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], is_array($data['answers'] ?? null) ? $data['answers'] : []);
+        // The fields this submitter answered: calculated ones join the record below.
+        $answered = $data['answers'];
 
         // An answer past ResponseService::MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES is refused by name
         // before anything evaluates it, as the app runtime does.
@@ -884,29 +886,10 @@ class ResponseController
         $script = $form['logicScript'] ?? null;
 
         try {
-            // Atomic quota enforcement: re-check the count under a per-form lock so
-            // concurrent submissions cannot both pass the earlier check and push the
-            // stored count past quotaLimit (the lock fails open under contention).
-            $quotaLock = null;
-            if (!empty($settings['quotaLimit'])) {
-                $quotaLock = $this->responseService->acquireFormLock($formId);
-                if ($quotaLock === null) {
-                    // Audit FL-004/C-11: no mutex → concurrent submissions could overshoot
-                    // the hard cap. Fail closed + retryable.
-                    return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true,
-                        'message' => 'The form is busy — please retry in a moment.']];
-                }
-                if ($this->responseService->getResponseCount($formId) >= (int)$settings['quotaLimit']) {
-                    $this->responseService->releaseFormLock($quotaLock);
-                    $closedMessage = $settings['closedMessage'] ?? 'This form has reached its maximum number of responses.';
-                    return ['status' => 403, 'payload' => ['error' => true, 'message' => $closedMessage]];
-                }
-            }
-            try {
-                $result = $this->responseService->createResponse($formId, $data, $script, $sourceRunId);
-            } finally {
-                $this->responseService->releaseFormLock($quotaLock);
-            }
+            // Atomic quota enforcement: the count is checked again around the insert, under a
+            // per-form lock, so concurrent submissions cannot both pass the earlier check and
+            // push the stored count past quotaLimit.
+            $result = $this->responseService->createResponse($formId, $data, $script, $sourceRunId, (int) ($settings['quotaLimit'] ?? 0) ?: null);
 
             // Handle rejection from script
             if ($result instanceof ScriptRejection) {
@@ -938,11 +921,17 @@ class ResponseController
 
             $this->audit($request, 'response.create', 'response', $result['id'] ?? '', ['formId' => $formId, 'stored' => $stored]);
             // What a script stored on the record (a score, a value it fetched) is the owner's to
-            // read, not the submitter's.
+            // read, not the submitter's. They get back their own answers, as they were stored.
             $isOwner = is_string($callerId) && $callerId !== '' && ($form['userId'] ?? null) === $callerId;
             return ['status' => 201, 'payload' => ['response' => $isOwner ? $result : array_intersect_key($result, array_flip([
-                'id', 'formId', 'status', 'stored', 'submittedAt', 'updatedAt',
-            ]))]];
+                'id', 'status', 'stored', 'submittedAt', 'updatedAt',
+            ])) + ['answers' => array_intersect_key((array) ($result['answers'] ?? []), $answered)]]];
+        } catch (\FormLogic\Services\FormQuotaRefused $e) {
+            // Audit FL-004/C-11: no mutex → concurrent submissions could overshoot the hard cap.
+            if ($e->busy) {
+                return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true, 'message' => $e->getMessage()]];
+            }
+            return ['status' => 403, 'payload' => ['error' => true, 'message' => $settings['closedMessage'] ?? $e->getMessage()]];
         } catch (EncryptionEnablingException $e) {
             // Enable-race gate: a concurrent enable committed between the dispatch
             // check and the atomic write — fail closed with the contract shape.

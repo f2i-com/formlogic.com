@@ -27,12 +27,12 @@ final class RateLimitMiddlewareTest extends TestCase
     /** @var array<string, int> hits per limiter key, as the shared store would count them */
     private array $hits = [];
 
-    private function middleware(int $max): RateLimitMiddleware
+    private function middleware(int $max, bool $demoPostsRead = false): RateLimitMiddleware
     {
         $limiter = $this->createMock(RateLimiter::class);
         $limiter->method('hit')->willReturnCallback(fn (string $key) => $this->hits[$key] = ($this->hits[$key] ?? 0) + 1);
         $limiter->method('secondsUntilReset')->willReturn(30);
-        return new RateLimitMiddleware($limiter, $max, 60, 'native_records', true, true);
+        return new RateLimitMiddleware($limiter, $max, 60, 'native_records', true, true, demoPostsRead: $demoPostsRead);
     }
 
     private function answer(RateLimitMiddleware $middleware, ?string $email, string $ip, string $method = 'GET'): int
@@ -64,6 +64,28 @@ final class RateLimitMiddlewareTest extends TestCase
         $this->assertSame(429, $this->answer($limit, $this->demoEmail(), '2001:db8::2', 'POST'), 'a new address is not a new write budget');
         $this->assertSame(429, $this->answer($limit, $this->demoEmail(), '2001:db8::3', 'DELETE'));
         $this->assertSame(['native_records:u:' . hash('sha256', 'account-1')], array_keys($this->hits));
+    }
+
+    /** Reports are POST only because their query rides in the body: every demo visitor runs them. */
+    public function testDemoVisitorsDoNotShareOneReportBudget(): void
+    {
+        $limit = $this->middleware(1, true);
+        $this->assertSame(200, $this->answer($limit, $this->demoEmail(), '203.0.113.10', 'POST'));
+        $this->assertSame(200, $this->answer($limit, $this->demoEmail(), '203.0.113.20', 'POST'), 'a second demo visitor has a budget of their own');
+        $this->assertSame(429, $this->answer($limit, $this->demoEmail(), '203.0.113.10', 'POST'), 'still limited');
+    }
+
+    public function testAMembersReportsStayKeyedByAccountAlone(): void
+    {
+        $limit = $this->middleware(1, true);
+        $this->assertSame(200, $this->answer($limit, 'owner@example.com', '203.0.113.10', 'POST'));
+        $this->assertSame(429, $this->answer($limit, 'owner@example.com', '203.0.113.20', 'POST'), 'a new address is not a new budget');
+    }
+
+    public function testTheReportRoutesCountTheirPostsAsReads(): void
+    {
+        $index = (string) file_get_contents(dirname(__DIR__, 2) . '/public/index.php');
+        $this->assertMatchesRegularExpression('/\$reportRateLimiter = new RateLimitMiddleware\([^;]*demoPostsRead: true\);/', $index);
     }
 
     public function testEveryOtherAccountIsStillKeyedByAccountAlone(): void

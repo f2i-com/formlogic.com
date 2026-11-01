@@ -115,8 +115,8 @@ class FormController
         }
         if (isset($data['theme'])) {
             $themeJson = json_encode($data['theme']);
-            if ($themeJson !== false && strlen($themeJson) > 10240) {
-                return 'Theme must be 10KB or smaller';
+            if ($themeJson !== false && strlen($themeJson) > FormService::MAX_THEME_BYTES) {
+                return 'Theme must be 512KB or smaller';
             }
         }
         if (isset($data['customScreen'])) {
@@ -233,13 +233,14 @@ class FormController
         // E2EE (plan §8): private forms carry their signed manifest on the OWNER
         // payload too — the builder verifies signer keys and renders the exact
         // schema snapshot. Served no-store like the public manifest.
+        $form['fieldsRevision'] = FormService::fieldsRevision($form['fields'] ?? []);
         if ($this->encryptionService !== null && $this->encryptionService->isPrivate($formId)) {
             $form['encryption'] = $this->encryptionService->publicManifest($formId);
             return $this->jsonResponse($response, ['form' => $form])
                 ->withHeader('Cache-Control', 'no-store');
         }
 
-        return $this->jsonResponse($response, ['form' => $form + ['fieldsRevision' => FormService::fieldsRevision($form['fields'] ?? [])]]);
+        return $this->jsonResponse($response, ['form' => $form]);
     }
 
     /**

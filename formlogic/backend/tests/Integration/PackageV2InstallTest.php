@@ -1178,6 +1178,12 @@ class PackageV2InstallTest extends TestCase
         $this->assertSame([], $safePreview['breakingFlows']);
         $this->assertCount(1, $safePreview['affectedFlows'], 'still reports what the update touches');
 
+        // A flow that has since moved on: only the revision it runs now can break.
+        self::$pdo->prepare('UPDATE flow_definitions SET version = version + 1 WHERE id = ?')->execute([(string) $flow['id']]);
+        $movedOn = self::$pkgV2->previewUpdate($next, $this->userId);
+        $this->assertSame([], $movedOn['affectedFlows']);
+        $this->assertSame([], $movedOn['breakingFlows']);
+
         self::$pdo->prepare('DELETE FROM flow_definitions WHERE id = ?')->execute([(string) $flow['id']]);
     }
 

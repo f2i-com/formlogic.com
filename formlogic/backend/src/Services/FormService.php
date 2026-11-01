@@ -21,6 +21,12 @@ class FormService
     }
 
     /**
+     * A form's theme holds its logo and background image as data: URLs, each kept to about 200KB
+     * by the editor (ThemeEditor.tsx), so a save and a pack of the form take this much.
+     */
+    public const MAX_THEME_BYTES = 524288;
+
+    /**
      * Field-id slugs must not collide with the FormLogic expression prelude's globals
      * (a field id like "count"/"sum"/"format" would shadow that builtin in generated
      * expressions). The editor's EXPRESSION_GLOBAL_NAMES (ui/src/lib/utils.ts).
@@ -386,13 +392,14 @@ class FormService
 
     /**
      * Create a new form (or update if it already exists - for sync support)
+     *
+     * @param bool $keepsItsId this id comes from the bin, from a form this server already held. A
+     *   separate argument because $data is a client's body on POST /api/forms.
      */
-    public function createForm(array $data): array
+    public function createForm(array $data, bool $keepsItsId = false): array
     {
         $id = $data['id'] ?? $this->generateUuid();
-        // Clients choose form ids, and an id goes into every URL of this form: it is one
-        // path segment, never a path. Checked before anything looks the id up.
-        if (!is_string($id) || !SQLiteConnection::isFormId($id)) {
+        if (!is_string($id)) {
             throw new \InvalidArgumentException('Invalid form id');
         }
         $now = date('Y-m-d H:i:s');
@@ -406,6 +413,12 @@ class FormService
                 throw new \RuntimeException('A form with this ID already exists');
             }
             return $this->updateForm($id, $data);
+        }
+
+        // Clients choose form ids, and an id goes into every URL of this form: it is one path
+        // segment, never a path. That holds new ids to a format, and older ones keep working.
+        if (!$keepsItsId && !SQLiteConnection::isFormId($id)) {
+            throw new \InvalidArgumentException('Invalid form id');
         }
 
         // Clients choose form ids (a form made offline keeps its id when it syncs), and a
@@ -477,7 +490,17 @@ class FormService
             if ($ownTx && $this->mysql->inTransaction()) {
                 $this->mysql->rollBack();
             }
+            // Two first saves of one id (an offline client syncing twice) both found it free, and
+            // the key settles it. The one that lost is now the save that finds the form there.
+            if ($ownTx && $e instanceof \PDOException && ($e->errorInfo[1] ?? null) === 1062 && $this->getForm($id) !== null) {
+                return $this->createForm($data);
+            }
             throw $e;
+        }
+
+        // Records may follow with no fields to have made the file (an old form's were all removed).
+        if ($keepsItsId) {
+            $this->sqlite->getFormDatabase($id, true);
         }
 
         // Create SQLite database and save fields
@@ -1103,7 +1126,8 @@ class FormService
             }
         }
 
-        $db = $this->sqlite->getFormDatabase($formId);
+        // Both callers hold this form's row.
+        $db = $this->sqlite->getFormDatabase($formId, true);
 
         // Wrap delete + insert in a transaction to prevent partial field loss on failure
         $db->beginTransaction();

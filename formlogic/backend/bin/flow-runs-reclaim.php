@@ -33,7 +33,7 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
  * less often than the 1-minute webhook-worker since a genuine crash is rare (note: the minute field
  * below is written as "0-59/5" rather than the equivalent "star-slash-5" so this cron line doesn't
  * prematurely close this very docblock comment):
- *   0-59/5 * * * * php /path/to/formlogic/backend/bin/flow-runs-reclaim.php >> /var/log/formlogic-flow-runs-reclaim.log 2>&1
+ *   0-59/5 * * * * php /path/to/formlogic/backend/bin/flow-runs-reclaim.php >> /path/to/formlogic/backend/logs/formlogic-flow-runs-reclaim.log 2>&1
  *
  * Options:
  *   --seconds=N  override the staleness threshold (else FLOW_RUN_STALE_SECONDS, else 600)
@@ -103,10 +103,9 @@ $dryRun = in_array('--dry-run', $argvSafe, true);
 $seconds = flowRunStaleSeconds($argvSafe, $_ENV);
 
 $mysql = new MySQLConnection($mysqlConfig);
-// Ensure the table exists even if this runs before the web app booted (both idempotent).
+// Ensure the table exists even if this runs before the web app booted (under its migration lock).
 try {
-    $mysql->initializeSchema();
-    $mysql->runMigrations();
+    $mysql->ensureSchemaCurrent();
 } catch (\Throwable $e) {
     fwrite(STDERR, sprintf("[%s] schema init failed: %s\n", date('c'), $e->getMessage()));
 }

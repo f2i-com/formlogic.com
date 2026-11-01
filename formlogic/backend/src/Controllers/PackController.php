@@ -215,7 +215,7 @@ class PackController
                     'warnings' => $result['warnings'] ?? [],
                 ], 201);
             } catch (\RuntimeException $e) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+                return $this->importRefusal($response, $e);
             } catch (\Exception $e) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to import application package'], 500);
             } finally {
@@ -366,7 +366,7 @@ class PackController
                 'warnings' => $warnings,
             ], 201);
         } catch (\RuntimeException $e) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+            return $this->importRefusal($response, $e);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to import application package'], 500);
         }
@@ -602,7 +602,7 @@ class PackController
             ], 201);
 
         } catch (\RuntimeException $e) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+            return $this->importRefusal($response, $e);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to import pack'], 500);
         }
@@ -717,7 +717,7 @@ class PackController
             }
             return $this->jsonResponse($response, ['success' => true, 'apps' => $result['apps'], 'forms' => $result['forms']], 201);
         } catch (\RuntimeException $e) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+            return $this->importRefusal($response, $e);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to install the sample'], 500);
         }
@@ -800,10 +800,16 @@ class PackController
             ]);
 
         } catch (\RuntimeException $e) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+            return $this->importRefusal($response, $e);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to adopt pack'], 500);
         }
+    }
+
+    /** An import refused with its message. 409 says that this pack is installing right now. */
+    private function importRefusal(Response $response, \RuntimeException $e): Response
+    {
+        return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], $e->getCode() === 409 ? 409 : 400);
     }
 
     /**
@@ -1001,12 +1007,12 @@ class PackController
         // Recycle bin: uninstallPack hard-deletes record-bearing forms, so their
         // snapshots are captured FIRST; commitCapturedForms (finally) records a
         // bin entry only for forms the uninstall actually removed and discards
-        // the rest — apps aren't snapshotted (reinstallable from the pack).
+        // the rest. Apps go to the bin inside the uninstall.
         $pendingTrash = $this->trashService !== null
             ? $this->trashService->captureRecordBearingForms($installationId, $userId)
             : [];
         try {
-            $result = $this->packService->uninstallPack($installationId, $userId);
+            $result = $this->packService->uninstallPack($installationId, $userId, $this->trashService);
 
             // Audit the uninstall
             if ($this->auditService) {

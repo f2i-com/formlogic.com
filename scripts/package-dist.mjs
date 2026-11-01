@@ -260,6 +260,9 @@ Manual install (no wizard)
 2. Create the backend config: copy api/.env.example to api/.env, then set
      APP_ENV=production and APP_DEBUG=false          — the example is for development: it shows
                                                        errors to visitors and trusts any domain claim
+     APP_URL                                         — this site's public address, such as
+                                                       https://forms.example.com. Reset links and
+                                                       connected domains' sign-ins go there
      DB_HOST, DB_DATABASE, DB_USERNAME, DB_PASSWORD  — your MySQL details
      JWT_SECRET                                      — a long random string
      DATA_ENCRYPTION_KEY                             — encrypts stored secrets and app records
@@ -297,17 +300,28 @@ Manual install (no wizard)
 Scheduled tasks (optional but recommended)
 ------------------------------------------
 The wizard prints these ready-to-paste; the crontab lines are (use the full
-path to your PHP 8.2+ CLI binary if plain "php" isn't on cron's PATH):
-  * * * * *  php <web-root>/api/bin/webhook-worker.php       # webhook retry delivery (lock-guarded; or run once with --loop as a service)
-  * * * * *  php <web-root>/api/bin/native-record-dispatch.php    # retry record events after an interrupted delivery
-  0-59/5 * * * * php <web-root>/api/bin/flow-runs-reclaim.php     # every 5 min: revert flow runs stuck 'running' >10min (crashed claimant) to 'error'
-  0-59/5 * * * * php <web-root>/api/bin/flow-outcome-dispatch.php # every 5 min: finish flow outcome events a crash left pending
-  11 * * * * php <web-root>/api/bin/artifact-sweep.php       # hourly: remove expired flow artifacts
-  15 2 * * * php <web-root>/api/bin/backup-accounts.php      # nightly: account and site backups, recycle-bin purge, upload cleanup, record retention, webhook log prune
-  17 3 * * * php <web-root>/api/bin/idempotency-cleanup.php  # nightly offline-sync ledger prune (rows older than 30 days)
-  23 3 * * * php <web-root>/api/bin/desktop-commands-cleanup.php  # nightly desktop-command relay prune (rows older than 7 days; also expires crashed/claimed rows)
-  41 3 * * * php <web-root>/api/bin/privacy-sweep.php        # nightly: clear respondent addresses on private forms after 30 days
-  0 4 * * 1  php <web-root>/api/bin/reconcile.php            # weekly read-only MySQL<->SQLite drift report (--fix applies safe repairs)
+path to your PHP 8.2+ CLI binary if plain "php" isn't on cron's PATH). Add them
+to the crontab of the web server user: a job whose log it can't open never starts.
+  # webhook retry delivery (lock-guarded; or run once with --loop as a service)
+  * * * * *  php <web-root>/api/bin/webhook-worker.php >> <web-root>/api/logs/formlogic-webhooks.log 2>&1
+  # retry record events after an interrupted delivery
+  * * * * *  php <web-root>/api/bin/native-record-dispatch.php >> <web-root>/api/logs/formlogic-native-records.log 2>&1
+  # every 5 min: revert flow runs stuck 'running' >10min (crashed claimant) to 'error'
+  0-59/5 * * * * php <web-root>/api/bin/flow-runs-reclaim.php >> <web-root>/api/logs/formlogic-flow-runs-reclaim.log 2>&1
+  # every 5 min: finish flow outcome events a crash left pending
+  0-59/5 * * * * php <web-root>/api/bin/flow-outcome-dispatch.php >> <web-root>/api/logs/formlogic-flow-outcomes.log 2>&1
+  # hourly: remove expired flow artifacts
+  11 * * * * php <web-root>/api/bin/artifact-sweep.php >> <web-root>/api/logs/formlogic-artifacts.log 2>&1
+  # nightly: account and site backups, recycle-bin purge, upload cleanup, record retention, webhook log prune
+  15 2 * * * php <web-root>/api/bin/backup-accounts.php >> <web-root>/api/logs/formlogic-backup.log 2>&1
+  # nightly offline-sync ledger prune (rows older than 30 days)
+  17 3 * * * php <web-root>/api/bin/idempotency-cleanup.php >> <web-root>/api/logs/formlogic-idempotency.log 2>&1
+  # nightly desktop-command relay prune (rows older than 7 days; also expires crashed/claimed rows)
+  23 3 * * * php <web-root>/api/bin/desktop-commands-cleanup.php >> <web-root>/api/logs/formlogic-desktop-commands.log 2>&1
+  # nightly: clear respondent addresses on private forms after 30 days
+  41 3 * * * php <web-root>/api/bin/privacy-sweep.php >> <web-root>/api/logs/formlogic-privacy-sweep.log 2>&1
+  # weekly read-only MySQL<->SQLite drift report (--fix applies safe repairs)
+  0 4 * * 1  php <web-root>/api/bin/reconcile.php >> <web-root>/api/logs/formlogic-reconcile.log 2>&1
 
 Troubleshooting
 ---------------

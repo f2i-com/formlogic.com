@@ -133,6 +133,14 @@ class PackService
                     unset($importSettings['notifications']);
                 }
 
+                // Showing a form's answers to anyone who has its link is the owner's to turn on,
+                // never a pack's to ship on, and the install review doesn't mention it. The
+                // signature over a screen doesn't cover these two, so a signed screen stays verified.
+                $importScreen = $this->resolveCustomScreen($packForm['customScreen'] ?? null, $formIdMap);
+                if (is_array($importScreen)) {
+                    unset($importScreen['publicRecords'], $importScreen['publicRecordFields']);
+                }
+
                 $formData = [
                     'id' => $newFormId,
                     'userId' => $userId,
@@ -142,7 +150,7 @@ class PackService
                     'settings' => $importSettings,
                     'theme' => $packForm['theme'] ?? [],
                     'logicScript' => $packForm['logicScript'] ?? null,
-                    'customScreen' => $this->resolveCustomScreen($packForm['customScreen'] ?? null, $formIdMap),
+                    'customScreen' => $importScreen,
                     'icon' => $packForm['icon'] ?? null,
                     'fields' => $fields,
                 ];
@@ -1685,9 +1693,12 @@ class PackService
     /**
      * Uninstall a pack: delete all forms and apps created by it.
      *
+     * With $trash, its apps go to the recycle bin as any deleted app does, and their databases stay
+     * on disk until the bin lets them go: those hold members' records, which the pack can't bring back.
+     *
      * @return array { formsDeleted: int, appsDeleted: int }
      */
-    public function uninstallPack(string $installationId, string $userId): array
+    public function uninstallPack(string $installationId, string $userId, ?TrashService $trash = null): array
     {
         // Verify the installation belongs to this user
         $stmt = $this->mysql->prepare("
@@ -1717,11 +1728,20 @@ class PackService
                 $checkStmt->execute(['id' => $appId]);
                 $owner = $checkStmt->fetchColumn();
                 if ($owner !== false && $owner !== $userId) continue;
-                if ($owner !== false) $this->appService->deleteApp($appId);
+                if ($trash !== null) {
+                    if ($owner !== false) {
+                        $trash->trashApp($appId, $userId);
+                        $appsDeleted++;
+                    }
+                    // A retry finds this app's row gone because it is in the bin: its storage stays.
+                    if ($owner !== false || $trash->holdsApp($appId, $userId)) continue;
+                } elseif ($owner !== false) {
+                    $this->appService->deleteApp($appId);
+                }
                 // A retry also cleans storage after the app row was already removed.
                 ($this->hosting ??= new HostedAppService(new SandboxRunner()))->remove($appId);
                 ($this->native ??= new NativeAppService())->remove($appId);
-                if ($owner !== false) $appsDeleted++;
+                if ($owner !== false && $trash === null) $appsDeleted++;
             } catch (\Throwable $e) { $failedApps[] = $appId; }
         }
         if ($failedApps) throw new \RuntimeException('Some app storage could not be removed yet. Retry uninstall to finish; the installation has been retained.');
@@ -1847,21 +1867,27 @@ class PackService
      * Serialize concurrent install/adopt of the same pack by the same user so the
      * isPackInstalled() check-then-insert cannot race into duplicate installations
      * (there is no UNIQUE constraint on pack_installations). Mirrors the audit-chain
-     * GET_LOCK pattern. Fails open (returns null) so a lock-server hiccup never
-     * blocks legitimate installs.
+     * GET_LOCK pattern. Without the lock an install refuses (409): the first one hasn't
+     * committed, so the check can't see it, and carrying on installs everything twice.
      */
-    private function acquireInstallLock(string $packId, string $userId): ?string
+    private function acquireInstallLock(string $packId, string $userId): string
     {
         // GET_LOCK names are capped at 64 chars; hash to stay well within that.
         $name = 'fl_pack_install_' . hash('sha256', $packId . '|' . $userId);
         $name = substr($name, 0, 60);
+        $held = false;
         try {
             $stmt = $this->mysql->prepare("SELECT GET_LOCK(:n, 5)");
             $stmt->execute(['n' => $name]);
-            return ((int) $stmt->fetchColumn() === 1) ? $name : null;
+            $held = (int) $stmt->fetchColumn() === 1;
+            $stmt->closeCursor();
         } catch (\Exception $e) {
-            return null;
+            $held = false;
         }
+        if (!$held) {
+            throw new \RuntimeException('This pack is already installing. Try again when that has finished.', 409);
+        }
+        return $name;
     }
 
     private function releaseInstallLock(?string $name): void
@@ -1967,8 +1993,8 @@ class PackService
             }
             if (isset($form['theme'])) {
                 $themeJson = json_encode($form['theme']);
-                if ($themeJson !== false && strlen($themeJson) > 10240) {
-                    throw new \RuntimeException("Form '{$form['packFormId']}' theme exceeds 10KB limit");
+                if ($themeJson !== false && strlen($themeJson) > FormService::MAX_THEME_BYTES) {
+                    throw new \RuntimeException("Form '{$form['packFormId']}' theme exceeds 512KB limit");
                 }
             }
             if (isset($form['customScreen'])) {

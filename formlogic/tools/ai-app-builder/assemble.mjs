@@ -447,7 +447,7 @@ export function validatePack(pack) {
       errors.push(`form "${f.packFormId}" logicScript exceeds the 100KB import cap`);
     }
     if (f.fields && jsonBytes(f.fields) > 512000) errors.push(`form "${f.packFormId}" fields exceed the 500KB import cap`);
-    for (const [key, cap] of [['settings', 10240], ['theme', 10240], ['customScreen', 524288]]) {
+    for (const [key, cap] of [['settings', 10240], ['theme', 524288], ['customScreen', 524288]]) {
       if (f[key] !== undefined && jsonBytes(f[key]) > cap) {
         errors.push(`form "${f.packFormId}" ${key} exceeds the ${Math.round(cap / 1024)}KB import cap`);
       }

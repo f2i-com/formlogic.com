@@ -131,6 +131,10 @@ tar czf backups/storage-$(date +%F).tar.gz -C formlogic/backend storage
 cp formlogic/backend/.env backups/env-$(date +%F)   # keep this somewhere safe, and NOT with the backups above
 ```
 
+Stop the site for this `tar`. The SQLite databases keep recent writes in a `-wal` file beside
+them, and a copy of the two made while the site runs can miss records or be damaged. On a live
+site use `bin/backup-accounts.php`, which takes a consistent snapshot of each database.
+
 **Restore:**
 1. Restore the MySQL dump into an empty database.
 2. Restore the `storage/` directories with the **same paths and permissions** (dirs `0700`).
@@ -150,7 +154,7 @@ worker so retries actually fire:
 
 ```cron
 # once a minute
-* * * * * php /path/to/formlogic/backend/bin/webhook-worker.php >> /var/log/formlogic-webhooks.log 2>&1
+* * * * * php /path/to/formlogic/backend/bin/webhook-worker.php >> /path/to/formlogic/backend/logs/formlogic-webhooks.log 2>&1
 ```
 
 On hosts without cron, run it continuously (sleeps 60s between passes):
@@ -173,21 +177,24 @@ recycle bin, clears abandoned uploads, applies each form's record retention and 
 log, so none of that happens without it.
 
 ```cron
-* * * * *      php /path/to/backend/bin/webhook-worker.php
-* * * * *      php /path/to/backend/bin/native-record-dispatch.php
-0-59/5 * * * * php /path/to/backend/bin/flow-runs-reclaim.php
-0-59/5 * * * * php /path/to/backend/bin/flow-outcome-dispatch.php
-11 * * * *     php /path/to/backend/bin/artifact-sweep.php
-15 2 * * *     php /path/to/backend/bin/backup-accounts.php
-17 3 * * *     php /path/to/backend/bin/idempotency-cleanup.php
-23 3 * * *     php /path/to/backend/bin/desktop-commands-cleanup.php
-41 3 * * *     php /path/to/backend/bin/privacy-sweep.php
-0 4 * * 1      php /path/to/backend/bin/reconcile.php
+* * * * *      php /path/to/backend/bin/webhook-worker.php >> /path/to/backend/logs/formlogic-webhooks.log 2>&1
+* * * * *      php /path/to/backend/bin/native-record-dispatch.php >> /path/to/backend/logs/formlogic-native-records.log 2>&1
+0-59/5 * * * * php /path/to/backend/bin/flow-runs-reclaim.php >> /path/to/backend/logs/formlogic-flow-runs-reclaim.log 2>&1
+0-59/5 * * * * php /path/to/backend/bin/flow-outcome-dispatch.php >> /path/to/backend/logs/formlogic-flow-outcomes.log 2>&1
+11 * * * *     php /path/to/backend/bin/artifact-sweep.php >> /path/to/backend/logs/formlogic-artifacts.log 2>&1
+15 2 * * *     php /path/to/backend/bin/backup-accounts.php >> /path/to/backend/logs/formlogic-backup.log 2>&1
+17 3 * * *     php /path/to/backend/bin/idempotency-cleanup.php >> /path/to/backend/logs/formlogic-idempotency.log 2>&1
+23 3 * * *     php /path/to/backend/bin/desktop-commands-cleanup.php >> /path/to/backend/logs/formlogic-desktop-commands.log 2>&1
+41 3 * * *     php /path/to/backend/bin/privacy-sweep.php >> /path/to/backend/logs/formlogic-privacy-sweep.log 2>&1
+0 4 * * 1      php /path/to/backend/bin/reconcile.php >> /path/to/backend/logs/formlogic-reconcile.log 2>&1
 ```
 
 The jobs that must not overlap hold a lock in `storage/locks`, or in the system's temp folder under
 a name this install alone uses if the user running cron can't write there. They exit non-zero if
-neither works. Run them as the web server's user, so that every run of a job shares one lock.
+neither works. Run them as the web server's user, so that every run of a job shares one lock. It can
+write to `logs/` as well. A job whose log it can't open never starts, so a log in `/var/log` won't do.
+The wizard, the release zip and `install.sh` make `logs/`. git doesn't carry it, so on a checkout set
+up by hand, create it first and give it to that user.
 
 ---
 

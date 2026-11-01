@@ -556,6 +556,31 @@ final class AokieCompanionDeviceService
         ];
     }
 
+    /**
+     * Records an admission, once an hour per device. Clients re-admit about every 90 seconds, and
+     * a row each time pushed real call events out of the history the app shows, and never left.
+     *
+     * @param array<string,mixed> $event
+     */
+    public function recordAdmission(
+        string $actorUserId,
+        string $appId,
+        string $subjectId,
+        ?string $deviceId,
+        array $event,
+    ): void {
+        $recent = $this->db()->prepare(
+            "SELECT 1 FROM aokie_companion_activity
+             WHERE app_id = :app AND device_id = :device AND event_type = 'admission_issued'
+               AND created_at > (NOW() - INTERVAL 1 HOUR)
+             LIMIT 1"
+        );
+        $recent->execute(['app' => $appId, 'device' => $deviceId]);
+        if ($recent->fetchColumn() === false) {
+            $this->recordActivity($actorUserId, $appId, $subjectId, $deviceId, $event);
+        }
+    }
+
     /** @param array<string,mixed> $event @return array<string,mixed> */
     public function recordActivity(
         string $actorUserId,

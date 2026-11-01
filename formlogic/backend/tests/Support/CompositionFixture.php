@@ -35,6 +35,9 @@ class CompositionApps extends AppService
     public function updateApp(string $appId,array $data): ?array {
         $app=$this->getApp($appId); if(!$app)return null; $app=array_merge($app,$data); $s=$this->db->prepare('UPDATE apps SET data=? WHERE id=?'); $s->execute([json_encode($app),$appId]); return $app;
     }
+    public function updateAppLocked(string $appId,callable $change): ?array {
+        $app=$this->getApp($appId); return $app ? $this->updateApp($appId,$change($app)) : null;
+    }
 }
 class CompositionForms extends FormService
 {

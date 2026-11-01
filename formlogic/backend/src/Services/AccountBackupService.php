@@ -1266,6 +1266,7 @@ final class AccountBackupService
             $warnings = array_values(array_filter(is_array($structure['warnings'] ?? null) ? $structure['warnings'] : [], 'is_string'));
             $created = ['apps' => [], 'forms' => [], 'workspaceFlows' => [], 'appFlows' => []];
             $opts = [
+                'serverHeld' => $serverHeld,
                 'preserveIds' => (bool) ($options['preserveIds'] ?? false),
                 'attachExistingForms' => (bool) ($options['attachExistingForms'] ?? false),
                 'attachExistingApps' => (bool) ($options['attachExistingApps'] ?? false),
@@ -1767,7 +1768,7 @@ final class AccountBackupService
      * Structure phase: forms → apps (memberships/roles/reports) → flows → bindings,
      * inside ONE MySQL transaction (createForm/createApp respect the open tx).
      *
-     * @param array{preserveIds:bool, attachExistingForms:bool, attachExistingApps:bool, lenientFormBindings:bool, rebuildInboundLinks:bool} $opts
+     * @param array{serverHeld:bool, preserveIds:bool, attachExistingForms:bool, attachExistingApps:bool, lenientFormBindings:bool, rebuildInboundLinks:bool} $opts
      * @return array{formIdMap: array<string,string>, appIdMap: array<string,string>, flowSlugMap: array<string,string>, flowsCreated:int, bindingsCreated:int, attachedForms: string[]}
      */
     private function restoreStructure(array $structure, string $userId, array &$created, array &$warnings, array $opts): array
@@ -1818,7 +1819,9 @@ final class AccountBackupService
                     'customLogic' => is_array($bf['customLogic'] ?? null) ? $bf['customLogic'] : null,
                     'icon' => is_string($bf['icon'] ?? null) ? $bf['icon'] : null,
                     'fields' => $this->remapFields(is_array($bf['fields'] ?? null) ? $bf['fields'] : [], $formIdMap, $warnings, $opts['preserveIds']),
-                ]);
+                // An id that older versions allowed comes back with its form. An uploaded archive says
+                // what it likes, so its ids are still held to the format.
+                ], $opts['serverHeld'] && $newId === (string) $bf['id']);
                 $created['forms'][] = ['id' => $newId, 'title' => (string) $bf['title']];
                 $this->restoreScreenTrust($bf['customScreen'] ?? null, fn (string $trust, array $provenance) => $this->formService->setCustomScreenTrust($newId, $trust, $provenance));
                 // createForm's INSERT has no published_at column — restore it directly.

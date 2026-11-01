@@ -196,8 +196,8 @@ final class TrashService
 
     /**
      * Capture snapshots of an installation's RECORD-BEARING forms before
-     * uninstallPack deletes them (apps aren't snapshotted — reinstallable from
-     * the pack; recordless forms aren't worth a bin entry). Call
+     * uninstallPack deletes them (it puts apps in the bin itself; recordless
+     * forms aren't worth a bin entry). Call
      * commitCapturedForms() with the result AFTER the uninstall: each pending
      * capture commits only if its form is actually gone.
      *
@@ -230,6 +230,14 @@ final class TrashService
             }
         }
         return $pendings;
+    }
+
+    /** Whether this deleted app is in the user's bin, which keeps its storage for an undelete. */
+    public function holdsApp(string $appId, string $userId): bool
+    {
+        $stmt = $this->pdo->prepare("SELECT 1 FROM trash_items WHERE kind = 'app' AND original_id = :id AND user_id = :u LIMIT 1");
+        $stmt->execute(['id' => $appId, 'u' => $userId]);
+        return $stmt->fetchColumn() !== false;
     }
 
     /** @param array[] $pendings from captureRecordBearingForms() */
@@ -383,6 +391,13 @@ final class TrashService
         if (!is_array($row) || !is_string($row['zip_path'])) {
             return false;
         }
+        // Claimed first, as a restore claims it: erasing the app's storage while a restore has
+        // the item would leave the restored app with no data. Whoever wins the row goes on.
+        $claim = $this->pdo->prepare("UPDATE trash_items SET status = 'restoring', claimed_at = NOW() WHERE id = :id AND user_id = :u AND status = 'trashed'");
+        $claim->execute(['id' => $trashId, 'u' => $userId]);
+        if ($claim->rowCount() !== 1) {
+            return false;
+        }
         // E2EE (security review): "delete forever" removes the form's parked
         // key/grant/manifest rows in the SAME transaction as the item delete,
         // BEFORE the recovery zip is touched — a crypto-lifecycle failure rolls
@@ -393,17 +408,13 @@ final class TrashService
             if (($row['kind'] ?? '') === 'form') {
                 $this->formEncryptionLifecycle('purge', (string) $row['original_id'], true);
             }
-            $del = $this->pdo->prepare("DELETE FROM trash_items WHERE id = :id AND user_id = :u AND status = 'trashed'");
-            $del->execute(['id' => $trashId, 'u' => $userId]);
-            if ($del->rowCount() !== 1) {
-                $this->pdo->rollBack();
-                return false;
-            }
+            $this->pdo->prepare('DELETE FROM trash_items WHERE id = :id')->execute(['id' => $trashId]);
             $this->pdo->commit();
         } catch (\Throwable $e) {
             if ($this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
             }
+            $this->releaseClaim($trashId);
             $this->logger->error('Trash: purge failed — item and snapshot left intact', [
                 'trashId' => $trashId, 'error' => $e->getMessage(),
             ]);
@@ -411,6 +422,17 @@ final class TrashService
         }
         @unlink($this->trashDir . '/' . $row['zip_path']);
         return true;
+    }
+
+    /** Hands an item back after a purge that didn't finish, so that a later one can try. */
+    private function releaseClaim(string $trashId): void
+    {
+        try {
+            $this->pdo->prepare("UPDATE trash_items SET status = 'trashed' WHERE id = :id")->execute(['id' => $trashId]);
+        } catch (\Throwable $e) {
+            // Its claim lapses by itself, and the next run takes the item then.
+            $this->logger->error('Trash: could not release a purge claim', ['trashId' => $trashId, 'error' => $e->getMessage()]);
+        }
     }
 
     /**
@@ -422,8 +444,17 @@ final class TrashService
     public function purgeExpired(): array
     {
         $items = 0;
-        $stmt = $this->pdo->query('SELECT id, zip_path, kind, original_id FROM trash_items WHERE expires_at < NOW()');
+        // Not an item a restore has, unless the worker holding that claim died: restore() gives a
+        // claim thirty minutes, and an expired item whose claim has lapsed goes like any other.
+        $free = "(status = 'trashed' OR claimed_at IS NULL OR claimed_at < NOW() - INTERVAL 30 MINUTE)";
+        $stmt = $this->pdo->query("SELECT id, zip_path, kind, original_id FROM trash_items WHERE expires_at < NOW() AND {$free}");
+        $claim = $this->pdo->prepare("UPDATE trash_items SET status = 'restoring', claimed_at = NOW() WHERE id = :id AND {$free}");
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            // Claimed as purgeItem claims it: a restore may have taken the item since the SELECT.
+            $claim->execute(['id' => $row['id']]);
+            if ($claim->rowCount() !== 1) {
+                continue;
+            }
             // The crypto purge commits in the SAME transaction as the row delete,
             // BEFORE the zip is unlinked — a failure keeps the item (row + zip)
             // so the next cron run retries instead of losing the recovery data.
@@ -439,6 +470,7 @@ final class TrashService
                 if ($this->pdo->inTransaction()) {
                     $this->pdo->rollBack();
                 }
+                $this->releaseClaim((string) $row['id']);
                 $this->logger->error('Trash: expired-item purge failed — item kept for retry', [
                     'trashId' => $row['id'], 'error' => $e->getMessage(),
                 ]);

@@ -2807,11 +2807,11 @@ class MySQLConnection
                 policy VARCHAR(20) NOT NULL,
                 enabled TINYINT(1) NOT NULL DEFAULT 1,
                 round_robin_cursor BIGINT UNSIGNED NOT NULL DEFAULT 0,
-                created_by_user_id VARCHAR(36) NOT NULL,
+                created_by_user_id VARCHAR(36) NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
-                FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
                 UNIQUE INDEX idx_aokie_routing_name (app_id, name),
                 INDEX idx_aokie_routing_enabled (app_id, enabled)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -2913,6 +2913,7 @@ class MySQLConnection
                 admission_grants JSON NULL,
                 frame MEDIUMTEXT NOT NULL,
                 created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                delivered_at DATETIME(3) NULL,
                 FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
                 INDEX idx_aokie_relay_inbox (app_id, to_party, seq),
                 INDEX idx_aokie_relay_expiry (created_at)
@@ -2925,6 +2926,28 @@ class MySQLConnection
         if ($pdo->query("SHOW COLUMNS FROM aokie_companion_relay_frames LIKE 'admission_grants'")->rowCount() === 0) {
             // Legacy rows remain NULL and therefore fail closed to grants:[].
             $pdo->exec('ALTER TABLE aokie_companion_relay_frames ADD COLUMN admission_grants JSON NULL AFTER from_party');
+        }
+        if ($pdo->query("SHOW COLUMNS FROM aokie_companion_relay_frames LIKE 'delivered_at'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE aokie_companion_relay_frames ADD COLUMN delivered_at DATETIME(3) NULL AFTER created_at');
+        }
+
+        // A routing group is the app's, not its creator's: erasing the account that made one took
+        // the group with it, and with it the app's call routing. Checked by rule, not by the
+        // column, so that a run stopped part way through finishes here.
+        $routingCreator = $pdo->query(
+            "SELECT k.CONSTRAINT_NAME AS name, r.DELETE_RULE AS rule
+             FROM information_schema.KEY_COLUMN_USAGE k
+             JOIN information_schema.REFERENTIAL_CONSTRAINTS r
+               ON r.CONSTRAINT_SCHEMA = k.TABLE_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+             WHERE k.TABLE_SCHEMA = DATABASE() AND k.TABLE_NAME = 'aokie_companion_routing_groups'
+               AND k.COLUMN_NAME = 'created_by_user_id'"
+        )->fetch(PDO::FETCH_ASSOC) ?: null;
+        if (($routingCreator['rule'] ?? null) !== 'SET NULL') {
+            if ($routingCreator !== null) {
+                $pdo->exec("ALTER TABLE aokie_companion_routing_groups DROP FOREIGN KEY `{$routingCreator['name']}`");
+            }
+            $pdo->exec('ALTER TABLE aokie_companion_routing_groups MODIFY COLUMN created_by_user_id VARCHAR(36) NULL');
+            $pdo->exec('ALTER TABLE aokie_companion_routing_groups ADD FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL');
         }
 
         // RUN-301 (ADR-010): compiled canonical IR + definition locks pinned to the immutable

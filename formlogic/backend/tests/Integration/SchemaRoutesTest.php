@@ -117,6 +117,37 @@ class SchemaRoutesTest extends TestCase
         $this->assertSame(0, $this->hashIndexNonUnique(), 'and nothing changes on the next run');
     }
 
+    public function testAnInstallWhoseRoutingGroupsDiedWithTheirCreatorIsMovedOn(): void
+    {
+        $name = $this->createDatabase('routing');
+        $this->pdo->exec("USE `{$name}`");
+        $this->mysql->initializeSchema();
+        $this->mysql->runMigrations();
+
+        // As every install before the change is.
+        $rule = "SELECT r.DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS r
+                 JOIN information_schema.KEY_COLUMN_USAGE k
+                   ON k.CONSTRAINT_SCHEMA = r.CONSTRAINT_SCHEMA AND k.CONSTRAINT_NAME = r.CONSTRAINT_NAME
+                 WHERE k.TABLE_SCHEMA = DATABASE() AND k.TABLE_NAME = 'aokie_companion_routing_groups' AND k.COLUMN_NAME = 'created_by_user_id'";
+        $fk = $this->pdo->query(
+            "SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'aokie_companion_routing_groups' AND COLUMN_NAME = 'created_by_user_id' AND REFERENCED_TABLE_NAME = 'users'"
+        )->fetchColumn();
+        $this->pdo->exec("ALTER TABLE aokie_companion_routing_groups DROP FOREIGN KEY `{$fk}`");
+        $this->pdo->exec('ALTER TABLE aokie_companion_routing_groups MODIFY COLUMN created_by_user_id VARCHAR(36) NOT NULL');
+        $this->pdo->exec('ALTER TABLE aokie_companion_routing_groups ADD FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE CASCADE');
+        $this->assertSame('CASCADE', $this->pdo->query($rule)->fetchColumn());
+
+        $this->mysql->runMigrations();
+
+        $this->assertSame('SET NULL', $this->pdo->query($rule)->fetchColumn());
+        $column = $this->pdo->query("SHOW COLUMNS FROM aokie_companion_routing_groups LIKE 'created_by_user_id'")->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame('YES', $column['Null']);
+
+        $this->mysql->runMigrations();
+        $this->assertSame('SET NULL', $this->pdo->query($rule)->fetchColumn(), 'and nothing changes on the next run');
+    }
+
     private function createDatabase(string $label): string
     {
         $name = 'formlogic_schema_' . $label . '_' . bin2hex(random_bytes(4));
