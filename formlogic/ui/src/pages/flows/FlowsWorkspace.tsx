@@ -5,7 +5,7 @@
 // (FlowEditor — React Flow canvas, node palette, properties, autosave) with a back link
 // in its toolbar, plus measured-width inline panels or the shared slide-over drawer for
 // triggers/history/test-run. Deep-linked by ?flow=<id> from the app-level Flows panel.
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Plus, RefreshCw, Sparkles, Workflow, X } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
@@ -15,6 +15,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
 import { deferEffect } from '../../lib/deferredEffect';
+import { lazyWithRetry } from '../../lib/lazyWithRetry';
 import { demoApplyFlowOverlay, demoApplyFormBindingOverlay, demoCreateFlow, demoUpdateFlow, demoDeleteFlow } from '../../lib/demoLocal';
 import { toast } from '../../stores/toastStore';
 import { FlowEditor } from '../../components/flows/editor/FlowEditor';
@@ -38,7 +39,7 @@ import type { FlowBinding, FlowDefinition, WorkflowGraph } from '../../types/flo
 
 const BELOW_MD_QUERY = '(max-width: 767.98px)';
 const LEGACY_INLINE_QUERY = '(min-width: 1024px)';
-const AiServicesDialog = lazy(() => import('../../components/flows/AiServicesDialog'));
+const AiServicesDialog = lazyWithRetry(() => import('../../components/flows/AiServicesDialog'));
 
 function mediaMatches(query: string, fallback: boolean): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return fallback;

@@ -6,9 +6,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { checkDistEngines, zippLicensesText, engineIdentity, checkNativeRuntime, relativeImports, nativeImportProblems, NATIVE_MODULES } from './release-runtime.mjs';
 import { createHash } from 'node:crypto';
 import { wasmModule, writeZippTree, zippEngineWasm, zippReleaseFixture } from '../formlogic/ui/scripts/zipp-release-fixture.mjs';
@@ -35,6 +37,15 @@ const uiDist = (extra = {}) => ({
   'assets/ort-wasm-simd-threaded.wasm': wasmModule(['run', 'memory_usage'], 'onnxruntime'),
   'assets/tiny.wasm': Buffer.from([0x00, 0x61]),
   ...extra,
+});
+
+// A page compares its build with what the server says it runs (ui/src/lib/newRelease.ts), so both
+// have to be the one value. A tagged release could match ui/package.json, but an untagged package's
+// VERSION is `<sha>-<date>`, and every page of it would call itself out of date.
+test('the UI build is named with what the zip writes to VERSION', () => {
+  const packager = readFileSync(fileURLToPath(new URL('./package-dist.mjs', import.meta.url)), 'utf8');
+  assert.match(packager, /run\('npm', \['run', 'build'\], \{ cwd: uiDir, env: \{ VITE_API_URL: '\/api', VITE_FORMLOGIC_VERSION: version \} \}\);/);
+  assert.match(packager, /writeFileSync\(path\.join\(apiDst, 'VERSION'\), `\$\{version\}\\n`\);/);
 });
 
 test('checkDistEngines finds every engine copy by content and requires the app\'s hashed engine among them', async (t) => {

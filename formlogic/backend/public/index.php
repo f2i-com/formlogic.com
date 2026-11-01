@@ -1287,6 +1287,9 @@ $app->add(function ($request, $handler) use ($oauthPublicPaths) {
         ->withoutHeader('Access-Control-Allow-Credentials'); // '*' + credentials is an invalid CORS combo
 });
 
+// Outside maintenance mode, so a tab left open across an update learns of it from the 503s too.
+$app->add(new \FormLogic\Middleware\ReleaseHeaderMiddleware(\FormLogic\Services\UpgradeService::defaultApiRoot() . '/VERSION'));
+
 // Added last, so outermost: it sees every answer, and keeps the headers those above have set.
 $app->add(new \FormLogic\Middleware\SqlErrorGuardMiddleware($appLogger));
 

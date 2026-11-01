@@ -2,6 +2,8 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { listenForStaleChunks } from './lib/lazyWithRetry'
+import { watchForNewRelease } from './lib/newRelease'
 
 // Set <html lang> to the user's browser locale so native date inputs
 // (and other locale-sensitive elements) render in the correct format.
@@ -14,6 +16,9 @@ document.documentElement.lang = navigator.language || 'en';
 for (const link of document.querySelectorAll<HTMLLinkElement>('link[data-fl-font-promote]')) {
   link.rel = 'stylesheet';
 }
+
+listenForStaleChunks();
+watchForNewRelease();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -25,37 +25,7 @@ import { AppLocalAccessPrompt } from './components/desktop/AppLocalAccessPrompt'
 import { SyncConflictDialog } from './components/sync/SyncConflictDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeManager } from './components/ui/ThemeManager';
-
-// Retry wrapper for lazy imports — handles stale chunk references after deploys
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- React.lazy requires ComponentType<any> to accept components with arbitrary, mutually-incompatible prop shapes; narrowing to unknown breaks every call site
-function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any> }>) {
-  return React.lazy(() =>
-    factory()
-      .then((mod) => {
-        // Clear the retry guard only on a SUCCESSFUL chunk load, so the 30s window
-        // survives across reloads when a chunk is persistently missing. Clearing it
-        // on every app mount (as AppInitializer did) defeated the guard and caused
-        // an infinite reload loop on a stale/missing chunk.
-        try { sessionStorage.removeItem('lazy_refresh'); } catch { /* ignore */ }
-        return mod;
-      })
-      .catch((error: Error) => {
-      const isChunkError =
-        error.message.includes('Failed to fetch dynamically imported module') ||
-        error.message.includes('Loading chunk') ||
-        error.message.includes('Loading CSS chunk');
-      // Use a timestamp to prevent infinite reload loops: only retry once
-      // within a 30-second window
-      const lastRefresh = Number(sessionStorage.getItem('lazy_refresh') || '0');
-      if (isChunkError && Date.now() - lastRefresh > 30_000) {
-        sessionStorage.setItem('lazy_refresh', String(Date.now()));
-        window.location.reload();
-        return new Promise(() => {}) as never; // Suspend during reload
-      }
-      throw error;
-    })
-  );
-}
+import { lazyWithRetry } from './lib/lazyWithRetry';
 
 const HostedAppPage = lazyWithRetry(() => import('./pages/apps/HostedAppPage'));
 const NativeAppPage = lazyWithRetry(() => import('./pages/apps/NativeAppPage'));

@@ -482,7 +482,9 @@ if (cli.skipUiBuild) {
   }
   // VITE_API_URL=/api pins the single-domain same-origin API base even if a local
   // ui/.env says otherwise (real process env beats .env files in Vite).
-  run('npm', ['run', 'build'], { cwd: uiDir, env: { VITE_API_URL: '/api' } });
+  // VITE_FORMLOGIC_VERSION is what a page compares with the release the server says it runs
+  // (ui/src/lib/newRelease.ts), so it is the very value written to VERSION below.
+  run('npm', ['run', 'build'], { cwd: uiDir, env: { VITE_API_URL: '/api', VITE_FORMLOGIC_VERSION: version } });
 }
 // The root .htaccess ships from ui/public/ via the Vite build — it IS the
 // single-domain routing + hardening, so its absence is a hard error.

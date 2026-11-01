@@ -2,7 +2,7 @@
  * API Client for FormLogic Backend
  */
 
-import { ADMIN_CONFIRMATION_REQUIRED, adminConfirmationHeaders, askForAdminConfirmation } from './adminConfirmation';
+import { ADMIN_CONFIRMATION_DECLINED, ADMIN_CONFIRMATION_REQUIRED, adminConfirmationHeaders, askForAdminConfirmation, canAskForAdminConfirmation } from './adminConfirmation';
 import type { Form } from '../types/form';
 import type { App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, FormAppContext } from '../types/app';
 import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
@@ -27,6 +27,7 @@ import type {
   WorkflowGraph,
 } from '../types/flows';
 import { logger } from './logger';
+import { noteServerRelease, RELEASE_HEADER } from './newRelease';
 import { currentSessionGeneration, isSessionGenerationCurrent } from './sessionGeneration';
 import {
   addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId, clearDemoRecords,
@@ -907,6 +908,7 @@ class ApiClient {
         // Include cookies in requests for HttpOnly cookie authentication
         credentials: 'include',
       });
+      noteServerRelease(response.headers?.get?.(RELEASE_HEADER));
 
       let data: T;
       try {
@@ -929,7 +931,7 @@ class ApiClient {
         if (d?.code === ADMIN_CONFIRMATION_REQUIRED && !confirmedAgain && await askForAdminConfirmation()) {
           return this.request<T>(endpoint, options, true);
         }
-        let message = (d?.message as string) || 'An error occurred';
+        let message = d?.code === ADMIN_CONFIRMATION_REQUIRED && canAskForAdminConfirmation() ? ADMIN_CONFIRMATION_DECLINED : (d?.message as string) || 'An error occurred';
         // Surface per-field validation errors so failures are actionable rather
         // than a generic "Validation failed".
         if (d?.errors && typeof d.errors === 'object') {
@@ -975,6 +977,7 @@ class ApiClient {
     }
     try {
       const response = await fetch(url, { ...options, headers, credentials: 'include' });
+      noteServerRelease(response.headers?.get?.(RELEASE_HEADER));
       let body: Record<string, unknown> | null = null;
       try {
         body = (await response.json()) as Record<string, unknown>;
@@ -982,8 +985,9 @@ class ApiClient {
         body = null;
       }
       if (response.status === 401) this.handleUnauthorized(generation);
-      if (body?.code === ADMIN_CONFIRMATION_REQUIRED && !confirmedAgain && await askForAdminConfirmation()) {
-        return this.requestWithMeta(endpoint, options, true);
+      if (body?.code === ADMIN_CONFIRMATION_REQUIRED) {
+        if (!confirmedAgain && await askForAdminConfirmation()) return this.requestWithMeta(endpoint, options, true);
+        if (canAskForAdminConfirmation()) body = { ...body, message: ADMIN_CONFIRMATION_DECLINED };
       }
       return { ok: response.ok, status: response.status, body };
     } catch (error) {
@@ -4752,8 +4756,8 @@ class ApiClient {
     return this.request('/admin/upgrade/apply', { method: 'POST', body: JSON.stringify({ confirm: true, keepMaintenanceOn, packageId, digest, allowDowngrade }) });
   }
 
-  async adminUpgradeRollback(backupId: string): Promise<ApiResponse<{ ok: boolean; restoredVersion: string; journal: string[] }>> {
-    return this.request('/admin/upgrade/rollback', { method: 'POST', body: JSON.stringify({ backupId, confirm: true }) });
+  async adminUpgradeRollback(backupId: string, allowDowngrade = false): Promise<ApiResponse<{ ok: boolean; restoredVersion: string; journal: string[] }>> {
+    return this.request('/admin/upgrade/rollback', { method: 'POST', body: JSON.stringify({ backupId, confirm: true, allowDowngrade }) });
   }
 
   async adminUpgradeRestoreDb(backupId: string): Promise<ApiResponse<{ ok: boolean; statements: number }>> {
@@ -4913,7 +4917,8 @@ export interface AdminUpgradeStatus {
   currentVersion: string;
   layout: { apiRoot: string; webRoot: string | null; mode: string; supported: boolean };
   staged: AdminStagedPackage | null;
-  backups: Array<{ id: string; at?: string | null; version?: string | null; manual: boolean; hasCode: boolean; hasDatabase: boolean; sizeBytes: number }>;
+  /** rollbackWarning: what going back to this snapshot would break, to be confirmed. Absent from a server before it. */
+  backups: Array<{ id: string; at?: string | null; version?: string | null; manual: boolean; hasCode: boolean; hasDatabase: boolean; sizeBytes: number; rollbackWarning?: string | null }>;
   history: Array<{ action: string; at: string; by?: string; fromVersion?: string; toVersion?: string; backupId?: string }>;
   maintenance: MaintenanceStatus;
 }

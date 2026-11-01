@@ -199,6 +199,9 @@ class CorsMiddleware implements MiddlewareInterface
             // a split-origin deployment every such action preflights, and the preflight must list it.
             ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization, X-CSRF-Token, X-Admin-Confirmation, X-FormLogic-Client-Engine, X-FormLogic-Hosted-Actor')
             ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
+            // A page can read only the headers named here on a reply from another origin, so on a
+            // split-domain site it would never learn that the release changed.
+            ->withHeader('Access-Control-Expose-Headers', ReleaseHeaderMiddleware::HEADER)
             ->withHeader('Access-Control-Max-Age', '3600');
 
         // Only allow credentials for non-wildcard origins

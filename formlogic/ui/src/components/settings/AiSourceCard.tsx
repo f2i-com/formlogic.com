@@ -10,7 +10,7 @@
 // Saved via GET/PUT /api/ai/preferences; the saved state also primes
 // websiteAiRouting.resolveDefaultAiSource() for default-source consumers.
 import { usePublicConfig } from '../../hooks/usePublicConfig';
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { CODEX_PROVIDER_ID, CODEX_REASONING_EFFORTS } from '../../client-runtime/desktop/desktopTunnel';
 import { Check, Laptop, Loader2, RefreshCw, Settings2 } from 'lucide-react';
 import {
@@ -28,6 +28,7 @@ import { useFlowsDesktopPresence } from '../flows/useFlowsDesktopPresence';
 import { explainDesktopAiError } from '../../client-runtime/flows/aiDefault';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
+import { lazyWithRetry } from '../../lib/lazyWithRetry';
 import { logger } from '../../lib/logger';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
@@ -43,7 +44,7 @@ import {
   type ModelOption,
 } from './aiModelCatalog';
 
-const AiServicesDialog = lazy(() => import('../flows/AiServicesDialog'));
+const AiServicesDialog = lazyWithRetry(() => import('../flows/AiServicesDialog'));
 
 /**
  * Chat-capable sources out of the desktop's /api/ai/sources union: gateway providers

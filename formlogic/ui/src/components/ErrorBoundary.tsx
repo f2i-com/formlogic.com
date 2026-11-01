@@ -27,21 +27,9 @@ export class ErrorBoundary extends Component<Props, State> {
     logger.error('Error caught by boundary:', error, errorInfo);
   }
 
-  handleReset = () => {
-    // A stale-chunk error recurs if we only re-render the same lazy component — hard
-    // reload to fetch the new bundle (same checks as App.tsx's lazy-import retry).
-    const msg = this.state.error?.message || '';
-    if (
-      msg.includes('Failed to fetch dynamically imported module') ||
-      msg.includes('Loading chunk') ||
-      msg.includes('Loading CSS chunk')
-    ) {
-      window.location.reload();
-      return;
-    }
-    this.setState({ hasError: false, error: null });
-  };
-
+  // React.lazy keeps its rejected import, so rendering the same tree again can only fail again, and
+  // no message tells a stale chunk from anything else in every browser (lib/lazyWithRetry.ts). What
+  // was on screen has already gone by the time this card shows.
   handleReload = () => {
     window.location.reload();
   };
@@ -75,7 +63,7 @@ export class ErrorBoundary extends Component<Props, State> {
               </details>
             )}
             <div className="flex gap-3 justify-center">
-              <Button variant="outline" onClick={this.handleReset}>
+              <Button variant="outline" onClick={this.handleReload}>
                 Try Again
               </Button>
               <Button onClick={this.handleReload} leftIcon={<RefreshCw className="h-4 w-4" />}>

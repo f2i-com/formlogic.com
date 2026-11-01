@@ -124,13 +124,20 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
   }
   // A redirect under either frame tree defeats the shell's connect-src pin: CSP path matching
   // stops at the redirect, so a redirect to /api carries the request (and, in some browsers, the
-  // viewer's cookies) out of the frame. Neither tree may contain one.
+  // viewer's cookies) out of the frame. Neither tree may contain one. The one rule that may name
+  // them leaves the address alone (`-`) and answers 404, which sends no Location, and nothing else.
   for (const line of htaccess.split('\n')) {
     const rule = line.trim();
     if (!/^(Redirect(Match|Permanent|Temp)?|RewriteRule)\s/i.test(rule)) continue;
-    if (/\/?(hosted-runtime|app-editors)\//.test(rule)) {
+    if (/\/?(hosted-runtime|app-editors)\//.test(rule) && !/^RewriteRule\s+\S+\s+-\s+\[R=404,L\]$/.test(rule)) {
       fail(`ui/public/.htaccess must not redirect or rewrite under the frame trees: ${rule}`);
     }
+  }
+  // A frame open across an update asks for chunks that have gone. Answered with the app shell, that
+  // is an HTML "script" a CDN keeps under the script's name, in the trees as much as in assets/. The
+  // rule names them from the root: /app/assets/ is the route of an app with that slug.
+  if (!/^\s*RewriteRule \^\(assets\|hosted-runtime\/assets\|app-editors\/\[\^\/\]\+\/assets\)\/ - \[R=404,L\]$/m.test(htaccess.replace(/\r\n/g, '\n'))) {
+    fail('.htaccess must answer 404 for a missing build file in assets/, hosted-runtime/assets/ and app-editors/*/assets/');
   }
 
   // The nginx example in the README is what a site without Apache copies, and nothing runs it. It

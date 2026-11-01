@@ -138,9 +138,13 @@ Options -Indexes
   # SPA: serve real files (assets, index.html, service worker) as-is...
   RewriteRule ^index\.html$ - [L]
   # A build file that isn't here is a page from an older release asking for it. Answered with the
-  # app shell it is an HTML "script", and a CDN keeps that under the script's name.
+  # app shell it is an HTML "script", and a CDN keeps that under the script's name. The hosted
+  # runtime and the editors have assets/ folders of their own, and these rules reach them: the
+  # .htaccess in hosted-runtime/ sets headers only, and a folder with no rewrite directive of its
+  # own keeps this file's. Named from the root, so /app/assets/ stays the route of an app with
+  # that slug. A status outside 3xx sends no Location, so this redirects nothing.
   RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteRule ^assets/ - [R=404,L]
+  RewriteRule ^(assets|hosted-runtime/assets|app-editors/[^/]+/assets)/ - [R=404,L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   # ...and hand every other path to the app shell for client-side routing.
