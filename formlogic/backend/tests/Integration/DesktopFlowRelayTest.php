@@ -374,6 +374,30 @@ class DesktopFlowRelayTest extends TestCase
         $this->assertSame(200, $freed['status'], 'completing the sibling frees the lane');
     }
 
+    /**
+     * Closed or crashed mid-run, a desktop comes back and finds its own run still holding the
+     * lane. It runs one at a time, so that run is dead, and nobody should wait out the 15 minutes.
+     */
+    public function testADesktopThatComesBackLetsGoOfTheRunItHeld(): void
+    {
+        $held = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $next = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($held, ['flows:relay'], ['instanceId' => 'desk-1'])['status']);
+
+        $quiet = DesktopFlowRelayService::ABANDONED_SECONDS + 5;
+        self::$pdo->prepare("UPDATE desktop_flow_runs SET claimed_at = DATE_SUB(NOW(), INTERVAL {$quiet} SECOND) WHERE id = ?")->execute([$held]);
+
+        $other = $this->v1Claim($next, ['flows:relay'], ['instanceId' => 'desk-2']);
+        $this->assertSame('lane_busy', $other['body']['code'] ?? null, 'only the desktop that held it can let it go');
+
+        $this->assertSame(200, $this->v1Claim($next, ['flows:relay'], ['instanceId' => 'desk-1'])['status']);
+        $row = self::$pdo->prepare('SELECT status, envelope FROM desktop_flow_runs WHERE id = ?');
+        $row->execute([$held]);
+        $released = $row->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame('expired', $released['status']);
+        $this->assertNull($released['envelope'], 'its sealed content goes with it');
+    }
+
     public function testClaimantBindingOnFramesAndComplete(): void
     {
         $id = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];

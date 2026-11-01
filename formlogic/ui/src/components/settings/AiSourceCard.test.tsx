@@ -247,6 +247,29 @@ describe('AiSourceCard', () => {
     expect(container!.querySelector('input[aria-label="Desktop provider id"]')).toBeNull();
   });
 
+  it('says what went wrong when a linked desktop does not list its providers, and can ask again', async () => {
+    mockPresence = { kind: 'remote', label: 'DESKTOP-X' };
+    getAiPreferencesMock.mockResolvedValue({ data: prefs({ aiSource: 'desktop' }) });
+    fetchProviderCatalogMock.mockResolvedValueOnce({ ok: false, error: { code: 'e2e_key_unknown', message: 'Its encryption key is not published yet.' } });
+    await mount();
+
+    expect(container!.textContent).toContain('Its encryption key is not published yet.');
+    expect(container!.textContent).not.toContain('No paired desktop was found');
+
+    fetchProviderCatalogMock.mockResolvedValueOnce({
+      ok: true,
+      data: { providers: [{ id: 'local-llama', label: 'Llama.cpp', capabilities: ['chat'] }], threadId: 't1' },
+    });
+    const again = [...container!.querySelectorAll('button')].find((button) => button.textContent === 'Try again');
+    await act(async () => {
+      again!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(container!.querySelector('select[aria-label="Desktop provider"]')?.textContent).toContain('Llama.cpp');
+  });
+
   it('offers chat-capable local services in the dropdown, saved under the service: token', async () => {
     getAiPreferencesMock.mockResolvedValue({ data: prefs({ aiSource: 'desktop', desktopProviderId: 'service:llama-cpp' }) });
     listAiSourcesMock.mockResolvedValue([

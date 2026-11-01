@@ -374,6 +374,30 @@ class DesktopAiRelayTest extends TestCase
         $this->assertSame(200, $freed['status'], 'completing the sibling frees the lane');
     }
 
+    /**
+     * Closed or crashed mid-turn, a desktop comes back and finds its own turn still holding the
+     * lane. It runs one at a time, so that turn is dead, and nobody should wait out the 5 minutes.
+     */
+    public function testADesktopThatComesBackLetsGoOfTheTurnItHeld(): void
+    {
+        $held = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $next = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($held, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+
+        $quiet = DesktopAiRelayService::ABANDONED_SECONDS + 5;
+        self::$pdo->prepare("UPDATE desktop_ai_requests SET claimed_at = DATE_SUB(NOW(), INTERVAL {$quiet} SECOND) WHERE id = ?")->execute([$held]);
+
+        $other = $this->v1Claim($next, ['ai:relay'], ['instanceId' => 'desk-2']);
+        $this->assertSame('lane_busy', $other['body']['code'] ?? null, 'only the desktop that held it can let it go');
+
+        $this->assertSame(200, $this->v1Claim($next, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $row = self::$pdo->prepare('SELECT status, envelope FROM desktop_ai_requests WHERE id = ?');
+        $row->execute([$held]);
+        $released = $row->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame('expired', $released['status']);
+        $this->assertNull($released['envelope'], 'its sealed content goes with it');
+    }
+
     public function testClaimantBindingOnFramesInputAndComplete(): void
     {
         $id = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];

@@ -47,6 +47,8 @@ class DesktopFlowRelayService
     public const REQUEST_TTL_SECONDS = 900;
     /** A claimed/streaming run silent for this long is reaped (see expireStale()). */
     public const CLAIMED_STALE_SECONDS = 900;
+    /** A run its own desktop has left silent this long is let go when it claims the next. */
+    public const ABANDONED_SECONDS = 30;
     /**
      * A claimed/streaming run is reaped this long after it was ENQUEUED, however many frames it
      * sends: frames refresh the silence anchor, so without this a desktop that kept sending them
@@ -428,6 +430,9 @@ class DesktopFlowRelayService
                 // Still pending and target-matched: the NOT EXISTS guard refused → the lane
                 // is occupied by a claimed/streaming sibling. (An expired pending row reads
                 // as already_claimed, matching the AI lane's 409 wording.)
+                if ($instanceId !== null && $this->releaseAbandoned($ownerUserId, $instanceId)) {
+                    return $this->claim($id, $ownerUserId, $data);
+                }
                 throw new \RuntimeException('lane_busy');
             }
             throw new \RuntimeException('already_claimed');
@@ -764,6 +769,43 @@ class DesktopFlowRelayService
             ");
         }
         return $reaped;
+    }
+
+    /**
+     * A desktop runs one flow at a time, and sends what it kept from before it asks for the next,
+     * so a desktop asking for the next has let go of any run it still holds: it was closed or
+     * crashed mid-run. That run would otherwise hold the lane, and one of the person's two places,
+     * until CLAIMED_STALE_SECONDS had passed. Only the same desktop, and only after a silence: a
+     * desktop that did serve two at once is told lane_busy as it always was.
+     */
+    private function releaseAbandoned(string $ownerUserId, string $instanceId): bool
+    {
+        $quiet = self::ABANDONED_SECONDS; // int class constant, safe to interpolate
+        $this->mysql->beginTransaction();
+        try {
+            $select = $this->mysql->prepare("
+                SELECT id FROM desktop_flow_runs
+                WHERE owner_user_id = :o AND claimed_by = :i AND status IN ('claimed', 'streaming')
+                  AND claimed_at < (NOW() - INTERVAL {$quiet} SECOND)
+                FOR UPDATE
+            ");
+            $select->execute(['o' => $ownerUserId, 'i' => $instanceId]);
+            $ids = $select->fetchAll(PDO::FETCH_COLUMN);
+            if ($ids === []) {
+                $this->mysql->commit();
+                return false;
+            }
+            $quoted = implode(',', array_map(fn ($id) => $this->mysql->quote((string) $id), $ids));
+            $this->mysql->exec("UPDATE desktop_flow_runs SET status = 'expired', envelope = NULL, result_envelope = NULL, finished_at = NOW() WHERE id IN ({$quoted})");
+            $this->mysql->exec("DELETE FROM desktop_flow_run_frames WHERE request_id IN ({$quoted})");
+            $this->mysql->commit();
+            return true;
+        } catch (\Throwable $e) {
+            if ($this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
+        }
     }
 
     /** Non-terminal lane occupancy for one requesting user (any target). */

@@ -112,6 +112,8 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
   const [desktopReasoning, setDesktopReasoning] = useState('');
 
   const [desktopProviders, setDesktopProviders] = useState<AiSourceListing[]>([]);
+  const [providerListError, setProviderListError] = useState('');
+  const [providerListTick, setProviderListTick] = useState(0);
   const [customProviders, setCustomProviders] = useState<AiProviderConfig[]>(() => chatCapableCustomProviders(user?.id));
   const [catalogResult, setCatalogResult] = useState<CatalogResult | null>(null);
   const [catalogReloadTick, setCatalogReloadTick] = useState(0);
@@ -172,8 +174,11 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
         if (cancelled) return;
         if (!res.ok) {
           logger.warn('[ai-settings] tunnel provider listing failed:', res.error.message);
+          // A desktop is linked, so "none was found" would be untrue: say what happened instead.
+          setProviderListError(res.error.message);
           return;
         }
+        setProviderListError('');
         const listed = res.data.providers
           .map(providerListingFromTunnel)
           .filter((p): p is AiSourceListing => p !== null);
@@ -186,7 +191,7 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
     return () => {
       cancelled = true;
     };
-  }, [presenceKind, remoteOnly]);
+  }, [presenceKind, remoteOnly, providerListTick]);
 
   // Browser-local custom providers refresh when the AI services registry changes
   // (the AiServicesDialog dispatches this event on save; mount state is the lazy initializer).
@@ -475,8 +480,24 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
                   setDesktopModel('');
                 }}
                 disabled={readOnly}
-                hint="No paired desktop was found here — enter the provider id as it appears in OAIY."
+                hint={
+                  providerListError
+                    ? `Your desktop didn't list its providers: ${providerListError}`
+                    : 'No paired desktop was found here — enter the provider id as it appears in OAIY.'
+                }
               />
+            )}
+            {!showProviderSelect && providerListError && (
+              <button
+                type="button"
+                className="text-xs underline cursor-pointer text-amber-700 dark:text-amber-300"
+                onClick={() => {
+                  setProviderListError('');
+                  setProviderListTick((t) => t + 1);
+                }}
+              >
+                Try again
+              </button>
             )}
 
             {desktopProviderId.trim() !== '' &&

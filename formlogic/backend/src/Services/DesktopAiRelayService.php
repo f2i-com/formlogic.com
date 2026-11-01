@@ -39,6 +39,8 @@ class DesktopAiRelayService
     public const REQUEST_TTL_SECONDS = 300;
     /** A claimed/streaming request silent for this long is reaped (see expireStale()). */
     public const CLAIMED_STALE_SECONDS = 300;
+    /** A request its own desktop has left silent this long is let go when it claims the next. */
+    public const ABANDONED_SECONDS = 30;
 
     /** Sealed OUT frames of a terminal request survive this long so the reply stream can drain. */
     public const FRAME_GRACE_SECONDS = 60;
@@ -413,6 +415,9 @@ class DesktopAiRelayService
                 // Still pending and target-matched: the NOT EXISTS guard refused → the lane
                 // is occupied by a claimed/streaming sibling. (An expired pending row reads
                 // as already_claimed, matching DesktopCommandService's 409 wording.)
+                if ($instanceId !== null && $this->releaseAbandoned($ownerUserId, $instanceId)) {
+                    return $this->claim($id, $ownerUserId, $data);
+                }
                 throw new \RuntimeException('lane_busy');
             }
             throw new \RuntimeException('already_claimed');
@@ -732,6 +737,43 @@ class DesktopAiRelayService
                 $this->mysql->rollBack();
             }
             return 0;
+        }
+    }
+
+    /**
+     * A desktop runs one turn at a time, so a desktop asking for the next has let go of any it
+     * still holds: it was closed or crashed mid-turn, or never heard the reply to its claim. That
+     * turn would otherwise hold the lane, and one of the person's two places, until
+     * CLAIMED_STALE_SECONDS had passed. Only the same desktop, and only after a silence: a
+     * desktop that did serve two at once is told lane_busy as it always was.
+     */
+    private function releaseAbandoned(string $ownerUserId, string $instanceId): bool
+    {
+        $quiet = self::ABANDONED_SECONDS; // int class constant, safe to interpolate
+        $this->mysql->beginTransaction();
+        try {
+            $select = $this->mysql->prepare("
+                SELECT id FROM desktop_ai_requests
+                WHERE owner_user_id = :o AND claimed_by = :i AND status IN ('claimed', 'streaming')
+                  AND claimed_at < (NOW() - INTERVAL {$quiet} SECOND)
+                FOR UPDATE
+            ");
+            $select->execute(['o' => $ownerUserId, 'i' => $instanceId]);
+            $ids = $select->fetchAll(PDO::FETCH_COLUMN);
+            if ($ids === []) {
+                $this->mysql->commit();
+                return false;
+            }
+            $quoted = implode(',', array_map(fn ($id) => $this->mysql->quote((string) $id), $ids));
+            $this->mysql->exec("UPDATE desktop_ai_requests SET status = 'expired', envelope = NULL, finished_at = NOW() WHERE id IN ({$quoted})");
+            $this->mysql->exec("DELETE FROM desktop_ai_frames WHERE request_id IN ({$quoted})");
+            $this->mysql->commit();
+            return true;
+        } catch (\Throwable $e) {
+            if ($this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
         }
     }
 
