@@ -652,6 +652,63 @@ class TrashTest extends TestCase
         $this->assertSame([], $this->trashRows());
     }
 
+    public function testGoingOnStillKeepsACopyOfWhatCanBeCopied(): void
+    {
+        self::$sqlite->closeAll();
+        file_put_contents(self::$sqlite->getFormDbPath($this->f2), 'not a database');
+        $installation = $this->packHolding([$this->f1, $this->f2], []);
+        $trash = self::$trash;
+        $request = (new ServerRequestFactory())->createServerRequest('DELETE', '/api/packs/' . $installation)
+            ->withQueryParams(['withoutCopy' => '1'])->withAttribute('userId', $this->userId);
+
+        $response = (new PackController($this->packs(), null, null, null, $trash))->uninstall($request, new SlimResponse(), ['installationId' => $installation]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertNull(self::$forms->ownerOf($this->f1));
+        $this->assertNull(self::$forms->ownerOf($this->f2));
+        $this->assertSame([$this->f1], array_column($this->trashRows(), 'original_id'), 'the healthy form is in the bin, and only the ruined one is gone for good');
+    }
+
+    public function testAnAppThatGoesWithNoCopyLeavesNoStoreBehind(): void
+    {
+        self::$pdo->prepare("INSERT INTO flow_kv (id, owner_user_id, app_id, scope, k, v) VALUES (?, ?, ?, 'n', 'k', '1')")
+            ->execute([bin2hex(random_bytes(8)), $this->userId, $this->app1]);
+        $installation = $this->packHolding([], [$this->app1]);
+
+        $this->packs()->uninstallPack($installation, $this->userId, $this->binThatCannotKeepAnything(), true);
+
+        $left = self::$pdo->prepare('SELECT COUNT(*) FROM flow_kv WHERE app_id = ?');
+        $left->execute([$this->app1]);
+        $this->assertSame(0, (int) $left->fetchColumn());
+        $this->assertNull(self::$apps->getApp($this->app1));
+    }
+
+    public function testAnAppTheBinCanKeepKeepsItsCopyWhenAnotherCannot(): void
+    {
+        $refused = self::$apps->createApp(['name' => 'Refused', 'status' => 'published'], $this->userId);
+        $apps = new class ((string) $refused['id'], self::$mysql, self::$forms) extends AppService {
+            public function __construct(private string $refused, MySQLConnection $mysql, FormService $forms)
+            {
+                parent::__construct($mysql, $forms);
+            }
+
+            public function getApp(string $appId): ?array
+            {
+                if ($appId === $this->refused && debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2)[1]['function'] === 'keepApp') {
+                    throw new \RuntimeException('No space left on device');
+                }
+                return parent::getApp($appId);
+            }
+        };
+        $trash = new TrashService(self::$mysql, self::$sqlite, self::$backup, self::$forms, $apps, self::$flows, ['retentionDays' => 30, 'dir' => self::$trashDir]);
+        $packs = new PackService(self::$mysql, self::$forms, $apps, new AppUserService(self::$mysql));
+
+        $result = $packs->uninstallPack($this->packHolding([], [$this->app1, $refused['id']]), $this->userId, $trash, true);
+
+        $this->assertSame(2, $result['appsDeleted']);
+        $this->assertSame([$this->app1], array_column($this->trashRows(), 'original_id'));
+    }
+
     public function testAFormDeleteRefusesWhenNoCopyCanBeMadeAndGoesOnWhenThePersonSaysTo(): void
     {
         self::$sqlite->closeAll();

@@ -138,6 +138,32 @@ class E2eeTrashLifecycleTest extends E2eeTestCase
         $this->assertTrue(self::$encryption->isPrivate($formId));
     }
 
+    public function testAFormThatWentWithNoCopyLeavesNoKeysBehind(): void
+    {
+        $form = $this->makeDraftForm();
+        $formId = (string) $form['id'];
+        $this->enablePrivateForm($formId);
+        self::$forms->deleteForm($formId);
+
+        self::$trash->forgetFormKeys($formId, $this->userId);
+        FormEncryptionService::invalidateCache();
+
+        $this->assertNull($this->row('SELECT 1 AS x FROM form_encryption WHERE form_id = ?', [$formId]));
+    }
+
+    public function testAFormInTheBinKeepsItsKeys(): void
+    {
+        $form = $this->makeDraftForm();
+        $formId = (string) $form['id'];
+        $this->enablePrivateForm($formId);
+        self::$trash->trashForm($formId, $this->userId);
+
+        self::$trash->forgetFormKeys($formId, $this->userId);
+        FormEncryptionService::invalidateCache();
+
+        $this->assertSame('trashed', $this->row('SELECT state FROM form_encryption WHERE form_id = ?', [$formId])['state']);
+    }
+
     /**
      * A TrashService whose crypto lifecycle is GUARANTEED to fail: the injected
      * FormEncryptionService sits on an empty in-memory SQLite handle, so every

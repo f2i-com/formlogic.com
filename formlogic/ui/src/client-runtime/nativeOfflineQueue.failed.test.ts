@@ -90,7 +90,7 @@ describe('failed submissions in the native queue', () => {
     runtime([failedRow(), failedRow({ id: 'q_2', idempotencyKey: 'k2', status: 'pending', attempts: 1 })]);
     const listed = await listNativeFailedSubmissions();
     expect(listed).toEqual([
-      { id: 'q_1', appSlug: 'shop', formId: 'orders', createdAt: Date.parse('2026-10-01T09:30:00Z'), failedAt: null, conflict: false },
+      { id: 'q_1', appSlug: 'shop', formId: 'orders', createdAt: Date.parse('2026-10-01T09:30:00Z'), failedAt: null, conflict: false, scriptRan: false },
     ]);
     expect(JSON.stringify(listed)).not.toContain('tea');
   });

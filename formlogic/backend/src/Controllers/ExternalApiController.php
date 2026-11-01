@@ -291,6 +291,7 @@ class ExternalApiController
                     'rejected' => $result->isRejected(),
                     'code' => $result->code,
                     'detail' => $result->detail,
+                    'scriptRan' => $result->scriptActed ? true : null,
                 ], static fn ($v) => $v !== null), $result->status);
             }
 

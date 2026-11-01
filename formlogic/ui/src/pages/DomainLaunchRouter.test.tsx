@@ -518,6 +518,30 @@ describe('DomainLaunchRouter', () => {
       expect(container.textContent).not.toContain('platform page');
     });
 
+    // The host's answer is an answer, whatever is keeping the app's: no password form on a domain.
+    it('hears that it is a domain at once, with the app\'s own answer still out', async () => {
+      vi.useFakeTimers();
+      serverSays(config('runtime_direct'));
+      getNativeEntry.mockReturnValue(new Promise(() => {}));
+      rememberedHost.mockReturnValue({ kind: 'not-domain' });
+
+      await show('/app/shop');
+      await waitFor(2_500);
+
+      expect(container.textContent).not.toContain('platform page');
+    });
+
+    it('sends a password page on with the host\'s answer, whatever became of the app\'s', async () => {
+      vi.useFakeTimers();
+      serverSays({ ...config('launch_page'), platformUrl: 'https://forms.acme.com' });
+      getNativeEntry.mockResolvedValue({ error: 'Server error', status: 503 });
+      rememberedHost.mockReturnValue({ kind: 'domain', config: { ...config('launch_page'), platformUrl: 'https://forms.acme.com' }, softnAccess: 'members' });
+
+      await show('/reset-password?token=t');
+
+      expect(replace).toHaveBeenCalledWith('https://forms.acme.com/reset-password?token=t');
+    });
+
     it('takes a refusal for the answer it is', async () => {
       serverSays(config('launch_page'));
       getNativeEntry.mockResolvedValue({ error: 'Not allowed', status: 403 });

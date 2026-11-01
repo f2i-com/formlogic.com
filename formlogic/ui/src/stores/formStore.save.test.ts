@@ -160,7 +160,16 @@ describe('FL-SAVE-001 truthful save state', () => {
     expect(offer?.action.label).toBe('Delete without a copy');
     expect(deleteForm).toHaveBeenCalledTimes(1);
 
+    // Nothing goes for good on one click in a toast.
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('window', { confirm });
     offer?.action.onClick();
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('gone for good'));
+    expect(deleteForm).toHaveBeenCalledTimes(1);
+
+    confirm.mockReturnValue(true);
+    offer?.action.onClick();
+    vi.unstubAllGlobals();
     await vi.waitFor(() => expect(useFormStore.getState().forms).toEqual([]));
     expect(deleteForm).toHaveBeenLastCalledWith(FORM_ID, { withoutCopy: true });
 

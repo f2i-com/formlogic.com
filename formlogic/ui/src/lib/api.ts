@@ -609,6 +609,8 @@ export interface AppSubmitResult {
   processing?: boolean;
   /** 200: an idempotent replay of an already-completed submission. */
   idempotent?: boolean;
+  /** The form's script acted and nothing was stored: nothing may send this again by itself. */
+  scriptRan?: boolean;
   status?: number;
 }
 
@@ -2909,6 +2911,7 @@ class ApiClient {
       error: message,
       conflict: b.conflict === true,
       processing: b.processing === true,
+      scriptRan: b.scriptRan === true,
       status: res.status,
     };
   }
@@ -2933,6 +2936,8 @@ class ApiClient {
     processing?: boolean;
     /** Idempotent replay: the server already holds this exact submission — ack it (do NOT re-queue). */
     idempotent?: boolean;
+    /** The form's script acted and nothing was stored — stop here: only the person sends it again. */
+    scriptRan?: boolean;
   }> }>> {
     return this.request(`/app/${seg(slug)}/sync/batch`, {
       method: 'POST',
@@ -4083,7 +4088,7 @@ class ApiClient {
     return this.request('/packs/installed');
   }
 
-  /** `withoutCopy`: only after the recycle bin refused one (`bin_unavailable`) and the person chose to go on. */
+  /** `withoutCopy`: only after the recycle bin refused one (`bin_unavailable`) and the person chose to go on. What can be copied still is. */
   async uninstallPack(installationId: string, opts: { withoutCopy?: boolean } = {}): Promise<ApiResponse<PackUninstallResult>> {
     return this.request(`/packs/${seg(installationId)}${opts.withoutCopy ? '?withoutCopy=1' : ''}`, { method: 'DELETE' });
   }

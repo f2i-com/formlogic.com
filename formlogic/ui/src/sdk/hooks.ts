@@ -263,6 +263,8 @@ export interface SdkFailedSubmission {
   conflict: boolean;
   /** Its last try was answered in a way FormLogic does not recognise (a sign-in page, a proxy). */
   unrecognised: boolean;
+  /** The form's script acted and it wasn't stored. Sending it again runs the script again. */
+  scriptRan: boolean;
 }
 
 export type SdkRetryOutcome = RetryOutcome;
@@ -382,6 +384,7 @@ export function useOfflineQueue(): SdkOfflineQueue {
         failedAt: row.failedAt,
         conflict: row.conflict,
         unrecognised: row.unrecognised === true,
+        scriptRan: row.scriptRan === true,
       })),
     [failedRows, appSlug, forms]
   );

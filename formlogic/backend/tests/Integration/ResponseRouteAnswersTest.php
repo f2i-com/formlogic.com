@@ -111,7 +111,8 @@ final class ResponseRouteAnswersTest extends E2eeTestCase
     private function assertNotSentAgain(ResponseInterface $response): void
     {
         $this->assertSame(409, $response->getStatusCode(), (string) $response->getBody());
-        $this->assertTrue($this->body($response)['conflict'], 'the offline queues stop on this and show it');
+        $this->assertTrue($this->body($response)['scriptRan'], 'the offline queues stop on this, and a person can still send it again');
+        $this->assertArrayNotHasKey('conflict', $this->body($response), 'a conflict can never be sent again, and this can');
         $this->assertFalse($response->hasHeader('Retry-After'));
         $this->assertStringContainsString('already run', $this->body($response)['message']);
         $this->assertStringNotContainsString('SQLSTATE', (string) $response->getBody());

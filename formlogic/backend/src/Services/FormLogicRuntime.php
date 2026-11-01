@@ -117,7 +117,8 @@ class FormLogicRuntime
                 str_starts_with($error, 'Script execution error: ') ? $error : 'Script execution error: ' . $error,
                 0,
                 $executionTimeMs,
-                $scriptFault
+                $scriptFault,
+                $this->httpRequestCount > 0
             );
         }
 
@@ -126,7 +127,7 @@ class FormLogicRuntime
             if (strlen($message) > 500) {
                 $message = substr($message, 0, 500);
             }
-            return ScriptResult::rejection($message, 0, $executionTimeMs);
+            return ScriptResult::rejection($message, 0, $executionTimeMs, $this->httpRequestCount > 0);
         }
 
         return ScriptResult::success(
@@ -138,6 +139,7 @@ class FormLogicRuntime
             executionTimeMs: $executionTimeMs,
             flowRuns: $capture->getFlowRuns(),
             store: ($done['store'] ?? true) !== false,
+            actedOutside: $this->httpRequestCount > 0,
         );
     }
 

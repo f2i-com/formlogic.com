@@ -6,7 +6,6 @@ namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
-use FormLogic\Support\SqlErrorText;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use PDO;
@@ -2181,7 +2180,7 @@ class ResponseService
      *   on one form doesn't tie up the workers every other page needs.
      * @return array|ScriptRejection The created response or a rejection
      * @throws FormQuotaRefused when $quotaLimit turns the submission away; nothing ran or was stored
-     * @throws NotStoredAfterScript when a busy database refuses the record once the script has run
+     * @throws NotStoredAfterScript when the record can't be stored once the script has acted outside
      */
     public function createResponse(string $formId, array $data, ?string $script = null, ?string $sourceRunId = null, ?int $quotaLimit = null): array|ScriptRejection
     {
@@ -2244,7 +2243,7 @@ class ResponseService
 
                 // Handle rejection
                 if ($scriptResult->isRejected()) {
-                    return new ScriptRejection($scriptResult->rejectionMessage ?? 'Submission rejected');
+                    return new ScriptRejection($scriptResult->rejectionMessage ?? 'Submission rejected', scriptActed: $scriptResult->actedOutside);
                 }
 
                 // FAIL CLOSED when the script produced no verdict. An author who wrote
@@ -2255,15 +2254,16 @@ class ResponseService
                 // anyway, which is what happened before, meant a submitter whose
                 // answers pushed the script over budget got their record stored
                 // unjudged, and a store:false form kept plaintext it promised not to.
-                // Nothing has been written at this point, so a retry is safe.
+                // Nothing has been written at this point, so a retry is safe, unless the script
+                // got as far as an HTTP request (ScriptRejection says so).
                 if (!$scriptResult->success) {
                     $this->logger->error('onSubmit script did not run; submission refused', [
                         'formId' => $formId,
                         'error' => $scriptResult->error,
                     ]);
                     return $scriptResult->scriptFault
-                        ? ScriptRejection::scriptFailed($scriptResult->error ?? 'script error')
-                        : ScriptRejection::unavailable($scriptResult->error ?? 'script error');
+                        ? ScriptRejection::scriptFailed($scriptResult->error ?? 'script error', $scriptResult->actedOutside)
+                        : ScriptRejection::unavailable($scriptResult->error ?? 'script error', $scriptResult->actedOutside);
                 }
 
                 // Script opted out of storage ({store:false}): the submission is
@@ -2344,7 +2344,7 @@ class ResponseService
             if ($db->inTransaction()) {
                 $db->rollBack();
             }
-            throw $this->withScriptDone($e, $formId, $runsScript);
+            throw $this->withScriptDone($e, $formId, $scriptResult);
         } finally {
             // The count reads this database, so from here on the record is counted.
             $this->releaseFormLock($quotaLock);
@@ -2398,12 +2398,17 @@ class ResponseService
             // by this response id — remove them too, or the failed submission
             // leaves orphaned computed values, tags and a script log with no
             // parent response (SQLite FKs are not enforced by default).
-            $qid = $db->quote($id);
-            $db->exec("DELETE FROM computed WHERE response_id = $qid");
-            $db->exec("DELETE FROM tags WHERE response_id = $qid");
-            $db->exec("DELETE FROM script_logs WHERE response_id = $qid");
-            $db->exec("DELETE FROM responses WHERE id = $qid");
-            throw $this->withScriptDone($mysqlErr, $formId, $runsScript);
+            try {
+                $qid = $db->quote($id);
+                $db->exec("DELETE FROM computed WHERE response_id = $qid");
+                $db->exec("DELETE FROM tags WHERE response_id = $qid");
+                $db->exec("DELETE FROM script_logs WHERE response_id = $qid");
+                $db->exec("DELETE FROM responses WHERE id = $qid");
+            } catch (\Throwable $cleanupErr) {
+                // The refusal below is what the caller has to hear, and what stops a queue.
+                $this->logger->error('A refused record could not be taken back out', ['formId' => $formId, 'responseId' => $id, 'error' => $cleanupErr->getMessage()]);
+            }
+            throw $this->withScriptDone($mysqlErr, $formId, $scriptResult);
         }
 
         // 7. Update analytics (best-effort: the response is already committed, so a
@@ -2490,15 +2495,16 @@ class ResponseService
     }
 
     /**
-     * A busy database says "try again", and that is true of the record. Once a script has run it
-     * isn't true of the submission (see NotStoredAfterScript).
+     * Anything that stops a record once its script has acted outside: "try again" would be true of
+     * the record and not of the submission (see NotStoredAfterScript). A script that only worked
+     * things out can run again, and a private form's refusals keep their own codes.
      */
-    private function withScriptDone(\Throwable $e, string $formId, bool $scriptRan): \Throwable
+    private function withScriptDone(\Throwable $e, string $formId, ?ScriptResult $script): \Throwable
     {
-        if (!$scriptRan || !($e instanceof \PDOException) || !SqlErrorText::isBusy($e->getMessage())) {
+        if ($script === null || !$script->actedOutside || $e instanceof EncryptionEnablingException || $e instanceof PrivateFormEncryptedException) {
             return $e;
         }
-        $this->logger->error('A record was refused after its onSubmit script ran', ['formId' => $formId, 'error' => $e->getMessage()]);
+        $this->logger->error('A record was not stored after its onSubmit script acted', ['formId' => $formId, 'error' => $e->getMessage()]);
         return new NotStoredAfterScript($e);
     }
 

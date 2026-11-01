@@ -23,8 +23,10 @@ use FormLogic\Services\FormService;
 use FormLogic\Services\NotStoredAfterScript;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\ResponseVersionConflict;
+use FormLogic\Services\ScriptRejection;
 use FormLogic\Services\ScriptResult;
 use FormLogic\Services\WebhookService;
+use FormLogic\Services\SandboxRunner;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Slim\Psr7\Factory\ServerRequestFactory;
@@ -775,7 +777,7 @@ final class ParallelWritesTest extends TestCase
         $runtime = $this->createMock(FormLogicRuntime::class);
         $runtime->method('execute')->willReturnCallback(function () use (&$holder): ScriptResult {
             $holder = $this->holdTheFormsDatabase();
-            return new ScriptResult(true);
+            return new ScriptResult(true, actedOutside: true);
         });
         $responses = new ResponseService(self::$mysql, self::$sqlite, $runtime);
         try {
@@ -789,6 +791,90 @@ final class ParallelWritesTest extends TestCase
             $this->letTheFormsDatabaseGo($holder);
         }
         self::assertSame(0, $responses->getResponseCount($this->formId));
+    }
+
+    public function testAnyOtherFailureAfterTheScriptActedIsNoRefusalToSendAgainEither(): void
+    {
+        $db = self::$sqlite->getFormDatabase($this->formId);
+        $runtime = $this->createMock(FormLogicRuntime::class);
+        $runtime->method('execute')->willReturnCallback(static function () use ($db): ScriptResult {
+            // The disk filling up, as far as this insert can tell.
+            $db->exec('DROP TABLE script_logs');
+            return new ScriptResult(true, actedOutside: true);
+        });
+        $responses = new ResponseService(self::$mysql, self::$sqlite, $runtime);
+
+        $this->expectException(NotStoredAfterScript::class);
+        $responses->createResponse($this->formId, ['answers' => []], self::A_SCRIPT);
+    }
+
+    public function testAScriptThatOnlyWorkedThingsOutCanRunAgain(): void
+    {
+        $holder = null;
+        $runtime = $this->createMock(FormLogicRuntime::class);
+        $runtime->method('execute')->willReturnCallback(function () use (&$holder): ScriptResult {
+            $holder = $this->holdTheFormsDatabase();
+            return new ScriptResult(true);
+        });
+        try {
+            (new ResponseService(self::$mysql, self::$sqlite, $runtime))->createResponse($this->formId, ['answers' => []], self::A_SCRIPT);
+            self::fail('The database was held');
+        } catch (\PDOException $e) {
+            self::assertStringContainsString('database is locked', $e->getMessage());
+        } finally {
+            $this->letTheFormsDatabaseGo($holder);
+        }
+    }
+
+    /** @return array<string, array{0: ScriptResult, 1: int}> */
+    public static function scriptsThatActedAndStoredNothing(): array
+    {
+        return [
+            'it refused, after a call' => [ScriptResult::rejection('No', 0, 0, true), 422],
+            'it threw, after a call' => [ScriptResult::error('Script execution error: boom', 0, 0, true, true), 409],
+            'the engine stopped it, after a call' => [ScriptResult::error('out of budget', 0, 0, false, true), 409],
+        ];
+    }
+
+    /** @dataProvider scriptsThatActedAndStoredNothing */
+    public function testARefusalAfterAnHttpCallSaysSo(ScriptResult $result, int $status): void
+    {
+        $runtime = $this->createMock(FormLogicRuntime::class);
+        $runtime->method('execute')->willReturn($result);
+
+        $refused = (new ResponseService(self::$mysql, self::$sqlite, $runtime))->createResponse($this->formId, ['answers' => []], self::A_SCRIPT);
+
+        self::assertInstanceOf(ScriptRejection::class, $refused);
+        self::assertTrue($refused->scriptActed);
+        self::assertSame($status, $refused->status, 'a 503 would have every queue send it again');
+    }
+
+    public function testAScriptThatFailedBeforeAnyCallIsStillA503(): void
+    {
+        $runtime = $this->createMock(FormLogicRuntime::class);
+        $runtime->method('execute')->willReturn(ScriptResult::error('out of budget'));
+
+        $refused = (new ResponseService(self::$mysql, self::$sqlite, $runtime))->createResponse($this->formId, ['answers' => []], self::A_SCRIPT);
+
+        self::assertInstanceOf(ScriptRejection::class, $refused);
+        self::assertFalse($refused->scriptActed);
+        self::assertSame(503, $refused->status);
+    }
+
+    public function testTheRuntimeSaysWhenAScriptMadeACall(): void
+    {
+        $runner = $this->createMock(SandboxRunner::class);
+        $runner->method('isAvailable')->willReturn(true);
+        $runner->method('runScript')->willReturnCallback(static function (string $script, array $context, callable $handler): array {
+            if ($script === 'calls') {
+                $handler('http', 'post', ['not a url', null]);
+            }
+            return ['result' => null];
+        });
+        $runtime = new FormLogicRuntime([], $runner);
+
+        self::assertTrue($runtime->execute('calls', [])->actedOutside);
+        self::assertFalse($runtime->execute('works things out', [])->actedOutside, 'and each run starts from nothing');
     }
 
     public function testABusyDatabaseWithNoScriptCanStillBeSentAgain(): void

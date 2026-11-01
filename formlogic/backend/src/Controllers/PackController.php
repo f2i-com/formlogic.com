@@ -1009,13 +1009,15 @@ class PackController
         // entry only for forms the uninstall actually removed and takes back the
         // rest. Apps go to the bin inside the uninstall.
         // withoutCopy is said only after the bin refused (bin_unavailable), by someone who has read
-        // why: without it, a pack whose form file is ruined could never be uninstalled.
+        // why: without it, a pack whose form file is ruined could never be uninstalled. Whatever can
+        // be copied still is.
         $withoutCopy = ($request->getQueryParams()['withoutCopy'] ?? '') === '1';
-        $bin = $withoutCopy ? null : $this->trashService;
         $pendingTrash = [];
         try {
-            $pendingTrash = $bin !== null ? $bin->captureRecordBearingForms($installationId, $userId) : [];
-            $result = $this->packService->uninstallPack($installationId, $userId, $bin);
+            $pendingTrash = $this->trashService !== null
+                ? $this->trashService->captureRecordBearingForms($installationId, $userId, !$withoutCopy)
+                : [];
+            $result = $this->packService->uninstallPack($installationId, $userId, $this->trashService, $withoutCopy);
 
             // Audit the uninstall
             if ($this->auditService) {

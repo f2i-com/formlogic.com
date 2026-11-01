@@ -65,11 +65,13 @@ describe('PackImportModal uninstall', () => {
   const REFUSED = { error: 'Nothing was uninstalled: a copy of "Clients" could not be saved to the recycle bin.', code: 'bin_unavailable' };
   const button = (name: string) => Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent?.trim() === name) as HTMLButtonElement | undefined;
 
-  async function openInstalled() {
+  async function openInstalled({ keepList = false } = {}) {
     useFormStore.setState({ storageMode: 'api' });
-    vi.spyOn(api, 'getInstalledPacks').mockResolvedValue({
-      data: { installations: [{ id: 'inst-1', packName: 'Clients Pack', formCount: 1, appCount: 0, existingFormCount: 1, existingAppCount: 0, installedAt: '2026-11-01' }] },
-    } as never);
+    if (!keepList) {
+      vi.spyOn(api, 'getInstalledPacks').mockResolvedValue({
+        data: { installations: [{ id: 'inst-1', packName: 'Clients Pack', formCount: 1, appCount: 0, existingFormCount: 1, existingAppCount: 0, installedAt: '2026-11-01' }] },
+      } as never);
+    }
     host = document.createElement('div');
     document.body.appendChild(host);
     await act(async () => {
@@ -93,11 +95,11 @@ describe('PackImportModal uninstall', () => {
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('gone for good');
     expect(useToastStore.getState().toasts).toEqual([]);
 
-    await act(async () => button('Delete without a copy')!.click());
+    await act(async () => button('Delete anyway')!.click());
     await act(settle);
 
     expect(uninstall).toHaveBeenLastCalledWith('inst-1', { withoutCopy: true });
-    expect(button('Delete without a copy')).toBeUndefined();
+    expect(button('Delete anyway')).toBeUndefined();
   });
 
   it('forgets the refusal on Cancel: the next try keeps a copy', async () => {
@@ -122,7 +124,31 @@ describe('PackImportModal uninstall', () => {
     await act(settle);
 
     expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({ message: 'Failed to uninstall pack' })]);
-    expect(button('Delete without a copy')).toBeUndefined();
+    expect(button('Delete anyway')).toBeUndefined();
+  });
+
+  it('keeps a refusal with its own pack, and holds the others back while one is going', async () => {
+    let answer!: (refused: unknown) => void;
+    const uninstall = vi.spyOn(api, 'uninstallPack').mockImplementationOnce(() => new Promise((resolve) => { answer = resolve as never; }));
+    vi.spyOn(api, 'getInstalledPacks').mockResolvedValue({
+      data: { installations: ['Clients Pack', 'Stock Pack'].map((packName, n) => ({ id: `inst-${n + 1}`, packName, formCount: 1, appCount: 0, existingFormCount: 1, existingAppCount: 0, installedAt: '2026-11-01' })) },
+    } as never);
+    await openInstalled({ keepList: true });
+    const stock = () => document.body.querySelector<HTMLButtonElement>('button[aria-label="Uninstall Stock Pack"]')!;
+
+    await act(async () => button('Delete')!.click());
+    expect(stock().disabled).toBe(true);
+
+    await act(async () => answer(REFUSED));
+    await act(settle);
+    expect(stock().disabled).toBe(false);
+    await act(async () => stock().click());
+
+    expect(button('Delete anyway')).toBeUndefined();
+    uninstall.mockResolvedValue({ data: { success: true, message: 'Uninstalled' } } as never);
+    await act(async () => button('Delete')!.click());
+    await act(settle);
+    expect(uninstall).toHaveBeenLastCalledWith('inst-2', { withoutCopy: false });
   });
 });
 

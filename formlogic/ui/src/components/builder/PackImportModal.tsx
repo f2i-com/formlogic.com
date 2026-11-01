@@ -139,7 +139,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
   const [uninstallingId, setUninstallingId] = useState<string | null>(null);
   const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
   // Why the recycle bin couldn't keep a copy, shown until the person goes on without one or cancels.
-  const [binRefusal, setBinRefusal] = useState<string | null>(null);
+  const [binRefusal, setBinRefusal] = useState<{ id: string; message: string } | null>(null);
   // MKT-605: which installed v2 extension has its receipt/dependency detail open (fetch-on-expand).
   const [expandedInstallation, setExpandedInstallation] = useState<string | null>(null);
 
@@ -666,7 +666,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
     setUninstallingId(installationId);
     let refusal: string | null = null;
     try {
-      const response = await api.uninstallPack(installationId, { withoutCopy: binRefusal !== null });
+      const response = await api.uninstallPack(installationId, { withoutCopy: binRefusal?.id === installationId });
       if (response.data?.success) {
         toast.success('Pack uninstalled', response.data.message);
         await Promise.all([refreshForms(), fetchApps(), loadInstallations()]);
@@ -682,7 +682,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
       toast.error('Uninstall failed', err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setUninstallingId(null);
-      setBinRefusal(refusal);
+      setBinRefusal(refusal === null ? null : { id: installationId, message: refusal });
       if (refusal === null) setConfirmUninstall(null);
     }
   }, [binRefusal, refreshForms, fetchApps, loadInstallations]);
@@ -1063,7 +1063,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                                 isLoading={uninstallingId === inst.id}
                                 leftIcon={uninstallingId !== inst.id ? <Trash2 className="h-3.5 w-3.5" /> : undefined}
                               >
-                                {uninstallingId === inst.id ? 'Removing...' : binRefusal !== null ? 'Delete without a copy' : 'Delete'}
+                                {uninstallingId === inst.id ? 'Removing...' : binRefusal?.id === inst.id ? 'Delete anyway' : 'Delete'}
                               </Button>
                             </div>
                           ) : (
@@ -1071,6 +1071,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                               variant="outline"
                               size="sm"
                               onClick={() => { setBinRefusal(null); setConfirmUninstall(inst.id); }}
+                              disabled={uninstallingId !== null}
                               aria-label={`Uninstall ${inst.packName}`}
                               title={`Uninstall ${inst.packName}`}
                               className="text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30 hover:bg-red-50 dark:hover:bg-red-500/10"
@@ -1088,9 +1089,9 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                               pre-captured into the Recycle bin (not irreversibly destroyed), while
                               apps and empty forms are removed outright (reinstallable from the pack).
                               A v2 extension removes only its contributed node definitions. */}
-                          <span role={binRefusal !== null ? 'alert' : undefined}>
-                            {binRefusal !== null
-                              ? `${binRefusal} You can still delete it, but its records and app data will be gone for good, with nothing in the Recycle bin.`
+                          <span role={binRefusal?.id === inst.id ? 'alert' : undefined}>
+                            {binRefusal?.id === inst.id
+                              ? `${binRefusal.message} You can delete it anyway: whatever can be copied goes to the Recycle bin, and anything that can't is gone for good.`
                               : inst.formatVersion === 2
                               ? `Removes this extension${(inst.nodesInstalled ?? 0) > 0 ? ` and its ${inst.nodesInstalled} contributed flow node${inst.nodesInstalled === 1 ? '' : 's'}` : ''}. Flows already using its nodes keep them as read-only placeholders.`
                               : `Removes ${inst.existingFormCount} form${inst.existingFormCount === 1 ? '' : 's'}${inst.existingAppCount > 0 ? ` and ${inst.existingAppCount} app${inst.existingAppCount === 1 ? '' : 's'}` : ''} created by this pack. Forms with collected responses go to the Recycle bin (restorable for 30 days); apps and empty forms are removed outright and can be reinstalled from the pack.`}

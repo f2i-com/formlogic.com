@@ -102,7 +102,13 @@ final class TrashService
             throw $this->copyRefused('Nothing was deleted', $this->formTitle($formId), $e);
         }
         if ($pending === null) {
-            $deleted = $this->formService->deleteForm($formId);
+            try {
+                $deleted = $this->formService->deleteForm($formId);
+            } catch (FormDeletionIncompleteException $e) {
+                // Its row has gone, and a retry finds nothing to purge these for.
+                $this->formEncryptionLifecycle('purge', $formId);
+                throw $e;
+            }
             if ($deleted) {
                 // Hard delete with NO bin entry (empty draft): a private form's
                 // encryption rows have nothing to be restored for — purge them.
@@ -214,12 +220,14 @@ final class TrashService
      * uninstallPack deletes them (recordless forms aren't worth a bin entry).
      * Call commitCapturedForms() with the result AFTER the uninstall: each copy
      * stays only if its form is actually gone. One that can't be saved takes
-     * back the others and stops the uninstall here, while everything still is.
+     * back the others and stops the uninstall here, while everything still is,
+     * unless the person has read that and said to go on ($stopAtARefusal false):
+     * then it goes without a copy, and the others keep theirs.
      *
      * @return array[] saved capture handles
      * @throws TrashSnapshotException
      */
-    public function captureRecordBearingForms(string $installationId, string $userId): array
+    public function captureRecordBearingForms(string $installationId, string $userId, bool $stopAtARefusal = true): array
     {
         $stmt = $this->pdo->prepare('SELECT form_ids FROM pack_installations WHERE id = :id AND user_id = :u');
         $stmt->execute(['id' => $installationId, 'u' => $userId]);
@@ -245,6 +253,13 @@ final class TrashService
                     $saved[] = $pending;
                 }
             } catch (\Throwable $e) {
+                if (!$stopAtARefusal) {
+                    if ($pending !== null) {
+                        $this->takeBack($pending);
+                    }
+                    $this->logger->error('Trash: could not save a copy, and was told to go on', ['name' => (string) $title, 'error' => $e->getMessage()]);
+                    continue;
+                }
                 foreach ($pending === null ? $saved : [...$saved, $pending] as $copy) {
                     $this->takeBack($copy);
                 }
@@ -303,6 +318,16 @@ final class TrashService
         $stmt->execute(['id' => $formId]);
         $title = $stmt->fetchColumn();
         return is_string($title) ? $title : $formId;
+    }
+
+    /** Keys of a form that went with no copy in the bin: nothing can come back for them. */
+    public function forgetFormKeys(string $formId, string $userId): void
+    {
+        $held = $this->pdo->prepare("SELECT 1 FROM trash_items WHERE kind = 'form' AND original_id = :id AND user_id = :u LIMIT 1");
+        $held->execute(['id' => $formId, 'u' => $userId]);
+        if ($held->fetchColumn() === false) {
+            $this->formEncryptionLifecycle('purge', $formId);
+        }
     }
 
     /** Whether this deleted app is in the user's bin, which keeps its storage for an undelete. */

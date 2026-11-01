@@ -1696,12 +1696,13 @@ class PackService
      * With $trash, its apps go to the recycle bin as any deleted app does, and their databases stay
      * on disk until the bin lets them go: those hold members' records, which the pack can't bring
      * back. Every app's copy is in the bin before the first delete, so that one that can't be kept
-     * stops the uninstall with nothing gone.
+     * stops the uninstall with nothing gone. $goOnWithoutCopies is someone who has read that saying
+     * to go on: an app the bin refuses is deleted outright, and the rest keep their copies.
      *
      * @return array { formsDeleted: int, appsDeleted: int }
      * @throws TrashSnapshotException when the bin can't keep an app; nothing was deleted
      */
-    public function uninstallPack(string $installationId, string $userId, ?TrashService $trash = null): array
+    public function uninstallPack(string $installationId, string $userId, ?TrashService $trash = null, bool $goOnWithoutCopies = false): array
     {
         // Verify the installation belongs to this user
         $stmt = $this->mysql->prepare("
@@ -1723,6 +1724,7 @@ class PackService
         $appsDeleted = 0;
 
         $kept = [];
+        $noCopy = [];
         if ($trash !== null) {
             $owned = $this->mysql->prepare("SELECT 1 FROM apps WHERE id = :id AND owner_id = :owner");
             foreach ($appIds as $appId) {
@@ -1731,6 +1733,10 @@ class PackService
                 try {
                     $kept[$appId] = $trash->keepApp($appId, $userId);
                 } catch (TrashSnapshotException $e) {
+                    if ($goOnWithoutCopies) {
+                        $noCopy[$appId] = true;
+                        continue;
+                    }
                     foreach ($kept as $copy) {
                         $trash->takeBack($copy);
                     }
@@ -1748,7 +1754,8 @@ class PackService
                 $checkStmt->execute(['id' => $appId]);
                 $owner = $checkStmt->fetchColumn();
                 if ($owner !== false && $owner !== $userId) continue;
-                if ($trash !== null) {
+                $toTheBin = $trash !== null && !isset($noCopy[$appId]);
+                if ($toTheBin) {
                     if ($owner !== false && $this->appService->deleteApp($appId)) {
                         unset($kept[$appId]);
                         $appsDeleted++;
@@ -1761,7 +1768,9 @@ class PackService
                 // A retry also cleans storage after the app row was already removed.
                 ($this->hosting ??= new HostedAppService(new SandboxRunner()))->remove($appId);
                 ($this->native ??= new NativeAppService())->remove($appId);
-                if ($owner !== false && $trash === null) $appsDeleted++;
+                // No foreign key reaches an app here, and no bin item is left to clear these later.
+                $this->mysql->prepare("DELETE FROM flow_kv WHERE app_id = :id")->execute(['id' => $appId]);
+                if ($owner !== false && !$toTheBin) $appsDeleted++;
             } catch (\Throwable $e) { $failedApps[] = $appId; }
         }
         // What is still here isn't in the bin: a retry makes its own copy.
@@ -1779,6 +1788,7 @@ class PackService
                 if (!$checkStmt->fetch()) continue; // Skip if not owned or already deleted
                 $this->formService->deleteForm($formId);
                 $formsDeleted++;
+                $trash?->forgetFormKeys($formId, $userId);
             } catch (\Exception $e) {
                 // Form may have been manually deleted already
             }

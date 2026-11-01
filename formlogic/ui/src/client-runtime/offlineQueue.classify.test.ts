@@ -79,6 +79,8 @@ describe('classifyDeliveryResult', () => {
   it('a conflict or an in-flight duplicate keeps its meaning whatever the status', () => {
     expect(classifyDeliveryResult({ ok: false, status: 503, processing: true }).outcome).toBe('processing');
     expect(classifyDeliveryResult({ ok: false, status: 503, conflict: true }).outcome).toBe('terminal');
+    expect(classifyDeliveryResult({ ok: false, status: 503, scriptRan: true }).outcome).toBe('stopped');
+    expect(classifyDeliveryResult({ ok: false, status: 422, scriptRan: true, error: 'No' })).toEqual({ outcome: 'stopped', error: 'No' });
   });
 
   it('a validation refusal still counts as an attempt', () => {

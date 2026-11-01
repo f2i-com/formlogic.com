@@ -21,10 +21,11 @@ export type QueuedStatus = 'pending' | 'syncing' | 'failed';
 
 /**
  * Why an item is 'failed': the server holds a different submission under its key; it ran out of
- * attempts; or it ran out of attempts and the last one was answered 2xx in a way the submit
- * endpoint never answers (UNRECOGNISED_REPLY).
+ * attempts; it ran out of attempts and the last one was answered 2xx in a way the submit endpoint
+ * never answers (UNRECOGNISED_REPLY); or the form's script acted and the record wasn't stored, so
+ * only a person can decide to send it again.
  */
-export type FailureKind = 'conflict' | 'gave-up' | 'unrecognised';
+export type FailureKind = 'conflict' | 'gave-up' | 'unrecognised' | 'script-ran';
 
 export interface QueuedSubmission {
   id: string;
@@ -79,6 +80,15 @@ export function isConflict(item: { failure?: FailureKind; lastError?: string | n
   return /different submission|idempotency conflict/i.test(item.lastError ?? '');
 }
 
+/**
+ * True when the form's script acted and the record wasn't stored. A native item has no `failure`, so
+ * it is known by the server's words (NotStoredAfterScript, ScriptRejection).
+ */
+export function isScriptRan(item: { failure?: FailureKind; lastError?: string | null }): boolean {
+  if (item.failure) return item.failure === 'script-ran';
+  return /script has already run|may already have acted/i.test(item.lastError ?? '');
+}
+
 /** What the person is shown about a submission that could not be sent. Never its answers. */
 export interface FailedSubmissionSummary {
   id: string;
@@ -89,10 +99,12 @@ export interface FailedSubmissionSummary {
   conflict: boolean;
   /** Its last attempt was answered in a way FormLogic does not recognise. The native queue does not say. */
   unrecognised?: boolean;
+  /** The form's script acted and the record wasn't stored: nothing sends it again but the person. */
+  scriptRan?: boolean;
 }
 
 /** The classified outcome of a single delivery attempt (see classifyDeliveryResult). */
-export type DeliveryOutcome = 'delivered' | 'processing' | 'retry' | 'unrecognised' | 'unreachable' | 'terminal';
+export type DeliveryOutcome = 'delivered' | 'processing' | 'retry' | 'unrecognised' | 'unreachable' | 'terminal' | 'stopped';
 
 /** The reason kept on a submission whose delivery was answered 2xx without the stored record's id. */
 export const UNRECOGNISED_REPLY = 'The server answered in a way FormLogic does not recognise.';
@@ -127,6 +139,8 @@ export interface DeliveryResultInput {
   processing?: boolean;
   /** 200: an idempotent replay of an already-completed submission (ok is also true). */
   idempotent?: boolean;
+  /** The form's script acted and nothing was stored: sending it again would run the script again. */
+  scriptRan?: boolean;
   /** The HTTP status; 0 when no response arrived at all (the api layer's network failure). */
   status?: number;
 }
@@ -153,6 +167,7 @@ export function isUnreachableStatus(status: number | undefined): boolean {
  *                                            → 'unrecognised' (keep pending; bump attempts, as 'retry'),
  *   - server says "already being processed"  → 'processing' (keep pending; do NOT remove or fail),
  *   - server says "different submission"     → 'terminal'   (mark failed; never retry — surface it),
+ *   - server says the form's script acted    → 'stopped'    (mark failed; only the person sends it again),
  *   - server not reached (0 / 408 / 429 / 502 / 503 / 504, see isUnreachableStatus)
  *                                            → 'unreachable' (keep pending; attempts unchanged),
  *   - any other error                        → 'retry'      (keep pending; bump attempts).
@@ -166,6 +181,9 @@ export function classifyDeliveryResult(result: DeliveryResultInput): DeliveryCla
       : { outcome: 'unrecognised', error: UNRECOGNISED_REPLY };
   }
   const message = (result.error ?? '').trim();
+  if (result.scriptRan === true) {
+    return { outcome: 'stopped', error: message || 'The form\'s script acted, and this was not stored.' };
+  }
   // Flags win over regex; the regex is a fallback for a transport that only surfaced the message.
   if (result.processing === true || /already being processed/i.test(message)) {
     return { outcome: 'processing', error: message || 'This submission is already being processed.' };
@@ -388,6 +406,7 @@ export async function listFailedSubmissions(): Promise<FailedSubmissionSummary[]
       failedAt: typeof i.failedAt === 'number' ? i.failedAt : null,
       conflict: isConflict(i),
       unrecognised: i.failure === 'unrecognised',
+      scriptRan: isScriptRan(i),
     }));
 }
 
@@ -538,6 +557,9 @@ async function runPass(): Promise<{ flushed: number; failed: number }> {
         if (terminal) failed++;
       } else if (outcome === 'terminal') {
         await settle({ attempts: item.attempts + 1, lastError: error, ...failure('conflict') });
+        failed++;
+      } else if (outcome === 'stopped') {
+        await settle({ attempts: item.attempts + 1, lastError: error, ...failure('script-ran') });
         failed++;
       } else {
         // Generic retryable error, or a 2xx that was not the submit endpoint's ('unrecognised') —

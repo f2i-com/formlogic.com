@@ -905,7 +905,7 @@ class ResponseController
                     'message' => $result->message,
                     'rejected' => $result->isRejected(),
                     'code' => $result->code,
-                ];
+                ] + ($result->scriptActed ? ['scriptRan' => true] : []);
                 // Why the script could not run goes to the form's owner (testing their own link)
                 // and to nobody else submitting: it is the script's internals.
                 if ($result->detail !== null && is_string($callerId) && $callerId !== '' && ($form['userId'] ?? null) === $callerId) {
@@ -936,12 +936,11 @@ class ResponseController
         } catch (\FormLogic\Services\FormQuotaRefused $e) {
             // Audit FL-004/C-11: no mutex → concurrent submissions could overshoot the hard cap.
             if ($e->busy) {
-                return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true, 'message' => $e->getMessage()]];
+                return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true, 'code' => 'form_busy', 'message' => $e->getMessage()]];
             }
             return ['status' => 403, 'payload' => ['error' => true, 'message' => $settings['closedMessage'] ?? $e->getMessage()]];
         } catch (\FormLogic\Services\NotStoredAfterScript $e) {
-            // A 409 conflict is the status every queue stops on.
-            return ['status' => 409, 'payload' => ['error' => true, 'conflict' => true, 'message' => $e->getMessage()]];
+            return ['status' => 409, 'payload' => ['error' => true, 'scriptRan' => true, 'message' => $e->getMessage()]];
         } catch (EncryptionEnablingException $e) {
             // Enable-race gate: a concurrent enable committed between the dispatch
             // check and the atomic write — fail closed with the contract shape.
@@ -963,7 +962,7 @@ class ResponseController
             }
             // A PDOException is a RuntimeException, and its text is the SQL error.
             $this->logger->error('Response creation error', ['exception' => $e->getMessage()]);
-            // The guard can't tell from what goes out below. Nothing was stored and no script ran
+            // The guard can't tell from what goes out below. Nothing was stored and no script acted
             // (that is NotStoredAfterScript), so this can go again.
             if (SqlErrorText::isBusy($e->getMessage())) {
                 return ['status' => 503, 'payload' => ['error' => true, 'retryable' => true,

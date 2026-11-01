@@ -193,6 +193,16 @@ describe('OfflineQueuePanel with submissions that could not be sent', () => {
     expect(host.querySelector('[role="status"]')?.textContent).not.toContain('could not be reached');
   });
 
+  it('says when the form\'s script ran and nothing was stored, and leaves Send again to the person', async () => {
+    queue.browser = { pending: 0, failed: 1 };
+    queue.browserFailed = [failed({ scriptRan: true })];
+    await show(<OfflineQueuePanel />);
+    expect(host.textContent).toContain('the form’s script had already run');
+    expect(host.textContent).not.toContain('different submission');
+    expect(button('Send again')).toBeDefined();
+    expect(button('Discard')).toBeDefined();
+  });
+
   it('can still discard while offline', async () => {
     queue.browser = { pending: 0, failed: 1 };
     queue.browserFailed = [failed()];

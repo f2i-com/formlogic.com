@@ -31,7 +31,7 @@
 // anyone's, as before. A runtime that predates the field drops it, and its items stay anyone's.
 import { api } from '../lib/api';
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from '../lib/sessionGeneration';
-import { flushBrowserQueue, isConflict, isUnreachableStatus, notifyQueueChanged, type FailedSubmissionSummary, type RetryOutcome } from './offlineQueue';
+import { flushBrowserQueue, isConflict, isScriptRan, isUnreachableStatus, notifyQueueChanged, type FailedSubmissionSummary, type RetryOutcome } from './offlineQueue';
 import type { FormLogicNativeBridge, NativeSyncFlushGroup, NativeSyncQueueItem } from './connectors/connectorTypes';
 
 /**
@@ -110,6 +110,7 @@ export async function listNativeFailedSubmissions(): Promise<FailedSubmissionSum
         // Unix seconds, from a runtime that records when an item failed; absent on older ones.
         failedAt: typeof i.failedAt === 'number' && i.failedAt > 0 ? i.failedAt * 1000 : null,
         conflict: isConflict(i),
+        scriptRan: isScriptRan(i),
       };
     })
     .sort((a, b) => a.createdAt - b.createdAt);
@@ -392,7 +393,7 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
 
       // Map the server's per-item results (keyed by idempotencyKey) back to queue-item ids, preserving
       // the idempotency distinctions so ack / fail / keep can be decided precisely (see syncBatch).
-      const byKey = new Map<string, { success: boolean; idempotent: boolean; conflict: boolean; processing: boolean; status: number | undefined; error: string | null }>();
+      const byKey = new Map<string, { success: boolean; idempotent: boolean; conflict: boolean; processing: boolean; scriptRan: boolean; status: number | undefined; error: string | null }>();
       for (const r of res.data.results ?? []) {
         if (r && typeof r.idempotencyKey === 'string') {
           byKey.set(r.idempotencyKey, {
@@ -400,6 +401,7 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
             idempotent: r.idempotent === true,
             conflict: r.conflict === true,
             processing: r.processing === true,
+            scriptRan: r.scriptRan === true,
             status: r.status,
             error: r.error ?? null,
           });
@@ -408,14 +410,23 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
       const ackIds: string[] = [];
       const failIds: string[] = [];
       const terminalIds: string[] = [];
+      const stoppedIds: string[] = [];
       let failError = 'Sync failed';
       let terminalError = 'Idempotency conflict';
+      let stoppedError = 'The form\'s script has already run, and this was not stored.';
       for (const it of payloadItems) {
         const r = byKey.get(it.idempotencyKey);
         // ACK a fresh success OR an idempotent replay — in both cases the server already holds this exact
         // submission, so the item can be removed from the queue.
         if (r?.success || r?.idempotent) {
           ackIds.push(it.id);
+          continue;
+        }
+        // STOP an item whose form script acted and left nothing stored: sending it again would run
+        // the script again, so only the person does that. Kept apart from a conflict, which they can't.
+        if (r?.scriptRan) {
+          stoppedIds.push(it.id);
+          if (r.error) stoppedError = r.error;
           continue;
         }
         // KEEP a `processing` item: an in-flight duplicate is being handled server-side. Leave it queued
@@ -447,19 +458,20 @@ async function drainNativeQueue(sync: NonNullable<FormLogicNativeBridge['sync']>
       if (ackIds.length && sync.ack) {
         try { await sync.ack(ackIds); } catch { /* ignore — items remain for the next flush */ }
       }
-      if (terminalIds.length) {
+      for (const [ids, reason] of [[terminalIds, terminalError], [stoppedIds, stoppedError]] as const) {
+        if (ids.length === 0) continue;
         // Feature-detect failTerminal: an older runtime without it falls back to a plain retryable
-        // fail, which still terminals the conflict once the native attempt cap is exhausted.
+        // fail, which still terminals the item once the native attempt cap is exhausted.
         try {
-          if (sync.failTerminal) await sync.failTerminal(terminalIds, terminalError);
-          else if (sync.fail) await sync.fail(terminalIds, terminalError);
+          if (sync.failTerminal) await sync.failTerminal(ids, reason);
+          else if (sync.fail) await sync.fail(ids, reason);
         } catch { /* ignore */ }
       }
       if (failIds.length && sync.fail) {
         try { await sync.fail(failIds, failError); } catch { /* ignore */ }
       }
       flushed += ackIds.length;
-      failed += terminalIds.length;
+      failed += terminalIds.length + stoppedIds.length;
       attempted.push(...failIds);
     }
   }

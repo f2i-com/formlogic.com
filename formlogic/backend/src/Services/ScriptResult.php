@@ -28,6 +28,8 @@ class ScriptResult
         /** On an error: true when the script itself failed (it threw, or defines no onSubmit),
          *  false when the engine stopped it or could not run it. */
         public readonly bool $scriptFault = false,
+        /** It made an HTTP request, however it ended: running it again would make that request again. */
+        public readonly bool $actedOutside = false,
     ) {}
 
     /**
@@ -50,6 +52,7 @@ class ScriptResult
         int $executionTimeMs = 0,
         array $flowRuns = [],
         bool $store = true,
+        bool $actedOutside = false,
     ): self {
         return new self(
             success: true,
@@ -61,6 +64,7 @@ class ScriptResult
             executionTimeMs: $executionTimeMs,
             flowRuns: $flowRuns,
             store: $store,
+            actedOutside: $actedOutside,
         );
     }
 
@@ -71,6 +75,7 @@ class ScriptResult
         string $message,
         int $instructionCount = 0,
         int $executionTimeMs = 0,
+        bool $actedOutside = false,
     ): self {
         return new self(
             success: true,
@@ -78,6 +83,7 @@ class ScriptResult
             rejectionMessage: $message,
             instructionCount: $instructionCount,
             executionTimeMs: $executionTimeMs,
+            actedOutside: $actedOutside,
         );
     }
 
@@ -89,6 +95,7 @@ class ScriptResult
         int $instructionCount = 0,
         int $executionTimeMs = 0,
         bool $scriptFault = false,
+        bool $actedOutside = false,
     ): self {
         return new self(
             success: false,
@@ -96,6 +103,7 @@ class ScriptResult
             instructionCount: $instructionCount,
             executionTimeMs: $executionTimeMs,
             scriptFault: $scriptFault,
+            actedOutside: $actedOutside,
         );
     }
 

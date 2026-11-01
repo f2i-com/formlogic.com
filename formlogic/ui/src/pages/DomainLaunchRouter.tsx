@@ -49,10 +49,11 @@ interface HostAnswer {
  * What the host is, and what its app is if it has one, or null while either has no real answer.
  * `isDomain` hears as soon as the host is known to be a customer's, before its app is.
  */
-async function askServer(host: string, isDomain: () => void): Promise<HostAnswer | null> {
+async function askServer(host: string, isDomain: (config: LaunchConfig) => void): Promise<HostAnswer | null> {
   const { config, answered, platform } = await lookUpHost(host);
   if (!answered) return null;
   if (!config) return { config, platform };
+  isDomain(config);
   const entry = await Promise.race([
     api.getNativeEntry(config.app.slug),
     new Promise<null>((resolve) => setTimeout(() => resolve(null), ENTRY_TIMEOUT_MS)),
@@ -60,12 +61,16 @@ async function askServer(host: string, isDomain: () => void): Promise<HostAnswer
   // This says no more about the app than a failed lookup does about the host, and taken for "no
   // SoftN app" it would show a SoftN app's domain the platform's pages.
   if (!entry || (entry.error && (entry.status === undefined || entry.status === 429 || entry.status >= 500))) {
-    isDomain();
     return null;
   }
   const softnAccess = entry.data?.native ? entry.data.access : undefined;
   rememberHost(host, config, softnAccess);
   return { config, softnAccess };
+}
+
+/** Where this domain's visitors sign in. Null where FormLogic is this very address: a local `?__flhost=` preview signs in as usual. */
+function signInAddress(config: LaunchConfig | null | undefined): string | null {
+  return config?.platformUrl && config.platformUrl !== window.location.origin ? config.platformUrl : null;
 }
 
 function Spinner() {
@@ -141,7 +146,7 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
   // What the last visit learned. It stays as it was for this page: the answer on its way is `heard`.
   const [remembered] = useState(() => rememberedHost(host));
   // The server has said this is a customer's domain, and hasn't yet said what its app is.
-  const [domainApp, setDomainApp] = useState(false);
+  const [lookedUp, setLookedUp] = useState<LaunchConfig | null>(null);
   const [waited, setWaited] = useState(0);
   const askAgain = useRef(() => {});
 
@@ -154,7 +159,7 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
       if (over || asking) return;
       asking = true;
       clearTimeout(nextTry);
-      const answer = await askServer(host, () => setDomainApp(true));
+      const answer = await askServer(host, setLookedUp);
       asking = false;
       if (over) return;
       if (answer) {
@@ -192,11 +197,10 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
   const direct = config?.domain.mode === 'runtime_direct';
   // As the router matches: `/LOGIN/` is the login page too.
   const path = pathname.toLowerCase().replace(/\/+$/, '');
-  // Null where FormLogic is this very address: a local `?__flhost=` preview signs in as usual.
-  const platformUrl = config?.platformUrl && config.platformUrl !== window.location.origin ? config.platformUrl : null;
+  const platformUrl = signInAddress(config ?? lookedUp);
   const takesPassword = SIGN_IN_PATHS.includes(path) || PASSWORD_PATHS.includes(path);
   // On the server's word alone: a reset link's token goes with it, and storage can be old or wrong.
-  const leaves = !!platformUrl && takesPassword && !asking;
+  const leavesFor = takesPassword ? signInAddress(heard ? heard.config : lookedUp) : null;
   const finishing = !!platformUrl && path === SIGN_IN_RETURN_PATH;
   const accountPage = takesPassword || LEGAL_PATHS.includes(path);
   // FormLogic's own address, if an older version let an app connect to it: /admin and /forms stay.
@@ -207,14 +211,14 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
   useDomainManifest(showsApp);
 
   useEffect(() => {
-    if (!leaves || !platformUrl) return;
+    if (!leavesFor) return;
     if (SIGN_IN_PATHS.includes(path)) {
       const after = new URLSearchParams(search).get('redirect');
-      startDomainSignIn(platformUrl, path === '/signup' ? 'signup' : 'login', signInDestination(after));
+      startDomainSignIn(leavesFor, path === '/signup' ? 'signup' : 'login', signInDestination(after));
     } else {
-      window.location.replace(`${platformUrl}${path}${search}`);
+      window.location.replace(`${leavesFor}${path}${search}`);
     }
-  }, [leaves, platformUrl, path, search]);
+  }, [leavesFor, path, search]);
 
   // runtime_direct on any other kind of app: this domain IS the app, at the app's usual URL.
   const redirects = !!config && !softnAccess && direct && pathname === '/';
@@ -222,11 +226,11 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
     if (redirects && config) window.location.replace(`/app/${config.app.slug}`);
   }, [redirects, config]);
 
-  if (redirects || leaves) return <Spinner />;
+  if (redirects || leavesFor) return <Spinner />;
   const waitOrSayUnreachable = () => (waited < LONG_WAIT_MS ? <Spinner /> : <DomainUnreachable onTryAgain={() => askAgain.current()} />);
   if (platformUrl && takesPassword) return waitOrSayUnreachable();
   if (!answer) {
-    if (!domainApp && remembered?.kind === 'not-domain') {
+    if (!lookedUp && remembered?.kind === 'not-domain') {
       const asksToSignIn = takesPassword || path === SIGN_IN_RETURN_PATH || /^\/app(\/|$)/.test(path);
       // A host no list names, or the site's own with an app connected to it. Its root is the answer's to decide.
       const homeMayChange = pathname === '/' && !remembered.platform;

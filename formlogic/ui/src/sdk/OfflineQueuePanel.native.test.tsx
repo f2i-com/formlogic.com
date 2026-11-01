@@ -91,4 +91,18 @@ describe('the status and the native queue', () => {
 
     expect(host.textContent).toContain('1 submission could not be sent');
   });
+
+  it('stops an item whose form script acted, under its own reason', async () => {
+    const rows = [{ ...item }];
+    bridge(rows);
+    const failTerminal = vi.fn(async () => ({ failed: 1 }));
+    const native = window as unknown as { FormLogicNative: { sync: Record<string, unknown> } };
+    native.FormLogicNative.sync.failTerminal = failTerminal;
+    const said = 'Your answers could not be saved, but this form\'s script has already run.';
+    vi.mocked(api.syncBatch).mockResolvedValue({ data: { results: [{ idempotencyKey: 'k1', success: false, responseId: null, error: said, status: 409, scriptRan: true }] } } as never);
+
+    await act(async () => { await flushNativeQueue(); });
+
+    expect(failTerminal).toHaveBeenCalledWith(['n1'], said);
+  });
 });

@@ -19,6 +19,10 @@ namespace FormLogic\Services;
  *                       nothing was stored, so a retry is safe; it can help only when
  *                       the engine stopped the script, and the message says which.
  *
+ * A script that made an HTTP request first is another matter (`scriptActed`): what it did
+ * can't be taken back, so nothing may send the submission again by itself, and a person is
+ * told to check first. A 503 would have every queue send it again, so it answers 409.
+ *
  * Why a script could not run is the form owner's business, not the respondent's: the
  * message never carries it. `detail` does, for the callers that answer the owner (the
  * owner's API key, the owner's AI over MCP, the owner testing their own public link).
@@ -32,6 +36,8 @@ class ScriptRejection
 {
     public const CODE_REJECTED = 'rejected';
     public const CODE_UNAVAILABLE = 'script_unavailable';
+    private const STOPPED_PARTWAY = "This form's processing script stopped partway, so nothing was stored, but it may already have acted. "
+        . "Please check with the form's owner before sending this again.";
 
     public function __construct(
         public readonly string $message,
@@ -41,6 +47,8 @@ class ScriptRejection
         public readonly ?string $detail = null,
         /** The script itself failed (scriptFailed), rather than the engine stopping it. */
         public readonly bool $scriptFault = false,
+        /** It made an HTTP request before it ended here (ScriptResult::$actedOutside). */
+        public readonly bool $scriptActed = false,
     ) {}
 
     /** The script judged the submission and refused it. */
@@ -50,8 +58,11 @@ class ScriptRejection
     }
 
     /** The engine stopped the script or could not start it; the submission may be retried. */
-    public static function unavailable(string $detail): self
+    public static function unavailable(string $detail, bool $scriptActed = false): self
     {
+        if ($scriptActed) {
+            return new self(self::STOPPED_PARTWAY, self::CODE_UNAVAILABLE, 409, $detail, false, true);
+        }
         return new self(
             "This form's processing script could not run, so the submission was not accepted. "
                 . 'Please try again in a moment.',
@@ -65,8 +76,11 @@ class ScriptRejection
      * The script itself failed (it threw, or defines no onSubmit). It fails the same way for
      * every submission until its owner corrects it, so the respondent is not asked to retry.
      */
-    public static function scriptFailed(string $detail): self
+    public static function scriptFailed(string $detail, bool $scriptActed = false): self
     {
+        if ($scriptActed) {
+            return new self(self::STOPPED_PARTWAY, self::CODE_UNAVAILABLE, 409, $detail, true, true);
+        }
         return new self(
             "This form's processing script failed, so the submission was not accepted and nothing was stored. "
                 . "The form's owner needs to correct the script.",

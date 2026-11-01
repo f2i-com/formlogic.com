@@ -122,7 +122,7 @@ describe('a submission the queue gave up on', () => {
   it('is listed for the person with what identifies it, and never its answers', async () => {
     const q = await giveUp();
     const listed = await listFailedSubmissions();
-    expect(listed).toEqual([{ id: q.id, appSlug: 'shop', formId: 'orders', createdAt: q.createdAt, failedAt: now, conflict: false, unrecognised: false }]);
+    expect(listed).toEqual([{ id: q.id, appSlug: 'shop', formId: 'orders', createdAt: q.createdAt, failedAt: now, conflict: false, unrecognised: false, scriptRan: false }]);
     expect(JSON.stringify(listed)).not.toContain('tea');
   });
 
@@ -157,6 +157,28 @@ describe('a submission the queue gave up on', () => {
     expect(await retrySubmission(row.id)).toBe('conflict');
     expect(api.createAppResponseResult).not.toHaveBeenCalled();
     expect((await listQueue())[0].status).toBe('failed');
+  });
+
+  // Sending it again would run the form's script again, and that script may have charged a card.
+  it('stops at once when the form\'s script acted, and leaves the choice to the person', async () => {
+    await enqueueSubmission({ appSlug: 'shop', formId: 'orders', answers: { item: 'tea' }, idempotencyKey: 'k1' });
+    const said = 'Your answers could not be saved, but this form\'s script has already run.';
+    vi.mocked(api.createAppResponseResult).mockReset().mockResolvedValue({ ok: false, status: 409, scriptRan: true, error: said });
+
+    await flushQueue();
+    await flushQueue();
+
+    expect(api.createAppResponseResult).toHaveBeenCalledTimes(1);
+    const [row] = await listQueue();
+    expect(row.status).toBe('failed');
+    expect(row.failure).toBe('script-ran');
+    expect(row.lastError).toBe(said);
+    const [listed] = await listFailedSubmissions();
+    expect(listed.scriptRan).toBe(true);
+    expect(listed.conflict).toBe(false);
+
+    vi.mocked(api.createAppResponseResult).mockResolvedValue({ ok: true, status: 201, response: { id: 'r1' } });
+    expect(await retrySubmission(row.id)).toBe('sent');
   });
 
   it('can be discarded, with the copy Workbox may hold of it', async () => {

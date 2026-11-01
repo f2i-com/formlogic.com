@@ -1637,7 +1637,7 @@ function FormResponseContent() {
             // which means nothing to a visitor. Log it and say something actionable.
             logger.error('Response submit refused:', result.error);
             setSubmitError(
-              result.status && result.status < 500 && typeof result.error === 'string'
+              result.status && (result.status < 500 || result.code === 'form_busy') && typeof result.error === 'string'
                 ? result.error
                 : 'We couldn’t send your answers just now. Nothing has been lost — check your connection and tap Submit again.'
             );

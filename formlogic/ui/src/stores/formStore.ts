@@ -801,10 +801,13 @@ export const useFormStore = create<FormState>()(
               toast.error('Failed to delete form', refused, result.code !== 'bin_unavailable' ? undefined : {
                 action: {
                   label: 'Delete without a copy',
-                  onClick: () => void api.deleteForm(id, { withoutCopy: true }).then((again) => {
-                    if (again.error) toast.error('Failed to delete form', typeof again.error === 'string' ? again.error : 'Please try again');
-                    else set((s) => ({ forms: s.forms.filter((f) => f.id !== id) }));
-                  }, () => toast.error('Failed to delete form', 'Please try again')),
+                  onClick: () => {
+                    if (!window.confirm(`Delete "${formToDelete.title}" without a copy? Its responses will be gone for good, with nothing in the Recycle bin.`)) return;
+                    void api.deleteForm(id, { withoutCopy: true }).then((again) => {
+                      if (again.error) toast.error('Failed to delete form', typeof again.error === 'string' ? again.error : 'Please try again');
+                      else set((s) => ({ forms: s.forms.filter((f) => f.id !== id) }));
+                    }, () => toast.error('Failed to delete form', 'Please try again'));
+                  },
                 },
               });
             } else if (result.data?.trashed) {

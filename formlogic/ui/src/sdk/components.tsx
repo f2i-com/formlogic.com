@@ -150,9 +150,11 @@ function FailedSubmissionList({ queue }: { queue: SdkOfflineQueue }) {
             <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-300">
               {item.conflict
                 ? 'The server already holds a different submission under this one’s reference, so it cannot be sent.'
-                : item.unrecognised
-                  ? UNRECOGNISED_TEXT
-                  : 'It could not be sent after several tries.'}
+                : item.scriptRan
+                  ? 'It wasn’t saved, but the form’s script had already run. Check with the form’s owner before sending it again.'
+                  : item.unrecognised
+                    ? UNRECOGNISED_TEXT
+                    : 'It could not be sent after several tries.'}
             </p>
             {confirming === item.key ? (
               <div role="group" aria-label="Confirm discard" className="mt-2 rounded-lg bg-red-50 dark:bg-red-500/10 p-2.5">
