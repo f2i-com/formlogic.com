@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Check,
@@ -81,6 +81,9 @@ export function OverviewStep({
   // an edit landing from another surface can never be clobbered by a stale draft.
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [descDraft, setDescDraft] = useState<string | null>(null);
+  // Set by Escape: the blur that follows saves nothing, and the draft it would read is still
+  // the typed text, because clearing the draft takes effect only after the key event.
+  const editCancelled = useRef(false);
   const [copied, setCopied] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [creatingDiagram, setCreatingDiagram] = useState(false);
@@ -109,10 +112,17 @@ export function OverviewStep({
     return ok;
   };
 
+  /** Whether Escape ended this edit: true once, for the blur Escape itself caused. */
+  const takeCancelled = () => {
+    const cancelled = editCancelled.current;
+    editCancelled.current = false;
+    return cancelled;
+  };
+
   const commitName = async () => {
     const next = (nameDraft ?? '').trim();
     setNameDraft(null);
-    if (!next || next === app.name) return;
+    if (takeCancelled() || !next || next === app.name) return;
     if (next.length < 2) {
       toast.error('Name too short', 'An app name needs at least two characters.');
       return;
@@ -123,7 +133,7 @@ export function OverviewStep({
   const commitDescription = async () => {
     const next = (descDraft ?? '').trim();
     setDescDraft(null);
-    if (next === (app.description ?? '').trim()) return;
+    if (takeCancelled() || next === (app.description ?? '').trim()) return;
     await saveField('description', next, 'App description');
   };
 
@@ -189,7 +199,7 @@ export function OverviewStep({
               onBlur={() => void commitName()}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-                if (e.key === 'Escape') { setNameDraft(null); e.currentTarget.blur(); }
+                if (e.key === 'Escape') { editCancelled.current = true; e.currentTarget.blur(); }
               }}
               // Reads as a heading until you touch it; the border appears on hover
               // and focus so it is discoverably editable without looking like a form.
@@ -201,7 +211,7 @@ export function OverviewStep({
               value={descDraft ?? app.description ?? ''}
               onChange={(e) => setDescDraft(e.target.value)}
               onBlur={() => void commitDescription()}
-              onKeyDown={(e) => { if (e.key === 'Escape') { setDescDraft(null); e.currentTarget.blur(); } }}
+              onKeyDown={(e) => { if (e.key === 'Escape') { editCancelled.current = true; e.currentTarget.blur(); } }}
               rows={2}
               placeholder="Say what this app is for — members see it, and the AI uses it when planning."
               className="scrollbar-thin -mx-2 mt-1 w-[calc(100%+1rem)] min-w-0 resize-none rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm leading-6 text-gray-600 outline-none transition hover:border-gray-200 focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/15 max-sm:min-h-[5.5rem] dark:text-slate-300 dark:hover:border-white/10 dark:focus:border-primary-500/50 dark:focus:bg-slate-950/60"

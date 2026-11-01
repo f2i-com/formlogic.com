@@ -4,7 +4,8 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Switch } from '../../components/ui/Switch';
 import { api } from '../../lib/api';
-import { generateId } from '../../lib/utils';
+import { saveFormFields } from '../../lib/formFields';
+import { generateFieldId } from '../../stores/formStore';
 import { toast } from '../../stores/toastStore';
 import type { Form, FormField } from '../../types/form';
 
@@ -87,7 +88,7 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms, defaultSo
       const sourceForm = sourceRes.data.form as Form;
 
       const newField: FormField = {
-        id: generateId(),
+        id: generateFieldId(label.trim(), sourceForm.fields.map((f) => f.id)),
         type: 'linked_record',
         label: label.trim(),
         required: false,
@@ -103,10 +104,10 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms, defaultSo
       // refused write closed the modal with a green "Relation created" and no relation.
       // The modal stays OPEN on failure — its open-effect wipes the draft, so closing
       // would throw away the source/target/label/display-field choices too.
-      const res = await api.updateForm(sourceFormId, { fields: [...sourceForm.fields, newField] });
+      const res = await saveFormFields(sourceFormId, [...sourceForm.fields, newField], { fieldsRevision: sourceForm.fieldsRevision });
       setSaving(false);
-      if (res.error) {
-        toast.error('Save failed', typeof res.error === 'string' ? res.error : 'Could not create the relation.');
+      if (!res.ok) {
+        toast.error('Save failed', res.error ?? 'Could not create the relation.');
         return;
       }
       toast.success('Relation created', `"${label.trim()}" was added.`);

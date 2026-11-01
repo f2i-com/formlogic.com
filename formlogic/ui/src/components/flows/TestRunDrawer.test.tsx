@@ -153,6 +153,20 @@ afterEach(async () => {
   document.body.innerHTML = '';
 });
 
+// The server only inserted a 'running' row that nothing ever picks up, and the sweep later failed it.
+it('offers no server run for a flow in an app, because none would run', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+  await act(async () => {
+    root!.render(<TestRunDrawer flow={{ ...flowWith('auto'), appId: 'app-1' }} onClose={() => undefined} />);
+  });
+  await flush();
+
+  expect(container.textContent).not.toMatch(/server/i);
+  expect(buttonByText(container, 'Run in browser')).toBeTruthy();
+});
+
 describe('TestRunDrawer — run dispatch per executionLocation', () => {
   it('auto: the browser runner stays the primary action', async () => {
     const container = await renderDrawer({}, 'auto');

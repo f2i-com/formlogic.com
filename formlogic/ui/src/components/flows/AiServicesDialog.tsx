@@ -759,7 +759,9 @@ function ProviderEditor({
       return null;
     }
     setError(null);
-    const next = { ...cfg, updatedAt: nowIso() };
+    // The editor never holds the sealed key: its copy dates from when it opened, so writing that
+    // back put the old key over one a Test had just saved. saveProvider keeps what is stored.
+    const next = { ...cfg, encryptedKey: undefined, updatedAt: nowIso() };
     saveProvider(userId, next);
     if (keyTouched) {
       if (apiKey === '') {

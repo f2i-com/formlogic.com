@@ -35,6 +35,7 @@ import { useAppStore } from '../../../stores/appStore';
 import { cn, formatRelativeTime } from '../../../lib/utils';
 import { readableForegroundColor } from '../../../lib/color';
 import { returnToState } from '../../../hooks/useReturnTo';
+import { useResourcePaths } from '../../admin/AdminActingContext';
 import { interleaveMenu, menuForms, menuLinks, roleCanSeeForm } from '../../app-runtime/appMenu';
 import { DynamicIcon } from '../../ui/DynamicIcon';
 import { trackStudioSave } from '../studioSaveState';
@@ -129,6 +130,7 @@ export function ScreensStep({
   onOpenPublish: () => void;
 }) {
   const navigate = useNavigate();
+  const paths = useResourcePaths();
   // The builder / screen studios return here when opened from this section.
   const studioReturn = returnToState(`/apps/${app.id}/studio/screens`, 'App Studio');
   const updateApp = useAppStore((s) => s.updateApp);
@@ -752,7 +754,7 @@ export function ScreensStep({
                 <Button className="w-full" onClick={customiseScreen} leftIcon={<WandSparkles className="h-4 w-4" />}>
                   Customise this screen
                 </Button>
-                <Button variant="secondary" className="w-full" onClick={() => navigate(`/builder/${selectedForm.id}`, { state: studioReturn })} leftIcon={<PencilRuler className="h-4 w-4" />}>
+                <Button variant="secondary" className="w-full" onClick={() => navigate(paths.builder(selectedForm.id, app.id), { state: studioReturn })} leftIcon={<PencilRuler className="h-4 w-4" />}>
                   Open form builder
                 </Button>
               </>

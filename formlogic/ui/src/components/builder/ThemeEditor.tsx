@@ -5,14 +5,25 @@ import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
 import { cn } from '../../lib/utils';
 import { readableForegroundColor } from '../../lib/color';
+import { shrinkImageToDataUrl } from '../../lib/shrinkImage';
 import type { FormTheme } from '../../types/form';
 
 interface ThemeEditorProps {
   isOpen: boolean;
   onClose: () => void;
   theme: FormTheme;
-  onSave: (theme: FormTheme) => void;
+  /** Resolves false when the theme did not reach the server (the store says why). */
+  onSave: (theme: FormTheme) => Promise<boolean>;
 }
+
+type ThemeImage = 'logo' | 'backgroundImage';
+
+// Each image travels inside the theme as a data URL, and the server takes 512KB of theme
+// (FormService::MAX_THEME_BYTES), so two images of this size leave room for the rest of it.
+// It counts a little more than JSON.stringify does: PHP writes every / in the base64 as \/.
+const THEME_IMAGE_MAX_PX = 1024;
+const THEME_IMAGE_MAX_CHARS = 200 * 1024;
+const THEME_MAX_CHARS = 500 * 1024;
 
 interface ThemePreset {
   id: string;
@@ -144,6 +155,11 @@ const BORDER_RADIUS_OPTIONS = [
 export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps) {
   const [editedTheme, setEditedTheme] = useState<FormTheme>(theme);
   const [activePreset, setActivePreset] = useState<string | null>(null);
+  // Why the last picked image was not taken, shown beside its upload control.
+  const [imageErrors, setImageErrors] = useState<Partial<Record<ThemeImage, string>>>({});
+  const [imagesShrinking, setImagesShrinking] = useState(0);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const bgInputRef = useRef<HTMLInputElement>(null);
 
@@ -154,6 +170,8 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
       // eslint-disable-next-line react-hooks/set-state-in-effect -- prop->draft re-sync: reset edited theme when modal opens or theme prop changes underneath
       setEditedTheme(theme);
       setActivePreset(null);
+      setImageErrors({});
+      setSaveError(null);
     }
   }, [isOpen, theme]);
 
@@ -191,7 +209,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     // Validate color values before saving
     const colorKeys = ['primaryColor', 'backgroundColor', 'textColor'] as const;
     for (const key of colorKeys) {
@@ -201,49 +219,71 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
       }
     }
 
-    onSave(editedTheme);
+    // The theme goes out in the same save as the title, status, settings and script, so one
+    // the server refuses would hold all of those back as well. Refused here, nothing is lost.
+    if (JSON.stringify(editedTheme).length > THEME_MAX_CHARS) {
+      setSaveError('This theme is too large to save. Remove the logo or the background image and upload it again.');
+      return;
+    }
+
+    setSaveError(null);
+    setSaving(true);
+    const saved = await onSave(editedTheme);
+    setSaving(false);
+    if (!saved) {
+      setSaveError('The theme was not saved. Try again, or check your connection.');
+      return;
+    }
     toast.success('Theme saved', 'Your theme changes have been applied');
     onClose();
   };
 
-  const handleImageUpload = (
+  const setImageError = (type: ThemeImage, message: string | null) => {
+    setImageErrors((current) => ({ ...current, [type]: message ?? undefined }));
+  };
+
+  const handleImageUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
-    type: 'logo' | 'backgroundImage'
+    type: ThemeImage
   ) => {
     const file = e.target.files?.[0];
+    // Cleared at once, or picking the same file after removing it fires no change event.
+    e.target.value = '';
     if (!file) return;
+    setImageError(type, null);
 
     // Validate file type
     if (!file.type.startsWith('image/')) {
-      toast.error('Invalid file', 'Please select an image file');
+      setImageError(type, 'That file is not an image. Choose a PNG or JPG.');
       return;
     }
 
-    // Validate file size (max 2MB)
-    if (file.size > 2 * 1024 * 1024) {
-      toast.error('File too large', 'Image must be less than 2MB');
+    // What is stored is the shrunk copy, so this only has to spare the browser from decoding
+    // something huge. A phone photo is several MB, and a fine background once shrunk.
+    if (file.size > 20 * 1024 * 1024) {
+      setImageError(type, 'That image is over 20MB. Choose a smaller one.');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      // Validate data URL is actually an image to prevent injection
-      if (!dataUrl.startsWith('data:image/')) {
-        toast.error('Invalid image', 'The uploaded file is not a valid image');
-        return;
-      }
-      updateTheme({ [type]: dataUrl });
-    };
-    reader.onerror = () => {
-      toast.error('Upload failed', 'Could not read the image file');
-    };
-    reader.readAsDataURL(file);
+    setImagesShrinking((n) => n + 1);
+    const shrunk = await shrinkImageToDataUrl(file, { maxPx: THEME_IMAGE_MAX_PX, maxChars: THEME_IMAGE_MAX_CHARS });
+    setImagesShrinking((n) => n - 1);
+    if (shrunk.ok) {
+      updateTheme({ [type]: shrunk.dataUrl });
+    } else {
+      setImageError(type, shrunk.reason === 'unreadable'
+        ? 'That image could not be read. Try a PNG or JPG.'
+        : 'That image is too detailed to fit, even made smaller. Try a simpler image.');
+    }
   };
 
-  const removeImage = (type: 'logo' | 'backgroundImage') => {
+  const removeImage = (type: ThemeImage) => {
     updateTheme({ [type]: undefined });
   };
+
+  const imageError = (type: ThemeImage) => imageErrors[type] && (
+    <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">{imageErrors[type]}</p>
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -463,16 +503,18 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
               >
                 <Image className="h-8 w-8 text-gray-400 dark:text-slate-500 group-hover:text-gray-500 dark:group-hover:text-slate-400" />
                 <span className="text-sm text-gray-500 dark:text-slate-400">Upload Background Image</span>
-                <span className="text-xs text-gray-400 dark:text-slate-500">PNG, JPG up to 2MB</span>
+                <span className="text-xs text-gray-400 dark:text-slate-500">PNG, JPG up to 20MB, made smaller to fit</span>
               </button>
             )}
             <input
               ref={bgInputRef}
               type="file"
               accept="image/*"
-              onChange={(e) => handleImageUpload(e, 'backgroundImage')}
+              aria-label="Background image file"
+              onChange={(e) => void handleImageUpload(e, 'backgroundImage')}
               className="hidden"
             />
+            {imageError('backgroundImage')}
           </div>
 
           {/* Logo */}
@@ -503,7 +545,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                 <Upload className="h-6 w-6 text-gray-400 dark:text-slate-500 group-hover:text-gray-500 dark:group-hover:text-slate-400" />
                 <div className="text-left">
                   <span className="text-sm text-gray-600 dark:text-slate-400 block">Upload Logo</span>
-                  <span className="text-xs text-gray-400 dark:text-slate-500">PNG, JPG up to 2MB</span>
+                  <span className="text-xs text-gray-400 dark:text-slate-500">PNG, JPG up to 20MB, made smaller to fit</span>
                 </div>
               </button>
             )}
@@ -511,9 +553,11 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
               ref={logoInputRef}
               type="file"
               accept="image/*"
-              onChange={(e) => handleImageUpload(e, 'logo')}
+              aria-label="Logo file"
+              onChange={(e) => void handleImageUpload(e, 'logo')}
               className="hidden"
             />
+            {imageError('logo')}
           </div>
 
           {/* Preview */}
@@ -590,6 +634,9 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
         </div>
 
         {/* Footer */}
+        {saveError && (
+          <p role="alert" className="px-6 pt-3 text-sm text-red-600 dark:text-red-400 border-t border-gray-200 dark:border-slate-800">{saveError}</p>
+        )}
         <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 flex justify-between">
           <Button variant="ghost" onClick={handleReset}>
             <RotateCcw className="h-4 w-4 mr-2" />
@@ -599,7 +646,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
             <Button variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button onClick={handleSave}>
+            <Button onClick={() => void handleSave()} isLoading={saving} disabled={saving || imagesShrinking > 0}>
               Apply Theme
             </Button>
           </div>

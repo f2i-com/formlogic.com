@@ -24,7 +24,7 @@ import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { api } from '../../lib/api';
 import { exportNativeProject, importNativeProject, type NativeProject } from '../../lib/nativeHosting';
 import { isSoftnApp, projectFromUpload, projectHasBackend } from '../../lib/softnApps';
-import { cn } from '../../lib/utils';
+import { cn, copyToClipboard } from '../../lib/utils';
 import { useAppStore } from '../../stores/appStore';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
@@ -160,8 +160,13 @@ function Workspace({ app }: { app: App }) {
     } catch { draft.setError('The download could not be prepared.'); }
   };
 
-  const copyLink = () => {
-    void navigator.clipboard?.writeText(liveUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }, () => undefined);
+  const copyLink = async () => {
+    if (await copyToClipboard(liveUrl)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      toast.error('Copy failed', 'Select the link and copy it manually.');
+    }
   };
 
   // The tabs take the arrow keys, Home and End, as a tab list does.

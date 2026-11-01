@@ -508,14 +508,18 @@ export function AppSettings() {
                 </div>
                 <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Buttons, links and highlights inside the app.</p>
               </div>
+              {/* The runtime applies the accent and the font and no background (AppRuntimeThemeProvider).
+                  This one goes into the web app manifest, so it colours the screen an installed app
+                  opens on. Called a background color and previewed behind the app, it promised more. */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Background color</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Installed app splash color</label>
                 <div className="flex gap-2 items-center">
-                  <input type="color" aria-label="Background color picker" value={app.theme?.backgroundColor || '#ffffff'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, backgroundColor: e.target.value } })} className="h-11 w-11 shrink-0 rounded-lg border border-gray-200 dark:border-slate-600 cursor-pointer" />
-                  <input type="text" aria-label="Background color hex value" value={app.theme?.backgroundColor || '#ffffff'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, backgroundColor: e.target.value } })}
+                  <input type="color" aria-label="Splash color picker" value={app.theme?.backgroundColor || '#ffffff'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, backgroundColor: e.target.value } })} className="h-11 w-11 shrink-0 rounded-lg border border-gray-200 dark:border-slate-600 cursor-pointer" />
+                  <input type="text" aria-label="Splash color hex value" value={app.theme?.backgroundColor || '#ffffff'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, backgroundColor: e.target.value } })}
                     onBlur={(e) => { if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(e.target.value)) setApp({ ...app, theme: { ...app.theme, backgroundColor: '#ffffff' } }); }}
                     className="min-w-0 flex-1 px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
                 </div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Shown only while the app opens from a home screen. Screens inside the app don't use it.</p>
               </div>
             </div>
             {(() => {
@@ -567,7 +571,7 @@ export function AppSettings() {
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Preview</label>
               <div
                 className="rounded-xl border border-gray-200 dark:border-slate-700 p-5 transition-all"
-                style={{ backgroundColor: app.theme?.backgroundColor || '#ffffff', fontFamily: app.theme?.fontFamily || DEFAULT_APP_THEME.fontFamily }}
+                style={{ backgroundColor: '#ffffff', fontFamily: app.theme?.fontFamily || DEFAULT_APP_THEME.fontFamily }}
               >
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${app.theme?.primaryColor || '#6366f1'}20` }}>

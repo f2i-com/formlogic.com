@@ -250,7 +250,7 @@ const DOCS = [
     items: [
       { name: 'bearerToken', desc: 'Bearer token for Authorization header (convenience for API auth)' },
       { name: 'headers', desc: 'Object of custom headers { "X-Custom": "value" }' },
-      { name: 'timeout', desc: 'Request timeout in seconds (default: 10, max: 30)' },
+      { name: 'timeout', desc: 'Request timeout in seconds. Cut to the script\'s 2 second time limit, so a longer one has no effect' },
       { name: 'method', desc: 'HTTP method for ctx.http.request() - GET, POST, PUT, DELETE, PATCH' },
       { name: 'url', desc: 'Request URL for ctx.http.request()' },
       { name: 'body', desc: 'Request body for ctx.http.request()' },
@@ -327,7 +327,7 @@ const custom = ctx.http.request({
   body: { status: "received", data: ctx.answers },
   headers: { "Content-Type": "application/json" },
   bearerToken: "your-token",
-  timeout: 15
+  timeout: 1
 });`,
     items: [],
   },
@@ -851,8 +851,8 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
                   <h3 className="font-semibold text-gray-900 dark:text-white mb-3">HTTP Request Limits</h3>
                   <div className="bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-900/20 rounded-lg p-4 text-sm text-blue-800 dark:text-blue-400">
                     <ul className="space-y-1">
-                      <li>Maximum 30 second timeout per request</li>
-                      <li>Default timeout is 10 seconds</li>
+                      <li>Each request stops after 2 seconds, the script's own time limit, and a longer timeout has no effect</li>
+                      <li>All requests in a run, redirects included, share 3 seconds</li>
                       <li>Requests to localhost/private IPs are blocked (security)</li>
                       <li>HTTP and HTTPS protocols only</li>
                       <li>Maximum 5 redirects followed</li>

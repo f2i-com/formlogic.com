@@ -53,6 +53,9 @@ export function FormFlowBindingEditor({
   onCancel: () => void;
 }) {
   const [draft, setDraft] = useState<BindingDraft>(() => draftFromBinding(binding, flows));
+  // The timeout as it is being typed. Held as text until the input is left: limited at every key,
+  // the 5 of 5000 became 250 and the next digits landed after it, ending at 250000.
+  const [timeoutText, setTimeoutText] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const selectedFlow = flows.find((flow) => flow.slug === draft.flow) ?? null;
   const inputNames = triggerInputNamesFromFlow(selectedFlow);
@@ -129,8 +132,13 @@ export function FormFlowBindingEditor({
                 type="number"
                 min={250}
                 max={300000}
-                value={String(draft.timeoutMs)}
-                onChange={(e) => patch({ timeoutMs: Math.max(250, Math.min(300000, Number(e.target.value) || 30000)) })}
+                value={timeoutText ?? String(draft.timeoutMs)}
+                onChange={(e) => setTimeoutText(e.target.value)}
+                onBlur={() => {
+                  if (timeoutText === null) return;
+                  patch({ timeoutMs: Math.max(250, Math.min(300000, Number(timeoutText) || 30000)) });
+                  setTimeoutText(null);
+                }}
               />
             </div>
           )}

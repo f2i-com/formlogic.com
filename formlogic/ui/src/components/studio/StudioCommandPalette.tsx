@@ -21,6 +21,7 @@ import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { cn } from '../../lib/utils';
 import { returnToState } from '../../hooks/useReturnTo';
+import { useResourcePaths } from '../admin/AdminActingContext';
 import { STUDIO_STEPS, type StudioStepId } from './studioSteps';
 import type { App, AppForm, AppRole } from '../../types/app';
 import type { Form } from '../../types/form';
@@ -82,6 +83,7 @@ export function StudioCommandPalette({
   onAskAi: () => void;
 }) {
   const navigate = useNavigate();
+  const paths = useResourcePaths();
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const studioReturn = returnToState(`/apps/${app.id}/studio/${activeStep}`, 'App Studio');
@@ -148,7 +150,7 @@ export function StudioCommandPalette({
         detail: `${form?.fields.length ?? 0} fields · open in the form builder`,
         keywords: `${label} form fields data builder`,
         icon: FileText,
-        action: () => navigate(`/builder/${attachment.formId}`, { state: studioReturn }),
+        action: () => navigate(paths.builder(attachment.formId, app.id), { state: studioReturn }),
       };
     });
 
@@ -177,6 +179,7 @@ export function StudioCommandPalette({
     aiAvailable,
     app.id,
     appForms,
+    paths,
     flows,
     formsById,
     navigate,

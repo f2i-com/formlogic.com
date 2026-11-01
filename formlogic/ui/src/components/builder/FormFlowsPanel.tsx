@@ -34,6 +34,8 @@ interface FlowSection {
   note?: string;
   flows: FlowDefinition[];
   bindings: FlowBinding[];
+  /** True when this app's flows or bindings could not be read: what it holds is unknown, not none. */
+  unread?: boolean;
 }
 
 interface EditingTarget {
@@ -169,6 +171,7 @@ export function FormFlowsPanel({
           : context.isPublished ? 'Attached app flow.' : 'Attached app flow in a draft app.',
         flows: appFlows,
         bindings: bindingsRes.data ? filterSubmitBindings(bindingsRes.data.bindings, formId, true) : [],
+        unread: !!(flowsRes.error || bindingsRes.error),
       };
     }));
 
@@ -179,7 +182,8 @@ export function FormFlowsPanel({
     }));
     const nextCount = allBindings.length;
 
-    if (!demoMode && (workspaceFlowsRes.error || workspaceBindingsRes.error || contextsRes.error)) {
+    const anyUnread = !demoMode && (workspaceFlowsRes.error || workspaceBindingsRes.error || contextsRes.error || nextAppSections.some((section) => section.unread));
+    if (anyUnread) {
       toast.error('Failed to load flow bindings');
     }
     setWorkspaceFlows(nextWorkspaceFlows);
@@ -187,7 +191,8 @@ export function FormFlowsPanel({
     setAppSections(nextAppSections);
     setLastRuns(Object.fromEntries(runEntries));
     setLoading(false);
-    onCountChange?.(nextCount);
+    // A count missing what could not be read would be wrong; the one shown stays until it is known.
+    if (!anyUnread) onCountChange?.(nextCount);
     setCreateScopeKey((current) => {
       const keys = ['workspace', ...nextAppSections.map((section) => section.key)];
       if (demoMode) return 'workspace';
@@ -425,7 +430,12 @@ export function FormFlowsPanel({
                 {section.note && <p className="text-xs text-gray-400 dark:text-slate-500">{section.note}</p>}
               </div>
 
-              {section.flows.length === 0 && section.bindings.length === 0 && (
+              {section.unread ? (
+                <div role="alert" className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-3 text-xs text-amber-800 dark:text-amber-300">
+                  <p>Could not load this app&apos;s flows, so some may be missing here.</p>
+                  <Button variant="ghost" size="sm" className="mt-1" onClick={refresh}>Try again</Button>
+                </div>
+              ) : section.flows.length === 0 && section.bindings.length === 0 && (
                 <p className="rounded-lg border border-dashed border-gray-300 dark:border-slate-700 px-3 py-4 text-center text-xs text-gray-500 dark:text-slate-400">
                   No flows in this scope yet.
                 </p>

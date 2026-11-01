@@ -10,6 +10,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { RelationFormModal } from './RelationFormModal';
 import { api } from '../../lib/api';
 import { deferEffect } from '../../lib/deferredEffect';
+import { saveFormFields } from '../../lib/formFields';
 import type { Form, FormField } from '../../types/form';
 import type { AppForm } from '../../types/app';
 
@@ -32,6 +33,8 @@ export function AppRelationsManager() {
 
   const [appForms, setAppForms] = useState<AppForm[]>([]);
   const [relations, setRelations] = useState<Relation[]>([]);
+  // Forms that could not be read: their relations are unknown, not absent.
+  const [unreadableForms, setUnreadableForms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Relation | null>(null);
@@ -56,8 +59,12 @@ export function AppRelationsManager() {
     if (isCancelled()) return;
 
     const rels: Relation[] = [];
+    const unreadable: string[] = [];
     results.forEach((result, idx) => {
-      if (result.status !== 'fulfilled' || !result.value.data?.form) return;
+      if (result.status !== 'fulfilled' || !result.value.data?.form) {
+        unreadable.push(forms[idx].displayName);
+        return;
+      }
       const form = result.value.data!.form as Form;
       form.fields
         .filter((f) => f.type === 'linked_record' && f.properties.targetFormId)
@@ -73,6 +80,7 @@ export function AppRelationsManager() {
     });
 
     setRelations(rels);
+    setUnreadableForms(unreadable);
     setLoading(false);
   }, [appId, fetchAppForms]);
 
@@ -96,13 +104,13 @@ export function AppRelationsManager() {
       }
       const form = res.data.form as Form;
       const updatedFields = form.fields.filter((f) => f.id !== deleteTarget.field.id);
-      // api.updateForm returns { error } rather than throwing, so discarding the result
-      // turned every refusal (permission, validation, a private form demanding an
-      // encryptionSchema) into a silent no-op: the dialog closed, the list reloaded,
-      // and the relation was still there with no message at all.
-      const upd = await api.updateForm(deleteTarget.sourceFormId, { fields: updatedFields });
-      if (upd.error) {
-        setDeleteError(typeof upd.error === 'string' ? upd.error : 'Could not delete the relation.');
+      // A refusal comes back as a value rather than a throw, so discarding it turned
+      // every one (permission, validation, a private form demanding an encryptionSchema)
+      // into a silent no-op: the dialog closed, the list reloaded, and the relation was
+      // still there with no message at all.
+      const upd = await saveFormFields(deleteTarget.sourceFormId, updatedFields, { fieldsRevision: form.fieldsRevision });
+      if (!upd.ok) {
+        setDeleteError(upd.error ?? 'Could not delete the relation.');
         setDeleting(false);
         return;
       }
@@ -159,7 +167,13 @@ export function AppRelationsManager() {
               </button>
             </div>
           )}
-          {relations.length === 0 ? (
+          {unreadableForms.length > 0 && (
+            <div role="alert" className="flex items-center justify-between gap-3 text-sm text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 rounded-lg mb-4 border border-amber-200 dark:border-amber-500/20">
+              <span>Could not load {unreadableForms.join(', ')}, so any relations from {unreadableForms.length === 1 ? 'that form' : 'those forms'} are not shown here.</span>
+              <Button variant="ghost" size="sm" onClick={() => void loadRelations()}>Try again</Button>
+            </div>
+          )}
+          {relations.length === 0 && unreadableForms.length === 0 ? (
             <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-12 text-center">
               <div className="mx-auto w-12 h-12 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-4">
                 <Link2 className="h-6 w-6 text-primary-600 dark:text-primary-400" />

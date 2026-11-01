@@ -33,7 +33,8 @@ const FONTS = [
  *
  * Only controls the runtime HONOURS are offered: AppRuntimeThemeProvider applies
  * `primaryColor` and `fontFamily`. `backgroundColor` and `textColor` were editable,
- * previewed and contrast-checked but never applied to anything, so they are gone.
+ * previewed and contrast-checked but applied to no screen, so they are gone from here.
+ * (`backgroundColor` does reach the web app manifest: App settings offers it for that.)
  */
 export function AppLookPanel({
   app,

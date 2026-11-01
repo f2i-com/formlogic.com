@@ -106,8 +106,9 @@ export function PublishStep({
     // Landing pages that target a FORM must still point at an attached form —
     // 'dashboard' (and other non-form values) are always valid.
     const landing = (app.settings as { landingPage?: string } | undefined)?.landingPage;
+    // Only a list that was read can say the form is gone: publish is never blocked on an unread one.
     const landingPageMissing =
-      !!landing && landing !== 'dashboard' && landing !== 'records' && !appForms.some((af) => af.formId === landing);
+      formCountKnown !== false && !!landing && landing !== 'dashboard' && landing !== 'records' && !appForms.some((af) => af.formId === landing);
     const settings = app.settings as { allowSelfRegistration?: boolean; defaultRoleId?: string } | undefined;
     const preflight = buildPreflightChecks({
       formCount: appForms.length,

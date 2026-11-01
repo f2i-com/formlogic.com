@@ -128,4 +128,18 @@ describe('app management navigation', () => {
     await act(async () => { studio.click(); });
     expect(routeRef.current).toBe('/apps/app-1/studio');
   });
+
+  // The runtime applies the accent and the font. theme.backgroundColor reaches only the web app
+  // manifest's background_color, so it is offered for what it does, and not previewed behind the app.
+  it('says what the background color does, and does not preview it as the app\'s', async () => {
+    fixtures.apps = [{ ...app, theme: { ...app.theme, backgroundColor: '#112233' } }];
+    await renderAt('/apps/app-1/settings?tab=theme', <AppSettings />);
+    await act(async () => { await new Promise((done) => setTimeout(done, 0)); });
+
+    expect(container.querySelector('input[aria-label="Accent color picker"]')).not.toBeNull();
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Splash color hex value"]')?.value).toBe('#112233');
+    expect(container.textContent).toContain('Installed app splash color');
+    expect(container.textContent).not.toContain('Background color');
+    expect(container.innerHTML).not.toContain('rgb(17, 34, 51)');
+  });
 });

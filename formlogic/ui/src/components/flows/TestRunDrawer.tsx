@@ -4,8 +4,7 @@
 // (client-runtime/flows/flowExecutor) with the owner-scoped workspace deps (ZIPP sandbox +
 // the FormLogic API + connector client). The author supplies a JSON `inputs` object. The run reads
 // like a debug log: a live per-node timeline (each node's status, duration and a compact output /
-// error) built from the executor's onNodeStatus observer, plus the final status + result. App-scoped
-// flows additionally offer a headless server run that writes a row into run history.
+// error) built from the executor's onNodeStatus observer, plus the final status + result.
 //
 // "Run on" (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md §5.7): the primary run button honors the
 // flow's executionLocation — 'auto' keeps the browser executor untouched, 'desktop' rides the
@@ -13,7 +12,7 @@
 // (credit-metered; typed refusals — credits exhausted / unsupported nodes — surface inline).
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, Cloud, Laptop, Loader2, MinusCircle, PlayCircle, ServerCog, X } from 'lucide-react';
+import { AlertTriangle, Check, Cloud, Laptop, Loader2, MinusCircle, PlayCircle, X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { PanelHeader } from './PanelHeader';
 import { RemoteComputerSelect } from './RemoteComputerSelect';
@@ -75,12 +74,10 @@ function PhaseGlyph({ phase }: { phase: NodeRunPhase }) {
   return <X className="h-3.5 w-3.5 flex-none text-red-500" />;
 }
 
-export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeStatus, onCloudRunFeedback, hideClose = false, inputValue, onInputChange }: {
+export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloudRunFeedback, hideClose = false, inputValue, onInputChange }: {
   flow: FlowDefinition;
   onClose: () => void;
-  /** Called after a successful server test-run (app flows) so the caller can refresh history. */
-  onServerRun?: () => void;
-  /** Fired when a browser/server run begins so the caller can clear the canvas run pills. */
+  /** Fired when a run begins so the caller can clear the canvas run pills. */
   onRunStart?: () => void;
   /** Forwarded executor onNodeStatus events so the caller can light up the canvas node pills. */
   onNodeStatus?: (nodeId: string, status: NodeRunPhase, info?: { output?: unknown; error?: string }) => void;
@@ -96,7 +93,6 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
   const [localInputText, setInputText] = useState(() => initialInputsJson(flow.flowJson));
   const inputText = inputValue ?? localInputText;
   const [running, setRunning] = useState(false);
-  const [serverRunning, setServerRunning] = useState(false);
   const [outcome, setOutcome] = useState<FlowRunOutcome | null>(null);
   const [runLog, setRunLog] = useState<RunLog>(EMPTY_RUN_LOG);
   // "Run on" state (plan §5.7): where the last run executed, the desktop relay's live
@@ -317,36 +313,6 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
     setOutcome({ status: 'done', result: res.data.result, nodesExecuted: executed });
   };
 
-  const runServer = async () => {
-    if (!flow.appId) return;
-    setServerRunning(true);
-    resetRunState();
-    onRunStart?.();
-    // The shared demo is server-read-only; a logged server run isn't possible, so run in the
-    // browser instead (same executor) — no server error, and the result still shows here.
-    if (api.isDemoMode()) {
-      setServerRunning(false);
-      toast.info('Demo mode', 'Runs execute in your browser and are not saved to the server.');
-      await runBrowser();
-      return;
-    }
-    const r = await api.testRunFlow(flow.appId, flow.id);
-    setServerRunning(false);
-    if (r.error || !r.data) {
-      toast.error('Server test run failed', typeof r.error === 'string' ? r.error : undefined);
-      return;
-    }
-    const run = r.data.run;
-    setOutcome({
-      status: run.status === 'done' ? 'done' : run.status === 'timeout' ? 'timeout' : run.status === 'cancelled' ? 'cancelled' : 'error',
-      result: run.result ?? undefined,
-      error: run.error ?? undefined,
-      nodesExecuted: 0,
-    });
-    toast.success('Server run recorded', 'It now appears in run history.');
-    onServerRun?.();
-  };
-
   const hasTimeline = runLog.order.length > 0;
 
   return (
@@ -379,7 +345,7 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
         </div>
 
         {location === 'desktop' && !api.isDemoMode() && (
-          <RemoteComputerSelect value={desktopInstanceId} onChange={setDesktopInstanceId} disabled={running || serverRunning} onComputersChange={onComputersChange} />
+          <RemoteComputerSelect value={desktopInstanceId} onChange={setDesktopInstanceId} disabled={running} onComputersChange={onComputersChange} />
         )}
         <div className="flex flex-wrap gap-2">
           {location === 'auto' && (
@@ -398,13 +364,8 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
             </Button>
           )}
           {location !== 'auto' && (
-            <Button variant="outline" size="sm" onClick={runBrowser} disabled={running || serverRunning} leftIcon={<PlayCircle className="h-4 w-4" />}>
+            <Button variant="outline" size="sm" onClick={runBrowser} disabled={running} leftIcon={<PlayCircle className="h-4 w-4" />}>
               Run in browser
-            </Button>
-          )}
-          {flow.appId && (
-            <Button variant="outline" size="sm" onClick={runServer} isLoading={serverRunning} disabled={serverRunning} leftIcon={<ServerCog className="h-4 w-4" />}>
-              Run on server &amp; log
             </Button>
           )}
         </div>
@@ -423,7 +384,6 @@ export function TestRunDrawer({ flow, onClose, onServerRun, onRunStart, onNodeSt
             : location === 'cloud'
               ? 'Cloud runs execute on FormLogic Cloud and use plan credits.'
               : 'Browser runs use the ZIPP runtime and your session\'s permissions, exactly like a live run, but are not written to history.'}
-          {flow.appId ? ' A server run executes headless and is recorded below.' : ''}
         </p>
 
         {/* Desktop relay state (plan §5.7): queue position → running → done/failed/uncertain. */}

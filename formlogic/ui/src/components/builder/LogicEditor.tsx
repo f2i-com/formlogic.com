@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/Tabs';
 import { cn, createFieldVariableMap, replaceVariablesWithIds, replaceIdsWithVariables } from '../../lib/utils';
 import { useExpressionTester } from '../../hooks/useFormLogic';
 import type { FormField, ConditionalLogic } from '../../types/form';
+import { CHOICE_FIELDS, DATE_INPUTS, NUMBER_ANSWERS, OPERATORS_ON_AN_OPTION, simpleConditionToExpression, type SimpleCondition } from './logicConditions';
 
 interface LogicEditorProps {
   isOpen: boolean;
@@ -17,13 +18,6 @@ interface LogicEditorProps {
   field: FormField;
   allFields: FormField[];
   onSave: (logic: ConditionalLogic | undefined) => void;
-}
-
-interface SimpleCondition {
-  id: string;
-  fieldId: string;
-  operator: string;
-  value: string;
 }
 
 const OPERATORS = [
@@ -49,59 +43,6 @@ const ACTIONS = [
   { value: 'hide', label: 'Hide this field' },
   { value: 'require', label: 'Make this field required' },
 ];
-
-function simpleConditionToExpression(
-  conditions: SimpleCondition[],
-  combinator: 'and' | 'or',
-  idToVar: Record<string, string>,
-  numericFieldIds: Set<string>
-): string {
-  if (conditions.length === 0) return 'true';
-
-  const parts = conditions.map((cond) => {
-    // Use variable name instead of field ID
-    const fieldRef = idToVar[cond.fieldId] || cond.fieldId;
-    // Escape quotes in value to prevent expression injection
-    const escaped = String(cond.value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const value = cond.value;
-    // number/rating/scale answers are stored as real JS numbers, so equality must
-    // compare against an unquoted numeric literal (0 === "0" is false under the
-    // strict equality the ZIPP sandbox evaluates).
-    const isNumeric = numericFieldIds.has(cond.fieldId);
-
-    switch (cond.operator) {
-      case '===':
-        return isNumeric ? `${fieldRef} === ${Number(value) || 0}` : `${fieldRef} === "${escaped}"`;
-      case '!==':
-        return isNumeric ? `${fieldRef} !== ${Number(value) || 0}` : `${fieldRef} !== "${escaped}"`;
-      case '>':
-        return `${fieldRef} > ${Number(value) || 0}`;
-      case '<':
-        return `${fieldRef} < ${Number(value) || 0}`;
-      case '>=':
-        return `${fieldRef} >= ${Number(value) || 0}`;
-      case '<=':
-        return `${fieldRef} <= ${Number(value) || 0}`;
-      case 'contains':
-        // Guard against a null/unanswered trigger (null.includes throws -> the
-        // condition fails OPEN, inconsistent with ===/notEmpty). isNotEmpty keeps
-        // both string-substring and array-membership semantics of .includes;
-        // numeric fields have no .includes, so substring-match their stringified value.
-        return isNumeric
-          ? `isNotEmpty(${fieldRef}) && String(${fieldRef}).includes("${escaped}")`
-          : `isNotEmpty(${fieldRef}) && ${fieldRef}.includes("${escaped}")`;
-      case 'notEmpty':
-        return `isNotEmpty(${fieldRef})`;
-      case 'empty':
-        return `isEmpty(${fieldRef})`;
-      default:
-        return 'true';
-    }
-  });
-
-  const operator = combinator === 'and' ? ' && ' : ' || ';
-  return parts.join(operator);
-}
 
 export function LogicEditor({
   isOpen,
@@ -134,11 +75,8 @@ export function LogicEditor({
     [availableFields]
   );
 
-  // Fields whose answers are real numbers (so equality must not string-quote).
-  const numericFieldIds = useMemo(
-    () => new Set(availableFields.filter((f) => ['number', 'rating', 'scale'].includes(f.type)).map((f) => f.id)),
-    [availableFields]
-  );
+  // What each field's answer is, which decides how a condition on it compares.
+  const fieldTypes = useMemo(() => new Map(availableFields.map((f) => [f.id, f.type])), [availableFields]);
 
   // Initialize from existing logic (convert IDs to variable names for display)
   useEffect(() => {
@@ -169,9 +107,9 @@ export function LogicEditor({
   useEffect(() => {
     if (mode === 'simple' && conditions.length > 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- derived expression must be regenerated synchronously when simple conditions/combinator change
-      setExpression(simpleConditionToExpression(conditions, combinator, idToVar, numericFieldIds));
+      setExpression(simpleConditionToExpression(conditions, combinator, idToVar, fieldTypes));
     }
-  }, [conditions, combinator, mode, idToVar, numericFieldIds]);
+  }, [conditions, combinator, mode, idToVar, fieldTypes]);
 
   const handleAddCondition = () => {
     if (availableFields.length === 0) return;
@@ -256,7 +194,7 @@ export function LogicEditor({
     for (const f of availableFields) {
       const varName = idToVar[f.id];
       if (!varName) continue;
-      if (['number', 'rating', 'scale'].includes(f.type)) ctx[varName] = 0;
+      if (NUMBER_ANSWERS.has(f.type) || f.type === 'calculated') ctx[varName] = 0;
       else if (f.type === 'checkboxes') ctx[varName] = [];
       else ctx[varName] = '';
     }
@@ -265,6 +203,37 @@ export function LogicEditor({
 
   // Show the user's edits for THIS field if any, otherwise the auto-filled default.
   const testContext = editedContext && editedContext.fieldId === field.id ? editedContext.value : defaultTestContext;
+
+  /** The box a condition's value goes in, which depends on the field and how it is compared. */
+  const conditionValue = (cond: SimpleCondition, index: number) => {
+    const conditionField = availableFields.find((f) => f.id === cond.fieldId);
+    const setValue = (value: string) => handleConditionChange(cond.id, { value });
+    if (conditionField && CHOICE_FIELDS.has(conditionField.type) && OPERATORS_ON_AN_OPTION.has(cond.operator)) {
+      // A rule compares what is stored for an answer, an option's value. Its label can be renamed
+      // while the value stays option_1, and nothing in a free text box said so: a rule typed from
+      // the label never matched. A value no option holds is still offered, so it stays in sight.
+      const options = (conditionField.properties.options ?? []).map((o) => ({ value: o.value, label: o.label || o.value }));
+      if (cond.value !== '' && !options.some((o) => o.value === cond.value)) {
+        options.unshift({ value: cond.value, label: `${cond.value} (not an option)` });
+      }
+      return (
+        <div role="group" aria-label={`Value for condition ${index + 1}`} className="w-full sm:w-40">
+          <Dropdown options={options} value={cond.value} onChange={setValue} placeholder="Choose an option" />
+        </div>
+      );
+    }
+    const dateInput = conditionField && cond.operator !== 'contains' ? DATE_INPUTS[conditionField.type] : undefined;
+    return (
+      <Input
+        type={dateInput ?? 'text'}
+        value={cond.value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="Value"
+        aria-label={`Value for condition ${index + 1}`}
+        className={dateInput ? 'w-full sm:w-44' : 'w-full sm:w-32'}
+      />
+    );
+  };
 
   return (
     <Modal
@@ -368,15 +337,7 @@ export function LogicEditor({
                         onChange={(v) => handleConditionChange(cond.id, { operator: v })}
                         className="w-full sm:w-48"
                       />
-                      {!['notEmpty', 'empty'].includes(cond.operator) && (
-                        <Input
-                          value={cond.value}
-                          onChange={(e) => handleConditionChange(cond.id, { value: e.target.value })}
-                          placeholder="Value"
-                          aria-label={`Value for condition ${index + 1}`}
-                          className="w-full sm:w-32"
-                        />
-                      )}
+                      {!['notEmpty', 'empty'].includes(cond.operator) && conditionValue(cond, index)}
                       <Button
                         variant="ghost"
                         size="sm"

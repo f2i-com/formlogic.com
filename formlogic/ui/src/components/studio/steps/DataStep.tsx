@@ -23,7 +23,7 @@ import { api } from '../../../lib/api';
 import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
 import { useAuthStore } from '../../../stores/authStore';
-import { useFormStore } from '../../../stores/formStore';
+import { generateFieldId, useFormStore } from '../../../stores/formStore';
 import { useVaultStore } from '../../../stores/vaultStore';
 import { cn } from '../../../lib/utils';
 import { returnToState } from '../../../hooks/useReturnTo';
@@ -32,7 +32,7 @@ import { VaultUnlockDialog } from '../../vault/VaultUnlockDialog';
 import { RelationFormModal } from '../../../pages/apps/RelationFormModal';
 import { trackStudioSave } from '../studioSaveState';
 import { ExportDataMenu } from '../../apps/ExportDataMenu';
-import { useAdminActing } from '../../admin/AdminActingContext';
+import { useAdminActing, useResourcePaths } from '../../admin/AdminActingContext';
 import { saveFormFields } from '../../../lib/formFields';
 import type { App, AppForm } from '../../../types/app';
 import type { FieldType, Form, FormField } from '../../../types/form';
@@ -78,19 +78,6 @@ const QUICK_ADD_TYPES: Array<{ type: FieldType; label: string }> = [
 /** Field kinds whose settings dock should stay shut in the builder. */
 const LAYOUT_FIELD_TYPES = new Set<string>(['statement', 'welcome_screen', 'thank_you']);
 
-/** Slug-style field id from a label (mirrors the builder's convention). */
-function fieldIdFromLabel(label: string, existing: string[]): string {
-  let base = label.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 32) || 'field';
-  if (/^\d/.test(base)) base = `_${base}`;
-  let id = base;
-  let n = 1;
-  while (existing.includes(id)) {
-    n += 1;
-    id = `${base}_${n}`;
-  }
-  return id;
-}
-
 /**
  * Data & forms: the app's data types (attached forms), their fields and
  * relationships. Quick edits happen inline through the real form APIs; deep
@@ -120,6 +107,7 @@ export function DataStep({
 }) {
   const navigate = useNavigate();
   const acting = useAdminActing();
+  const paths = useResourcePaths();
   // Deep surfaces opened from this section return here via their Back buttons.
   const studioReturn = returnToState(`/apps/${app.id}/studio/data`, 'App Studio');
   const fetchFormAppUsage = useAppStore((s) => s.fetchFormAppUsage);
@@ -149,6 +137,8 @@ export function DataStep({
   const [showVaultSetup, setShowVaultSetup] = useState(false);
   const [showVaultUnlock, setShowVaultUnlock] = useState(false);
   const fieldLabelRef = useRef<HTMLInputElement>(null);
+  // Set by Escape: the blur that follows leaves the name as it was.
+  const typeNameCancelled = useRef(false);
 
   useEffect(() => {
     fetchFormAppUsage(app.id).then(setSharedWith);
@@ -264,8 +254,9 @@ export function DataStep({
     const res = await trackStudioSave(
       label,
       async () => {
-        const result = await saveFormFields(form.id, nextFields, { isPrivate: form.isPrivate });
-        if (result.ok) await onReloadForms();
+        const result = await saveFormFields(form.id, nextFields, { isPrivate: form.isPrivate, fieldsRevision: form.fieldsRevision });
+        // This list is read once, so after a refusal it is what the next try would be made from.
+        if (result.ok || result.changedElsewhere) await onReloadForms();
         return result;
       },
       (r) => r.ok
@@ -302,15 +293,24 @@ export function DataStep({
     if (!form || !attachment) return;
     const trimmed = nextName.trim();
     if (!trimmed || trimmed === (attachment.displayName || form.title)) return;
-    const alsoUsed = (sharedWith[form.id]?.length ?? 0) > 0;
     const ok = await trackStudioSave(
       'Data type name',
       async () => {
         const res = await api.updateAppForm(app.id, form.id, { displayName: trimmed });
         if (res.error) return res;
-        if (!alsoUsed) await api.updateForm(form.id, { title: trimmed });
+        // Asked now, not read from the rail's badge: that lookup shows an empty list when it
+        // fails, and an unknown answer must not rename the form in another app.
+        const usage = await api.getAppsFormUsage();
+        const usedElsewhere = !usage.data || !!usage.error
+          || usage.data.apps.some((other) => other.appId !== app.id && other.forms.some((f) => f.formId === form.id));
+        let title: { error?: string } = {};
+        if (!usedElsewhere) {
+          title = await api.updateForm(form.id, { title: trimmed });
+          // The builder's copy carries the title on its next save.
+          if (!title.error) useFormStore.getState().setFormLocal(form.id, { title: trimmed });
+        }
         await onReloadForms();
-        return res;
+        return title.error ? { error: `The name changed in this app, but the form's own title did not: ${title.error}` } : res;
       },
       (r) => !r.error
     );
@@ -330,7 +330,7 @@ export function DataStep({
     try {
       const existingIds = selected.form.fields.map((f) => f.id);
       const field: FormField = {
-        id: fieldIdFromLabel(label, existingIds),
+        id: generateFieldId(label, existingIds),
         type: newFieldType,
         label,
         required: false,
@@ -344,13 +344,18 @@ export function DataStep({
       const res = await trackStudioSave(
         `${formNameById[selected.form.id]} fields`,
         async () => {
-          const result = await saveFormFields(selected.form!.id, nextFields, { isPrivate: selected.form!.isPrivate });
+          const result = await saveFormFields(selected.form!.id, nextFields, {
+            isPrivate: selected.form!.isPrivate,
+            fieldsRevision: selected.form!.fieldsRevision,
+          });
           if (result.ok) {
             // The row STAYS open: adding fields is a run of small edits, and
             // re-opening it per field made a six-field form six extra clicks.
             setNewFieldLabel('');
             await onReloadForms();
             fieldLabelRef.current?.focus();
+          } else if (result.changedElsewhere) {
+            await onReloadForms();
           }
           return result;
         },
@@ -380,7 +385,7 @@ export function DataStep({
     if (field && !LAYOUT_FIELD_TYPES.has(field.type)) {
       useFormStore.getState().setSelectedField(field.id);
     }
-    navigate(`/builder/${formId}`, { state: studioReturn });
+    navigate(paths.builder(formId, app.id), { state: studioReturn });
   };
 
   const unreadable = unreadableFormIds.length > 0;
@@ -529,10 +534,15 @@ export function DataStep({
                     id="studio-type-name"
                     value={typeNameDraft ?? (selected.attachment?.displayName || selected.form.title)}
                     onChange={(e) => setTypeNameDraft(e.target.value)}
-                    onBlur={() => { const v = typeNameDraft; setTypeNameDraft(null); if (v !== null) void renameDataType(v); }}
+                    onBlur={() => {
+                      const v = typeNameCancelled.current ? null : typeNameDraft;
+                      typeNameCancelled.current = false;
+                      setTypeNameDraft(null);
+                      if (v !== null) void renameDataType(v);
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-                      if (e.key === 'Escape') { setTypeNameDraft(null); e.currentTarget.blur(); }
+                      if (e.key === 'Escape') { typeNameCancelled.current = true; e.currentTarget.blur(); }
                     }}
                     className="-mx-2 min-w-0 max-w-full flex-1 rounded-lg border border-transparent bg-transparent px-2 py-0.5 text-lg font-semibold text-gray-900 outline-none transition hover:border-gray-200 focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-500/15 dark:text-white dark:hover:border-white/10 dark:focus:border-primary-500/50 dark:focus:bg-slate-950/60"
                   />

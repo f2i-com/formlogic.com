@@ -43,6 +43,7 @@ const { SoftnAppWorkspace } = await import('./SoftnAppWorkspace');
 const { useAppStore } = await import('../../stores/appStore');
 const { useUIStore } = await import('../../stores/uiStore');
 const { useAuthStore } = await import('../../stores/authStore');
+const { toast } = await import('../../stores/toastStore');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root;
@@ -90,6 +91,30 @@ describe('SoftnAppWorkspace', () => {
     await act(async () => (container.querySelector('#softn-tab-settings') as HTMLButtonElement).click());
     expect(container.textContent).not.toContain('Custom domains');
     expect(mocks.getAppDomains).not.toHaveBeenCalled();
+  });
+
+  // navigator.clipboard does not exist on plain HTTP, and the click did nothing at all.
+  describe('Copy link', () => {
+    const copyButton = () => [...container.querySelectorAll('button')].find(b => /recipes$/.test(b.textContent ?? '')) as HTMLButtonElement;
+    afterEach(() => { delete (document as { execCommand?: unknown }).execCommand; });
+
+    it('works where only the older way of copying does', async () => {
+      const execCommand = vi.fn(() => true);
+      Object.assign(document, { execCommand });
+      await render('published', installed(1));
+      await act(async () => copyButton().click());
+      expect(execCommand).toHaveBeenCalledWith('copy');
+      expect(container.textContent).toContain('Link copied');
+    });
+
+    it('says so when nothing could copy', async () => {
+      const failed = vi.spyOn(toast, 'error');
+      Object.assign(document, { execCommand: () => false });
+      await render('published', installed(1));
+      await act(async () => copyButton().click());
+      expect(failed).toHaveBeenCalledWith('Copy failed', expect.any(String));
+      expect(container.textContent).not.toContain('Link copied');
+    });
   });
 
   it('previews the app in place at the width chosen, never framing a page of FormLogic', async () => {
