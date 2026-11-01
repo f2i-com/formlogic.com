@@ -1139,6 +1139,17 @@ class AdminPanelTest extends TestCase
         });
     }
 
+    public function testAnUnreadableSnapshotInfoStillSaysSoOnThePage(): void
+    {
+        // The route refuses it as unknown, so a dialog with no warning could never send the flag.
+        [$svc, , $backupId, $apiRoot] = $this->upgradedFrom('0.1.17');
+        $this->withDataKey(self::DATA_KEY, function () use ($svc, $backupId, $apiRoot): void {
+            file_put_contents("{$apiRoot}/storage/backups/{$backupId}/backup-info.json", '{ not json');
+            $rows = array_column($svc->listBackups(), null, 'id');
+            $this->assertStringContainsString('authenticator', (string) $rows[$backupId]['rollbackWarning']);
+        });
+    }
+
     public function testTheRollbackRouteRefusesThenTakesTheConfirmation(): void
     {
         [$svc, $maintenance, $backupId] = $this->upgradedFrom('0.1.17');

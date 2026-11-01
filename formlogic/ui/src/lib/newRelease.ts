@@ -1,22 +1,50 @@
 import { useToastStore } from '../stores/toastStore';
 
 // A tab left open across an update goes on running old code against the new server, and the new
-// service worker takes it over without reloading it. Two things can tell it so: a reply from another
-// release, and the worker changing hands. Either way it only offers: someone may be typing.
+// service worker takes it over without reloading it. A reply from another release says so, and all
+// this does is offer: someone may be typing.
 
 /** Replies name their release here (ReleaseHeaderMiddleware). A server before it sends nothing. */
 export const RELEASE_HEADER = 'X-FormLogic-Release';
 
+/** Long enough for a new worker to take over, short enough that Reload still feels like one. */
+const NEW_WORKER_WAIT_MS = 4000;
+
 let told = false;
 
+/**
+ * The worker serves this release until it looks at sw.js again, so a plain reload could land on the
+ * same page. It looks now and not when the notice appears: a new worker drops the old release's
+ * chunks as it takes over, and a tab still running on them would reload itself at the next one.
+ */
+async function reloadOntoNewRelease(): Promise<void> {
+  const workers = globalThis.navigator?.serviceWorker;
+  try {
+    const registration = await workers?.getRegistration();
+    if (workers && registration) {
+      const tookOver = new Promise<void>((resolve) => {
+        workers.addEventListener('controllerchange', () => resolve(), { once: true });
+        setTimeout(resolve, NEW_WORKER_WAIT_MS);
+      });
+      await registration.update();
+      if (registration.installing || registration.waiting) await tookOver;
+    }
+  } catch {
+    // The reload is still the best there is to offer.
+  }
+  window.location.reload();
+}
+
 function offerReload(): void {
-  if (told) return;
+  // Not in a frame. The person there is a visitor to someone's page, who has no use for this, and
+  // the embed code's sandbox has no allow-modals, so nothing would ask before their answers went.
+  if (told || globalThis.self !== globalThis.top) return;
   told = true;
   useToastStore.getState().addToast({
     type: 'info',
     title: 'A new version is ready',
     duration: 0,
-    action: { label: 'Reload', onClick: () => window.location.reload() },
+    action: { label: 'Reload', onClick: () => void reloadOntoNewRelease() },
   });
 }
 
@@ -27,20 +55,21 @@ function offerReload(): void {
  */
 export function noteServerRelease(release: string | null | undefined): void {
   const built = import.meta.env.VITE_FORMLOGIC_VERSION as string | undefined;
-  if (!release || !built || release === built || told) return;
+  if (!release || !built || release === built) return;
   offerReload();
-  // The worker keeps serving this release until it has looked at sw.js again, and it only looks on a
-  // navigation, so Reload on its own could come back to the same page.
-  void globalThis.navigator?.serviceWorker?.getRegistration().then((registration) => registration?.update()).catch(() => {});
 }
 
-export function watchForNewRelease(): void {
+/**
+ * A worker changing hands is a reason to ask, not news: /form/ comes from the network, so a page
+ * there is the new release already, and a first visit's worker claims its tab too. The reply says,
+ * through noteServerRelease, as any other does.
+ */
+export function watchForNewRelease(askTheServer: () => unknown): void {
   const workers = globalThis.navigator?.serviceWorker;
   if (!workers) return;
-  // clientsClaim: a first visit's worker takes this tab over too, and nothing about that is new.
   let controlled = !!workers.controller;
   workers.addEventListener('controllerchange', () => {
-    if (controlled) offerReload();
+    if (controlled) void askTheServer();
     controlled = true;
   });
 }

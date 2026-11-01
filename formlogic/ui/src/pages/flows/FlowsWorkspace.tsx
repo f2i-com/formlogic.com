@@ -16,6 +16,7 @@ import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
 import { deferEffect } from '../../lib/deferredEffect';
 import { lazyWithRetry } from '../../lib/lazyWithRetry';
+import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { demoApplyFlowOverlay, demoApplyFormBindingOverlay, demoCreateFlow, demoUpdateFlow, demoDeleteFlow } from '../../lib/demoLocal';
 import { toast } from '../../stores/toastStore';
 import { FlowEditor } from '../../components/flows/editor/FlowEditor';
@@ -706,6 +707,7 @@ export function FlowsWorkspace() {
         </FlowMobileDrawer>
       )}
 
+      <ErrorBoundary fallback={<div role="alert" className="fixed bottom-4 right-4 z-50 rounded-lg bg-gray-900 px-4 py-2 text-sm text-white shadow-lg">The AI services dialog couldn’t load. Reload this page to try again.</div>}>
       <Suspense fallback={null}>
         {showAiServices && (
           <AiServicesDialog
@@ -715,6 +717,7 @@ export function FlowsWorkspace() {
           />
         )}
       </Suspense>
+      </ErrorBoundary>
       <ConfirmDialog
         isOpen={pendingDelete !== null}
         onClose={() => setPendingDelete(null)}

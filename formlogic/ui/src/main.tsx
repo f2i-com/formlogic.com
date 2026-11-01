@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { api } from './lib/api'
 import { listenForStaleChunks } from './lib/lazyWithRetry'
 import { watchForNewRelease } from './lib/newRelease'
 
@@ -18,7 +19,7 @@ for (const link of document.querySelectorAll<HTMLLinkElement>('link[data-fl-font
 }
 
 listenForStaleChunks();
-watchForNewRelease();
+watchForNewRelease(() => api.healthCheck());
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

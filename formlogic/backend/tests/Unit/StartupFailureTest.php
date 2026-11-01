@@ -31,6 +31,22 @@ final class StartupFailureTest extends TestCase
     /** The whole entry point, against a database nobody is listening for, with PHP set to show errors. */
     public function testTheEntryPointAnswersInJsonWhenTheDatabaseIsDown(): void
     {
+        $answer = json_decode($this->entryPointOutput([]), true);
+        $this->assertIsArray($answer);
+        $this->assertTrue($answer['retryable']);
+    }
+
+    /** A host can disable ini_set, and the line meant to make failures clean must not be one. */
+    public function testAHostWithIniSetDisabledStillAnswers(): void
+    {
+        $output = $this->entryPointOutput(['-d', 'disable_functions=ini_set,ini_restore']);
+        $this->assertStringNotContainsString('undefined function', $output);
+        $this->assertIsArray(json_decode($output, true), $output);
+    }
+
+    /** @param list<string> $phpOptions */
+    private function entryPointOutput(array $phpOptions): string
+    {
         $backend = dirname(__DIR__, 2);
         $environment = array_merge(array_filter(getenv(), 'is_string'), [
             'APP_ENV' => 'production',
@@ -46,7 +62,7 @@ final class StartupFailureTest extends TestCase
             'SCRIPT_NAME' => '/api/index.php',
         ]);
         $process = proc_open(
-            [PHP_BINARY, '-d', 'display_errors=1', '-d', 'log_errors=0', $backend . '/public/index.php'],
+            [PHP_BINARY, ...$phpOptions, '-d', 'display_errors=1', '-d', 'log_errors=0', $backend . '/public/index.php'],
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
             $backend,
@@ -59,8 +75,6 @@ final class StartupFailureTest extends TestCase
 
         $this->assertStringNotContainsString('Stack trace', $output);
         $this->assertStringNotContainsString($backend, $output);
-        $answer = json_decode($output, true);
-        $this->assertIsArray($answer, $output);
-        $this->assertTrue($answer['retryable']);
+        return $output;
     }
 }

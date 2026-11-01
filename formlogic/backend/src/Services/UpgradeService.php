@@ -890,7 +890,8 @@ class UpgradeService
                 'hasCode' => is_dir("{$dir}/{$entry}/api"),
                 'hasDatabase' => is_file("{$dir}/{$entry}/database.sql.gz"),
                 'sizeBytes' => $this->dirSize("{$dir}/{$entry}"),
-                'rollbackWarning' => is_array($info) && is_dir("{$dir}/{$entry}/api") ? $this->rollbackWarning((string) ($info['version'] ?? 'unknown')) : null,
+                // An unreadable info file is an unknown release, as rollback itself reads it.
+                'rollbackWarning' => is_dir("{$dir}/{$entry}/api") ? $this->rollbackWarning(is_array($info) ? (string) ($info['version'] ?? 'unknown') : 'unknown') : null,
             ];
         }
         return array_slice($out, 0, 20);

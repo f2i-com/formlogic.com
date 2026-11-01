@@ -8,7 +8,8 @@ const realLocation = window.location;
 
 class FakeWorkers extends EventTarget {
   controller: object | null;
-  getRegistration = vi.fn(async () => ({ update }));
+  registration: { update: typeof update; installing?: object | null } = { update };
+  getRegistration = vi.fn(async () => this.registration);
   constructor(controlled: boolean) {
     super();
     this.controller = controlled ? {} : null;
@@ -51,7 +52,7 @@ describe('a reply from another release', () => {
     expect(reload, 'someone may be typing').not.toHaveBeenCalled();
 
     notice.action?.onClick();
-    expect(reload).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
   });
 
   it('says so once, even after it is dismissed', async () => {
@@ -71,14 +72,64 @@ describe('a reply from another release', () => {
     expect(notices()).toHaveLength(1);
   });
 
-  // The worker keeps serving this release until it has looked at sw.js again, so Reload alone could
-  // come back to the same page.
-  it('has the worker look for the new release now', async () => {
+  // A new worker drops the old release's chunks as it takes over, and this tab may still need one:
+  // a sidebar link would then reload it, with nobody asked. So nothing looks until Reload is pressed.
+  it('leaves the worker alone until Reload is pressed', async () => {
     const workers = new FakeWorkers(true);
     const { noteServerRelease } = await page('0.1.20', workers);
     noteServerRelease('0.1.21');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(update).not.toHaveBeenCalled();
+    expect(workers.getRegistration).not.toHaveBeenCalled();
+
+    notices()[0].action?.onClick();
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  // The worker serves this release until it has looked at sw.js, so Reload alone could come back to it.
+  it('reloads once the new worker has taken over', async () => {
+    const workers = new FakeWorkers(true);
+    workers.registration.installing = {};
+    const { noteServerRelease } = await page('0.1.20', workers);
     noteServerRelease('0.1.21');
+    notices()[0].action?.onClick();
     await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(reload, 'the old page would come back').not.toHaveBeenCalled();
+    workers.dispatchEvent(new Event('controllerchange'));
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+  });
+
+  it('reloads anyway when the new worker never comes', async () => {
+    vi.useFakeTimers();
+    try {
+      const workers = new FakeWorkers(true);
+      workers.registration.installing = {};
+      const { noteServerRelease } = await page('0.1.20', workers);
+      noteServerRelease('0.1.21');
+      notices()[0].action?.onClick();
+      await vi.advanceTimersByTimeAsync(4100);
+      expect(reload).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('reloads anyway when the worker cannot be asked', async () => {
+    const workers = new FakeWorkers(true);
+    workers.getRegistration.mockRejectedValueOnce(new Error('no'));
+    const { noteServerRelease } = await page('0.1.20', workers);
+    noteServerRelease('0.1.21');
+    notices()[0].action?.onClick();
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+  });
+
+  // The embed code's sandbox has no allow-modals, so beforeunload can't ask, and Reload took a
+  // visitor's answers with no question. Measured in Chromium, Firefox and WebKit.
+  it('offers nothing in a frame', async () => {
+    const { noteServerRelease } = await page('0.1.20');
+    vi.stubGlobal('top', {});
+    noteServerRelease('0.1.21');
+    expect(notices()).toHaveLength(0);
   });
 });
 
@@ -144,30 +195,60 @@ describe('the replies that say', () => {
 });
 
 describe('a new service worker', () => {
-  it('offers a reload when it takes this tab from the old one', async () => {
+  const ask = vi.fn();
+  beforeEach(() => ask.mockClear());
+
+  // /form/ comes from the network, so a page there is the new release when its worker changes hands:
+  // it said "a new version is ready" on the new version. The server's reply is what tells them apart.
+  it('asks the server, and says nothing itself', async () => {
     const workers = new FakeWorkers(true);
     const { watchForNewRelease } = await page('0.1.20', workers);
-    watchForNewRelease();
+    watchForNewRelease(ask);
+    workers.dispatchEvent(new Event('controllerchange'));
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(notices()).toHaveLength(0);
+  });
+
+  it('is quiet on a page that is the release the server names', async () => {
+    const workers = new FakeWorkers(true);
+    const { noteServerRelease, watchForNewRelease } = await page('0.1.21', workers);
+    watchForNewRelease(() => noteServerRelease('0.1.21'));
+    workers.dispatchEvent(new Event('controllerchange'));
+    expect(notices()).toHaveLength(0);
+  });
+
+  it('offers a reload on a page the server is past', async () => {
+    const workers = new FakeWorkers(true);
+    const { noteServerRelease, watchForNewRelease } = await page('0.1.20', workers);
+    watchForNewRelease(() => noteServerRelease('0.1.21'));
     workers.dispatchEvent(new Event('controllerchange'));
     expect(notices().map((notice) => notice.title)).toEqual(['A new version is ready']);
     expect(reload).not.toHaveBeenCalled();
   });
 
-  // clientsClaim: a first visit's worker takes this tab over too, and nothing about that is new.
-  it('stays quiet when a first visit is claimed, and not for what comes after', async () => {
-    const workers = new FakeWorkers(false);
-    const { watchForNewRelease } = await page('0.1.20', workers);
-    watchForNewRelease();
+  it('is quiet in a build that names no release', async () => {
+    const workers = new FakeWorkers(true);
+    const { noteServerRelease, watchForNewRelease } = await page(undefined, workers);
+    watchForNewRelease(() => noteServerRelease('0.1.21'));
     workers.dispatchEvent(new Event('controllerchange'));
     expect(notices()).toHaveLength(0);
+  });
+
+  // clientsClaim: a first visit's worker takes this tab over too, and nothing about that is new.
+  it('asks nothing when a first visit is claimed, and asks at what comes after', async () => {
+    const workers = new FakeWorkers(false);
+    const { watchForNewRelease } = await page('0.1.20', workers);
+    watchForNewRelease(ask);
     workers.dispatchEvent(new Event('controllerchange'));
-    expect(notices()).toHaveLength(1);
+    expect(ask).not.toHaveBeenCalled();
+    workers.dispatchEvent(new Event('controllerchange'));
+    expect(ask).toHaveBeenCalledTimes(1);
   });
 
   it('says it once however it heard', async () => {
     const workers = new FakeWorkers(true);
     const { noteServerRelease, watchForNewRelease } = await page('0.1.20', workers);
-    watchForNewRelease();
+    watchForNewRelease(() => noteServerRelease('0.1.21'));
     noteServerRelease('0.1.21');
     workers.dispatchEvent(new Event('controllerchange'));
     expect(notices()).toHaveLength(1);
@@ -175,7 +256,7 @@ describe('a new service worker', () => {
 
   it('asks nothing of a browser without workers', async () => {
     const { noteServerRelease, watchForNewRelease } = await page('0.1.20');
-    watchForNewRelease();
+    watchForNewRelease(ask);
     noteServerRelease('0.1.21');
     expect(notices()).toHaveLength(1);
   });

@@ -18,14 +18,19 @@ final class StartupFailure
     /** Production answers never carry PHP's own text, whatever php.ini says. */
     public static function install(): void
     {
-        ini_set('display_errors', '0');
         set_exception_handler([self::class, 'handle']);
+        // A host can disable it, and from PHP 8 a disabled function does not exist.
+        if (function_exists('ini_set')) {
+            ini_set('display_errors', '0');
+        }
     }
 
     /** The php.ini setting again, for development. */
     public static function showPhpErrors(): void
     {
-        ini_restore('display_errors');
+        if (function_exists('ini_restore')) {
+            ini_restore('display_errors');
+        }
     }
 
     public static function handle(\Throwable $failure): void
@@ -39,14 +44,16 @@ final class StartupFailure
             $failure->getLine()
         ));
 
+        // Part of a reply has gone: JSON after it would only spoil what was sent.
+        if (headers_sent()) {
+            return;
+        }
         $answer = self::answerTo($failure);
-        if (!headers_sent()) {
-            http_response_code($answer['status']);
-            header('Content-Type: application/json');
-            header('Cache-Control: no-store');
-            if ($answer['retryAfter'] !== null) {
-                header('Retry-After: ' . $answer['retryAfter']);
-            }
+        http_response_code($answer['status']);
+        header('Content-Type: application/json');
+        header('Cache-Control: no-store');
+        if ($answer['retryAfter'] !== null) {
+            header('Retry-After: ' . $answer['retryAfter']);
         }
         echo json_encode($answer['body']);
     }
