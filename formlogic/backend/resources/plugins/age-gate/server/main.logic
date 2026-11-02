@@ -172,10 +172,16 @@ function turnAngles(read, turns, mirrored) {
 }
 
 // The first turn (1, 2, ...) that did not go far enough the way it was asked, or 0 when all did.
-function shortTurn(moved, degrees) {
+// How far a turn must go: the setting sideways, three quarters of it up or down. A head tilted up or down while its
+// eyes stay on the screen moves the nose less than one turned aside (seen on a webcam: a tilt down read short).
+function needed(turn, degrees) {
+  return turn == "up" || turn == "down" ? degrees * 0.75 : degrees;
+}
+
+function shortTurn(moved, turns, degrees) {
   let n = 0;
   while (n < moved.length) {
-    if (moved[n] < degrees) return n + 1;
+    if (moved[n] < needed(turns[n + 1], degrees)) return n + 1;
     n = n + 1;
   }
   return 0;
@@ -192,12 +198,12 @@ function anglesTurned(read, turns, degrees) {
     words.push(turns[n + 1] + " " + Math.floor(moved[n] + 0.5) + "°");
     n = n + 1;
   }
-  let measured = " Measured from the straight-on picture: " + words.join(", ") + " (each needs " + degrees + "°).";
-  let short = shortTurn(moved, degrees);
+  let measured = " Measured from the straight-on picture: " + words.join(", ") + " (each needs " + degrees + "° sideways, " + needed("up", degrees) + "° up or down).";
+  let short = shortTurn(moved, turns, degrees);
   if (short == 0) return {failed: null, measured: measured};
   let sideways = turns.indexOf("left") >= 0 || turns.indexOf("right") >= 0;
-  if (sideways && shortTurn(turnAngles(read, turns, true), degrees) == 0) return {failed: null, measured: measured};
-  let how = moved[short - 1] <= -degrees ? " went the other way." : " was too small to measure.";
+  if (sideways && shortTurn(turnAngles(read, turns, true), turns, degrees) == 0) return {failed: null, measured: measured};
+  let how = moved[short - 1] <= -needed(turns[short], degrees) ? " went the other way." : " was too small to measure.";
   return {failed: "Your " + ORDINAL[short] + " turn (" + TURN_WORDS[turns[short]] + ")" + how + " Try again, following each arrow and turning a little further.", measured: measured};
 }
 

@@ -211,7 +211,7 @@ How to write one is `docs/PLUGINS.md`. In short:
      face points (yaw and pitch in degrees, from the detector's five landmarks by geometry: the nose
      tip's place between the eyes and the mouth, the eye line levelled first; no model judges it). The
      plugin reads each turn against the straight-on picture, so a camera above the screen or a face not
-     square to it counts against no one; each must go `turnDegrees` (8 by default, 4 to 25) the way it
+     square to it counts against no one; each must go `turnDegrees` (8 by default, 4 to 25; up and down three quarters of it since 1.4.1, as a tilt with the eyes on the screen moves the nose less) the way it
      was asked. The AI's own left and right are not asked then: in a webcam trial they were what failed.
      A camera that mirrors its picture turns every left and right round, and still counts (up and down
      must be right). A face the detector loses on a turn alone is "turn a little less". The

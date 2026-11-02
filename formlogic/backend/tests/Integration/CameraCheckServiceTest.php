@@ -220,16 +220,17 @@ final class CameraCheckServiceTest extends TestCase
     public function testTheTurnsAreReadFromTheAnglesOaiyMeasured(): void
     {
         // A camera above the screen: the straight-on picture looks down 12° and a little aside. `by` degrees each turn.
-        $angles = fn (float $by, bool $mirrored = false, array $lost = []) => function (?array $asked, int $count, array $hints) use ($by, $mirrored, $lost) {
+        $angles = fn (float $by, bool $mirrored = false, array $lost = [], ?float $tilt = null) => function (?array $asked, int $count, array $hints) use ($by, $mirrored, $lost, $tilt) {
             $side = $mirrored ? -$by : $by;
+            $tilt ??= $by;
             $images = [];
             foreach ($hints as $i => $hint) {
                 [$yaw, $pitch] = match ($hint) {
                     'center' => [5.0, -12.0],
                     'left' => [5.0 + $side, -12.0],
                     'right' => [5.0 - $side, -12.0],
-                    'up' => [5.0, -12.0 + $by],
-                    'down' => [5.0, -12.0 - $by],
+                    'up' => [5.0, -12.0 + $tilt],
+                    'down' => [5.0, -12.0 - $tilt],
                 };
                 $images[] = in_array($i, $lost, true) ? ['faces' => 0] : ['faces' => 1, 'age' => 35.0, 'yaw' => $yaw, 'pitch' => $pitch];
             }
@@ -246,6 +247,7 @@ final class CameraCheckServiceTest extends TestCase
             'turns too small to measure' => [$angles(4.0), 'turns', 'too small'],
             'every turn the other way' => [$angles(-15.0), 'turns', 'the other way'],
             'a camera that mirrors its picture' => [$angles(15.0, true), 'passed', 'Done'],
+            'a smaller tilt up or down: three quarters of a turn aside' => [$angles(15.0, false, [], 6.5), 'passed', 'Done'],
             'a face lost on the second turn' => [$angles(15.0, false, [2]), 'no_face', 'second turn'],
         ];
         foreach ($cases as $what => [$readings, $expected, $words]) {
@@ -266,7 +268,7 @@ final class CameraCheckServiceTest extends TestCase
         // The administrator trying it on themselves is told what each turn measured.
         [$check] = $this->check(fn ($a) => $a, null, true, $angles(15.0), true);
         self::assertSame('turns', $check['outcome']);
-        self::assertMatchesRegularExpression('/Measured from the straight-on picture: (left|right|up|down) 15°, .* \(each needs 20°\)/', (string) $check['message']);
+        self::assertMatchesRegularExpression('/Measured from the straight-on picture: (left|right|up|down) 15°, .* \(each needs 20° sideways, 15° up or down\)/', (string) $check['message']);
     }
 
     /**
