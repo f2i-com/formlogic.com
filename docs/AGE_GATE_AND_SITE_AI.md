@@ -188,7 +188,11 @@ How to write one is `docs/PLUGINS.md`. In short:
      app's age plus the buffer, and the AI's youngest likely age must not fall below the app's age;
      either one short of that asks for a stronger check. The pass's method says `face_check_age_model`.
      Its `ageModel` setting: `prefer` (the AI's estimate where OAIY has no age model) or `require` (no
-     face check without it, and that one not counted as a try). Why both: in an independent benchmark
+     face check without it, and that one not counted as a try). An OAIY that has the model and did not
+     read the pictures (a timeout, a picture it would not read, too few answers) is never "no model":
+     since 1.4.2 that check did not run and is not counted, or whoever could send a picture it cannot
+     read would choose the weaker check. The same goes for an answer that leaves out what only it
+     can say (a screen, one person, the detector's count, the angles of one picture). Why both: in an independent benchmark
      (arXiv 2602.07815, v3 of 24 October 2026) MiVOLO was the best specialised estimator (5.10 years'
      error across eight datasets) but read 21% of minors as adults at a plain 18 line; a general vision
      model read 16 to 29%. Nothing newer was usable: MiVOLO-Next (May 2026) keeps its weights private
@@ -201,10 +205,13 @@ How to write one is `docs/PLUGINS.md`. In short:
      at OpenCV's 0.9. Now: the AI is asked only about a face on a screen or print held up to the
      camera (edges, glare, pixels), and it counts only when it says so of at least half the camera
      pictures; it is asked about writing held up to the camera, not writing in the room, and that
-     counts only where the AI alone reads the age (with OAIY's age model, words aimed at the AI do
-     not decide anything). With OAIY's detector, its count decides and the AI's is not read; OAIY
-     counts only faces at least a fifth the area of the largest (`in_front`) and reads check frames
-     at 0.8. The messages say which picture and what to do ("Your face wasn't found in the first
+     counts only where the AI alone reads the age. With OAIY's age model a sign aimed at the AI does
+     not refuse anyone, but the AI still decides three things alone (a screen or print, the same
+     person, its youngest likely age), so words aimed at it can still reach those. With OAIY's
+     detector, its count decides and the AI's is not read; OAIY counts only faces at least a fifth the
+     area of the largest (`in_front`, so a real face next to a much larger one on a held-up phone is
+     not counted), hides every face it found from the age model's whole-picture input, and reads
+     check frames at 0.8. The messages say which picture and what to do ("Your face wasn't found in the first
      picture, looking straight at the camera. Face a light…", "More than one face was in your first
      turn…").
    - **The turns from the face itself (1.3.0).** With the age model, OAIY also measures which way each
@@ -217,12 +224,23 @@ How to write one is `docs/PLUGINS.md`. In short:
      must be right). A face the detector loses on a turn alone is "turn a little less". The
      administrator's trial says what each turn measured. Without the angles (no age model, or an older
      OAIY) the AI's description is used, and a sequence whose every left and right it reads exactly
-     reversed counts too (models often name sides from the person's view). A flat photo held up and
-     turned barely moves these angles, as nothing in it stands out; a replayed video or a face swap
-     still can.
+     reversed counts too (models often name sides from the person's view). A camera read either way
+     gives up left against right as a check: with one sideways turn in the sequence, either direction
+     passes.
+   - **What the turns do not prove.** A flat picture is not safe from them: the five landmarks are read
+     as if on a head, and a life-size print held close and tilted by about 30° can read past the 6° an up
+     or down needs (worked by hand from perspective, not yet tried with the detector). Only the AI's
+     screen-or-print answer stands behind them then, so lower `turnDegrees` makes this easier to
+     fool as well as easier to pass. At 50 cm in a 360-pixel picture one landmark pixel is about 5°, so
+     the lowest settings are finer than the measurement. Reading the nose against the plane of the
+     eyes and mouth (a homography) would hold a flat picture still; it needs trying on real faces first.
    - What this is not: a general vision model is not an evaluated age estimator, and the turns show
      a fresh response to a random challenge, not a live person (a virtual camera running a face swap
-     can follow them). It suits a site that wants more than a declaration and accepts an estimate;
+     can follow them). The youngest of the age model's readings across all the pictures decides, a tilted
+     head included, which is the safe side for a child in any one picture and asks more of an honest adult
+     near the line; how much more has not been measured on real faces. No camera is needed either: the steps reach the browser before any picture is
+     taken, and a picture is any JPEG sent to the site, so a script holding five stills of an adult
+     can answer them. A browser cannot close that. It suits a site that wants more than a declaration and accepts an estimate;
      the administrator should try it on themselves (Admin → Plugins → Camera checks) and choose the
      buffer and turns from what they see. A regulator-grade check needs the later methods.
 3. **Photo ID plus face match** (later, `verified`). Date of birth read from the ID by a vision

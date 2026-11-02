@@ -134,6 +134,23 @@ function readings(verification, count) {
   return verification.images;
 }
 
+// Whether OAIY has an age model and it did not read these pictures. An OAIY without one says so, or says nothing, and
+// the AI stands in where the site allows it. Anything else (a timeout, a picture it would not read, a short answer) is
+// no reason to settle for less: whoever could send a picture it cannot read would otherwise choose the weaker check.
+function modelFailed(verification, read) {
+  if (!verification || read != null) return false;
+  return verification.error != "not_installed" && verification.error != "unknown_task";
+}
+
+// How many of the pictures OAIY measured a face's angles in.
+function anglesKnown(read) {
+  let known = 0;
+  for (let image of read) {
+    if (typeof image.yaw == "number" && typeof image.pitch == "number") known = known + 1;
+  }
+  return known;
+}
+
 // The image test's words for OAIY's age model.
 function ageModelWords(verification) {
   if (!verification) return " This OAIY does not run an age model: the AI's own estimate is used.";
@@ -192,18 +209,25 @@ function shortTurn(moved, turns, degrees) {
 // measured: what each turn came to, for the administrator's own trial}.
 function anglesTurned(read, turns, degrees) {
   let moved = turnAngles(read, turns, false);
+  let short = shortTurn(moved, turns, degrees);
+  // Read the way that fits more of the turns, so the turn named below is the one that really fell short.
+  if (short != 0 && (turns.indexOf("left") >= 0 || turns.indexOf("right") >= 0)) {
+    let other = turnAngles(read, turns, true);
+    let otherShort = shortTurn(other, turns, degrees);
+    if (otherShort == 0 || otherShort > short) {
+      moved = other;
+      short = otherShort;
+    }
+  }
   let words = [];
   let n = 0;
   while (n < moved.length) {
-    words.push(turns[n + 1] + " " + Math.floor(moved[n] + 0.5) + "°");
+    words.push(turns[n + 1] + " " + Math.floor(moved[n] * 10 + 0.5) / 10 + "°");
     n = n + 1;
   }
   let measured = " Measured from the straight-on picture: " + words.join(", ") + " (each needs " + degrees + "° sideways, " + needed("up", degrees) + "° up or down).";
-  let short = shortTurn(moved, turns, degrees);
   if (short == 0) return {failed: null, measured: measured};
-  let sideways = turns.indexOf("left") >= 0 || turns.indexOf("right") >= 0;
-  if (sideways && shortTurn(turnAngles(read, turns, true), turns, degrees) == 0) return {failed: null, measured: measured};
-  let how = moved[short - 1] <= -needed(turns[short], degrees) ? " went the other way." : " was too small to measure.";
+  let how = moved[short - 1] <= -needed(turns[short], degrees) ? " went the other way." : " did not go far enough.";
   return {failed: "Your " + ORDINAL[short] + " turn (" + TURN_WORDS[turns[short]] + ")" + how + " Try again, following each arrow and turning a little further.", measured: measured};
 }
 
@@ -237,11 +261,14 @@ function facesFound(read, turns) {
 
 // Whether the face is on a screen, a print or a mask, as the AI sees it. One picture so judged can be a small model
 // misreading a webcam's picture; most of them is a screen. Writing held up to the camera counts only where the AI
-// alone reads the age, as it could be words aimed at the AI; with OAIY's age model, the model reads the age.
+// alone reads the age, as it could be words aimed at the AI; with OAIY's age model, the model reads the age. Nothing
+// else looks for these, so an answer that leaves them out did not do the check: never read as "not a screen".
 function looksLive(seen, ageModel) {
   let screens = 0;
   let held = false;
   for (let image of seen) {
+    if (typeof image.screen_or_print != "boolean") return unavailable();
+    if (!ageModel && typeof image.held_writing != "boolean") return unavailable();
     if (image.screen_or_print === true) screens = screens + 1;
     if (image.held_writing === true) held = true;
   }
@@ -310,6 +337,7 @@ function decideCheck(row, turns, answer, buffer, verification, need, turnDegrees
   }
   if (row.mode == "probe") return {outcome: "reads_images", message: "The model read the control picture: it reads images." + ageModelWords(verification)};
   let read = readings(verification, seen.length);
+  if (modelFailed(verification, read)) return unavailable();
   if (read == null && need == "require") {
     return {outcome: "unavailable", message: "The face check needs the site's age model, which is not ready. This did not count as one of your tries."};
   }
@@ -319,13 +347,18 @@ function decideCheck(row, turns, answer, buffer, verification, need, turnDegrees
   } else {
     // Without OAIY's detector, the AI's own count is all there is.
     for (let image of seen) {
+      if (typeof image.faces != "number") return unavailable();
       if (image.faces !== 1) return {outcome: "no_face", message: "We need one face, and only one, in every picture. Try again in good light."};
     }
   }
   let live = looksLive(seen, read != null);
   if (live != null) return live;
   let measured = null;
-  if (read != null && turnAngles(read, turns, false) != null) {
+  // Angles in some pictures and not others: this OAIY measures them and could not here, which is no reason to go
+  // back to the AI's left and right. None at all is an OAIY older than its angles.
+  let known = read != null ? anglesKnown(read) : 0;
+  if (known > 0 && known != read.length) return unavailable();
+  if (known > 0) {
     let judged = anglesTurned(read, turns, turnDegrees);
     measured = judged.measured;
     if (judged.failed != null) return {outcome: "turns", message: judged.failed, measured: measured};
@@ -340,6 +373,7 @@ function decideCheck(row, turns, answer, buffer, verification, need, turnDegrees
 
 // The age, once the pictures and the turns are right.
 function ageDecision(row, answer, buffer, read) {
+  if (typeof answer.same_person != "boolean") return unavailable();
   if (answer.same_person !== true) return {outcome: "not_same", message: "The pictures did not all show the same person. Try again."};
   let low = answer.age_low;
   let estimate = answer.age_estimate;

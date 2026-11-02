@@ -1,7 +1,7 @@
 {
   "id": "formlogic.age-gate",
   "name": "Age gate",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "main": "ui/main.ui",
   "config": {
     "server": {
@@ -73,7 +73,7 @@
       {
         "key": "turnDegrees",
         "label": "How far each head turn must go, in degrees",
-        "help": "Measured from the face where OAIY has its age model, against the person's own straight-on picture; up and down need three quarters of it. Lower is easier with a webcam. Try it on yourself: the result says how far your turns measured.",
+        "help": "Measured from the face where OAIY has its age model; up and down need three quarters of it. Lower is easier, and easier to fool. Try it on yourself: the result says how far your turns measured.",
         "type": "integer",
         "min": 4,
         "max": 25,

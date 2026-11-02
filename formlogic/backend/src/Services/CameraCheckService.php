@@ -316,7 +316,8 @@ final class CameraCheckService
         }
         $images = [];
         foreach (array_slice(is_array($said['images'] ?? null) ? $said['images'] : [], 0, 16) as $image) {
-            $one = ['faces' => is_int($image['faces'] ?? null) && $image['faces'] >= 0 ? min($image['faces'], 99) : 0];
+            // No count stays no count: read as 0, it would tell the person their face was not found, and charge them.
+            $one = is_int($image['faces'] ?? null) && $image['faces'] >= 0 ? ['faces' => min($image['faces'], 99)] : [];
             if (is_int($image['age'] ?? null) || is_float($image['age'] ?? null)) {
                 $one['age'] = round((float) $image['age'], 1);
             }
@@ -596,7 +597,8 @@ final class CameraCheckService
         if ($this->attemptsLeft($userId) < 1) {
             throw new \InvalidArgumentException('You have used today\'s camera checks. Try again tomorrow.');
         }
-        $last = $this->pdo->prepare("SELECT 1 FROM camera_checks WHERE user_id = ? AND outcome = 'not_confirmed' AND finished_at > ? LIMIT 1");
+        // A member's check only: an administrator's trial on themselves leaves no mark on their own real one.
+        $last = $this->pdo->prepare("SELECT 1 FROM camera_checks WHERE user_id = ? AND mode = 'member' AND outcome = 'not_confirmed' AND finished_at > ? LIMIT 1");
         $last->execute([$userId, gmdate('Y-m-d H:i:s', time() - self::COOLDOWN_SECONDS)]);
         if ($last->fetchColumn() !== false) {
             throw new \InvalidArgumentException('Your last check could not confirm this. You can try again in an hour.');

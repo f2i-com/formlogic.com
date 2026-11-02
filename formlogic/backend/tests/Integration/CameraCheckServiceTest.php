@@ -244,7 +244,7 @@ final class CameraCheckServiceTest extends TestCase
         self::assertSame('face_check_age_model', $this->gate->receiptsFor($this->memberId)[0]['method']);
 
         $cases = [
-            'turns too small to measure' => [$angles(4.0), 'turns', 'too small'],
+            'turns that did not go far enough' => [$angles(4.0), 'turns', 'did not go far enough'],
             'every turn the other way' => [$angles(-15.0), 'turns', 'the other way'],
             'a camera that mirrors its picture' => [$angles(15.0, true), 'passed', 'Done'],
             'a smaller tilt up or down: three quarters of a turn aside' => [$angles(15.0, false, [], 6.5), 'passed', 'Done'],
@@ -325,6 +325,111 @@ final class CameraCheckServiceTest extends TestCase
         self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
         [$check] = $this->check(fn ($a) => $a);
         self::assertSame('unavailable', $check['outcome']);
+    }
+
+    /**
+     * OAIY has an age model and it did not read these pictures: that is no reason to settle for the AI alone, or
+     * whoever could send a picture it cannot read would choose the weaker check. Nobody's try is spent on it.
+     */
+    public function testAnAgeModelThatDidNotReadThePicturesIsNotSettledWithout(): void
+    {
+        $said = fn (array $words) => fn (?array $asked) => ['task' => 'face-age'] + $words;
+        $cases = [
+            'it failed' => $said(['error' => 'failed', 'message' => 'the worker ran out of time']),
+            'a picture it would not read' => $said(['error' => 'invalid', 'message' => 'not a picture']),
+            'an answer for too few pictures' => fn (?array $asked, int $count) => ['task' => 'face-age', 'images' => array_fill(0, $count - 1, ['faces' => 1, 'age' => 35.0])],
+        ];
+        foreach ($cases as $what => $readings) {
+            self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
+            [$check] = $this->check(fn ($a) => $a, null, true, $readings);
+            self::assertSame('unavailable', $check['outcome'], $what);
+            self::assertSame(3, $check['attemptsLeft'], $what);
+        }
+        self::assertSame([], $this->gate->receiptsFor($this->memberId), 'none of these recorded a pass');
+
+        // An OAIY that does not know the task has no age model, which is the case the AI stands in for.
+        self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
+        [$check] = $this->check(fn ($a) => $a, null, true, $said(['error' => 'unknown_task', 'message' => 'this OAIY does not check it']));
+        self::assertSame('passed', $check['outcome']);
+        self::assertSame('face_check', $this->gate->receiptsFor($this->memberId)[0]['method']);
+    }
+
+    /**
+     * Nothing else looks for a screen, and nothing else says it is one person: an answer that leaves those out, or
+     * says them in some other way, did not do that part of the check. Never read as "no", or held against the person.
+     */
+    public function testAnAnswerThatDoesNotSayIsNotCountedEitherWay(): void
+    {
+        $ages = fn (?array $asked, int $count) => ['task' => 'face-age', 'images' => array_fill(0, $count, ['faces' => 1, 'age' => 35.0])];
+        $partly = function (?array $asked, int $count, array $hints) {
+            $images = [];
+            foreach ($hints as $i => $hint) {
+                $images[] = ['faces' => 1, 'age' => 35.0] + ($i === 1 ? [] : ['yaw' => 0.0, 'pitch' => 0.0]);
+            }
+            return ['task' => 'face-age', 'images' => $images];
+        };
+        $cases = [
+            'no word on a screen, with the age model' => [fn ($a) => self::setAll($a, 'screen_or_print', null), $ages],
+            'no word on a screen, without it' => [fn ($a) => self::setAll($a, 'screen_or_print', null), null],
+            'a screen said in words' => [fn ($a) => self::setAll($a, 'screen_or_print', 'true'), $ages],
+            'no word on writing, where the AI alone reads the age' => [fn ($a) => self::setAll($a, 'held_writing', null), null],
+            'no word on one person' => [function ($a) { unset($a['same_person']); return $a; }, $ages],
+            'no count from the AI, without the age model' => [fn ($a) => self::setAll($a, 'faces', null), null],
+            'no count from the detector' => [fn ($a) => $a, fn (?array $asked, int $count) => ['task' => 'face-age', 'images' => array_fill(0, $count, ['age' => 35.0])]],
+            'angles in some pictures and not others' => [fn ($a) => $a, $partly],
+        ];
+        foreach ($cases as $what => [$twist, $readings]) {
+            self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
+            [$check] = $this->check($twist, null, true, $readings);
+            self::assertSame('unavailable', $check['outcome'], $what . ': ' . $check['message']);
+            self::assertSame(3, $check['attemptsLeft'], $what);
+        }
+        self::assertSame([], $this->gate->receiptsFor($this->memberId));
+
+        // With the age model reading the age, writing is no longer the AI's to weigh, so it need not say.
+        self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
+        [$check] = $this->check(fn ($a) => self::setAll($a, 'held_writing', null), null, true, $ages);
+        self::assertSame('passed', $check['outcome']);
+    }
+
+    public function testATurnThatFellShortIsNamedWhicheverWayTheCameraReads(): void
+    {
+        // A camera that mirrors its picture, with the third turn short: the turn named is that one, not the first.
+        $mirrored = function (?array $asked, int $count, array $hints) {
+            $images = [];
+            foreach ($hints as $i => $hint) {
+                $by = $i === 3 ? 2.0 : 15.0;
+                [$yaw, $pitch] = match ($hint) {
+                    'center' => [0.0, 0.0],
+                    'left' => [-$by, 0.0],
+                    'right' => [$by, 0.0],
+                    'up' => [0.0, $by],
+                    'down' => [0.0, -$by],
+                };
+                $images[] = ['faces' => 1, 'age' => 35.0, 'yaw' => $yaw, 'pitch' => $pitch];
+            }
+            return ['task' => 'face-age', 'images' => $images];
+        };
+        $this->plugins->setSettings('formlogic.age-gate', ['turns' => 'all']);
+        for ($tries = 0; $tries < 12; $tries++) {
+            self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
+            [$check] = $this->check(fn ($a) => $a, null, true, $mirrored);
+            if ($check['outcome'] === 'turns' && str_contains((string) $check['message'], 'third turn')) {
+                self::assertStringContainsString('did not go far enough', (string) $check['message']);
+                return;
+            }
+            // Turns that were up and down alone read the same either way, and a mirrored left first is what this is about.
+            self::assertSame('turns', $check['outcome']);
+        }
+        self::fail('The short turn was never named as the third.');
+    }
+
+    public function testAnAdministratorsTrialLeavesNoMarkOnTheirOwnRealCheck(): void
+    {
+        [$check] = $this->check(fn ($a) => ['age_low' => 12, 'age_estimate' => 14] + $a, null, true, null, true);
+        self::assertSame('not_confirmed', $check['outcome']);
+        $started = $this->checks->start($this->adminId, 'formlogic.age-gate', $this->slug, 'age');
+        self::assertSame('started', $started['status']);
     }
 
     public function testWhatTheModelSaysIsReadAsItsDescriptionAndNothingMore(): void
