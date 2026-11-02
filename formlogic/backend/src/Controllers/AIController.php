@@ -119,6 +119,8 @@ class AIController
         if (($missing = $this->siteAiMissing()) !== null) {
             return $this->jsonResponse($response, ['error' => true, 'code' => 'site_ai_unavailable', 'message' => $missing], 503);
         }
+        // On the site's OAIY the member's own in-flight limit applies (SiteDesktopAi).
+        $this->aiService->forRequester(is_string($request->getAttribute('userId')) ? $request->getAttribute('userId') : null);
         if ($this->planService === null) {
             return null;
         }
@@ -519,6 +521,7 @@ class AIController
                 return $authError;
             }
         }
+        $this->aiService->forRequester(is_string($userId) ? $userId : null);
         $body = $request->getParsedBody() ?? [];
         if (!is_array($body)) {
             $body = [];
@@ -604,6 +607,9 @@ class AIController
         if ($editor) @set_time_limit(AIService::EDITOR_REQUEST_TIMEOUT + 30);
         try {
             $result = $this->aiService->chat($messages, false, null, null, $editor);
+        } catch (\FormLogic\Services\SiteAiBusyException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'site_ai_busy', 'message' => $e->getMessage()], 503)
+                ->withHeader('Retry-After', (string) \FormLogic\Services\SiteAiBusyException::RETRY_AFTER_SECONDS);
         } catch (\Throwable $e) {
             $this->logger->error('AI chat error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'The AI request failed'], 502);
@@ -1132,6 +1138,8 @@ class AIController
             );
             $usage = is_array($result['usage'] ?? null) ? $result['usage'] : $usage;
             echo self::sseChatDone($usage);
+        } catch (\FormLogic\Services\SiteAiBusyException $e) {
+            echo self::sseChatError($e->getMessage());
         } catch (\Throwable $e) {
             $this->logger->error('AI chat stream error', ['exception' => $e->getMessage()]);
             echo self::sseChatError('The AI request failed');

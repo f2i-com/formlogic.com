@@ -54,6 +54,7 @@ class AdminController
         private ?\FormLogic\Services\PlanService $planService = null,
         private ?\FormLogic\Services\RuntimeEngineService $engines = null,
         private ?\FormLogic\Services\AdminSupportActivity $activity = null,
+        private ?\FormLogic\Services\SiteAiDesktopSettings $siteAiDesktop = null,
     ) {
     }
 
@@ -434,6 +435,66 @@ class AdminController
         }
         $this->audit($request, 'admin.plans_update', 'platform', $plans);
         return $this->jsonResponse($response, ['plans' => $plans]);
+    }
+
+    /**
+     * GET /api/admin/site-ai-desktop: which of this administrator's linked OAIY computers serves the
+     * site's AI (SiteDesktopAi), and the ones that could.
+     */
+    public function getSiteAiDesktop(Request $request, Response $response): Response
+    {
+        if ($this->siteAiDesktop === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Not available'], 503);
+        }
+        $current = $this->siteAiDesktop->current();
+        return $this->jsonResponse($response, [
+            'current' => $current === null ? null : [
+                'connectionId' => $current['connectionId'],
+                'deviceName' => $current['deviceName'] ?? '',
+                'fingerprint' => \FormLogic\Services\SiteAiDesktopSettings::fingerprint($current['publicKey']),
+                'chosenAt' => $current['chosenAt'] ?? null,
+                'yours' => $current['ownerUserId'] === $request->getAttribute('userId'),
+            ],
+            'candidates' => $this->siteAiDesktop->candidates((string) $request->getAttribute('userId')),
+        ]);
+    }
+
+    /** PUT /api/admin/site-ai-desktop {connectionId}: serve the site's AI from that computer, pinned to its key now. */
+    public function putSiteAiDesktop(Request $request, Response $response): Response
+    {
+        if ($this->siteAiDesktop === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Not available'], 503);
+        }
+        $body = $request->getParsedBody();
+        $connectionId = is_array($body) ? ($body['connectionId'] ?? null) : null;
+        if (!is_string($connectionId) || $connectionId === '') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Choose a computer.'], 400);
+        }
+        try {
+            $chosen = $this->siteAiDesktop->choose((string) $request->getAttribute('userId'), $connectionId);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 503);
+        }
+        $fingerprint = \FormLogic\Services\SiteAiDesktopSettings::fingerprint($chosen['publicKey']);
+        $this->audit($request, 'admin.site_ai_desktop', $chosen['connectionId'], ['deviceName' => $chosen['deviceName'], 'fingerprint' => $fingerprint]);
+        return $this->getSiteAiDesktop($request, $response);
+    }
+
+    /** DELETE /api/admin/site-ai-desktop: the site's AI goes back to the .env upstream. */
+    public function deleteSiteAiDesktop(Request $request, Response $response): Response
+    {
+        if ($this->siteAiDesktop === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Not available'], 503);
+        }
+        try {
+            $this->siteAiDesktop->clear();
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 503);
+        }
+        $this->audit($request, 'admin.site_ai_desktop', null, ['off' => true]);
+        return $this->getSiteAiDesktop($request, $response);
     }
 
     public function listAllowances(Request $request, Response $response): Response

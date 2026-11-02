@@ -1,0 +1,133 @@
+<?php
+
+declare(strict_types=1);
+
+namespace FormLogic\Services;
+
+use FormLogic\Database\MySQLConnection;
+use PDO;
+
+/**
+ * Which of the administrator's linked OAIY computers serves the site's AI (SiteDesktopAi), with
+ * the key it is pinned to. Kept in storage/site-ai-desktop.json beside platform-plans.json; the
+ * key is the one the computer had published when it was chosen, so a computer whose key changes
+ * stops being answered until it is chosen again, rather than being trusted with a new one.
+ */
+final class SiteAiDesktopSettings
+{
+    private PDO $pdo;
+
+    public function __construct(MySQLConnection $mysql, private ?string $path = null)
+    {
+        $this->pdo = $mysql->getConnection();
+        $this->path ??= dirname(__DIR__, 2) . '/storage/site-ai-desktop.json';
+    }
+
+    /** {ownerUserId, connectionId, instanceId, publicKey, providerId, deviceName, chosenAt}, or null. */
+    public function current(): ?array
+    {
+        $raw = @file_get_contents($this->path);
+        if ($raw === false) {
+            return null;
+        }
+        $data = json_decode($raw, true);
+        if (!is_array($data)) {
+            return null;
+        }
+        foreach (['ownerUserId', 'connectionId', 'instanceId', 'publicKey', 'providerId'] as $key) {
+            if (!is_string($data[$key] ?? null) || $data[$key] === '') {
+                return null;
+            }
+        }
+        return $data;
+    }
+
+    /** A short, readable fingerprint of a public key, as OAIY can show it beside its own. */
+    public static function fingerprint(string $publicKey): string
+    {
+        $hex = substr(hash('sha256', (string) base64_decode($publicKey, true)), 0, 20);
+        return implode(' ', str_split(strtoupper($hex), 4));
+    }
+
+    /**
+     * The administrator's linked computers that could serve: each with a published chat key, and
+     * whether it has been heard from in the last 90 seconds.
+     */
+    public function candidates(string $adminUserId): array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT id, desktop_instance_id, device_name, e2e_public_key, last_seen_at,
+                    last_seen_at > (NOW() - INTERVAL 90 SECOND) AS fresh
+             FROM desktop_connections WHERE owner_user_id = ? AND e2e_public_key IS NOT NULL ORDER BY last_seen_at DESC"
+        );
+        $stmt->execute([$adminUserId]);
+        return array_map(static fn(array $row) => [
+            'connectionId' => (string) $row['id'],
+            'instanceId' => (string) $row['desktop_instance_id'],
+            'deviceName' => (string) ($row['device_name'] ?? ''),
+            'fingerprint' => self::fingerprint((string) $row['e2e_public_key']),
+            'online' => (bool) $row['fresh'],
+            'lastSeenAt' => $row['last_seen_at'],
+        ], $stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    /** Pin one of the administrator's computers, with the key it has published now. */
+    public function choose(string $adminUserId, string $connectionId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, desktop_instance_id, device_name, e2e_public_key FROM desktop_connections WHERE id = ? AND owner_user_id = ?'
+        );
+        $stmt->execute([$connectionId, $adminUserId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            throw new \InvalidArgumentException('That computer is not linked to your account.');
+        }
+        $key = (string) ($row['e2e_public_key'] ?? '');
+        $raw = base64_decode($key, true);
+        if ($raw === false || strlen($raw) !== SODIUM_CRYPTO_BOX_PUBLICKEYBYTES) {
+            throw new \InvalidArgumentException('That computer has not published its chat key yet. Open OAIY on it and try again.');
+        }
+        if (str_starts_with((string) $row['desktop_instance_id'], 'oauth-')) {
+            throw new \InvalidArgumentException('That computer has not checked in yet. Open OAIY on it and try again.');
+        }
+        $chosen = [
+            'ownerUserId' => $adminUserId,
+            'connectionId' => (string) $row['id'],
+            'instanceId' => (string) $row['desktop_instance_id'],
+            'publicKey' => $key,
+            'providerId' => SiteDesktopAi::PROVIDER,
+            'deviceName' => (string) ($row['device_name'] ?? ''),
+            'chosenAt' => gmdate('c'),
+        ];
+        $this->write($chosen);
+        return $chosen;
+    }
+
+    public function clear(): void
+    {
+        if (is_file($this->path) && !@unlink($this->path)) {
+            throw new \RuntimeException('Cannot turn the site\'s OAIY off: storage/site-ai-desktop.json could not be removed.');
+        }
+    }
+
+    private function write(array $data): void
+    {
+        $dir = dirname($this->path);
+        if (!is_dir($dir) && !@mkdir($dir, 0750, true) && !is_dir($dir)) {
+            throw new \RuntimeException('Settings storage is unavailable.');
+        }
+        $tmp = tempnam($dir, '.site-ai-');
+        if ($tmp === false) {
+            throw new \RuntimeException('Cannot save the site\'s AI settings.');
+        }
+        try {
+            if (file_put_contents($tmp, json_encode($data, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR), LOCK_EX) === false || !rename($tmp, $this->path)) {
+                throw new \RuntimeException('Cannot save the site\'s AI settings.');
+            }
+        } finally {
+            if (is_file($tmp)) {
+                @unlink($tmp);
+            }
+        }
+    }
+}

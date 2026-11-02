@@ -17,6 +17,28 @@ class AIService
     private string $model;
     private string $visionModel;
 
+    /** The administrator's OAIY, when it serves the site's AI in place of the .env upstream. */
+    private ?SiteDesktopAi $siteDesktop = null;
+    /** The member a turn is for, so their own in-flight limit applies on the site's OAIY. */
+    private ?string $requester = null;
+
+    public function useSiteDesktop(?SiteDesktopAi $desktop): void
+    {
+        $this->siteDesktop = $desktop;
+    }
+
+    public function forRequester(?string $userId): static
+    {
+        $this->requester = $userId !== null && $userId !== '' ? $userId : null;
+        return $this;
+    }
+
+    /** True when the site's AI goes to the administrator's OAIY (SiteDesktopAi). */
+    public function servedByOaiy(): bool
+    {
+        return $this->siteDesktop?->active() !== null;
+    }
+
     public function __construct(private ?PlatformPlansService $platformPlans = null)
     {
         // Provider-neutral AI_* names take precedence (point these at LM Studio / Ollama / any
@@ -65,7 +87,7 @@ class AIService
      */
     public function isConfigured(): bool
     {
-        return $this->isEnabled() && ($this->apiKey !== '' || $this->isCustomEndpoint());
+        return $this->isEnabled() && ($this->servedByOaiy() || $this->apiKey !== '' || $this->isCustomEndpoint());
     }
 
     /**
@@ -703,6 +725,10 @@ PROMPT;
             throw new \Exception('AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).');
         }
 
+        if (($desktop = $this->siteDesktop) !== null && $desktop->active() !== null) {
+            return $desktop->chat($messages, $this->requester, null, null, 120)['content'];
+        }
+
         $model = $model ?? $this->model;
 
         $payload = [
@@ -994,6 +1020,15 @@ PROMPT;
      */
     protected function chatCompletionsRequest(array $payload, bool $stream, ?callable $onDelta, ?callable $onHeartbeat): array
     {
+        if (($desktop = $this->siteDesktop) !== null && $desktop->active() !== null) {
+            return $desktop->chat(
+                $payload['messages'],
+                $this->requester,
+                $stream ? $onDelta : null,
+                $onHeartbeat,
+                $this->requestTimeout ?? ($stream ? self::CHAT_STREAM_TIMEOUT : 120)
+            );
+        }
         // Only send Authorization when a key is set — keyless local servers (LM Studio / Ollama)
         // can reject or mishandle an empty bearer token.
         $headers = ['Content-Type: application/json'];
@@ -1513,6 +1548,10 @@ PROMPT;
      */
     protected function chatCompletionsToolsRequest(array $payload): array
     {
+        // OAIY's tunnel takes the messages and nothing else, so tools would never reach the engine.
+        if ($this->servedByOaiy()) {
+            throw new \RuntimeException('The site\'s AI runs on OAIY, which does not take FormLogic\'s tools yet. Ask without tools, or connect your own AI in Settings → AI.');
+        }
         // Only send Authorization when a key is set — keyless local servers (LM Studio / Ollama)
         // can reject or mishandle an empty bearer token.
         $headers = ['Content-Type: application/json'];

@@ -153,6 +153,12 @@ export interface PlanUsage {
   storage: { usedBytes: number; limitBytes: number | null };
 }
 
+/** The site's AI on the administrator's own OAIY (SiteDesktopAi on the server). */
+export interface SiteAiDesktopState {
+  current: { connectionId: string; deviceName: string; fingerprint: string; chosenAt: string | null; yours: boolean } | null;
+  candidates: { connectionId: string; instanceId: string; deviceName: string; fingerprint: string; online: boolean; lastSeenAt: string | null }[];
+}
+
 export interface PlatformPlans {
   paymentsEnabled: boolean;
   freeName: string;
@@ -4490,6 +4496,17 @@ class ApiClient {
   }
 
   /** Admin: GET /api/admin/allowances — per-plan monthly AI/credit allowances (plan_allowances). */
+  /** Which of this administrator's linked OAIY computers serves the site's AI, and those that could. */
+  async adminGetSiteAiDesktop(): Promise<ApiResponse<SiteAiDesktopState>> {
+    return this.request('/admin/site-ai-desktop');
+  }
+  async adminPutSiteAiDesktop(connectionId: string): Promise<ApiResponse<SiteAiDesktopState>> {
+    return this.request('/admin/site-ai-desktop', { method: 'PUT', body: JSON.stringify({ connectionId }) });
+  }
+  async adminDeleteSiteAiDesktop(): Promise<ApiResponse<SiteAiDesktopState>> {
+    return this.request('/admin/site-ai-desktop', { method: 'DELETE' });
+  }
+
   async adminGetPlans(): Promise<ApiResponse<{ plans: PlatformPlans }>> {
     return this.request('/admin/plans');
   }

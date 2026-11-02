@@ -185,7 +185,8 @@ $container->set(\FormLogic\Controllers\AdminController::class, function (Contain
         $c->get(\FormLogic\Services\EmailService::class),
         $c->get(\FormLogic\Services\PlanService::class),
         $c->get(\FormLogic\Services\RuntimeEngineService::class),
-        $c->get(\FormLogic\Services\AdminSupportActivity::class)
+        $c->get(\FormLogic\Services\AdminSupportActivity::class),
+        $c->get(\FormLogic\Services\SiteAiDesktopSettings::class)
     );
 });
 
@@ -505,8 +506,20 @@ $container->set(ResponseController::class, function (Container $c) {
 });
 
 // Register AI services
-$container->set(AIService::class, function () {
-    return new AIService();
+$container->set(AIService::class, function (Container $c) {
+    $ai = new AIService();
+    // The site's AI on the administrator's OAIY, when they have chosen one (SiteDesktopAi).
+    $ai->useSiteDesktop($c->get(\FormLogic\Services\SiteDesktopAi::class));
+    return $ai;
+});
+$container->set(\FormLogic\Services\SiteAiDesktopSettings::class, function (Container $c) {
+    return new \FormLogic\Services\SiteAiDesktopSettings($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Services\SiteDesktopAi::class, function (Container $c) {
+    return new \FormLogic\Services\SiteDesktopAi(
+        $c->get(\FormLogic\Services\DesktopAiRelayService::class),
+        $c->get(\FormLogic\Services\SiteAiDesktopSettings::class)
+    );
 });
 
 $container->set(DocumentConverter::class, function () {
@@ -1546,6 +1559,10 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     // (plan Phase 2; updates audited as admin.allowance_update).
     $group->get('/plans', function ($request, $response) use ($ctrl) { return $ctrl()->getPlans($request, $response); });
     $group->put('/plans', function ($request, $response) use ($ctrl) { return $ctrl()->putPlans($request, $response); });
+    // The site's AI on this administrator's OAIY (SiteDesktopAi; audited as admin.site_ai_desktop).
+    $group->get('/site-ai-desktop', function ($request, $response) use ($ctrl) { return $ctrl()->getSiteAiDesktop($request, $response); });
+    $group->put('/site-ai-desktop', function ($request, $response) use ($ctrl) { return $ctrl()->putSiteAiDesktop($request, $response); });
+    $group->delete('/site-ai-desktop', function ($request, $response) use ($ctrl) { return $ctrl()->deleteSiteAiDesktop($request, $response); });
     // Site client-engine policy: the default engine and the engines owners may choose from
     // (audited as admin.engine_policy_update, which commits with the policy or not at all).
     $group->get('/engine-policy', function ($request, $response) use ($ctrl) { return $ctrl()->getEnginePolicy($request, $response); });

@@ -4,6 +4,7 @@ import { deferEffect } from "../../lib/deferredEffect";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Card, CardContent } from "../../components/ui/Card";
+import { AdminSiteAiDesktop } from "./AdminSiteAiDesktop";
 
 export function AdminPlansCard() {
   const [plans, setPlans] = useState<PlatformPlans | null>(null);
@@ -171,6 +172,7 @@ export function AdminPlansCard() {
                 </span>
               </span>
             </label>
+            <AdminSiteAiDesktop />
             <div className="flex flex-wrap items-center gap-3">
               <Button onClick={() => void save()} isLoading={busy} disabled={!dirty}>Save plan settings</Button>
               {dirty && <Button variant="ghost" onClick={reset}>Discard changes</Button>}
