@@ -78,6 +78,7 @@
         "unit": "years",
         "min": 13,
         "max": 120,
+        "default": 18,
         "strengths": ["declared", "estimated"],
         "issueRoute": "/api/pass",
         "asks": "people aged {min} and over",

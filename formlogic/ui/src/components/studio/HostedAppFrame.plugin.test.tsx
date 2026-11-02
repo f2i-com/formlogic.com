@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-// A plugin's own page (PluginVerifyPage): the frame offers it two actions and no more. pluginContext
-// answers with what the host was given; pluginDone hands back to the host and ends the frame. Any
-// other frame asking either gets the refusal every unknown action gets.
+// A plugin's own page (PluginVerifyPage): the frame offers it its actions and no more. pluginContext
+// answers with what the host was given; pluginDone hands back to the host and ends the frame;
+// pluginCamera opens the site's camera check, for a plugin granted the camera. Any other frame asking
+// gets the refusal every unknown action gets.
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -49,7 +50,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function mount(plugin?: { context: Record<string, unknown>; onDone: () => void }) {
+async function mount(plugin?: { context: Record<string, unknown>; onDone: () => void; onCamera?: () => void }) {
   root = createRoot(container);
   await act(async () => root!.render(<HostedAppFrame slug="plugin-age" client={{ 'manifest.json': '{}' }} version={1} native={application} plugin={plugin} />));
   const iframe = container.querySelector('iframe')!;
@@ -92,6 +93,14 @@ it('refuses both to any other app, as it refuses every action it does not know',
     { id: 3, result: { error: HOSTED_ACTOR_ERROR } },
   ]);
   expect(api.runHostedAction).not.toHaveBeenCalled();
+});
+
+it('opens the site\'s camera check for a plugin granted the camera, and tells the frame only that', async () => {
+  const onCamera = vi.fn();
+  const channel = await mount({ context: {}, onDone: vi.fn(), onCamera });
+  await call(channel, 'pluginCamera', 1);
+  expect(onCamera).toHaveBeenCalledTimes(1);
+  expect(replies(channel)).toEqual([{ id: 1, result: { result: { opened: true } } }]);
 });
 
 it('gives a plugin page no third action either', async () => {

@@ -192,9 +192,9 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
           <div className="w-12 h-12 mx-auto rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-4">
             <ShieldCheck className="h-6 w-6 text-primary-600 dark:text-primary-400" />
           </div>
-          <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white tracking-tight">{gate.kind === 'age' ? `For people aged ${gate.min} and over` : `${appName} needs ${gate.label}`}</h2>
+          <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white tracking-tight">For {gate.asks}</h2>
           {gate.available
-            ? <p className="text-gray-500 dark:text-slate-400 mb-6">{gate.kind === 'age' ? `${appName} asks its members to confirm their age before it opens.` : `${appName} asks its members for this before it opens, through ${gate.pluginName}.`}</p>
+            ? <p className="text-gray-500 dark:text-slate-400 mb-6">{appName} asks its members for this before it opens, through {gate.pluginName}.</p>
             : <p className="text-gray-500 dark:text-slate-400 mb-6">This app needs a plugin that is not available on this site at the moment. Ask the app&apos;s owner.</p>}
           <div className="flex flex-col gap-2">
             {gate.available && <Button onClick={confirmAge}>{passAction(gate)}</Button>}

@@ -79,7 +79,7 @@ async function turnOnTheGate(page: Page, appId: string) {
   await page.goto(`/apps/${appId}/softn`);
   await page.getByRole('tab', { name: 'Settings' }).click();
   await page.getByRole('switch', { name: 'Only for people over an age' }).click();
-  await expect(page.getByText('Now only for people aged 18 and over', { exact: true })).toBeVisible();
+  await expect(page.getByText('Members are asked before it opens.', { exact: true })).toBeVisible();
 }
 
 async function joinAndMeetTheGate(page: Page) {
@@ -125,7 +125,7 @@ test('a member gets the age gate plugin\'s pass before an app that asks for it o
 
   // Withdrawn in Settings, the app asks again.
   await visit.goto('/settings#security');
-  await expect(visit.getByText(/Age 18\+ · you confirmed it · Age gate/)).toBeVisible();
+  await expect(visit.getByText(/Age 18\+ · your word · Age gate/)).toBeVisible();
   await visit.getByRole('button', { name: 'Withdraw' }).click();
   await expect(visit.getByText('You have none.')).toBeVisible();
   await visit.goto(`/app/${app.slug}`);

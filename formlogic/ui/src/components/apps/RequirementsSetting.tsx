@@ -1,21 +1,16 @@
 import { useEffect, useId, useState } from 'react';
 import { Switch } from '../ui/Switch';
 import { api } from '../../lib/api';
+import { STRENGTH_WORDS } from '../../lib/passes';
 import type { AppRequirement, PassKind, PassStrength } from '../../types/app';
 
-/** What each strength means to the person choosing it. */
-const STRENGTHS: { value: PassStrength; label: string; ageLabel: string; hint: string }[] = [
-  { value: 'declared', label: 'Their own word', ageLabel: 'They confirm their age', hint: 'Each member says so once on this site. It is their word, not a check.' },
-  { value: 'estimated', label: 'An estimate', ageLabel: 'A face check', hint: 'The plugin estimates it.' },
-  { value: 'verified', label: 'A check', ageLabel: 'An ID or digital ID check', hint: 'The plugin checks it against a document or a digital ID.' },
-];
-
+const STRENGTHS: PassStrength[] = ['declared', 'estimated', 'verified'];
 const keyOf = (r: { plugin: string; kind: string }) => `${r.plugin}|${r.kind}`;
 
 /**
  * What an app asks of its members before it opens: passes from the plugins enabled on this site
- * (Admin → Plugins). The server holds every route of the app to them (AppAccessGateMiddleware);
- * this only edits settings.requires.
+ * (Admin → Plugins), in each plugin's own words. The server holds every route of the app to them
+ * (AppAccessGateMiddleware); this only edits settings.requires.
  */
 export function RequirementsSetting({ value, onChange, disabled, anonymousAccess }: {
   value: AppRequirement[] | undefined;
@@ -54,23 +49,23 @@ export function RequirementsSetting({ value, onChange, disabled, anonymousAccess
       )}
       {kinds.map((kind) => {
         const current = requires.find((r) => keyOf(r) === keyOf(kind));
-        const age = kind.kind === 'age';
+        const offered = kind.offered ?? kind.strengths;
         const minId = `${id}-${kind.plugin}-${kind.kind}`;
         return (
           <div key={keyOf(kind)} className="space-y-3">
             <Switch
-              label={age ? 'Only for people over an age' : `Require ${kind.label}`}
-              description={`${age ? 'Members confirm their age on this site before the app opens for them.' : 'Members get it on this site before the app opens for them.'} Through ${kind.pluginName}, a plugin on this site. You, as its owner, are never asked.`}
+              label={kind.require || `Ask for ${kind.label}`}
+              description={`Members get it on this site before the app opens for them, through ${kind.pluginName}, a plugin on this site. You, as its owner, are never asked.`}
               checked={!!current}
               disabled={disabled}
               onChange={(on) => on
-                ? put({ plugin: kind.plugin, kind: kind.kind, min: Math.min(Math.max(age ? 18 : kind.min, kind.min), kind.max), strength: kind.strengths[0] })
+                ? put({ plugin: kind.plugin, kind: kind.kind, min: kind.default ?? kind.min, strength: offered[0] ?? kind.strengths[0] })
                 : drop(kind)}
             />
             {current && (
               <>
                 <div className="flex items-center gap-2">
-                  <label htmlFor={minId} className="text-sm font-medium text-gray-700 dark:text-slate-300">{age ? 'Minimum age' : `Least ${kind.label}`}</label>
+                  <label htmlFor={minId} className="text-sm font-medium text-gray-700 dark:text-slate-300">{kind.minLabel || `Least ${kind.label}`}</label>
                   <input
                     id={minId}
                     type="number"
@@ -84,25 +79,29 @@ export function RequirementsSetting({ value, onChange, disabled, anonymousAccess
                     }}
                     className="w-20 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
                   />
-                  {kind.unit && !age && <span className="text-sm text-gray-500 dark:text-slate-400">{kind.unit}</span>}
+                  {kind.unit && <span className="text-sm text-gray-500 dark:text-slate-400">{kind.unit}</span>}
                 </div>
                 <fieldset className="space-y-1.5" disabled={disabled}>
                   <legend className="text-sm font-medium text-gray-700 dark:text-slate-300">How they show it</legend>
                   {STRENGTHS.map((strength) => {
-                    const offered = kind.strengths.includes(strength.value);
+                    const granted = kind.strengths.includes(strength);
+                    const ready = offered.includes(strength);
+                    if (!granted && !kind.strengthLabels?.[strength]) return null;
                     return (
-                      <label key={strength.value} className="flex cursor-pointer gap-2 text-sm">
+                      <label key={strength} className="flex cursor-pointer gap-2 text-sm">
                         <input
                           type="radio"
                           name={`${minId}-strength`}
                           className="mt-1"
-                          checked={current.strength === strength.value}
-                          disabled={!offered && current.strength !== strength.value}
-                          onChange={() => put({ ...current, strength: strength.value })}
+                          checked={current.strength === strength}
+                          disabled={!ready && current.strength !== strength}
+                          onChange={() => put({ ...current, strength })}
                         />
                         <span>
-                          <span className="font-medium text-gray-900 dark:text-white">{age ? strength.ageLabel : strength.label}</span>
-                          <span className="block text-xs leading-5 text-gray-500 dark:text-slate-400">{offered ? strength.hint : `${kind.pluginName} doesn't offer this.`}</span>
+                          <span className="font-medium text-gray-900 dark:text-white">{kind.strengthLabels?.[strength] || STRENGTH_WORDS[strength].label}</span>
+                          <span className="block text-xs leading-5 text-gray-500 dark:text-slate-400">
+                            {ready ? STRENGTH_WORDS[strength].hint : granted ? 'Needs something this site has not set up yet: ask its administrator.' : `${kind.pluginName} doesn't offer this.`}
+                          </span>
                         </span>
                       </label>
                     );

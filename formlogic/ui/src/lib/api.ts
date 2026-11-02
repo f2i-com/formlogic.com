@@ -4,7 +4,7 @@
 
 import { ADMIN_CONFIRMATION_DECLINED, ADMIN_CONFIRMATION_REQUIRED, adminConfirmationHeaders, askForAdminConfirmation, canAskForAdminConfirmation } from './adminConfirmation';
 import type { Form } from '../types/form';
-import type { AccessReceipt, App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, AvailablePlugin, FormAppContext, InstalledPlugin, PassKind, PassRequirement, RequirementsStatus } from '../types/app';
+import type { AccessReceipt, App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, AvailablePlugin, CameraCheckState, FormAppContext, InstalledPlugin, PassKind, PassRequirement, RequirementsStatus, UploadedPlugin } from '../types/app';
 import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
 import { APP_LOGIC_LANGUAGES } from '../types/customAppLogic';
 import type { ClientEngineId } from './clientEngines';
@@ -151,6 +151,13 @@ export interface PlanUsage {
   plan: string;
   forms: { used: number; limit: number | null };
   storage: { usedBytes: number; limitBytes: number | null };
+}
+
+/** The camera check's setup: which computer, provider and model read the pictures, and the administrator's computers that could. */
+export interface AdminCameraCheckState {
+  current: null | { connectionId: string; deviceName: string; fingerprint: string; providerId: string; model: string | null; online: boolean; yours: boolean };
+  candidates: Array<{ connectionId: string; instanceId: string; deviceName: string; fingerprint: string; online: boolean; lastSeenAt: string | null }>;
+  engineProvider: string;
 }
 
 /** The site's AI on the administrator's own OAIY (SiteDesktopAi on the server). */
@@ -2840,8 +2847,8 @@ class ApiClient {
     return this.request(`/app/${seg(slug)}/activity${limit ? `?limit=${limit}` : ''}`);
   }
 
-  /** What a plugin's page is for: the app's requirement it meets, the plugin's app to run, and where to go back to. */
-  async getPluginContext(plugin: string, slug: string, kind: string, returnTo?: string): Promise<ApiResponse<{ plugin: { id: string; name: string; slug: string | null }; app: { name: string; slug: string }; requirement: PassRequirement; returnTo: string }>> {
+  /** What a plugin's page is for: the app's requirement it meets, the plugin's app to run, the ways to meet it, and where to go back to. */
+  async getPluginContext(plugin: string, slug: string, kind: string, returnTo?: string): Promise<ApiResponse<{ plugin: { id: string; name: string; slug: string | null }; app: { name: string; slug: string }; requirement: PassRequirement; camera?: boolean; settings?: Record<string, unknown>; returnTo: string }>> {
     const query = new URLSearchParams({ app: slug, kind });
     if (returnTo) query.set('return', returnTo);
     return this.request(`/plugins/${seg(plugin)}/context?${query}`);
@@ -2852,8 +2859,54 @@ class ApiClient {
     return this.request('/plugins/passes');
   }
 
+  /** The camera check a plugin uses (CameraCheckService): start one for an app's requirement, send its pictures, ask where it stands. */
+  async startCameraCheck(plugin: string, app: string, kind: string): Promise<ApiResponse<CameraCheckState>> {
+    return this.request('/camera-checks', { method: 'POST', body: JSON.stringify({ plugin, app, kind }) });
+  }
+  async sendCameraCheckPictures(id: string, frames: string[]): Promise<ApiResponse<CameraCheckState>> {
+    return this.request(`/camera-checks/${seg(id)}/pictures`, { method: 'POST', body: JSON.stringify({ frames }) });
+  }
+  async getCameraCheck(id: string): Promise<ApiResponse<CameraCheckState>> {
+    return this.request(`/camera-checks/${seg(id)}`);
+  }
+  async cancelCameraCheck(id: string): Promise<ApiResponse<{ cancelled: boolean }>> {
+    return this.request(`/camera-checks/${seg(id)}`, { method: 'DELETE' });
+  }
+  /** Admin: which OAIY computer, provider and model read camera checks' pictures, and trying them. */
+  async adminGetCameraCheck(): Promise<ApiResponse<AdminCameraCheckState>> {
+    return this.request('/admin/camera-check');
+  }
+  async adminCameraCheckProviders(connectionId: string): Promise<ApiResponse<{ providers: Array<{ id: string; label: string; model: string | null }> }>> {
+    return this.request(`/admin/camera-check/providers?${new URLSearchParams({ connectionId })}`);
+  }
+  async adminCameraCheckModels(connectionId: string, providerId: string): Promise<ApiResponse<{ models: Array<{ id: string; name: string }> }>> {
+    return this.request(`/admin/camera-check/models?${new URLSearchParams({ connectionId, providerId })}`);
+  }
+  async adminPutCameraCheck(choice: { connectionId: string; providerId: string; model: string | null }): Promise<ApiResponse<{ saved: boolean }>> {
+    return this.request('/admin/camera-check', { method: 'PUT', body: JSON.stringify(choice) });
+  }
+  async adminDeleteCameraCheck(): Promise<ApiResponse<{ saved: boolean }>> {
+    return this.request('/admin/camera-check', { method: 'DELETE' });
+  }
+  async adminProbeCameraCheck(plugin: string): Promise<ApiResponse<CameraCheckState>> {
+    return this.request('/admin/camera-check/probe', { method: 'POST', body: JSON.stringify({ plugin }) });
+  }
+  async adminTrialCameraCheck(plugin: string, min?: number): Promise<ApiResponse<CameraCheckState>> {
+    return this.request('/admin/camera-check/trial', { method: 'POST', body: JSON.stringify({ plugin, ...(min === undefined ? {} : { min }) }) });
+  }
+  /** Admin: an uploaded plugin, read first, then installed (or updated). */
+  async adminInspectPlugin(project: unknown): Promise<ApiResponse<{ plugin: UploadedPlugin }>> {
+    return this.request('/admin/plugin-uploads/inspect', { method: 'POST', body: JSON.stringify({ project }) });
+  }
+  async adminUploadPlugin(project: unknown): Promise<ApiResponse<{ plugin: InstalledPlugin }>> {
+    return this.request('/admin/plugin-uploads', { method: 'POST', body: JSON.stringify({ project }) });
+  }
+  async adminSetPluginSettings(id: string, settings: Record<string, number | string | boolean>): Promise<ApiResponse<{ plugin: InstalledPlugin }>> {
+    return this.request(`/admin/plugins/${seg(id)}/settings`, { method: 'PUT', body: JSON.stringify({ settings }) });
+  }
+
   /** Admin → Plugins: what is installed, and what ships with FormLogic to install. */
-  async adminGetPlugins(): Promise<ApiResponse<{ installed: InstalledPlugin[]; available: AvailablePlugin[] }>> {
+  async adminGetPlugins(): Promise<ApiResponse<{ installed: InstalledPlugin[]; available: AvailablePlugin[]; sandbox: Record<string, string> }>> {
     return this.request('/admin/plugins');
   }
   async adminInstallPlugin(id: string): Promise<ApiResponse<{ plugin: InstalledPlugin }>> {

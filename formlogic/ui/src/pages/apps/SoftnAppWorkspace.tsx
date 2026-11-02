@@ -151,8 +151,7 @@ function Workspace({ app }: { app: App }) {
       const settings = { ...(useAppStore.getState().apps.find(candidate => candidate.id === app.id)?.settings ?? app.settings) };
       if (next) settings.requires = next; else delete settings.requires;
       if (await updateApp(app.id, { settings })) {
-        const age = next?.find(requirement => requirement.kind === 'age');
-        toast.success(age ? `Now only for people aged ${age.min} and over` : next ? 'Saved' : 'Nothing is asked before it opens', next ? 'Members are asked before it opens.' : undefined);
+        toast.success(next ? 'Saved' : 'Nothing is asked before it opens', next ? 'Members are asked before it opens.' : undefined);
       }
     } finally { setGateBusy(false); }
   };

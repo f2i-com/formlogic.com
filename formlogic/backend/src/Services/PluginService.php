@@ -149,6 +149,8 @@ final class PluginService
             'unit' => mb_substr(self::text($pass['unit'] ?? null), 0, 20),
             'min' => $min,
             'max' => $max,
+            // The value an owner starts from when they turn the requirement on.
+            'default' => is_int($pass['default'] ?? null) && $pass['default'] >= $min && $pass['default'] <= $max ? $pass['default'] : $min,
             'strengths' => array_values(array_unique($strengths)),
             'issueRoute' => $route,
             // The site's words for it: who an app that asks it is for ("{min}" is the app's value),

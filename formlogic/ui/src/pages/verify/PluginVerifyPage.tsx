@@ -3,6 +3,7 @@ import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from '
 import { AlertCircle, Puzzle } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { NativeAppView } from '../../components/studio/NativeAppView';
+import { CameraCheckPanel } from '../../components/plugins/CameraCheckPanel';
 import { api } from '../../lib/api';
 import { useAuthStore } from '../../stores/authStore';
 import type { PassRequirement } from '../../types/app';
@@ -11,6 +12,8 @@ type Loaded = {
   plugin: { id: string; name: string; slug: string | null };
   app: { name: string; slug: string };
   requirement: PassRequirement;
+  /** The site's camera check is there for this plugin and requirement. */
+  camera?: boolean;
   returnTo: string;
 };
 
@@ -34,6 +37,7 @@ export function PluginVerifyPage() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notYet, setNotYet] = useState(false);
+  const [camera, setCamera] = useState(false);
 
   useEffect(() => {
     if (!user || !slug || !kind) return;
@@ -60,12 +64,15 @@ export function PluginVerifyPage() {
     });
   }, [pluginId, slug, kind, requestedReturn, goOn]);
 
-  // What the plugin's page is told: the app and what it asks, nothing about the member.
+  // What the plugin's page is told: the app, what it asks, whether the site's camera check is there
+  // for it, and its settings; nothing about the member.
   const context = useMemo(() => loaded ? {
     app: { name: loaded.app.name },
     requirement: { kind: loaded.requirement.kind, label: loaded.requirement.label, unit: loaded.requirement.unit, min: loaded.requirement.min, strength: loaded.requirement.strength },
+    camera: loaded.camera === true,
   } : null, [loaded]);
-  const bridge = useMemo(() => context ? { context, onDone } : undefined, [context, onDone]);
+  const openCamera = useCallback(() => setCamera(true), []);
+  const bridge = useMemo(() => context ? { context, onDone, ...(loaded?.camera ? { onCamera: openCamera } : {}) } : undefined, [context, onDone, loaded, openCamera]);
 
   if (!user) return <Navigate to={`/login?redirect=${encodeURIComponent(location.pathname + location.search)}`} replace />;
 
@@ -106,6 +113,14 @@ export function PluginVerifyPage() {
               <NativeAppView slug={loaded.plugin.slug} plugin={bridge} />
             </section>
             <a href="/" className="text-center text-sm text-gray-400 hover:text-gray-900 dark:text-slate-400 dark:hover:text-white">Not now</a>
+            {camera && (
+              <CameraCheckPanel
+                pluginName={loaded.plugin.name}
+                start={() => api.startCameraCheck(loaded.plugin.id, loaded.app.slug, loaded.requirement.kind)}
+                onPassed={onDone}
+                onClose={() => setCamera(false)}
+              />
+            )}
           </>
         )}
       </main>

@@ -1,5 +1,6 @@
-// Passes an app requires, as pages show them (AccessGateService on the server).
-import type { PassRequirement, RequirementsStatus } from '../types/app';
+// Passes an app requires, as pages show them (AccessGateService on the server). The words are the
+// plugin's own, from its manifest; nothing here knows what a plugin checks.
+import type { PassRequirement, PassStrength, RequirementsStatus } from '../types/app';
 
 /** The first requirement the member does not meet yet, or null. */
 export function unmetRequirement(status: RequirementsStatus | null | undefined): PassRequirement | null {
@@ -7,13 +8,13 @@ export function unmetRequirement(status: RequirementsStatus | null | undefined):
 }
 
 /** What the button that takes the member to a requirement's plugin says. */
-export function passAction(requirement: Pick<PassRequirement, 'kind' | 'pluginName'>): string {
-  return requirement.kind === 'age' ? 'Confirm your age' : `Continue with ${requirement.pluginName}`;
+export function passAction(requirement: Pick<PassRequirement, 'action' | 'pluginName'>): string {
+  return requirement.action || `Continue with ${requirement.pluginName}`;
 }
 
-/** A requirement in words: "Age 18 or over, declared". */
-export function describeRequirement(requirement: Pick<PassRequirement, 'kind' | 'label' | 'unit' | 'min' | 'strength'>): string {
-  const strength = requirement.strength === 'declared' ? 'their own word' : requirement.strength === 'estimated' ? 'an estimate' : 'a check';
-  if (requirement.kind === 'age') return `Aged ${requirement.min} or over, by ${strength}`;
-  return `${requirement.label} ${requirement.min}${requirement.unit ? ` ${requirement.unit}` : ''} or more, by ${strength}`;
-}
+/** The site's own words for each strength, where a plugin gives none. */
+export const STRENGTH_WORDS: Record<PassStrength, { label: string; hint: string; held: string }> = {
+  declared: { label: 'Their own word', hint: 'Each member says so once on this site. It is their word, not a check.', held: 'your word' },
+  estimated: { label: 'An estimate', hint: 'The plugin estimates it, with what this site gives it.', held: 'estimated' },
+  verified: { label: 'A check', hint: 'The plugin checks it against a document or a digital ID.', held: 'checked' },
+};

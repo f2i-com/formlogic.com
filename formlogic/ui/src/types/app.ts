@@ -86,11 +86,15 @@ export interface AppRequirement {
   strength: PassStrength;
 }
 
-/** A requirement as a page shows it, with whether the signed-in member meets it and where to. */
+/** A requirement as a page shows it, in its plugin's words, with whether the signed-in member meets it and where to. */
 export interface PassRequirement extends AppRequirement {
   pluginName: string;
   label: string;
   unit: string;
+  /** Who an app that asks it is for, with the app's value in: "people aged 18 and over". */
+  asks: string;
+  /** What the button that takes the member to the plugin says. */
+  action: string;
   /** The plugin that issues it is installed and on. */
   available: boolean;
   satisfied: boolean;
@@ -104,16 +108,68 @@ export interface RequirementsStatus {
   requirements: PassRequirement[];
 }
 
-/** A kind of pass an owner can require: one an enabled plugin on this site may issue. */
-export interface PassKind {
-  plugin: string;
-  pluginName: string;
+/** A pass a plugin may issue, as its manifest declares it, with the words the site shows for it. */
+export interface PluginPass {
   kind: string;
   label: string;
   unit: string;
   min: number;
   max: number;
+  /** The value an owner starts from. */
+  default: number;
   strengths: PassStrength[];
+  issueRoute: string;
+  asks: string;
+  action: string;
+  /** The owner's switch for it, and the field for the app's value. */
+  require: string;
+  minLabel: string;
+  strengthLabels: Partial<Record<PassStrength, string>>;
+}
+
+/** A kind of pass an owner can require: one an enabled plugin on this site may issue. */
+export interface PassKind extends PluginPass {
+  plugin: string;
+  pluginName: string;
+  /** The strengths this site can issue now (stronger than a declaration needs what the plugin uses set up). */
+  offered?: PassStrength[];
+}
+
+/** A setting a plugin declares, which the administrator sets and its code is handed. */
+export interface PluginSetting {
+  key: string;
+  label: string;
+  help: string;
+  type: 'integer' | 'choice' | 'boolean';
+  min?: number;
+  max?: number;
+  options?: Array<{ value: string; label: string }>;
+  default: number | string | boolean;
+}
+
+/** What a plugin asks, as the administrator reads it before granting it. */
+export interface PluginReview {
+  version: string;
+  passes: PluginPass[];
+  uses: string[];
+  settings: PluginSetting[];
+  /** Its sandbox's own permissions, in words. */
+  sandbox: string[];
+}
+
+/** One camera check, as the site's page follows it (CameraCheckService). */
+export interface CameraCheckState {
+  id: string;
+  mode: 'member' | 'trial' | 'probe';
+  status: 'started' | 'assessing' | 'done';
+  outcome: string | null;
+  message: string | null;
+  attemptsLeft: number | null;
+  expiresAt: string;
+  /** What to ask at each step, in the plugin's words, with an arrow, while it is started. */
+  steps?: Array<{ say: string; hint: 'center' | 'left' | 'right' | 'up' | 'down' | null }>;
+  /** The model's answer and the plugin's decision, for the administrator's own trial or test only. */
+  answer?: Record<string, unknown>;
 }
 
 /** One of the member's own passes. Never a date of birth, a picture or an estimate. */
@@ -137,23 +193,35 @@ export interface InstalledPlugin {
   id: string;
   manifestId: string;
   scope: string;
+  source: 'builtin' | 'upload';
   appId: string;
   name: string;
   version: string;
   enabled: boolean;
-  grants: Array<Omit<PassKind, 'plugin' | 'pluginName'> & { issueRoute: string }>;
+  grants: PluginPass[];
+  /** What it may use besides issuing passes: `camera`. */
+  uses: string[];
+  settingsSchema: PluginSetting[];
+  settings: Record<string, number | string | boolean>;
   installedAt: string;
   /** This FormLogic ships it in another version: what updating would bring, and grant it. */
-  update?: { version: string; passes: Array<Omit<PassKind, 'plugin' | 'pluginName'> & { issueRoute: string }> } | null;
+  update?: PluginReview | null;
 }
 
 /** A plugin that ships with FormLogic and is not installed yet. */
-export interface AvailablePlugin {
+export interface AvailablePlugin extends PluginReview {
   id: string;
   name: string;
   description: string;
-  version: string;
-  passes: Array<Omit<PassKind, 'plugin' | 'pluginName'> & { issueRoute: string }>;
+}
+
+/** An uploaded plugin, read before it is installed. */
+export interface UploadedPlugin extends PluginReview {
+  id: string;
+  name: string;
+  description: string;
+  /** It updates the installed plugin of this id. */
+  updates: { version: string } | null;
 }
 
 export interface AppNavItem {

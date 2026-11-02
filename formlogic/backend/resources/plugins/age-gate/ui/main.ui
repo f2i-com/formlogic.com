@@ -1,10 +1,9 @@
 <logic>
 // The age gate's page. The site tells it which app the person came from, the age that app asks,
-// and the ways this site can meet it now, in order (pluginContext): the person's own word where
-// the app accepts it, and the site's face check where it is set up. A declaration goes to this
-// plugin's backend, which answers with the pass FormLogic records. The face check runs in the
-// site's own page (pluginFaceCheck): this page never sees the camera or a picture. Then the site
-// takes the person back (pluginDone).
+// and whether the site's camera check is there for it (pluginContext). The waterfall: the person's
+// own word where the app accepts it, which goes to this plugin's backend; a face check where the app
+// asks for more, which the site's own page runs with the camera (pluginCamera) and this plugin's
+// backend decides. This page never sees the camera or a picture. Then the site takes the person back.
 var age = 0;
 var ready = false;
 var canDeclare = false;
@@ -21,10 +20,9 @@ function _init() {
       lead = 'This page was opened without an app to confirm your age for.';
       return;
     }
-    var methods = context.methods || [];
     age = context.requirement.min;
-    canDeclare = methods.indexOf('declaration') >= 0;
-    canFace = methods.indexOf('faceCheck') >= 0;
+    canDeclare = context.requirement.strength == 'declared';
+    canFace = context.camera === true;
     none = !canDeclare && !canFace;
     lead = context.app.name + ' is for people aged ' + age + ' and over.';
     if (!canDeclare && canFace) lead = lead + ' It asks for a quick check with your camera.';
@@ -50,7 +48,7 @@ function confirmAge() {
 function faceCheck() {
   if (!ready || !canFace) return;
   message = '';
-  softn.backend.call('pluginFaceCheck', {}, function(reply) {
+  softn.backend.call('pluginCamera', {}, function(reply) {
     if (reply && reply.error) message = reply.error;
   });
 }

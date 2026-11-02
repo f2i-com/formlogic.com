@@ -52,11 +52,12 @@ export function HostedAppFrame({
   /** Only trusted built-in clients may use the workspace bridge without hosted actions. */
   workspaceOnly?: boolean;
   /**
-   * A plugin's own page (PluginVerifyPage): the two things it may ask of this page, and nothing
+   * A plugin's own page (PluginVerifyPage): the things it may ask of this page, and nothing
    * else. `pluginContext` answers with what the server said the page is for; `pluginDone` hands
-   * back to the host, which decides where to go from the server's answer, never the frame's.
+   * back to the host, which decides where to go from the server's answer, never the frame's;
+   * `pluginCamera`, only for a plugin granted the camera, opens the site's camera check in this page.
    */
-  plugin?: { context: Record<string, unknown>; onDone: () => void };
+  plugin?: { context: Record<string, unknown>; onDone: () => void; onCamera?: () => void };
   /**
    * The engine the SERVER decided this app runs on, from the runtime GET, with the revision every
    * action sends back in X-FormLogic-Client-Engine. Absent (a server from before the decision, or
@@ -381,6 +382,13 @@ export function HostedAppFrame({
           if (mountNative && plugin && action === "pluginDone") {
             invalidate();
             plugin.onDone();
+            return;
+          }
+          // The site's camera check, for a plugin granted the camera: this page opens it outside the
+          // frame, which cannot have the camera. The frame learns only that it opened.
+          if (mountNative && plugin?.onCamera && action === "pluginCamera") {
+            plugin.onCamera();
+            reply({ result: { opened: true } });
             return;
           }
           if (["workspaceInfo", "workspaceRecords", "workspaceOpen", "workspaceDashboard"].includes(action)) {

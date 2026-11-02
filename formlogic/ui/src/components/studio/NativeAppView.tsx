@@ -21,7 +21,7 @@ const PASS_REFUSALS = ['pass_required', 'plugin_unavailable'];
  * `fullScreen`: the app is the whole page, and names the tab. `signInTo`: where a refused visitor
  * goes. `plugin`: this is a plugin's own page, given its two bridge actions (HostedAppFrame).
  */
-export function NativeAppView({ slug, fullScreen = false, signInTo, plugin }: { slug: string; fullScreen?: boolean; signInTo?: string; plugin?: { context: Record<string, unknown>; onDone: () => void } }) {
+export function NativeAppView({ slug, fullScreen = false, signInTo, plugin }: { slug: string; fullScreen?: boolean; signInTo?: string; plugin?: { context: Record<string, unknown>; onDone: () => void; onCamera?: () => void } }) {
   const userId = useAuthStore(state => state.user?.id);
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
   // `engine`: the server's engine decision for this mount (absent from a server before E0).
