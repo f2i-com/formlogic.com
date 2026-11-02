@@ -24,6 +24,7 @@ vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans:
 vi.mock('../../lib/api', () => ({ api: {
   getNativeProject: mocks.getNativeProject, saveNativeProject: mocks.saveNativeProject, installNativeStarter: mocks.installNativeStarter, publishApp: mocks.publishApp,
   getAppDomains: mocks.getAppDomains, createAppDomain: mocks.createAppDomain,
+  getPassKinds: async () => ({ data: { passes: [] } }),
   isAdminActing: () => false, isDemoMode: () => false,
 } }));
 vi.mock('../../hooks/useAiReady', () => ({ useAiReady: () => ({ ready: true, reason: null, recheck: async () => true }) }));

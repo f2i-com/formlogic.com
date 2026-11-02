@@ -119,6 +119,9 @@ jobs:
           # The suite logs in once per test from one address; the production limit
           # (10/min per IP, fail-closed) would refuse the later tests' logins.
           AUTH_LOGIN_RATE_LIMIT=500
+          # One administrator, for the specs that install a plugin (age-gate.spec.ts); made below.
+          ADMIN_EMAILS=e2e-admin@example.com
+          ADMIN_BOOTSTRAP_SECRET=$(php -r 'echo bin2hex(random_bytes(32));')
           EOF
 
       - name: Import database schema
@@ -185,12 +188,22 @@ jobs:
         working-directory: formlogic/backend
         run: php bin/provision-demo.php
 
+      # The administrator the plugin specs sign in as, made the one way a site makes its first.
+      - name: Make the E2E administrator
+        working-directory: formlogic/backend
+        env:
+          ADMIN_BOOTSTRAP_PASSWORD: e2e-admin-password-1
+        run: php bin/bootstrap-admin.php e2e-admin@example.com "$(grep '^ADMIN_BOOTSTRAP_SECRET=' .env | cut -d= -f2)"
+
       - name: Install Playwright Chrome
         working-directory: formlogic/ui
         run: npx playwright install --with-deps chrome
 
       - name: Run E2E
         working-directory: formlogic/ui
+        env:
+          E2E_ADMIN_EMAIL: e2e-admin@example.com
+          E2E_ADMIN_PASSWORD: e2e-admin-password-1
         run: npm run test:e2e
 
       - name: Server log (on failure)

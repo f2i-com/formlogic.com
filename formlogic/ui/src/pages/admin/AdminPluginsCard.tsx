@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Puzzle } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Card, CardContent } from '../../components/ui/Card';
@@ -23,14 +23,19 @@ export function AdminPluginsCard() {
   const [state, setState] = useState<{ installed: InstalledPlugin[]; available: AvailablePlugin[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // Bumped after every change, to read the list again.
+  const [revision, setRevision] = useState(0);
 
-  const load = useCallback(async () => {
-    const result = await api.adminGetPlugins();
-    if (result.error || !result.data) { setError(result.error ?? 'Could not read the plugins.'); return; }
-    setError(null);
-    setState(result.data);
-  }, []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    void api.adminGetPlugins().then((result) => {
+      if (cancelled) return;
+      if (result.error || !result.data) { setError(result.error ?? 'Could not read the plugins.'); return; }
+      setError(null);
+      setState(result.data);
+    });
+    return () => { cancelled = true; };
+  }, [revision]);
 
   const act = async (id: string, call: () => Promise<{ error?: string }>, done: string) => {
     setBusy(id);
@@ -38,7 +43,7 @@ export function AdminPluginsCard() {
     setBusy(null);
     if (result.error) { toast.error('That did not work', result.error); return; }
     toast.success(done);
-    await load();
+    setRevision((n) => n + 1);
   };
 
   return (

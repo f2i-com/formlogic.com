@@ -29,11 +29,11 @@ export function RequirementsSetting({ value, onChange, disabled, anonymousAccess
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    void api.getPassKinds().then((result) => {
+    void Promise.resolve(api.getPassKinds()).then((result) => {
       if (cancelled) return;
-      if (result.error || !result.data) setFailed(true);
+      if (!result?.data || result.error) setFailed(true);
       else setKinds(result.data.passes);
-    });
+    }, () => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
   }, []);
   const requires = value ?? [];
