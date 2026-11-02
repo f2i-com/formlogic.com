@@ -286,6 +286,12 @@ server {
         add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
     }
 
+    # Files nobody meant to publish, as in the bundled .htaccess: a dot folder or file (.git/config)
+    # and a backup or a dump left beside the site. /api/ is matched first (^~), so its routes are
+    # untouched, and .well-known is answered by the backend below.
+    location ~ /\.(?!well-known(?:/|$)) { return 404; }
+    location ~* \.(?:bak|old|orig|save|swp|sql(?:\.gz)?|sqlite3?(?:-wal|-shm)?|db|tar|tar\.gz|tgz|zip|7z|rar)$ { return 404; }
+
     # A build file that isn't here is a page from an older release asking for it. Answered with the
     # app shell it is an HTML "script", and a CDN keeps that under the script's name.
     location ^~ /assets/ {

@@ -166,6 +166,22 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
   if (!/fastcgi_read_timeout\s+\d{3,}s;/.test(apiBlock)) {
     fail('the nginx example must let /api/ run past nginx\'s 60 seconds: a Studio round, an update and a backup may take ten minutes, and PHP goes on behind a 504');
   }
+  // A .git folder or a backup left in the web root was a plain download: FilesMatch sees a file's own
+  // name only. Both servers refuse them, with one list of endings, and leave /api/ to the backend.
+  const flat = htaccess.replace(/\r\n/g, '\n');
+  const dotRule = 'RewriteRule (?:^|/)\\.(?!well-known(?:/|$)) - [R=404,L]';
+  const endingRule = flat.match(/^\s*RewriteRule \\\.\(\?:([^)]*sql[^\s]*)\)\$ - \[R=404,L,NC\]$/m);
+  const funnel = flat.indexOf('RewriteRule ^api/ api/public/index.php');
+  if (!flat.includes(dotRule)) fail('.htaccess must refuse dot folders and dot files other than .well-known');
+  if (!endingRule) fail('.htaccess must refuse backups and dumps (.sql, .zip, .bak and the rest) in any case');
+  if (funnel < 0 || flat.indexOf(dotRule) < funnel || (endingRule && flat.indexOf(endingRule[0]) < funnel)) {
+    fail('.htaccess must refuse dot files and backups after /api/ has gone to the backend, whose routes end in what they like');
+  }
+  if (!nginx.includes('location ~ /\\.(?!well-known(?:/|$)) { return 404; }')) fail('the nginx example must refuse dot folders and dot files, as .htaccess does');
+  const nginxEnding = nginx.match(/location ~\* \\\.\(\?:(\S*)\)\$ \{ return 404; \}/);
+  if (!nginxEnding || !endingRule || nginxEnding[1] !== endingRule[1]) {
+    fail('the nginx example must refuse the same backup and dump endings as .htaccess');
+  }
   const apache = readme.match(/```apache\n([\s\S]*?)```/)?.[1] ?? '';
   if (!apache) fail('README.md must keep its Apache example, or this check must go with it');
   if (!/RewriteRule \^\/api\/\(\.\*\)\$ \/api\/index\.php \[[^\]]*\bPT\b/.test(apache)) {

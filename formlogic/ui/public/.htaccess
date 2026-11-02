@@ -108,6 +108,14 @@ Options -Indexes
   RewriteCond %{DOCUMENT_ROOT}/api/public/index.php !-f
   RewriteRule ^api/ - [NC,R=404,L]
 
+  # Files nobody meant to publish: a dot folder or file (.git/config, .DS_Store) and a backup or a
+  # dump left beside the site (backup.sql, site.zip, index.php.bak). The FilesMatch blocks above see
+  # a file's own name only, so /.git/config and /backup.sql were plain downloads. /api/ has gone to
+  # the backend by now, so its routes end in what they like; .well-known is the certificate
+  # challenge's and the backend's.
+  RewriteRule (?:^|/)\.(?!well-known(?:/|$)) - [R=404,L]
+  RewriteRule \.(?:bak|old|orig|save|swp|sql(?:\.gz)?|sqlite3?(?:-wal|-shm)?|db|tar|tar\.gz|tgz|zip|7z|rar)$ - [R=404,L,NC]
+
   # Custom-domain launch endpoints served by the backend at the domain ROOT. Map three top-level
   # paths to the API front controller so the backend can answer them per-Host (signed client
   # manifest, same-origin PWA manifest, dynamic Android App Links). Gated on the bundled backend
