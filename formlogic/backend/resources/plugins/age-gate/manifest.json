@@ -1,7 +1,7 @@
 {
-  "id": "formlogic.plugin.age-gate",
+  "id": "formlogic.age-gate",
   "name": "Age gate",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "main": "ui/main.ui",
   "config": {
     "server": {
@@ -14,11 +14,11 @@
     "entry": "server/main.logic",
     "requires": {
       "apiVersion": 1,
-      "capabilities": []
+      "capabilities": ["sql", "crypto"]
     },
     "database": {
       "kind": "private-sqlite",
-      "migrations": []
+      "migrations": ["server/migrations/001.sql"]
     },
     "routes": [
       {
@@ -27,13 +27,50 @@
         "handler": "pass",
         "transaction": "read",
         "authorization": "anonymous"
+      },
+      {
+        "path": "/api/site/camera/start",
+        "method": "POST",
+        "handler": "cameraStart",
+        "transaction": "write",
+        "authorization": "anonymous"
+      },
+      {
+        "path": "/api/site/camera/decide",
+        "method": "POST",
+        "handler": "cameraDecide",
+        "transaction": "write",
+        "authorization": "anonymous"
       }
     ]
   },
   "formlogicPlugin": {
     "id": "formlogic.age-gate",
     "name": "Age gate",
-    "description": "Lets an app ask its members to confirm their age before it opens. Each person confirms it once on this site: it is their own word, not a check of their age.",
+    "description": "Lets an app ask its members to confirm their age before it opens: by their own word, or, where the app asks for more, by a face check with the camera that an AI on the administrator's computer reads. Each person does it once on this site.",
+    "uses": ["camera"],
+    "settings": [
+      {
+        "key": "bufferYears",
+        "label": "Years above the app's age a face check's estimate must reach",
+        "help": "An AI's estimate of age is least sure near the line. Someone whose youngest likely age is not this far above the app's age is asked for a stronger check instead.",
+        "type": "integer",
+        "min": 3,
+        "max": 15,
+        "default": 7
+      },
+      {
+        "key": "turns",
+        "label": "Head turns a face check asks for",
+        "help": "Some AI models tell up from down better than left from right. Try it on yourself to see.",
+        "type": "choice",
+        "options": [
+          { "value": "all", "label": "Left, right, up and down" },
+          { "value": "updown", "label": "Up and down only" }
+        ],
+        "default": "all"
+      }
+    ],
     "passes": [
       {
         "kind": "age",
@@ -41,8 +78,17 @@
         "unit": "years",
         "min": 13,
         "max": 120,
-        "strengths": ["declared"],
-        "issueRoute": "/api/pass"
+        "strengths": ["declared", "estimated"],
+        "issueRoute": "/api/pass",
+        "asks": "people aged {min} and over",
+        "action": "Confirm your age",
+        "require": "Only for people over an age",
+        "minLabel": "Minimum age",
+        "strengthLabels": {
+          "declared": "They confirm their age",
+          "estimated": "A face check with the camera",
+          "verified": "An ID or digital ID check"
+        }
       }
     ]
   }

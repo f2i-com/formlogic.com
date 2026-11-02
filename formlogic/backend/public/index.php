@@ -848,6 +848,30 @@ $container->set(\FormLogic\Controllers\PluginController::class, function (Contai
         $c->get(\FormLogic\Services\AccessGateService::class),
         $c->get(\FormLogic\Services\PluginService::class),
         $c->get(\FormLogic\Services\AppDomainService::class),
+        $c->get(AuditService::class),
+        $c->get(\FormLogic\Services\CameraCheckService::class)
+    );
+});
+// The camera check plugins use, read by the administrator's OAIY (CameraCheckService).
+$container->set(\FormLogic\Services\CameraCheckSettings::class, function (Container $c) {
+    return new \FormLogic\Services\CameraCheckSettings($c->get(\FormLogic\Services\SiteAiDesktopSettings::class));
+});
+$container->set(\FormLogic\Services\CameraCheckService::class, function (Container $c) {
+    return new \FormLogic\Services\CameraCheckService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\CameraCheckSettings::class),
+        $c->get(\FormLogic\Services\SiteDesktopAi::class),
+        $c->get(\FormLogic\Services\AccessGateService::class),
+        $c->get(\FormLogic\Services\PluginService::class),
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class)
+    );
+});
+$container->set(\FormLogic\Controllers\CameraCheckController::class, function (Container $c) {
+    return new \FormLogic\Controllers\CameraCheckController(
+        $c->get(\FormLogic\Services\CameraCheckService::class),
+        $c->get(\FormLogic\Services\CameraCheckSettings::class),
+        $c->get(\FormLogic\Services\SiteDesktopAi::class),
         $c->get(AuditService::class)
     );
 });
@@ -1640,11 +1664,44 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     $group->post('/plugins/{plugin:[a-z0-9][a-z0-9.-]{2,63}}/update', function ($request, $response) use ($plugins, $adminArgs) {
         return $plugins()->adminUpdatePlugin($request, $response, $adminArgs($request));
     });
+    // An administrator's own plugin: read what it asks first, then install it (or its new version).
+    $group->post('/plugin-uploads/inspect', function ($request, $response) use ($plugins) {
+        return $plugins()->adminInspect($request, $response);
+    });
+    $group->post('/plugin-uploads', function ($request, $response) use ($plugins) {
+        return $plugins()->adminUpload($request, $response);
+    });
+    $group->put('/plugins/{plugin:[a-z0-9][a-z0-9.-]{2,63}}/settings', function ($request, $response) use ($plugins, $adminArgs) {
+        return $plugins()->adminSettings($request, $response, $adminArgs($request));
+    });
     $group->put('/plugins/{plugin:[a-z0-9][a-z0-9.-]{2,63}}', function ($request, $response) use ($plugins, $adminArgs) {
         return $plugins()->adminUpdate($request, $response, $adminArgs($request));
     });
     $group->delete('/plugins/{plugin:[a-z0-9][a-z0-9.-]{2,63}}', function ($request, $response) use ($plugins, $adminArgs) {
         return $plugins()->adminRemove($request, $response, $adminArgs($request));
+    });
+    // The camera check's setup (CameraCheckController): which OAIY computer, provider and model read the pictures.
+    $cameraChecks = fn () => $container->get(\FormLogic\Controllers\CameraCheckController::class);
+    $group->get('/camera-check', function ($request, $response) use ($cameraChecks) {
+        return $cameraChecks()->adminGet($request, $response);
+    });
+    $group->get('/camera-check/providers', function ($request, $response) use ($cameraChecks) {
+        return $cameraChecks()->adminProviders($request, $response);
+    });
+    $group->get('/camera-check/models', function ($request, $response) use ($cameraChecks) {
+        return $cameraChecks()->adminModels($request, $response);
+    });
+    $group->put('/camera-check', function ($request, $response) use ($cameraChecks) {
+        return $cameraChecks()->adminPut($request, $response);
+    });
+    $group->delete('/camera-check', function ($request, $response) use ($cameraChecks) {
+        return $cameraChecks()->adminDelete($request, $response);
+    });
+    $group->post('/camera-check/probe', function ($request, $response) use ($cameraChecks) {
+        return $cameraChecks()->adminProbe($request, $response);
+    });
+    $group->post('/camera-check/trial', function ($request, $response) use ($cameraChecks) {
+        return $cameraChecks()->adminTrial($request, $response);
     });
 })->add(new \FormLogic\Middleware\PluginAccountGuardMiddleware($container->get(AppService::class)))
   ->add($adminWritesConfirmed)->add($adminRateLimiter)->add($adminGate)->add($authRequired);
@@ -3299,6 +3356,22 @@ $app->get('/api/plugins/{plugin:[a-z0-9][a-z0-9.-]{2,63}}/context', function ($r
 $app->get('/api/verification/receipts', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\PluginController::class)->receipts($request, $response);
 })->add($authRequired);
+// The camera check, from the site's own page (CameraCheckController): start and send are limited
+// hard, as each try is a chance at a false pass; the page asks where it stands every few seconds.
+$cameraCheckLimiter = new RateLimitMiddleware($rateLimiter, 10, 3600, 'camera_check', true);
+$cameraCheckPollLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'camera_check_poll', true);
+$app->post('/api/camera-checks', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\CameraCheckController::class)->start($request, $response);
+})->add($cameraCheckLimiter)->add($authRequired);
+$app->post('/api/camera-checks/{id:[a-f0-9]{32}}/pictures', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\CameraCheckController::class)->frames($request, $response, $getArgs($request));
+})->add($cameraCheckLimiter)->add($authRequired);
+$app->get('/api/camera-checks/{id:[a-f0-9]{32}}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\CameraCheckController::class)->status($request, $response, $getArgs($request));
+})->add($cameraCheckPollLimiter)->add($authRequired);
+$app->delete('/api/camera-checks/{id:[a-f0-9]{32}}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\CameraCheckController::class)->cancel($request, $response, $getArgs($request));
+})->add($cameraCheckPollLimiter)->add($authRequired);
 $app->delete('/api/verification/receipts/{id}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\PluginController::class)->revoke($request, $response, $getArgs($request));
 })->add($pluginLimiter)->add($authRequired);

@@ -84,6 +84,18 @@ final class SiteAiDesktopSettings
     /** Pin one of the administrator's computers, with the key it has published now. */
     public function choose(string $adminUserId, string $connectionId): array
     {
+        $chosen = $this->pin($adminUserId, $connectionId);
+        $this->write($chosen);
+        return $chosen;
+    }
+
+    /**
+     * One of the administrator's linked computers as a target to seal to, with the key it has
+     * published now: {ownerUserId, connectionId, instanceId, publicKey, providerId, deviceName,
+     * chosenAt}. Saved nowhere; the camera check keeps its own (CameraCheckSettings).
+     */
+    public function pin(string $adminUserId, string $connectionId): array
+    {
         $stmt = $this->pdo->prepare(
             'SELECT id, desktop_instance_id, device_name, e2e_public_key FROM desktop_connections WHERE id = ? AND owner_user_id = ?'
         );
@@ -100,7 +112,7 @@ final class SiteAiDesktopSettings
         if (str_starts_with((string) $row['desktop_instance_id'], 'oauth-')) {
             throw new \InvalidArgumentException('That computer has not checked in yet. Open OAIY on it and try again.');
         }
-        $chosen = [
+        return [
             'ownerUserId' => $adminUserId,
             'connectionId' => (string) $row['id'],
             'instanceId' => (string) $row['desktop_instance_id'],
@@ -109,8 +121,6 @@ final class SiteAiDesktopSettings
             'deviceName' => (string) ($row['device_name'] ?? ''),
             'chosenAt' => gmdate('c'),
         ];
-        $this->write($chosen);
-        return $chosen;
     }
 
     public function clear(): void

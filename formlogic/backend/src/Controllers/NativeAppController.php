@@ -184,6 +184,8 @@ class NativeAppController
             }
             $input = $request->getParsedBody();
             if (!is_array($input) || !is_string($input['path'] ?? null) || !preg_match('~^/api/[a-zA-Z0-9/_-]+$~D', $input['path']) || !in_array($input['method'] ?? null, ['GET','POST','PUT','DELETE'], true)) throw new \InvalidArgumentException('Provide an app API path and method');
+            // A plugin's /api/site/ routes are the site's to call (CameraCheckService), never its page's.
+            if ($plugin !== null && str_starts_with(strtolower($input['path']), PluginService::SITE_ROUTE_PREFIX)) throw new \RuntimeException('Not found', 404);
             // A plugin is the site's own, on no one's plan.
             if ($plugin === null && in_array($input['method'], ['POST', 'PUT'], true) && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) throw new \RuntimeException('The app owner’s cloud access has expired. Records remain available to read and export.', 402);
             $headers = is_array($input['headers'] ?? null) ? array_change_key_case($input['headers'], CASE_LOWER) : [];

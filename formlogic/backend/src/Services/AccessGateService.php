@@ -63,7 +63,7 @@ final class AccessGateService
             $min = $requirement['min'] ?? null;
             $strength = $requirement['strength'] ?? 'declared';
             if (!is_string($plugin) || !preg_match(PluginService::ID_PATTERN, $plugin) || !is_string($kind) || !preg_match('/^[a-z][a-z0-9_-]{0,15}$/D', $kind)
-                || !is_int($min) || $min < 0 || $min > 65535 || !is_string($strength) || !isset(self::ASSURANCE[$strength])) {
+                || !is_int($min) || $min < 0 || $min > 1000000 || !is_string($strength) || !isset(self::ASSURANCE[$strength])) {
                 continue;
             }
             $out[$plugin . '|' . $kind] = ['plugin' => $plugin, 'kind' => $kind, 'min' => $min, 'strength' => $strength];
@@ -122,19 +122,28 @@ final class AccessGateService
         return null;
     }
 
-    /** One requirement as a page shows it: what it asks, whether it is met, and where to meet it. */
+    /**
+     * One requirement as a page shows it: what it asks, in the plugin's own words (PluginService:
+     * `asks`, with the app's value in it, and `action`), whether it is met, and where to meet it.
+     */
     public function describe(array $app, array $requirement, bool $satisfied): array
     {
         $grant = $this->plugins?->grant($requirement['plugin'], $requirement['kind']);
         $plugin = $this->plugins?->find($requirement['plugin']);
+        $label = $grant['label'] ?? $requirement['kind'];
+        $unit = $grant['unit'] ?? '';
+        $asks = ($grant['asks'] ?? '') !== '' ? str_replace('{min}', (string) $requirement['min'], $grant['asks'])
+            : trim("{$label} {$requirement['min']} {$unit}") . ' or more';
         return [
             'plugin' => $requirement['plugin'],
             'pluginName' => $plugin['name'] ?? $requirement['plugin'],
             'kind' => $requirement['kind'],
-            'label' => $grant['label'] ?? $requirement['kind'],
-            'unit' => $grant['unit'] ?? '',
+            'label' => $label,
+            'unit' => $unit,
             'min' => $requirement['min'],
             'strength' => $requirement['strength'],
+            'asks' => $asks,
+            'action' => ($grant['action'] ?? '') !== '' ? $grant['action'] : 'Continue with ' . ($plugin['name'] ?? $requirement['plugin']),
             'available' => $grant !== null,
             'satisfied' => $satisfied,
             'verifyPath' => '/plugins/' . rawurlencode($requirement['plugin']) . '/verify?app=' . rawurlencode((string) ($app['slug'] ?? ''))
@@ -159,13 +168,10 @@ final class AccessGateService
         return ['satisfied' => !in_array(false, array_column($each, 'satisfied'), true), 'requirements' => $each];
     }
 
-    /** How a page says an unmet requirement, in words. An age pass reads as an age. */
+    /** How a page says an unmet requirement: "This app is for {asks}." and the way to it, in the plugin's words. */
     public static function sentence(array $described): string
     {
-        if ($described['kind'] === 'age') {
-            return sprintf('This app is for people aged %d and over. Confirm your age to open it.', $described['min']);
-        }
-        return sprintf('This app needs %s %d%s from %s.', $described['label'], $described['min'], $described['unit'] !== '' ? ' ' . $described['unit'] : '', $described['pluginName']);
+        return sprintf('This app is for %s. %s to open it.', $described['asks'], $described['action']);
     }
 
     /**
@@ -212,8 +218,8 @@ final class AccessGateService
         $strong = array_keys(array_filter(self::ASSURANCE, fn(int $rank) => $rank >= self::ASSURANCE[$requirement['strength']]));
         $marks = implode(',', array_fill(0, count($strong), '?'));
         $stmt = $this->pdo->prepare(
-            "SELECT 1 FROM access_receipts
-             WHERE user_id = ? AND plugin_id = ? AND kind = ? AND minimum_age >= ? AND assurance IN ({$marks})
+            "SELECT 1 FROM passes
+             WHERE user_id = ? AND plugin_id = ? AND kind = ? AND value >= ? AND strength IN ({$marks})
                AND revoked_at IS NULL AND expires_at > ?
              LIMIT 1"
         );
@@ -256,6 +262,11 @@ final class AccessGateService
         if ($live === null) {
             throw new \InvalidArgumentException('This plugin is turned off on this site.');
         }
+        // A plugin that uses the camera issues anything stronger than a declaration through a
+        // camera check (CameraCheckService), never from its own route.
+        if (in_array('camera', $plugin['uses'] ?? [], true)) {
+            $live['strengths'] = array_values(array_intersect($live['strengths'], ['declared']));
+        }
         $receipt = $this->issueFromPlugin($live, $plugin['manifestId'], $userId, $pass);
         $recorded = ['kind' => $receipt['kind'], 'value' => $receipt['value'], 'strength' => $receipt['strength'], 'expiresAt' => $receipt['expiresAt']];
         if (is_object($body)) $body->recorded = $recorded; else $result['body'] = (array) $body + ['recorded' => $recorded];
@@ -294,8 +305,8 @@ final class AccessGateService
             'expiresAt' => gmdate('Y-m-d H:i:s', $now + self::receiptDays() * 86400),
         ];
         $this->pdo->prepare(
-            'INSERT INTO access_receipts (id, user_id, plugin_id, kind, minimum_age, assurance, method, verifier, issued_at, expires_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)'
+            'INSERT INTO passes (id, user_id, plugin_id, kind, value, strength, method, issued_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )->execute([$id, $userId, $pluginId, $kind, $value, $strength, $method, $receipt['issuedAt'], $receipt['expiresAt']]);
         $this->met = [];
         return $receipt;
@@ -305,8 +316,8 @@ final class AccessGateService
     public function receiptsFor(string $userId): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, plugin_id, kind, minimum_age, assurance, method, issued_at, expires_at, revoked_at
-             FROM access_receipts WHERE user_id = ? ORDER BY issued_at DESC LIMIT 100'
+            'SELECT id, plugin_id, kind, value, strength, method, issued_at, expires_at, revoked_at
+             FROM passes WHERE user_id = ? ORDER BY issued_at DESC LIMIT 100'
         );
         $stmt->execute([$userId]);
         $now = gmdate('Y-m-d H:i:s');
@@ -318,8 +329,8 @@ final class AccessGateService
                 'pluginName' => $this->plugins?->find((string) $row['plugin_id'])['name'] ?? $row['plugin_id'],
                 'kind' => $row['kind'],
                 'label' => $grant['label'] ?? $row['kind'],
-                'value' => (int) $row['minimum_age'],
-                'strength' => $row['assurance'],
+                'value' => (int) $row['value'],
+                'strength' => $row['strength'],
                 'method' => $row['method'],
                 'issuedAt' => $row['issued_at'],
                 'expiresAt' => $row['expires_at'],
@@ -332,7 +343,7 @@ final class AccessGateService
     /** Withdraw one of the member's own passes. False when there is no such live pass of theirs. */
     public function revoke(string $userId, string $receiptId): bool
     {
-        $stmt = $this->pdo->prepare('UPDATE access_receipts SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL');
+        $stmt = $this->pdo->prepare('UPDATE passes SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL');
         $stmt->execute([gmdate('Y-m-d H:i:s'), $receiptId, $userId]);
         $this->met = [];
         return $stmt->rowCount() === 1;

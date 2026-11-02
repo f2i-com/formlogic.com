@@ -1,29 +1,40 @@
 <logic>
-// The age gate's page. The site tells it which app the person came from and the age that app asks
-// (pluginContext); the person's own declaration goes to this plugin's backend, which answers with
-// the pass FormLogic records; then the site takes them back (pluginDone).
+// The age gate's page. The site tells it which app the person came from, the age that app asks,
+// and the ways this site can meet it now, in order (pluginContext): the person's own word where
+// the app accepts it, and the site's face check where it is set up. A declaration goes to this
+// plugin's backend, which answers with the pass FormLogic records. The face check runs in the
+// site's own page (pluginFaceCheck): this page never sees the camera or a picture. Then the site
+// takes the person back (pluginDone).
 var age = 0;
 var ready = false;
+var canDeclare = false;
+var canFace = false;
+var none = false;
 var heading = 'Confirm your age';
 var lead = 'Loading...';
-var button = 'Loading...';
+var declareLabel = 'Loading...';
 var message = '';
 function _init() {
   softn.backend.call('pluginContext', {}, function(reply) {
     var context = reply && reply.result ? reply.result : null;
     if (!context || !context.requirement || !context.app) {
       lead = 'This page was opened without an app to confirm your age for.';
-      button = 'Nothing to confirm';
       return;
     }
+    var methods = context.methods || [];
     age = context.requirement.min;
+    canDeclare = methods.indexOf('declaration') >= 0;
+    canFace = methods.indexOf('faceCheck') >= 0;
+    none = !canDeclare && !canFace;
     lead = context.app.name + ' is for people aged ' + age + ' and over.';
-    button = 'I am ' + age + ' or older';
+    if (!canDeclare && canFace) lead = lead + ' It asks for a quick check with your camera.';
+    if (none) lead = lead + ' It asks for an age check this site does not offer yet. Ask the app\'s owner.';
+    declareLabel = 'I am ' + age + ' or older';
     ready = true;
   });
 }
 function confirmAge() {
-  if (!ready) return;
+  if (!ready || !canDeclare) return;
   ready = false;
   message = 'Saving...';
   softn.net.fetch('https://age-gate.plugin/api/pass', {method:'POST',body:{minimumAge:age,confirmed:true}}, function(response) {
@@ -36,11 +47,24 @@ function confirmAge() {
     softn.backend.call('pluginDone', {}, function() {});
   });
 }
+function faceCheck() {
+  if (!ready || !canFace) return;
+  message = '';
+  softn.backend.call('pluginFaceCheck', {}, function(reply) {
+    if (reply && reply.error) message = reply.error;
+  });
+}
 </logic>
 <Stack padding="lg" gap="md">
   <Heading level={2}>{heading}</Heading>
   <Text size="lg">{lead}</Text>
-  <Button @click={confirmAge}>{button}</Button>
-  <Text size="sm" variant="muted" lineHeight="relaxed">This is your own word, not a check of your age. It is kept with your account on this site and opens other apps here that ask the same, until it expires or you withdraw it in Settings. Nothing else about you is kept.</Text>
+  #if (canDeclare)
+    <Button @click={confirmAge}>{declareLabel}</Button>
+    <Text size="sm" variant="muted" lineHeight="relaxed">This is your own word, not a check of your age. It is kept with your account on this site and opens other apps here that ask the same, until it expires or you withdraw it in Settings. Nothing else about you is kept.</Text>
+  #end
+  #if (canFace)
+    <Button variant={canDeclare ? 'secondary' : 'primary'} @click={faceCheck}>Check with your camera</Button>
+    <Text size="sm" variant="muted" lineHeight="relaxed">This site's own page takes a few pictures as you turn your head. An AI on the site administrator's computer checks them, and they are deleted. Only the result is kept.</Text>
+  #end
   <Text size="sm">{message}</Text>
 </Stack>

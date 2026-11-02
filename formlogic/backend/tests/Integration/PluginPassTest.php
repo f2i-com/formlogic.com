@@ -130,7 +130,7 @@ final class PluginPassTest extends TestCase
             self::$pdo->prepare('DELETE FROM plugins WHERE manifest_id = ?')->execute([$manifestId]);
         }
         foreach ($this->userIds as $uid) {
-            self::$pdo->prepare('DELETE FROM access_receipts WHERE user_id = ?')->execute([$uid]);
+            self::$pdo->prepare('DELETE FROM passes WHERE user_id = ?')->execute([$uid]);
             self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$uid]);
         }
         $this->userIds = [];
@@ -190,9 +190,9 @@ final class PluginPassTest extends TestCase
         self::assertSame([$this->pluginId, 'age', 18, 'declared', 'self_declaration', 'Test plugin'],
             [$listed[0]['plugin'], $listed[0]['kind'], $listed[0]['value'], $listed[0]['strength'], $listed[0]['method'], $listed[0]['pluginName']]);
         // What is kept: who, which plugin, what for, the value, how, until when. Nothing else.
-        $columns = array_keys((array) self::$pdo->query('SELECT * FROM access_receipts WHERE id = ' . self::$pdo->quote($listed[0]['id']))->fetch(PDO::FETCH_ASSOC));
+        $columns = array_keys((array) self::$pdo->query('SELECT * FROM passes WHERE id = ' . self::$pdo->quote($listed[0]['id']))->fetch(PDO::FETCH_ASSOC));
         sort($columns);
-        self::assertSame(['assurance', 'expires_at', 'id', 'issued_at', 'kind', 'method', 'minimum_age', 'plugin_id', 'revoked_at', 'user_id', 'verifier'], $columns);
+        self::assertSame(['expires_at', 'id', 'issued_at', 'kind', 'method', 'plugin_id', 'revoked_at', 'strength', 'user_id', 'value'], $columns);
 
         self::assertSame(404, $this->call('DELETE', "/api/verification/receipts/{$listed[0]['id']}", $this->ownerId)->getStatusCode(), 'only its member withdraws it');
         self::assertSame(200, $this->call('DELETE', "/api/verification/receipts/{$listed[0]['id']}", $this->memberId)->getStatusCode());
@@ -255,7 +255,7 @@ final class PluginPassTest extends TestCase
         self::assertSame(403, $this->call('GET', "/api/app/{$theOthers}", $this->memberId)->getStatusCode(), 'one plugin\'s pass is not another\'s');
 
         // An expired pass opens nothing.
-        self::$pdo->prepare('UPDATE access_receipts SET expires_at = ? WHERE user_id = ?')->execute([gmdate('Y-m-d H:i:s', time() - 60), $this->memberId]);
+        self::$pdo->prepare('UPDATE passes SET expires_at = ? WHERE user_id = ?')->execute([gmdate('Y-m-d H:i:s', time() - 60), $this->memberId]);
         self::assertSame(403, $this->call('GET', "/api/app/{$adult}", $this->memberId)->getStatusCode());
     }
 
@@ -275,7 +275,7 @@ final class PluginPassTest extends TestCase
 
         // Its app is gone already (a test row); removing the plugin withdraws what it issued.
         $this->plugins->remove($this->pluginId);
-        self::assertSame(0, (int) self::$pdo->query('SELECT COUNT(*) FROM access_receipts WHERE revoked_at IS NULL AND user_id = ' . self::$pdo->quote($this->memberId))->fetchColumn());
+        self::assertSame(0, (int) self::$pdo->query('SELECT COUNT(*) FROM passes WHERE revoked_at IS NULL AND user_id = ' . self::$pdo->quote($this->memberId))->fetchColumn());
         self::assertSame('plugin_unavailable', $this->json($this->call('GET', "/api/app/{$slug}", $this->memberId))['code'] ?? null);
         // The app keeps its setting and says what is missing.
         self::assertSame($this->pluginId, self::$apps->getAppBySlug($slug)['settings']['requires'][0]['plugin'] ?? null);
@@ -400,6 +400,14 @@ final class PluginPassTest extends TestCase
             'a reversed range' => $manifest(['id' => 'example.plugin', 'name' => 'x', 'passes' => [['min' => 50, 'max' => 10] + self::AGE]]),
             'a kind twice' => $manifest(['id' => 'example.plugin', 'name' => 'x', 'passes' => [self::AGE, self::AGE]]),
             'five passes' => $manifest(['id' => 'example.plugin', 'name' => 'x', 'passes' => array_map(fn ($n) => ['kind' => 'k' . $n] + self::AGE, range(1, 5))]),
+            'a use the site has not got' => $manifest(['uses' => ['microphone']] + $good),
+            'the camera without its routes' => $manifest(['uses' => ['camera']] + $good),
+            'a pass issued on a site route' => $manifest(['id' => 'example.plugin', 'name' => 'x', 'passes' => [['issueRoute' => '/api/site/camera/decide'] + self::AGE]],
+                [['path' => '/api/site/camera/decide', 'method' => 'POST']]),
+            'a sandbox permission plugins may not have' => ['server' => ['routes' => [['path' => '/api/pass', 'method' => 'POST']], 'requires' => ['capabilities' => ['photos']]], 'formlogicPlugin' => $good],
+            'a setting with no type' => $manifest(['settings' => [['key' => 'x', 'label' => 'X']]] + $good),
+            'a setting whose default is out of range' => $manifest(['settings' => [['key' => 'x', 'label' => 'X', 'type' => 'integer', 'min' => 1, 'max' => 5, 'default' => 9]]] + $good),
+            'a choice whose default is not one' => $manifest(['settings' => [['key' => 'x', 'label' => 'X', 'type' => 'choice', 'options' => [['value' => 'a']], 'default' => 'b']]] + $good),
         ] as $what => $bad) {
             try {
                 PluginService::pluginManifest($bad);
@@ -407,10 +415,28 @@ final class PluginPassTest extends TestCase
             } catch (\InvalidArgumentException) {
             }
         }
+        // Settings handed to a plugin are held to their schema: a value that does not fit is its default.
+        $schema = PluginService::pluginManifest($manifest(['settings' => [
+            ['key' => 'n', 'label' => 'N', 'type' => 'integer', 'min' => 1, 'max' => 5, 'default' => 2],
+            ['key' => 'c', 'label' => 'C', 'type' => 'choice', 'options' => [['value' => 'a'], ['value' => 'b']], 'default' => 'a'],
+            ['key' => 'b', 'label' => 'B', 'type' => 'boolean', 'default' => false],
+        ]] + $good))['settings'];
+        self::assertSame(['n' => 4, 'c' => 'a', 'b' => true], PluginService::settingsValues($schema, ['n' => 4, 'c' => 'z', 'b' => true, 'other' => 1]));
+        // An upload cannot take a built-in's id.
+        $upload = ['files' => ['manifest.json' => json_encode(['id' => 'x', 'main' => 'ui/main.ui', 'version' => '1', 'formlogicPlugin' => ['id' => 'formlogic.mine', 'name' => 'Mine']]), 'ui/main.ui' => '<Text>Hi</Text>']];
+        try {
+            $this->plugins->inspect($upload, 'upload');
+            self::fail('an upload posed as a built-in');
+        } catch (\InvalidArgumentException $e) {
+            self::assertStringContainsString('formlogic.', $e->getMessage());
+        }
+        $upload['files']['manifest.json'] = str_replace('formlogic.mine', 'someone.mine', $upload['files']['manifest.json']);
+        self::assertSame(['someone.mine', null], [($read = $this->plugins->inspect($upload, 'upload'))['id'], $read['updates']]);
+
         // The plugin that ships with FormLogic reads as one, and is a valid SoftN project.
         $builtin = $this->plugins->builtins()['formlogic.age-gate'] ?? null;
         self::assertNotNull($builtin);
-        self::assertSame([['kind' => 'age', 'min' => 13, 'max' => 120, 'strengths' => ['declared'], 'issueRoute' => '/api/pass']],
+        self::assertSame([['kind' => 'age', 'min' => 13, 'max' => 120, 'strengths' => ['declared', 'estimated'], 'issueRoute' => '/api/pass']],
             array_map(fn ($p) => array_intersect_key($p, array_flip(['kind', 'min', 'max', 'strengths', 'issueRoute'])), $builtin['passes']));
     }
 
@@ -423,9 +449,11 @@ final class PluginPassTest extends TestCase
         // A copy of the plugin that ships, so a newer version can be laid beside it.
         $shipped = dirname(__DIR__, 2) . '/resources/plugins/age-gate';
         $builtins = self::$tmpRoot . '/builtins-' . bin2hex(random_bytes(3));
-        foreach (['manifest.json', 'ui/main.ui', 'server/main.logic'] as $file) {
+        $all = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($shipped, \FilesystemIterator::SKIP_DOTS));
+        foreach ($all as $source) {
+            $file = str_replace('\\', '/', substr((string) $source, strlen($shipped) + 1));
             @mkdir(dirname("{$builtins}/age-gate/{$file}"), 0777, true);
-            copy("{$shipped}/{$file}", "{$builtins}/age-gate/{$file}");
+            copy((string) $source, "{$builtins}/age-gate/{$file}");
         }
         $plugins = new PluginService(self::$mysql, self::$apps, $native, $builtins);
         $gate = new AccessGateService(self::$mysql, $plugins);
@@ -434,7 +462,8 @@ final class PluginPassTest extends TestCase
 
         $plugin = $plugins->installBuiltin('formlogic.age-gate', $this->ownerId);
         $this->appIds[] = $plugin['appId'];
-        self::assertSame(['formlogic.age-gate', '1.0.0', true], [$plugin['manifestId'], $plugin['version'], $plugin['enabled']]);
+        self::assertSame(['formlogic.age-gate', '1.1.0', true, 'builtin', ['camera']], [$plugin['manifestId'], $plugin['version'], $plugin['enabled'], $plugin['source'], $plugin['uses']]);
+        self::assertSame(['bufferYears' => 7, 'turns' => 'all'], $plugin['settings'], 'its settings start at their defaults');
         $app = self::$apps->getApp($plugin['appId']);
         self::assertSame([PluginService::SYSTEM_USER_ID, 'published'], [$app['ownerId'], $app['status']]);
         self::assertNotNull($plugins->forApp($app));
@@ -453,19 +482,26 @@ final class PluginPassTest extends TestCase
 
         // A newer version laid beside it is offered, taken, and then no longer offered.
         $manifest = json_decode((string) file_get_contents("{$builtins}/age-gate/manifest.json"), true);
-        $manifest['version'] = '1.0.1';
+        $manifest['version'] = '1.1.1';
         file_put_contents("{$builtins}/age-gate/manifest.json", json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         $plugins = new PluginService(self::$mysql, self::$apps, $native, $builtins);
-        self::assertSame('1.0.1', $plugins->pendingUpdate($plugins->find('formlogic.age-gate'))['version'] ?? null);
+        self::assertSame('1.1.1', $plugins->pendingUpdate($plugins->find('formlogic.age-gate'))['version'] ?? null);
+        $plugins->setSettings('formlogic.age-gate', ['bufferYears' => 10]);
+        try {
+            $plugins->setSettings('formlogic.age-gate', ['bufferYears' => 99]);
+            self::fail('a setting out of its range');
+        } catch (\InvalidArgumentException) {
+        }
         $updated = $plugins->updateBuiltin('formlogic.age-gate');
-        self::assertSame('1.0.1', $updated['version']);
+        self::assertSame('1.1.1', $updated['version']);
+        self::assertSame(['bufferYears' => 10, 'turns' => 'all'], $updated['settings'], 'settings that still fit are kept');
         self::assertNull($plugins->pendingUpdate($updated));
         self::assertSame(1, $this->receiptCount($this->memberId), 'its passes stay');
 
         $plugins->remove('formlogic.age-gate');
         self::assertNull($plugins->find('formlogic.age-gate'));
         self::assertNull(self::$apps->getApp($plugin['appId']));
-        self::assertSame(0, (int) self::$pdo->query('SELECT COUNT(*) FROM access_receipts WHERE revoked_at IS NULL AND user_id = ' . self::$pdo->quote($this->memberId))->fetchColumn());
+        self::assertSame(0, (int) self::$pdo->query('SELECT COUNT(*) FROM passes WHERE revoked_at IS NULL AND user_id = ' . self::$pdo->quote($this->memberId))->fetchColumn());
     }
 
     /** A plugin's answer on its own route, recorded (or not) for the member. Returns what the page gets. */
@@ -484,7 +520,7 @@ final class PluginPassTest extends TestCase
 
     private function receiptCount(string $userId): int
     {
-        $stmt = self::$pdo->prepare('SELECT COUNT(*) FROM access_receipts WHERE user_id = ?');
+        $stmt = self::$pdo->prepare('SELECT COUNT(*) FROM passes WHERE user_id = ?');
         $stmt->execute([$userId]);
         return (int) $stmt->fetchColumn();
     }
@@ -494,7 +530,7 @@ final class PluginPassTest extends TestCase
     {
         $manifestId = 'test.plugin-' . bin2hex(random_bytes(4));
         $now = gmdate('Y-m-d H:i:s');
-        self::$pdo->prepare("INSERT INTO plugins (id, manifest_id, scope, app_id, name, version, enabled, grants, installed_by, installed_at, updated_at) VALUES (?, ?, 'site', ?, 'Test plugin', '1.0.0', 1, ?, NULL, ?, ?)")
+        self::$pdo->prepare("INSERT INTO plugins (id, manifest_id, scope, source, app_id, name, version, enabled, grants, uses, settings_schema, settings, installed_by, installed_at, updated_at) VALUES (?, ?, 'site', 'upload', ?, 'Test plugin', '1.0.0', 1, ?, '[]', '[]', '{}', NULL, ?, ?)")
             ->execute([bin2hex(random_bytes(16)), $manifestId, 'no-app-' . bin2hex(random_bytes(4)), json_encode($grants), $now, $now]);
         $this->pluginIds[] = $manifestId;
         $this->fresh();

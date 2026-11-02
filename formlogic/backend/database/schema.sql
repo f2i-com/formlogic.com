@@ -699,39 +699,68 @@ CREATE TABLE `backup_link_codes` (
   CONSTRAINT `fk_backup_link_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- A member's passes (AccessGateService): which plugin issued it, what for, the value, how, until when.
-CREATE TABLE `access_receipts` (
+-- Passes (AccessGateService): a person's pass from a plugin, of a kind, for a value, at a strength, by a method, until when.
+CREATE TABLE `passes` (
   `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `plugin_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `plugin_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `kind` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `minimum_age` smallint unsigned NOT NULL,
-  `assurance` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `value` int unsigned NOT NULL,
+  `strength` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
   `method` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `verifier` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `issued_at` datetime NOT NULL,
   `expires_at` datetime NOT NULL,
   `revoked_at` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
-  KEY `idx_access_receipts_user` (`user_id`,`kind`,`expires_at`),
-  CONSTRAINT `fk_access_receipts_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+  KEY `idx_passes_user` (`user_id`,`plugin_id`,`kind`,`expires_at`),
+  CONSTRAINT `fk_passes_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Installed plugins (PluginService): a SoftN project held as an app of the system Plugins account.
+-- Installed plugins (PluginService): a SoftN project held as an app of the system Plugins account, and what it was granted.
 CREATE TABLE `plugins` (
   `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `manifest_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `scope` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'site',
+  `source` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'builtin',
   `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `name` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
   `version` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '1',
   `grants` json NOT NULL,
+  `uses` json NOT NULL,
+  `settings_schema` json NOT NULL,
+  `settings` json NOT NULL,
   `installed_by` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `installed_at` datetime NOT NULL,
   `updated_at` datetime NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_plugins_manifest_scope` (`manifest_id`,`scope`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Camera checks (CameraCheckService): the steps a plugin asked for, how it went, the outcome. Never a picture or the model's answer.
+CREATE TABLE `camera_checks` (
+  `id` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `mode` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `plugin_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `kind` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `min_value` int unsigned NOT NULL DEFAULT '0',
+  `steps` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `turn` mediumtext COLLATE utf8mb4_unicode_ci,
+  `status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `outcome` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `message` varchar(300) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `relay_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `relay_owner` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `channel` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL,
+  `submitted_at` datetime DEFAULT NULL,
+  `finished_at` datetime DEFAULT NULL,
+  `expires_at` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_camera_checks_user` (`user_id`,`created_at`),
+  CONSTRAINT `fk_camera_checks_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;

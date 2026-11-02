@@ -60,48 +60,11 @@ final class SiteDesktopAi
     public function chat(array $messages, ?string $requester, ?callable $onDelta, ?callable $onHeartbeat, int $timeoutSeconds): array
     {
         $site = $this->active() ?? throw new \RuntimeException('This site\'s AI is not served from OAIY.');
-        $desktopKey = base64_decode($site['publicKey'], true);
-        if ($desktopKey === false || strlen($desktopKey) !== SODIUM_CRYPTO_BOX_PUBLICKEYBYTES) {
-            throw new \RuntimeException('The pinned OAIY key is unreadable. Choose the computer again in Admin.');
-        }
-        $ephemeral = sodium_crypto_box_keypair();
-        $pair = sodium_crypto_box_keypair_from_secretkey_and_publickey(sodium_crypto_box_secretkey($ephemeral), $desktopKey);
-        $turn = [
-            'v' => 1,
-            'kind' => 'chat',
-            'providerId' => $site['providerId'],
-            'threadId' => 'site-' . bin2hex(random_bytes(12)),
-            'clientSeq' => 1,
-            'messages' => array_values($messages),
-        ];
-        $envelope = self::seal($turn, 0, 0, $pair);
-        if (strlen((string) base64_decode($envelope, true)) > DesktopAiRelayService::MAX_ENVELOPE_BYTES) {
-            throw new SiteAiTooLargeException('This is too large for the site\'s AI on OAIY, which takes about 250 KB a request. Use a smaller picture or fewer of them.');
-        }
-        $this->assertCanTake();
-
+        [$id, $pair] = $this->send($site, ['kind' => 'chat', 'messages' => array_values($messages)], $requester);
         try {
-            $queued = $this->relay->enqueue($site['ownerUserId'], $requester ?? $site['ownerUserId'], [
-                'kind' => 'chat',
-                'providerId' => $site['providerId'],
-                'targetInstanceId' => $site['instanceId'],
-                'ephPub' => base64_encode(sodium_crypto_box_publickey($ephemeral)),
-                'envelope' => $envelope,
-            ]);
-        } catch (\RuntimeException $e) {
-            if (in_array($e->getMessage(), ['queue_full_user', 'queue_full_desktop'], true)) {
-                throw new SiteAiBusyException($e->getMessage() === 'queue_full_user'
-                    ? 'You already have requests waiting for the site\'s AI. Try again when they finish.'
-                    : 'The site\'s AI is busy with other people\'s requests. Try again in a moment.');
-            }
-            throw $e;
-        } finally {
-            sodium_memzero($ephemeral);
-        }
-        $id = (string) $queued['request']['requestId'];
-
-        try {
-            return $this->read($id, $site['ownerUserId'], $pair, $onDelta, $onHeartbeat, $timeoutSeconds);
+            $answer = $this->read($id, $site['ownerUserId'], $pair, $onDelta, $onHeartbeat, $timeoutSeconds);
+            unset($answer['final']);
+            return $answer;
         } catch (\Throwable $e) {
             // Nobody waits for it now: the computer must not spend its one lane on it later.
             $this->relay->abandon($id, $site['ownerUserId']);
@@ -112,35 +75,151 @@ final class SiteDesktopAi
     }
 
     /**
+     * Seal one turn to $target (a pinned computer: ownerUserId, connectionId, instanceId, publicKey,
+     * providerId) and queue it, the member $requester asking (null: the computer's owner). $body is
+     * the turn's own part: `kind` (chat, models or providers), and `messages` and `model` for a chat.
+     * Never a tool grant. Returns [requestId, the turn's key pair]: the frames back open with it.
+     * Refused at once when the computer is offline or already has MAX_WAITING turns.
+     *
+     * @return array{0: string, 1: string}
+     */
+    public function send(array $target, array $body, ?string $requester): array
+    {
+        $desktopKey = base64_decode((string) ($target['publicKey'] ?? ''), true);
+        if ($desktopKey === false || strlen($desktopKey) !== SODIUM_CRYPTO_BOX_PUBLICKEYBYTES) {
+            throw new \RuntimeException('The pinned OAIY key is unreadable. Choose the computer again in Admin.');
+        }
+        $kind = (string) ($body['kind'] ?? 'chat');
+        unset($body['kind'], $body['toolGrant'], $body['toolMode']);
+        $ephemeral = sodium_crypto_box_keypair();
+        $pair = sodium_crypto_box_keypair_from_secretkey_and_publickey(sodium_crypto_box_secretkey($ephemeral), $desktopKey);
+        $turn = [
+            'v' => 1,
+            'kind' => $kind,
+            'providerId' => $target['providerId'],
+            'threadId' => 'site-' . bin2hex(random_bytes(12)),
+            'clientSeq' => 1,
+        ] + $body;
+        $envelope = self::seal($turn, 0, 0, $pair);
+        if (strlen((string) base64_decode($envelope, true)) > DesktopAiRelayService::MAX_ENVELOPE_BYTES) {
+            sodium_memzero($ephemeral);
+            sodium_memzero($pair);
+            throw new SiteAiTooLargeException('This is too large for the site\'s AI on OAIY, which takes about 250 KB a request. Use a smaller picture or fewer of them.');
+        }
+        if (($refusal = $this->unavailableFor($target)) !== null) {
+            sodium_memzero($ephemeral);
+            sodium_memzero($pair);
+            throw $refusal;
+        }
+
+        try {
+            $queued = $this->relay->enqueue($target['ownerUserId'], $requester ?? $target['ownerUserId'], [
+                'kind' => $kind,
+                'providerId' => $target['providerId'],
+                'targetInstanceId' => $target['instanceId'],
+                'ephPub' => base64_encode(sodium_crypto_box_publickey($ephemeral)),
+                'envelope' => $envelope,
+            ]);
+        } catch (\RuntimeException $e) {
+            sodium_memzero($pair);
+            if (in_array($e->getMessage(), ['queue_full_user', 'queue_full_desktop'], true)) {
+                throw new SiteAiBusyException($e->getMessage() === 'queue_full_user'
+                    ? 'You already have requests waiting for the site\'s AI. Try again when they finish.'
+                    : 'The site\'s AI is busy with other people\'s requests. Try again in a moment.');
+            }
+            throw $e;
+        } finally {
+            sodium_memzero($ephemeral);
+        }
+        return [(string) $queued['request']['requestId'], $pair];
+    }
+
+    /**
+     * One turn to $target, waited for to its final frame: for the listings (`models`,
+     * `providers`), which a computer answers without running a model. Returns the final frame.
+     */
+    public function request(array $target, array $body, int $timeoutSeconds): array
+    {
+        [$id, $pair] = $this->send($target, $body, null);
+        try {
+            return $this->read($id, $target['ownerUserId'], $pair, null, null, $timeoutSeconds)['final'] ?? [];
+        } catch (\Throwable $e) {
+            $this->relay->abandon($id, $target['ownerUserId']);
+            throw $e;
+        } finally {
+            sodium_memzero($pair);
+        }
+    }
+
+    /**
+     * What a queued turn has sent back so far, without waiting: its status (pending, claimed,
+     * streaming, done, failed, expired), the text so far, the final frame once there is one, and
+     * the computer's error when it sent one. Read from the first frame each time, so nothing of
+     * the answer is kept between polls.
+     *
+     * @return array{status: ?string, content: string, final: ?array, error: ?string}
+     */
+    public function collect(string $id, string $owner, string $pair): array
+    {
+        $content = '';
+        $final = null;
+        $error = null;
+        $since = 0;
+        $expect = 0;
+        do {
+            $rows = $this->relay->fetchOutput($id, $owner, $since);
+            foreach ($rows as $row) {
+                $since = $row['seq'];
+                $frame = self::open($row['envelope'], 1, $expect++, $pair);
+                $kind = $frame['kind'] ?? $frame['type'] ?? null;
+                if ($kind === 'delta') {
+                    $content .= self::text($frame['delta'] ?? $frame['text'] ?? null);
+                } elseif ($kind === 'final' || $kind === 'done') {
+                    $final = $frame;
+                    if ($content === '') {
+                        $content = self::text($frame['completion'] ?? $frame['text'] ?? null);
+                    }
+                } elseif ($kind === 'error' || $kind === 'failed') {
+                    $error = is_string($frame['message'] ?? null) ? $frame['message'] : 'OAIY could not answer.';
+                }
+            }
+        } while (count($rows) >= 200);
+        return ['status' => $this->relay->getStatus($id, $owner), 'content' => $content, 'final' => $final, 'error' => $error];
+    }
+
+    /** Give up on a queued turn: if the computer has not taken it, it never will. */
+    public function abandon(string $id, string $owner): void
+    {
+        $this->relay->abandon($id, $owner);
+    }
+
+    /** Why $target cannot take a turn now, or null. */
+    public function unavailableFor(array $target): ?SiteAiBusyException
+    {
+        if (!$this->settings->online($target)) {
+            return new SiteAiBusyException('The computer the site\'s AI runs on is offline. Try again later.', 'site_ai_offline');
+        }
+        if ($this->relay->inFlightForTarget($target['ownerUserId'], $target['instanceId']) >= self::MAX_WAITING) {
+            return new SiteAiBusyException('The site\'s AI is busy with other people\'s requests. Try again in a moment.');
+        }
+        return null;
+    }
+
+    /**
      * Why the site's OAIY cannot take a turn now, or null. Checked before a turn is queued, and by
      * callers that want to say so before they start (AIController::meterGeneration).
      */
     public function unavailable(): ?SiteAiBusyException
     {
         $site = $this->active();
-        if ($site === null) {
-            return null;
-        }
-        if (!$this->settings->online($site)) {
-            return new SiteAiBusyException('The computer the site\'s AI runs on is offline. Try again later.', 'site_ai_offline');
-        }
-        if ($this->relay->inFlightForTarget($site['ownerUserId'], $site['instanceId']) >= self::MAX_WAITING) {
-            return new SiteAiBusyException('The site\'s AI is busy with other people\'s requests. Try again in a moment.');
-        }
-        return null;
-    }
-
-    private function assertCanTake(): void
-    {
-        if (($refusal = $this->unavailable()) !== null) {
-            throw $refusal;
-        }
+        return $site === null ? null : $this->unavailableFor($site);
     }
 
     /** The sealed frames of one turn, opened in order, to its final frame. */
     private function read(string $id, string $owner, string $pair, ?callable $onDelta, ?callable $onHeartbeat, int $timeoutSeconds): array
     {
         $content = '';
+        $listed = [];
         $since = 0;
         $expect = 0;
         $deadline = microtime(true) + max(5, $timeoutSeconds);
@@ -158,6 +237,11 @@ final class SiteDesktopAi
                             $onDelta($text);
                         }
                     }
+                } elseif ($kind === 'models' || $kind === 'providers') {
+                    // A listing can come in a frame of its own before the final one.
+                    if (is_array($frame[$kind] ?? null)) {
+                        $listed[$kind] = $frame[$kind];
+                    }
                 } elseif ($kind === 'final' || $kind === 'done') {
                     // A final frame after a stream is empty; one without a stream holds the answer.
                     if ($content === '') {
@@ -166,7 +250,7 @@ final class SiteDesktopAi
                             $onDelta($content);
                         }
                     }
-                    return ['content' => $content, 'usage' => ['promptTokens' => 0, 'completionTokens' => 0, 'totalTokens' => 0]];
+                    return ['content' => $content, 'usage' => ['promptTokens' => 0, 'completionTokens' => 0, 'totalTokens' => 0], 'final' => $frame + $listed];
                 } elseif ($kind === 'error' || $kind === 'failed') {
                     $message = is_string($frame['message'] ?? null) ? $frame['message'] : 'OAIY could not answer.';
                     throw new \RuntimeException('The site\'s AI (OAIY) could not answer: ' . $message);
@@ -180,7 +264,7 @@ final class SiteDesktopAi
             }
             if ($status === 'done') {
                 // Done with every frame read: the answer is what came.
-                return ['content' => $content, 'usage' => ['promptTokens' => 0, 'completionTokens' => 0, 'totalTokens' => 0]];
+                return ['content' => $content, 'usage' => ['promptTokens' => 0, 'completionTokens' => 0, 'totalTokens' => 0], 'final' => $listed];
             }
             if (microtime(true) > $deadline) {
                 throw new \RuntimeException('The site\'s AI took too long to answer.');

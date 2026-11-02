@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = '4e40764813591524e28aea12be75e272';
+    public const SCHEMA_STAMP = '0c89a4720f0dc80ecf2f673ff12b5a8a';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -1540,44 +1540,79 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
-        // A member's passes (AccessGateService): which plugin issued it, what for, the value it
-        // establishes (an age, for an age pass), how strongly, until when. Never a date of birth, a
-        // picture or an estimate. `minimum_age` is the pass's value whatever its kind.
+        // Passes (AccessGateService): a person's pass from a plugin, of a kind, for a value, at a
+        // strength, by a method, until when. What a pass means is its plugin's; never a picture,
+        // an estimate or a document is kept here.
         $pdo->exec("
-            CREATE TABLE IF NOT EXISTS access_receipts (
+            CREATE TABLE IF NOT EXISTS passes (
                 id VARCHAR(36) PRIMARY KEY,
                 user_id VARCHAR(36) NOT NULL,
-                plugin_id VARCHAR(64) NOT NULL DEFAULT '',
+                plugin_id VARCHAR(64) NOT NULL,
                 kind VARCHAR(16) NOT NULL,
-                minimum_age SMALLINT UNSIGNED NOT NULL,
-                assurance VARCHAR(16) NOT NULL,
+                value INT UNSIGNED NOT NULL,
+                strength VARCHAR(16) NOT NULL,
                 method VARCHAR(32) NOT NULL,
-                verifier VARCHAR(64) NULL,
                 issued_at DATETIME NOT NULL,
                 expires_at DATETIME NOT NULL,
                 revoked_at DATETIME NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-                KEY idx_access_receipts_user (user_id, kind, expires_at)
+                KEY idx_passes_user (user_id, plugin_id, kind, expires_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
         // Installed plugins (PluginService): a SoftN project with a plugin manifest, held as an app
-        // of the system Plugins account, and what the administrator granted it at install. `scope`
-        // is 'site' (an administrator installed it) or an app id (an owner, for that app).
+        // of the system Plugins account, and what the administrator granted it: the passes it may
+        // issue (`grants`, with the words the site shows for them), what else it may use (`uses`),
+        // and its settings (`settings_schema` from its manifest, `settings` as set). `scope` is
+        // 'site' (an administrator installed it) or an app id (an owner, for that app); `source`
+        // is 'builtin' (ships with FormLogic) or 'upload'.
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS plugins (
                 id VARCHAR(36) PRIMARY KEY,
                 manifest_id VARCHAR(64) NOT NULL,
                 scope VARCHAR(36) NOT NULL DEFAULT 'site',
+                source VARCHAR(16) NOT NULL DEFAULT 'builtin',
                 app_id VARCHAR(36) NOT NULL,
                 name VARCHAR(120) NOT NULL,
                 version VARCHAR(40) NOT NULL,
                 enabled TINYINT(1) NOT NULL DEFAULT 1,
                 grants JSON NOT NULL,
+                uses JSON NOT NULL,
+                settings_schema JSON NOT NULL,
+                settings JSON NOT NULL,
                 installed_by VARCHAR(36) NULL,
                 installed_at DATETIME NOT NULL,
                 updated_at DATETIME NOT NULL,
                 UNIQUE KEY uq_plugins_manifest_scope (manifest_id, scope)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Camera checks (CameraCheckService): the steps a plugin asked for, its turn for the model
+        // until it is sent, how it went and the outcome. Never a picture or the model's answer.
+        // `channel` holds the sealed turn's key while OAIY works on it, cleared when the check ends.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS camera_checks (
+                id VARCHAR(32) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                mode VARCHAR(8) NOT NULL,
+                plugin_id VARCHAR(64) NOT NULL,
+                app_id VARCHAR(36) NULL,
+                kind VARCHAR(16) NOT NULL,
+                min_value INT UNSIGNED NOT NULL DEFAULT 0,
+                steps TEXT NOT NULL,
+                turn MEDIUMTEXT NULL,
+                status VARCHAR(16) NOT NULL,
+                outcome VARCHAR(32) NULL,
+                message VARCHAR(300) NULL,
+                relay_id VARCHAR(36) NULL,
+                relay_owner VARCHAR(36) NULL,
+                channel VARCHAR(128) NULL,
+                created_at DATETIME NOT NULL,
+                submitted_at DATETIME NULL,
+                finished_at DATETIME NULL,
+                expires_at DATETIME NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                KEY idx_camera_checks_user (user_id, created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
         // Staged artifact ownership (review FL-002; mirrored in schema.sql +
@@ -1682,10 +1717,6 @@ class MySQLConnection
     {
         $pdo = $this->getConnection();
 
-        // Passes name the plugin that issued them (AccessGateService); an early table had no column for it.
-        if ($pdo->query("SHOW COLUMNS FROM access_receipts LIKE 'plugin_id'")->rowCount() === 0) {
-            $pdo->exec("ALTER TABLE access_receipts ADD COLUMN plugin_id VARCHAR(64) NOT NULL DEFAULT '' AFTER user_id");
-        }
 
         // MKT: the marketplace catalog carries Application Package v2 aggregates alongside Pack
         // v1. A version row DECLARES what its pack_data is rather than the reader guessing from
