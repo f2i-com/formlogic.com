@@ -706,3 +706,41 @@ export const FORM_LEVEL_PERMISSIONS: PermissionAction[] = [
   'delete_responses',
   'export_responses',
 ];
+
+/** The SoftN directory this site publishes hosted SoftN apps to (null: publishing off), as the admin card shows it. */
+export interface SoftnDirectorySettings {
+  url: string | null;
+  /** DATA_ENCRYPTION_KEY is set, so apps' edit keys are kept encrypted (publishing needs it). */
+  keysEncrypted: boolean;
+}
+
+/** An app of this account's in the SoftN directory. Never its edit key. */
+export interface SoftnPublication {
+  slug: string;
+  name: string;
+  directory: string;
+  page: string;
+  play: string;
+  version: number;
+  appId: string | null;
+  updatedAt: string;
+}
+
+/** A hosted SoftN app packed for the SoftN directory, as its owner's approval page shows it. */
+export interface SoftnDraft {
+  draftId: string;
+  appId: string;
+  status: 'draft' | 'awaiting_approval' | 'publishing' | 'published' | 'failed' | 'uncertain' | 'expired';
+  destination: string;
+  target: { slug: string } | null;
+  sha256: string;
+  bytes: number;
+  listing: { name?: string; description?: string; category?: string; tags?: string[]; author?: string; notes?: string };
+  permissions: Record<string, unknown>;
+  warnings: string[];
+  previewUrl: string;
+  approvalUrl: string;
+  expiresAt: string;
+  error: string | null;
+  publication: SoftnPublication | null;
+}

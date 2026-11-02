@@ -83,6 +83,8 @@ class McpController
         private ?\FormLogic\Services\PackService $packs = null,
         private ?\FormLogic\Services\AppUserService $appUsers = null,
         private ?\FormLogic\Services\RuntimeEngineService $engines = null,
+        // Publishing hosted SoftN apps to a public SoftN directory (the softn_* tools).
+        private ?\FormLogic\Services\SoftnDirectoryService $softnDirectory = null,
     ) {}
 
     // ── Token management (authenticated app owner) ──
@@ -487,6 +489,7 @@ class McpController
             $this->packs,
             $this->appUsers,
             engines: $this->engines,
+            softnDirectory: $this->softnDirectory,
         );
     }
 
@@ -503,6 +506,7 @@ class McpController
         $tokens = $this->tokens;
         return new ChatToolsContext(
             userId: $userId,
+            siteUrl: (static function () use ($request): ?string { try { return \FormLogic\Helpers\AppUrl::frontendBase($request); } catch (\Throwable) { return null; } })(),
             scopedAppId: is_string($session['appId'] ?? null) ? $session['appId'] : null,
             creatorMode: is_array($session['created'] ?? null), // a "creator" token: confined to what it makes
             createdApps: is_array($session['created']['apps'] ?? null) ? $session['created']['apps'] : [],

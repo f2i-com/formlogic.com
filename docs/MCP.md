@@ -556,6 +556,39 @@ first; documents reference them by the `id` returned from `create_report`.
 - `responses:read` scope is **not** required to create reports. Runtime data access still respects
   each user's response permissions.
 
+### Publishing to the SoftN directory
+
+A hosted SoftN app built here can be published to a public SoftN directory (softn.com's, or another),
+where anyone can play it and read its source. It is off until the administrator names a directory
+(Admin → Platform → SoftN directory), and refused until the server has `DATA_ENCRYPTION_KEY`, because
+the directory answers a publish with an edit key that is kept here encrypted for the account that
+published.
+
+An agent never publishes. It drafts and asks; the account's person approves on a page of this site.
+
+| Tool | Scope | What it does |
+| --- | --- | --- |
+| `softn_get_started` | `apps:read` | The directory, its categories, the limits (32 MB, 4,000 files, drafts kept 24 hours, 10 publications an hour), the workflow and the rules. |
+| `softn_create_draft` | `apps:write` | Packs the app's current files as a `.softn` draft and checks it: file names, size, the manifest, the permissions it declares. Its `server/` files stay here, with a warning. Returns `draftId`, `sha256`, `previewUrl` and `approvalUrl`. A new app needs `listing.name` and `listing.category`. |
+| `softn_validate_draft`, `softn_preview_draft`, `softn_get_app` | `apps:read` | A draft: its checks, where its owner can try it, and its status (`draft`, `awaiting_approval`, `publishing`, `published`, `failed`, `uncertain`, `expired`) with the app's page and play links once published. |
+| `softn_publish_draft` | `apps:write` | Asks for publication and returns `approvalUrl` for the person. Publishes nothing. Asking again changes nothing. |
+| `softn_publish_version` | `apps:write` | A draft as a new version of an app this account published (`slug` from `softn_list_my_apps`), asked for the same way. |
+| `softn_list_my_apps` | `apps:read` | This account's apps in the directory. |
+
+- **The approval** is `/softn-directory/approve/<draftId>`, a signed-in page with the CSRF check, which an
+  MCP token cannot call. It shows the destination, who can see the app, its listing, what it may use,
+  the bundle's size and hash, and the warnings. Approving moves the draft to `publishing` in one
+  conditional update, so a second click, a second tab or a retrying agent cannot make a second app. A
+  published draft answers with its publication.
+- **An unclear answer** from the directory (a 5xx, or a timeout after the bundle went) leaves the draft
+  `uncertain`. It is never tried again by itself; the person checks the directory and can then
+  approve again ("I checked: try again"). A refusal (4xx) or a directory that could not be reached
+  leaves it `failed`, and it can be approved again.
+- **The edit key** is sealed with `DataEncryption` for its row, used only for that account's new versions,
+  and never returned by a tool or a page.
+- Drafts live in `storage/softn-drafts/`, expire after 24 hours, and an account keeps at most ten; an
+  update is refused for an app the account did not publish.
+
 ---
 
 ## Security

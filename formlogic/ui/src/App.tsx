@@ -67,6 +67,7 @@ const FormResponseView = lazyWithRetry(() => import('./pages/FormResponseView'))
 const Login = lazyWithRetry(() => import('./pages/Login').then(m => ({ default: m.Login })));
 const AppDomainSignIn = lazyWithRetry(() => import('./pages/AppDomainSignIn').then(m => ({ default: m.AppDomainSignIn })));
 const PluginVerifyPage = lazyWithRetry(() => import('./pages/verify/PluginVerifyPage').then(m => ({ default: m.PluginVerifyPage })));
+const SoftnDirectoryApprove = lazyWithRetry(() => import('./pages/SoftnDirectoryApprove').then(m => ({ default: m.SoftnDirectoryApprove })));
 const Signup = lazyWithRetry(() => import('./pages/Signup').then(m => ({ default: m.Signup })));
 
 // Lazy load app admin pages
@@ -407,6 +408,8 @@ function AppRoutes() {
         <Route path="/apps/new" element={<AppCreateStart />} />
         {/* App Studio — the app-first workspace (Plan/Data/Screens/Automations/Access/Publish) */}
         <Route path="/apps/:appId/softn" element={<SoftnAppWorkspace />} />
+        {/* An agent's draft for the public SoftN directory, published only when its owner approves here */}
+        <Route path="/softn-directory/approve/:draftId" element={<SoftnDirectoryApprove />} />
         <Route path="/apps/:appId/studio" element={<AppStudio />} />
         <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
         <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />

@@ -11,6 +11,7 @@ import { AdminPlansCard } from './AdminPlansCard';
 import { AdminAllowancesCard } from './AdminAllowancesCard';
 import { AdminEnginePolicyCard } from './AdminEnginePolicyCard';
 import { AdminPluginsCard } from './AdminPluginsCard';
+import { AdminSoftnDirectoryCard } from './AdminSoftnDirectoryCard';
 import { AdminError, AdminSpinner } from './adminUi';
 import { useAdminQuery } from './useAdminQuery';
 
@@ -152,6 +153,7 @@ export function AdminPlatform() {
       <section id="plans" className="scroll-mt-24"><AdminPlansCard /></section>
       <section id="app-engine" className="scroll-mt-24"><AdminEnginePolicyCard /></section>
       <section id="plugins" className="scroll-mt-24"><AdminPluginsCard /></section>
+          <section id="softn-directory" className="scroll-mt-24"><AdminSoftnDirectoryCard /></section>
       <Card id="availability" className="scroll-mt-24">
         <CardContent className="p-5 sm:p-6 space-y-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">

@@ -41,6 +41,8 @@ final class ChatToolsContext
         public readonly string $source = 'chat',
         /** @var string[] Diagram (blueprint) ids a creator token has made (empty otherwise). */
         public readonly array $createdBlueprints = [],
+        /** This site's own address, for links a tool hands back (a draft's approval page). Null: links stay relative. */
+        public readonly ?string $siteUrl = null,
     ) {}
 
     /** Enforce the surface's scope model; throws the surface's denial exception on refusal. */

@@ -744,7 +744,8 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         $c->get(\FormLogic\Services\AppCompositionService::class),
         $c->get(\FormLogic\Services\PackService::class),
         $c->get(\FormLogic\Services\AppUserService::class),
-        $c->get(\FormLogic\Services\RuntimeEngineService::class)
+        $c->get(\FormLogic\Services\RuntimeEngineService::class),
+        softnDirectory: $c->get(\FormLogic\Services\SoftnDirectoryService::class)
     );
 });
 // MCP OAuth 2.1: discovery metadata + client registration (DCR/CIMD) + code/refresh grants, so
@@ -853,6 +854,10 @@ $container->set(\FormLogic\Controllers\PluginController::class, function (Contai
     );
 });
 // The camera check plugins use, read by the administrator's OAIY (CameraCheckService).
+// Publishing hosted SoftN apps to a public SoftN directory: off until the administrator names one.
+$container->set(\FormLogic\Services\SoftnDirectoryService::class, function (Container $c) {
+    return new \FormLogic\Services\SoftnDirectoryService($c->get(MySQLConnection::class), $c->get(\FormLogic\Services\AppService::class), $c->get(\FormLogic\Services\NativeAppService::class));
+});
 $container->set(\FormLogic\Services\CameraCheckSettings::class, function (Container $c) {
     return new \FormLogic\Services\CameraCheckSettings($c->get(\FormLogic\Services\SiteAiDesktopSettings::class));
 });
@@ -1700,6 +1705,14 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     });
     $group->delete('/camera-check', function ($request, $response) use ($cameraChecks) {
         return $cameraChecks()->adminDelete($request, $response);
+    });
+    // Publishing hosted SoftN apps to a public SoftN directory: which one, or none (SoftnDirectoryController).
+    $softnDirectory = fn () => $container->get(\FormLogic\Controllers\SoftnDirectoryController::class);
+    $group->get('/softn-directory', function ($request, $response) use ($softnDirectory) {
+        return $softnDirectory()->adminGet($request, $response);
+    });
+    $group->put('/softn-directory', function ($request, $response) use ($softnDirectory) {
+        return $softnDirectory()->adminPut($request, $response);
     });
     $group->post('/camera-check/probe', function ($request, $response) use ($cameraChecks) {
         return $cameraChecks()->adminProbe($request, $response);
@@ -3376,6 +3389,18 @@ $app->get('/api/camera-checks/{id:[a-f0-9]{32}}', function ($request, $response)
 $app->delete('/api/camera-checks/{id:[a-f0-9]{32}}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\CameraCheckController::class)->cancel($request, $response, $getArgs($request));
 })->add($cameraCheckPollLimiter)->add($authRequired);
+// A draft an agent asked to publish to the SoftN directory, its owner's approval, and their apps there. A signed-in
+// session's, with the CSRF check: an MCP token reaches none of these.
+$softnDirectoryLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'softn_directory', true);
+$app->get('/api/softn-directory/drafts/{id:[a-f0-9]{32}}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\SoftnDirectoryController::class)->draft($request, $response, $getArgs($request));
+})->add($softnDirectoryLimiter)->add($authRequired);
+$app->post('/api/softn-directory/drafts/{id:[a-f0-9]{32}}/approve', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\SoftnDirectoryController::class)->approve($request, $response, $getArgs($request));
+})->add($softnDirectoryLimiter)->add($authRequired);
+$app->get('/api/softn-directory/publications', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\SoftnDirectoryController::class)->publications($request, $response);
+})->add($softnDirectoryLimiter)->add($authRequired);
 $app->delete('/api/verification/receipts/{id}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\PluginController::class)->revoke($request, $response, $getArgs($request));
 })->add($pluginLimiter)->add($authRequired);

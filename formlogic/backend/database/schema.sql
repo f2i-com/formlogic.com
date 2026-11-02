@@ -762,6 +762,47 @@ CREATE TABLE `camera_checks` (
   KEY `idx_camera_checks_user` (`user_id`,`created_at`),
   CONSTRAINT `fk_camera_checks_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Publishing hosted SoftN apps to a public SoftN directory (SoftnDirectoryService): drafts and what the directory gave back.
+CREATE TABLE `softn_directory_drafts` (
+  `id` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `directory_url` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `target_slug` varchar(80) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `sha256` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `bytes` int unsigned NOT NULL,
+  `listing` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `permissions` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `warnings` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `error` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `publication_id` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  `expires_at` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_softn_drafts_owner` (`owner_user_id`,`status`,`updated_at`),
+  CONSTRAINT `fk_softn_drafts_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `softn_directory_publications` (
+  `id` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `directory_url` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `slug` varchar(80) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `edit_key` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `page_url` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `play_url` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version` int unsigned NOT NULL DEFAULT '1',
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_softn_publication` (`directory_url`,`slug`),
+  CONSTRAINT `fk_softn_publications_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;

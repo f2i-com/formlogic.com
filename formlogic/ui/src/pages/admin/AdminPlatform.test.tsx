@@ -7,6 +7,7 @@ vi.mock('../../lib/api', () => ({ api: { adminGetMaintenance: mocks.maintenance,
 vi.mock('./AdminPlansCard', () => ({ AdminPlansCard: () => <div>Plans</div> }));
 vi.mock('./AdminAllowancesCard', () => ({ AdminAllowancesCard: () => <div>Allowances</div> }));
 vi.mock('./AdminPluginsCard', () => ({ AdminPluginsCard: () => <div>Plugins</div> }));
+vi.mock('./AdminSoftnDirectoryCard', () => ({ AdminSoftnDirectoryCard: () => <div>SoftN directory</div> }));
 vi.mock('./AdminEnginePolicyCard', () => ({ AdminEnginePolicyCard: () => <div>App engine</div> }));
 vi.mock('../../lib/timezone', () => ({ useAdminTimezone: () => 'UTC', formatDateTimeInZone: (date: string) => date }));
 vi.mock('../../stores/toastStore', () => ({ toast: { error: mocks.error, success: mocks.success } }));

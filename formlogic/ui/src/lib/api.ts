@@ -4,6 +4,7 @@
 
 import { ADMIN_CONFIRMATION_DECLINED, ADMIN_CONFIRMATION_REQUIRED, adminConfirmationHeaders, askForAdminConfirmation, canAskForAdminConfirmation } from './adminConfirmation';
 import type { Form } from '../types/form';
+import type { SoftnDirectorySettings, SoftnDraft } from '../types/app';
 import type { AccessReceipt, App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, AvailablePlugin, CameraCheckState, FormAppContext, InstalledPlugin, PassKind, PassRequirement, RequirementsStatus, UploadedPlugin } from '../types/app';
 import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
 import { APP_LOGIC_LANGUAGES } from '../types/customAppLogic';
@@ -2890,6 +2891,22 @@ class ApiClient {
   }
   async adminDeleteCameraCheck(): Promise<ApiResponse<{ saved: boolean }>> {
     return this.request('/admin/camera-check', { method: 'DELETE' });
+  }
+
+  /** The SoftN directory this site publishes to (null: off), and whether edit keys are kept encrypted. */
+  async adminGetSoftnDirectory(): Promise<ApiResponse<SoftnDirectorySettings>> {
+    return this.request('/admin/softn-directory');
+  }
+  async adminPutSoftnDirectory(url: string | null): Promise<ApiResponse<SoftnDirectorySettings>> {
+    return this.request('/admin/softn-directory', { method: 'PUT', body: JSON.stringify({ url }) });
+  }
+  /** A draft an agent asked to publish to the SoftN directory, for its owner's approval page. */
+  async getSoftnDraft(draftId: string): Promise<ApiResponse<SoftnDraft>> {
+    return this.request(`/softn-directory/drafts/${seg(draftId)}`);
+  }
+  /** The owner approves: published once. `anyway`: after a try whose outcome was unclear. */
+  async approveSoftnDraft(draftId: string, anyway = false): Promise<ApiResponse<SoftnDraft>> {
+    return this.request(`/softn-directory/drafts/${seg(draftId)}/approve`, { method: 'POST', body: JSON.stringify({ anyway }) });
   }
   async adminProbeCameraCheck(plugin: string): Promise<ApiResponse<CameraCheckState>> {
     return this.request('/admin/camera-check/probe', { method: 'POST', body: JSON.stringify({ plugin }) });

@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = '0c89a4720f0dc80ecf2f673ff12b5a8a';
+    public const SCHEMA_STAMP = 'ec45f2cf41d30e3b78e89ce8879fd748';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -1613,6 +1613,48 @@ class MySQLConnection
                 expires_at DATETIME NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 KEY idx_camera_checks_user (user_id, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        // Publishing hosted SoftN apps to a public SoftN directory (SoftnDirectoryService): drafts an agent makes and
+        // their owner approves, and what the directory gave back. The edit key is kept sealed (DataEncryption).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS softn_directory_drafts (
+                id VARCHAR(32) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NOT NULL,
+                directory_url VARCHAR(255) NOT NULL,
+                target_slug VARCHAR(80) NULL,
+                sha256 CHAR(64) NOT NULL,
+                bytes INT UNSIGNED NOT NULL,
+                listing TEXT NOT NULL,
+                permissions TEXT NOT NULL,
+                warnings TEXT NOT NULL,
+                status VARCHAR(20) NOT NULL,
+                error VARCHAR(500) NULL,
+                publication_id VARCHAR(32) NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NULL,
+                expires_at DATETIME NOT NULL,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                KEY idx_softn_drafts_owner (owner_user_id, status, updated_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS softn_directory_publications (
+                id VARCHAR(32) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL,
+                directory_url VARCHAR(255) NOT NULL,
+                slug VARCHAR(80) NOT NULL,
+                name VARCHAR(120) NOT NULL,
+                edit_key TEXT NOT NULL,
+                page_url VARCHAR(500) NOT NULL,
+                play_url VARCHAR(500) NOT NULL,
+                version INT UNSIGNED NOT NULL DEFAULT 1,
+                app_id VARCHAR(36) NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE KEY uq_softn_publication (directory_url, slug)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
         // Staged artifact ownership (review FL-002; mirrored in schema.sql +

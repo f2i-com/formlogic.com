@@ -58,6 +58,11 @@ class ChatToolsService
         'add_response' => 'responses:write', 'update_response' => 'responses:write',
         'delete_response' => 'responses:write',
         'connector_command' => 'connector:command', 'desktop_status' => 'connector:command',
+        // Publishing to a public SoftN directory (SoftnDirectoryService): drafts and asking are app writes; nothing a
+        // token does publishes, which takes the account's person approving on the draft's page.
+        'softn_get_started' => 'apps:read', 'softn_validate_draft' => 'apps:read', 'softn_preview_draft' => 'apps:read',
+        'softn_get_app' => 'apps:read', 'softn_list_my_apps' => 'apps:read',
+        'softn_create_draft' => 'apps:write', 'softn_publish_draft' => 'apps:write', 'softn_publish_version' => 'apps:write',
     ];
 
     /** Whether a tool only reads: its scope is one of the :read scopes. */
@@ -107,6 +112,8 @@ class ChatToolsService
         // The site's and the app's torch rules, checked before a native project is installed
         // (the runtime refuses to serve one either way). Null only in older tests.
         private ?RuntimeEngineService $engines = null,
+        // Publishing hosted SoftN apps to a public SoftN directory. Null: the softn_* tools say it is not set up.
+        private ?SoftnDirectoryService $softnDirectory = null,
     ) {}
 
     // ── Chat-surface entry (subset-restricted) ──────────────────────────────────────────
@@ -1033,6 +1040,16 @@ class ChatToolsService
                 $ctx->audit('delete_response', ['formId' => $formId, 'responseId' => $responseId]);
                 break;
             }
+            case 'softn_get_started':
+            case 'softn_create_draft':
+            case 'softn_validate_draft':
+            case 'softn_preview_draft':
+            case 'softn_publish_draft':
+            case 'softn_publish_version':
+            case 'softn_get_app':
+            case 'softn_list_my_apps':
+                $data = $this->softnDirectoryTool($name, $args, $ctx);
+                break;
             default:
                 throw new \Exception("Unknown or unavailable tool: {$name}");
         }
@@ -1490,6 +1507,59 @@ class ChatToolsService
      * by session scopes and strips 'scope'; the chat catalog (chatCatalog()) draws its
      * subset from the same source so the two can never drift.
      */
+    /**
+     * The softn_* tools: an agent packs a hosted SoftN app as a draft, checks and previews it, and asks for it to be
+     * published to the SoftN directory this site names. It never publishes: the account's person approves on the
+     * draft's page. No answer carries an edit key.
+     */
+    private function softnDirectoryTool(string $name, array $args, ChatToolsContext $ctx): array
+    {
+        if ($this->softnDirectory === null) {
+            throw new \DomainException('Publishing to a SoftN directory is not set up on this server.');
+        }
+        $userId = $ctx->userId;
+        $draftId = is_string($args['draftId'] ?? null) ? $args['draftId'] : '';
+        $withLinks = function (array $draft) use ($ctx): array {
+            $base = $ctx->siteUrl ?? '';
+            foreach (['previewUrl', 'approvalUrl'] as $key) {
+                if (is_string($draft[$key] ?? null) && $base !== '') $draft[$key] = rtrim($base, '/') . $draft[$key];
+            }
+            return $draft;
+        };
+        switch ($name) {
+            case 'softn_get_started':
+                return $this->softnDirectory->getStarted();
+            case 'softn_create_draft': {
+                $appId = (string) ($args['appId'] ?? $ctx->scopedAppId ?? '');
+                $this->assertAppScope($ctx, $appId);
+                $draft = $this->softnDirectory->createDraft($userId, $appId, is_array($args['listing'] ?? null) ? $args['listing'] : []);
+                $ctx->audit('softn_create_draft', ['appId' => $appId, 'draftId' => $draft['draftId'], 'sha256' => $draft['sha256']]);
+                return $withLinks($draft);
+            }
+            case 'softn_publish_version': {
+                $slug = is_string($args['slug'] ?? null) ? $args['slug'] : '';
+                $appId = (string) ($args['appId'] ?? $ctx->scopedAppId ?? '');
+                $this->assertAppScope($ctx, $appId);
+                $draft = $this->softnDirectory->createDraft($userId, $appId, is_array($args['listing'] ?? null) ? $args['listing'] : [], $slug);
+                $asked = $this->softnDirectory->requestPublish($userId, $draft['draftId']);
+                $ctx->audit('softn_publish_version', ['appId' => $appId, 'draftId' => $draft['draftId'], 'slug' => $slug]);
+                return $withLinks($asked) + ['next' => 'Give the person approvalUrl: the new version is published when they approve it there.'];
+            }
+            case 'softn_validate_draft':
+            case 'softn_preview_draft':
+            case 'softn_get_app':
+                return $withLinks($this->softnDirectory->draft($userId, $draftId));
+            case 'softn_publish_draft': {
+                $asked = $this->softnDirectory->requestPublish($userId, $draftId);
+                $ctx->audit('softn_publish_draft', ['draftId' => $draftId]);
+                return $withLinks($asked) + ($asked['status'] === 'published' ? [] : ['next' => 'Give the person approvalUrl: the app is published when they approve it there. softn_get_app tells you when.']);
+            }
+            case 'softn_list_my_apps':
+                return ['directory' => $this->softnDirectory->directory(), 'apps' => $this->softnDirectory->publications($userId)];
+        }
+        throw new \Exception("Unknown or unavailable tool: {$name}");
+    }
+
     public static function toolDefinitions(): array
     {
         $field = ['type' => 'object', 'description' => 'A field: { id, type, label, required, properties? }'];
@@ -1554,6 +1624,15 @@ class ChatToolsService
             ['name' => 'delete_response', 'scope' => 'responses:write', 'description' => 'Permanently delete one record (response) from a form.', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'responseId' => ['type' => 'string']], ['formId', 'responseId'])],
             ['name' => 'desktop_status', 'scope' => 'connector:command', 'description' => "Check whether the owner's FormLogic Desktop is online (currently polling the connector relay). Call this BEFORE connector_command to know if commands will reach a desktop. Returns { online, lastSeenSecondsAgo }.", 'inputSchema' => $obj([])],
             ['name' => 'connector_command', 'scope' => 'connector:command', 'description' => "Send a command to a hardware/service CONNECTOR on the owner's linked FormLogic Desktop and wait for the result (the desktop must be RUNNING + LINKED). connectorId names the connector (e.g. 'aokie' — the Bluetooth phone bridge). command + payload are connector-specific; for aokie: call.answer, call.reject, call.hangup, call.operatorSpeak {text}, sms.send {to, body}, sms.thread {threadId}, call.current, phone.status, dongle.list, dongle.diagnostics {simulate:'call'}. This is how you REMOTELY control the phone: e.g. hang up the current call, or speak a message to the caller. Returns the connector's result, or a note that it is still pending (desktop offline/slow).", 'inputSchema' => $obj(['connectorId' => ['type' => 'string', 'description' => "Connector id, e.g. 'aokie'."], 'command' => ['type' => 'string', 'description' => 'Connector command, e.g. call.hangup.'], 'payload' => ['type' => 'object', 'description' => 'Command arguments (connector-specific).'], 'waitMs' => ['type' => 'number', 'description' => 'Max ms to wait for the desktop result (default 15000, max 25000).']], ['connectorId', 'command'])],
+            // Publishing to the SoftN directory this site names (softn.com's, or the administrator's choice).
+            ['name' => 'softn_get_started', 'scope' => 'apps:read', 'description' => 'Read before publishing a hosted SoftN app to the public SoftN directory: whether this site publishes to one and where, its categories, the limits, the workflow and the rules (everything in a bundle is public; the backend in server/ stays here).', 'inputSchema' => $obj([])],
+            ['name' => 'softn_create_draft', 'scope' => 'apps:write', 'description' => 'Pack a hosted SoftN app\'s current files as a .softn draft for the SoftN directory and check it. Nothing is public. Returns draftId, sha256, bytes, the permissions the app declares, warnings, previewUrl and approvalUrl. A new app needs listing.name and listing.category.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'listing' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'category' => ['type' => 'string'], 'tags' => ['type' => 'array', 'items' => ['type' => 'string']], 'author' => ['type' => 'string']])], ['appId', 'listing'])],
+            ['name' => 'softn_validate_draft', 'scope' => 'apps:read', 'description' => 'A draft\'s checks: its size, hash, declared permissions, warnings, status and expiry.', 'inputSchema' => $obj(['draftId' => ['type' => 'string']], ['draftId'])],
+            ['name' => 'softn_preview_draft', 'scope' => 'apps:read', 'description' => 'Where the app\'s owner can try the draft before it is public (previewUrl, the app\'s own workspace here), with the permissions it declares.', 'inputSchema' => $obj(['draftId' => ['type' => 'string']], ['draftId'])],
+            ['name' => 'softn_publish_draft', 'scope' => 'apps:write', 'description' => 'Ask for a draft to be published to the SoftN directory. This does NOT publish: it returns approvalUrl, a page where the account\'s person sees the destination, listing, permissions and hash and approves. Give them that link. Calling it again changes nothing; an approved draft answers with its publication.', 'inputSchema' => $obj(['draftId' => ['type' => 'string']], ['draftId'])],
+            ['name' => 'softn_publish_version', 'scope' => 'apps:write', 'description' => 'Pack a hosted SoftN app as a new version of an app this account published to the directory (slug from softn_list_my_apps), and ask for it to be published. Returns approvalUrl for the person, as softn_publish_draft does.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'slug' => ['type' => 'string'], 'listing' => $obj(['notes' => ['type' => 'string']])], ['appId', 'slug'])],
+            ['name' => 'softn_get_app', 'scope' => 'apps:read', 'description' => 'A draft\'s status (draft, awaiting_approval, publishing, published, failed, uncertain, expired) and, once published, the app\'s page and play links in the directory.', 'inputSchema' => $obj(['draftId' => ['type' => 'string']], ['draftId'])],
+            ['name' => 'softn_list_my_apps', 'scope' => 'apps:read', 'description' => 'The apps this account has published to the directory, with their page and play links and versions.', 'inputSchema' => $obj([])],
         ];
     }
 
