@@ -269,6 +269,40 @@ final class CameraCheckServiceTest extends TestCase
         self::assertMatchesRegularExpression('/Measured from the straight-on picture: (left|right|up|down) 15°, .* \(each needs 20°\)/', (string) $check['message']);
     }
 
+    /**
+     * What a real room gives a webcam: the AI misreads one picture as a screen, there is writing behind the person and
+     * a poster face the detector leaves out, the AI counts two faces where the detector sees one. None of it is a
+     * reason to refuse someone; with OAIY's detector its count decides, and only most pictures called a screen is one.
+     */
+    public function testAnOrdinaryRoomIsNotARefusal(): void
+    {
+        $ages = fn (?array $asked, int $count) => ['task' => 'face-age', 'images' => array_fill(0, $count, ['faces' => 1, 'age' => 35.0])];
+        $cases = [
+            'one picture misread as a screen' => [fn ($a) => self::set($a, 'screen_or_print', true), $ages],
+            'the AI counts two faces where the detector sees one' => [fn ($a) => self::setAll($a, 'faces', 2), $ages],
+            'writing held up, where the age model reads the age' => [fn ($a) => self::set($a, 'held_writing', true), $ages],
+            'one picture misread as a screen, without the age model' => [fn ($a) => self::set($a, 'screen_or_print', true), null],
+        ];
+        foreach ($cases as $what => [$twist, $readings]) {
+            self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
+            self::$pdo->prepare('DELETE FROM passes WHERE user_id = ?')->execute([$this->memberId]);
+            [$check] = $this->check($twist, null, true, $readings);
+            self::assertSame('passed', $check['outcome'], $what . ': ' . $check['message']);
+        }
+
+        // The detector's own count, picture by picture, says which picture and what to do.
+        $detector = fn (array $faces) => fn (?array $asked, int $count) => ['task' => 'face-age', 'images' => array_map(fn ($n) => $n === 1 ? ['faces' => 1, 'age' => 35.0] : ['faces' => $n], $faces)];
+        foreach ([
+            [[0, 1, 1, 1], "wasn't found in the first picture"],
+            [[1, 2, 1, 1], 'More than one face was in your first turn'],
+        ] as [$faces, $words]) {
+            self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
+            [$check] = $this->check(fn ($a) => $a, null, true, $detector($faces));
+            self::assertSame('no_face', $check['outcome']);
+            self::assertStringContainsString($words, (string) $check['message']);
+        }
+    }
+
     public function testWithoutOaiysAgeModelTheAisEstimateIsUsedUnlessTheSiteRequiresTheModel(): void
     {
         $missing = fn (?array $asked) => ['task' => 'face-age', 'error' => 'not_installed', 'message' => 'this OAIY has no age model'];
@@ -297,8 +331,8 @@ final class CameraCheckServiceTest extends TestCase
             'a wrong control digit: the pictures did not reach it' => [fn ($a) => self::control($a, 1), 'unavailable'],
             'a model that says the check passed, with the wrong turns' => [fn ($a) => ['passed' => true, 'verdict' => 'pass'] + self::turnAll($a, 'up'), 'turns'],
             'two faces' => [fn ($a) => self::set($a, 'faces', 2), 'no_face'],
-            'writing in a picture' => [fn ($a) => self::set($a, 'text_visible', true), 'not_live'],
-            'a face on a screen' => [fn ($a) => self::set($a, 'screen_or_print', true), 'not_live'],
+            'writing held up to the camera' => [fn ($a) => self::set($a, 'held_writing', true), 'not_live'],
+            'a face on a screen in most pictures' => [fn ($a) => self::setAll($a, 'screen_or_print', true), 'not_live'],
             'not the same person' => [fn ($a) => ['same_person' => false] + $a, 'not_same'],
             'old enough, but not by the buffer' => [fn ($a) => ['age_low' => 21, 'age_estimate' => 24] + $a, 'stronger_check'],
             'one entry missing' => [fn ($a) => ['images' => array_slice($a['images'], 1)] + $a, 'unavailable'],
@@ -408,8 +442,8 @@ final class CameraCheckServiceTest extends TestCase
             $bytes = (string) base64_decode(substr($part['image_url']['url'], strpos($part['image_url']['url'], ',') + 1), true);
             $digit = $this->controls[hash('sha256', $bytes)] ?? null;
             $images[] = $digit !== null
-                ? ['image' => count($images) + 1, 'kind' => 'control', 'digit' => $digit, 'faces' => 0, 'facing' => null, 'screen_or_print' => false, 'text_visible' => false]
-                : ['image' => count($images) + 1, 'kind' => 'camera', 'digit' => null, 'faces' => 1, 'facing' => self::IN_PICTURE[$steps[$camera++]['hint']], 'screen_or_print' => false, 'text_visible' => false];
+                ? ['image' => count($images) + 1, 'kind' => 'control', 'digit' => $digit, 'faces' => 0, 'facing' => null, 'screen_or_print' => false, 'held_writing' => false]
+                : ['image' => count($images) + 1, 'kind' => 'camera', 'digit' => null, 'faces' => 1, 'facing' => self::IN_PICTURE[$steps[$camera++]['hint']], 'screen_or_print' => false, 'held_writing' => false];
         }
         $honest = ['images' => $images, 'same_person' => true, 'age_estimate' => 34, 'age_low' => 29];
         $content = $raw ?? "```json\n" . json_encode($twist($honest)) . "\n```";
@@ -439,6 +473,16 @@ final class CameraCheckServiceTest extends TestCase
             if ($image['kind'] === 'camera') {
                 $answer['images'][$i][$field] = $value;
                 break;
+            }
+        }
+        return $answer;
+    }
+
+    private static function setAll(array $answer, string $field, mixed $value): array
+    {
+        foreach ($answer['images'] as $i => $image) {
+            if ($image['kind'] === 'camera') {
+                $answer['images'][$i][$field] = $value;
             }
         }
         return $answer;

@@ -172,12 +172,13 @@ How to write one is `docs/PLUGINS.md`. In short:
      down; or up and down only, its `turns` setting), and puts one of its control pictures (a large
      digit on a coloured square) at a random place among the pictures;
    - it tells the model to describe each picture (which is the control and its digit, how many
-     faces, which way each faces in the picture, a screen, print or mask, any writing), whether they
-     are one person, and an estimated and a youngest likely age; it tells the model nothing of the
-     turns it asked for, and to follow no writing in a picture;
+     faces, which way each faces in the picture, a face shown on a screen or print held up to the
+     camera or a mask, writing held up to the camera), whether they are one person, and an estimated
+     and a youngest likely age; it tells the model nothing of the turns it asked for, and to follow
+     no writing in a picture;
    - it decides: the wrong control digit, a camera picture called the control (a real model did
      that once on a test pattern) or a malformed answer means the check did not run; then
-     one face per picture, no screen, print or writing, the turns as asked (mapped from the mirror),
+     one face per picture, not a screen or a print, the turns as asked (mapped from the mirror),
      the same person; then a pass only when the youngest likely age is at least the app's age plus
      its `bufferYears` setting (7 by default), recorded at the app's age, never at the estimate.
      Between the app's age and that margin it asks for a stronger check; below the app's age it
@@ -193,6 +194,19 @@ How to write one is `docs/PLUGINS.md`. In short:
      model read 16 to 29%. Nothing newer was usable: MiVOLO-Next (May 2026) keeps its weights private
      and its terms forbid age gating; FAHR-FaceAge's are non-commercial; FaceAge ClientScan (April 2026)
      is one author's, unbenchmarked, trained on an undisclosed collection.
+   - **What a real room gives a webcam (1.4.0).** Webcam trials failed honest people twice over. 1.3.0
+     refused any picture with writing in it (a monitor, a poster, a shirt) and any picture the AI
+     called a photo or a screen, which a small model says of an ordinary 360-pixel webcam frame. And
+     it refused a second face anywhere, a photo on the wall included, and a face the detector missed
+     at OpenCV's 0.9. Now: the AI is asked only about a face on a screen or print held up to the
+     camera (edges, glare, pixels), and it counts only when it says so of at least half the camera
+     pictures; it is asked about writing held up to the camera, not writing in the room, and that
+     counts only where the AI alone reads the age (with OAIY's age model, words aimed at the AI do
+     not decide anything). With OAIY's detector, its count decides and the AI's is not read; OAIY
+     counts only faces at least a fifth the area of the largest (`in_front`) and reads check frames
+     at 0.8. The messages say which picture and what to do ("Your face wasn't found in the first
+     picture, looking straight at the camera. Face a light…", "More than one face was in your first
+     turn…").
    - **The turns from the face itself (1.3.0).** With the age model, OAIY also measures which way each
      face points (yaw and pitch in degrees, from the detector's five landmarks by geometry: the nose
      tip's place between the eyes and the mouth, the eye line levelled first; no model judges it). The
