@@ -45,7 +45,7 @@ final class AppAccessGateMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
         $app = $this->apps->getAppBySlug($slug);
-        if ($app === null || $this->gate->requirementOf($app) === null) {
+        if ($app === null || $this->gate->requirementsOf($app) === []) {
             return $handler->handle($request);
         }
 

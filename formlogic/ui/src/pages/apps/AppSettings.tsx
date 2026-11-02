@@ -10,7 +10,7 @@ import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ConnectAiModal } from '../../components/mcp/ConnectAiModal';
 import { Switch } from '../../components/ui/Switch';
-import { AgeGateSetting } from '../../components/apps/AgeGateSetting';
+import { RequirementsSetting } from '../../components/apps/RequirementsSetting';
 import { TimezoneSelect } from '../../components/ui/TimezoneSelect';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { IconPicker } from '../../components/ui/IconPicker';
@@ -50,7 +50,7 @@ const EDITED_SETTING_KEYS = [
   'timezone',
   'hideNav',
   'services',
-  'ageGate',
+  'requires',
 ] as const;
 
 // The accent hex lands in an inline CSS custom property, so keep the format strict.
@@ -753,8 +753,8 @@ export function AppSettings() {
                 </>
               )}
             </SettingsCard>
-            <SettingsCard title="Age gate" description="Keep this app for people over an age. Choose Save changes to apply it.">
-              <AgeGateSetting value={app.settings?.ageGate} onChange={(next) => updateSetting('ageGate', next)} />
+            <SettingsCard title="Before it opens" description="Ask members for a pass from one of this site's plugins, such as their age. Choose Save changes to apply it.">
+              <RequirementsSetting value={app.settings?.requires} onChange={(next) => updateSetting('requires', next)} />
             </SettingsCard>
             <SettingsCard title="Members & permissions" description="Invite people and review what they can do.">
             <ManageAppGroup

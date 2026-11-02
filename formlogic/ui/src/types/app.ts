@@ -69,37 +69,89 @@ export interface AppSettings {
    *  Included services. The backend gates each service's endpoints on `enabled`;
    *  an ABSENT map/entry means enabled (backward compatible). */
   services?: Record<string, { enabled: boolean; title?: string; description?: string }>;
-  /** The app's age gate: members need a check for at least this age, by a method at least this
-   *  strong, before the app opens for them (AccessGateService). Absent: no gate. */
-  ageGate?: AgeGateSetting;
+  /** The passes the app's members need, each from the plugin named (AccessGateService). A member
+   *  without a live one is kept out until they get it on the main site; the owner never is.
+   *  Absent: none. */
+  requires?: AppRequirement[];
 }
 
-/** How strongly a method establishes an age, weakest first. */
-export type AgeAssurance = 'declared' | 'estimated' | 'verified';
+/** How strongly a method establishes a pass's value, weakest first. */
+export type PassStrength = 'declared' | 'estimated' | 'verified';
 
-export interface AgeGateSetting {
-  minimumAge: number;
-  assurance: AgeAssurance;
+/** What an app asks of its members: a pass of `kind` from `plugin`, for at least `min`, at least this strong. */
+export interface AppRequirement {
+  plugin: string;
+  kind: string;
+  min: number;
+  strength: PassStrength;
 }
 
-/** An app's age gate as the signed-in member stands with it. */
-export interface AgeGateStatus extends AgeGateSetting {
+/** A requirement as a page shows it, with whether the signed-in member meets it and where to. */
+export interface PassRequirement extends AppRequirement {
+  pluginName: string;
+  label: string;
+  unit: string;
+  /** The plugin that issues it is installed and on. */
+  available: boolean;
   satisfied: boolean;
-  /** Where on the main site the member confirms their age. */
+  /** Where on the main site the member gets it: the plugin's page, for this app. */
   verifyPath: string;
 }
 
-/** One of the member's own age checks. Never a date of birth, a picture or an estimate. */
+/** An app's requirements as the signed-in member stands with them. */
+export interface RequirementsStatus {
+  satisfied: boolean;
+  requirements: PassRequirement[];
+}
+
+/** A kind of pass an owner can require: one an enabled plugin on this site may issue. */
+export interface PassKind {
+  plugin: string;
+  pluginName: string;
+  kind: string;
+  label: string;
+  unit: string;
+  min: number;
+  max: number;
+  strengths: PassStrength[];
+}
+
+/** One of the member's own passes. Never a date of birth, a picture or an estimate. */
 export interface AccessReceipt {
   id: string;
-  kind: 'age';
-  minimumAge: number;
-  assurance: AgeAssurance;
+  plugin: string;
+  pluginName: string;
+  kind: string;
+  label: string;
+  value: number;
+  strength: PassStrength;
   method: string;
   issuedAt: string;
   expiresAt: string;
   revokedAt: string | null;
   live: boolean;
+}
+
+/** An installed plugin, as Admin → Plugins shows it. */
+export interface InstalledPlugin {
+  id: string;
+  manifestId: string;
+  scope: string;
+  appId: string;
+  name: string;
+  version: string;
+  enabled: boolean;
+  grants: Array<Omit<PassKind, 'plugin' | 'pluginName'> & { issueRoute: string }>;
+  installedAt: string;
+}
+
+/** A plugin that ships with FormLogic and is not installed yet. */
+export interface AvailablePlugin {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  passes: Array<Omit<PassKind, 'plugin' | 'pluginName'> & { issueRoute: string }>;
 }
 
 export interface AppNavItem {

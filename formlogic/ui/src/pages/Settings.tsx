@@ -53,7 +53,7 @@ import type { AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection, Accou
 import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
 import { MfaPanel } from '../components/settings/MfaPanel';
 import { SupportAccessPanel } from '../components/settings/SupportAccessPanel';
-import { AgeChecksPanel } from '../components/settings/AgeChecksPanel';
+import { PassesPanel } from '../components/settings/PassesPanel';
 import { VaultPanel } from '../components/vault/VaultPanel';
 import { AiSourceCard } from '../components/settings/AiSourceCard';
 import { passwordError as getPasswordError } from '../lib/passwordPolicy';
@@ -990,7 +990,7 @@ export function Settings() {
               {/* Age checks made for apps with an age gate, each one withdrawable. */}
               {!user?.isDemo && (
                 <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
-                  <AgeChecksPanel />
+                  <PassesPanel />
                 </div>
               )}
 

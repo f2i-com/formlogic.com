@@ -235,8 +235,8 @@ class AppPublicController
             'status' => $status,
             'isMember' => $appUser && $status === 'active',
             'canSelfRegister' => !$appUser && !empty($settings['allowSelfRegistration']),
-            // The app's age gate, if it has one: what it asks, whether this member meets it, and where to.
-            'ageGate' => $this->gate?->statusFor($app, $userId),
+            // The passes the app requires, if any: what each asks, whether this member meets it, and where to.
+            'requirements' => $this->gate?->statusFor($app, $userId),
         ]);
     }
 

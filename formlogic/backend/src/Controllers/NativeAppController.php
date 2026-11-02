@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
-use FormLogic\Services\{AppService, AppUserService, NativeAppService, PlanService, FlowService, RuntimeEngineService};
+use FormLogic\Services\{AccessGateService, AppService, AppUserService, NativeAppService, PlanService, PluginService, FlowService, RuntimeEngineService};
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -19,7 +19,8 @@ class NativeAppController
     // $engines is required, not optional-with-a-default: this controller is autowired, and PHP-DI's
     // reflection autowiring SKIPS optional parameters (ReflectionBasedAutowiring), so an `= null`
     // here would silently hand production a controller that decides no app's engine.
-    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines) {}
+    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null) {}
+
 
     public function manage(Request $request, Response $response, array $args): Response
     {
@@ -132,11 +133,21 @@ class NativeAppController
         $owner = $app && $user && $app['ownerId'] === $user;
         if (!$app || !$this->apps->isRuntimeVisible($app, (string) ($user ?? ''))) return $this->jsonError($response, 'App not found or access denied', 404);
         if ($blocked = $this->blockIfDemo($request, $response, 'Native hosting is unavailable in the shared demo.')) return $blocked;
-        return $this->respond($response, function () use ($request, $response, $app, $user, $owner) {
+        // A plugin's own app (PluginService): any signed-in person on this site runs its pages, as
+        // a member with no membership row, while the plugin is enabled. Nobody owns it.
+        $plugin = $this->plugins?->forApp($app);
+        return $this->respond($response, function () use ($request, $response, $app, $user, $owner, $plugin) {
             // Access is decided against the settled project (FL-S04), never an update's leftover project.json.
             $project = $this->native->project($app['id']);
             if (!$project) throw new \RuntimeException('Native app not found', 404);
-            $membership = $user && !$owner && $project['access'] === 'members' ? $this->users->getAppUser($app['id'], $user) : null;
+            if ($plugin !== null) {
+                if (!$plugin['enabled']) throw new \RuntimeException('This plugin is turned off on this site.', 403);
+                if (!$user) throw new \RuntimeException('Sign in to continue', 403);
+                $project['access'] = 'members';
+                $membership = ['status' => 'active', 'roleId' => 'member'];
+            } else {
+                $membership = $user && !$owner && $project['access'] === 'members' ? $this->users->getAppUser($app['id'], $user) : null;
+            }
             if ($project['access'] === 'members' && !$owner && (!$user || ($membership['status'] ?? '') !== 'active')) throw new \RuntimeException('Sign in with an active app membership to continue', 403);
             // The page was loaded on one engine; the server may have decided otherwise since (a
             // revocation, a policy edit). Inside respond(), so a resolver that cannot answer is the
@@ -173,7 +184,8 @@ class NativeAppController
             }
             $input = $request->getParsedBody();
             if (!is_array($input) || !is_string($input['path'] ?? null) || !preg_match('~^/api/[a-zA-Z0-9/_-]+$~D', $input['path']) || !in_array($input['method'] ?? null, ['GET','POST','PUT','DELETE'], true)) throw new \InvalidArgumentException('Provide an app API path and method');
-            if (in_array($input['method'], ['POST', 'PUT'], true) && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) throw new \RuntimeException('The app owner’s cloud access has expired. Records remain available to read and export.', 402);
+            // A plugin is the site's own, on no one's plan.
+            if ($plugin === null && in_array($input['method'], ['POST', 'PUT'], true) && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) throw new \RuntimeException('The app owner’s cloud access has expired. Records remain available to read and export.', 402);
             $headers = is_array($input['headers'] ?? null) ? array_change_key_case($input['headers'], CASE_LOWER) : [];
             $authorization = is_string($headers['authorization'] ?? null) ? $headers['authorization'] : '';
             if (strlen($authorization) > 4096) throw new \InvalidArgumentException('Invalid application authorization');
@@ -193,6 +205,10 @@ class NativeAppController
                 'headers' => (object) ['authorization' => $authorization, 'idempotency-key' => $idempotency],
                 'client_ip' => \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request), 'photos' => false,
             ], $identity, $this->flows->nativeRecordSubscriptions($app['id']), (int) ($project['version'] ?? 0), true);
+            if ($plugin !== null) {
+                if ($this->gate === null) throw new \RuntimeException('Plugins are not available', 503);
+                $result = $this->gate->recordFromPluginAnswer($plugin, (string) $user, $input['method'], $input['path'], $result);
+            }
             try {
                 $this->native->dispatchRecordEvents($app['id'], fn($id, $event, $data, $bindings) => $this->flows->enqueueNativeRecordEvent($app['id'], $id, $event, $data, $bindings));
             } catch (\Throwable $error) {

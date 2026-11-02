@@ -831,14 +831,36 @@ $container->set(ExternalApiController::class, function (Container $c) {
 });
 
 // Register App services
-$container->set(\FormLogic\Services\AccessGateService::class, function (Container $c) {
-    return new \FormLogic\Services\AccessGateService($c->get(MySQLConnection::class));
+// Plugins, and the passes they issue that apps require (PluginService, AccessGateService).
+$container->set(\FormLogic\Services\PluginService::class, function (Container $c) {
+    return new \FormLogic\Services\PluginService(
+        $c->get(MySQLConnection::class),
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class)
+    );
 });
-$container->set(\FormLogic\Controllers\AgeVerificationController::class, function (Container $c) {
-    return new \FormLogic\Controllers\AgeVerificationController(
+$container->set(\FormLogic\Services\AccessGateService::class, function (Container $c) {
+    return new \FormLogic\Services\AccessGateService($c->get(MySQLConnection::class), $c->get(\FormLogic\Services\PluginService::class));
+});
+$container->set(\FormLogic\Controllers\PluginController::class, function (Container $c) {
+    return new \FormLogic\Controllers\PluginController(
         $c->get(AppService::class),
         $c->get(\FormLogic\Services\AccessGateService::class),
-        $c->get(\FormLogic\Services\AppDomainService::class)
+        $c->get(\FormLogic\Services\PluginService::class),
+        $c->get(\FormLogic\Services\AppDomainService::class),
+        $c->get(AuditService::class)
+    );
+});
+$container->set(\FormLogic\Controllers\NativeAppController::class, function (Container $c) {
+    return new \FormLogic\Controllers\NativeAppController(
+        $c->get(AppService::class),
+        $c->get(AppUserService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class),
+        $c->get(\FormLogic\Services\PlanService::class),
+        $c->get(\FormLogic\Services\FlowService::class),
+        $c->get(\FormLogic\Services\RuntimeEngineService::class),
+        $c->get(\FormLogic\Services\PluginService::class),
+        $c->get(\FormLogic\Services\AccessGateService::class)
     );
 });
 
@@ -1606,7 +1628,23 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     $group->delete('/upgrade/package', function ($request, $response) use ($ctrl) {
         return $ctrl()->upgradeDiscard($request, $response);
     });
-})->add($adminWritesConfirmed)->add($adminRateLimiter)->add($adminGate)->add($authRequired);
+
+    // Plugins (PluginService): install one that ships with FormLogic, turn it on or off, remove it.
+    $plugins = fn () => $container->get(\FormLogic\Controllers\PluginController::class);
+    $group->get('/plugins', function ($request, $response) use ($plugins) {
+        return $plugins()->adminList($request, $response);
+    });
+    $group->post('/plugins/{plugin:[a-z0-9][a-z0-9.-]{2,63}}/install', function ($request, $response) use ($plugins, $adminArgs) {
+        return $plugins()->adminInstall($request, $response, $adminArgs($request));
+    });
+    $group->put('/plugins/{plugin:[a-z0-9][a-z0-9.-]{2,63}}', function ($request, $response) use ($plugins, $adminArgs) {
+        return $plugins()->adminUpdate($request, $response, $adminArgs($request));
+    });
+    $group->delete('/plugins/{plugin:[a-z0-9][a-z0-9.-]{2,63}}', function ($request, $response) use ($plugins, $adminArgs) {
+        return $plugins()->adminRemove($request, $response, $adminArgs($request));
+    });
+})->add(new \FormLogic\Middleware\PluginAccountGuardMiddleware($container->get(AppService::class)))
+  ->add($adminWritesConfirmed)->add($adminRateLimiter)->add($adminGate)->add($authRequired);
 
 // ── Admin acting-as mirror (platform administrators only) ──────────────────────
 // Owner-parity management of ANOTHER user's apps/forms/flows through the SAME
@@ -3246,20 +3284,21 @@ $app->post('/api/app/{slug}/native/request', function ($request, $response) use 
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->runtime($request, $response, $getArgs($request));
 })->add($appAccessGate)->add($nativeLimiter)->add($authOptional);
 
-// An app's age gate, met on the main site (AgeVerificationController); a domain's session never reaches these.
-$ageVerificationLimiter = new RateLimitMiddleware($rateLimiter, 20, 60, 'age_verification', true);
-$app->get('/api/verification/age', function ($request, $response) use ($container) {
-    return $container->get(\FormLogic\Controllers\AgeVerificationController::class)->status($request, $response);
-})->add($ageVerificationLimiter)->add($authRequired);
-$app->post('/api/verification/age/declare', function ($request, $response) use ($container) {
-    return $container->get(\FormLogic\Controllers\AgeVerificationController::class)->declare($request, $response);
-})->add($ageVerificationLimiter)->add($authRequired);
+// Plugins' pages and the passes they issue, on the main site (PluginController); a domain's
+// session never reaches these. The pass itself is recorded on the plugin's own native route.
+$pluginLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'plugins', true);
+$app->get('/api/plugins/passes', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\PluginController::class)->passKinds($request, $response);
+})->add($authRequired);
+$app->get('/api/plugins/{plugin:[a-z0-9][a-z0-9.-]{2,63}}/context', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\PluginController::class)->context($request, $response, $getArgs($request));
+})->add($pluginLimiter)->add($authRequired);
 $app->get('/api/verification/receipts', function ($request, $response) use ($container) {
-    return $container->get(\FormLogic\Controllers\AgeVerificationController::class)->receipts($request, $response);
+    return $container->get(\FormLogic\Controllers\PluginController::class)->receipts($request, $response);
 })->add($authRequired);
 $app->delete('/api/verification/receipts/{id}', function ($request, $response) use ($container, $getArgs) {
-    return $container->get(\FormLogic\Controllers\AgeVerificationController::class)->revoke($request, $response, $getArgs($request));
-})->add($ageVerificationLimiter)->add($authRequired);
+    return $container->get(\FormLogic\Controllers\PluginController::class)->revoke($request, $response, $getArgs($request));
+})->add($pluginLimiter)->add($authRequired);
 
 // App Admin routes (protected - require authentication + ownership)
 $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, $getArgs) {

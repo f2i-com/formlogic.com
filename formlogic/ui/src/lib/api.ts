@@ -4,7 +4,7 @@
 
 import { ADMIN_CONFIRMATION_DECLINED, ADMIN_CONFIRMATION_REQUIRED, adminConfirmationHeaders, askForAdminConfirmation, canAskForAdminConfirmation } from './adminConfirmation';
 import type { Form } from '../types/form';
-import type { AccessReceipt, AgeGateStatus, App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, FormAppContext } from '../types/app';
+import type { AccessReceipt, App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, AvailablePlugin, FormAppContext, InstalledPlugin, PassKind, PassRequirement, RequirementsStatus } from '../types/app';
 import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
 import { APP_LOGIC_LANGUAGES } from '../types/customAppLogic';
 import type { ClientEngineId } from './clientEngines';
@@ -2840,16 +2840,30 @@ class ApiClient {
     return this.request(`/app/${seg(slug)}/activity${limit ? `?limit=${limit}` : ''}`);
   }
 
-  /** An app's age gate as the caller stands, the methods this site offers for it, and where to go back to. */
-  async getAgeVerification(slug: string, returnTo?: string): Promise<ApiResponse<{ app: { name: string; slug: string }; ageGate: AgeGateStatus | null; methods: string[]; returnTo: string | null }>> {
-    const query = new URLSearchParams({ app: slug });
+  /** What a plugin's page is for: the app's requirement it meets, the plugin's app to run, and where to go back to. */
+  async getPluginContext(plugin: string, slug: string, kind: string, returnTo?: string): Promise<ApiResponse<{ plugin: { id: string; name: string; slug: string | null }; app: { name: string; slug: string }; requirement: PassRequirement; returnTo: string }>> {
+    const query = new URLSearchParams({ app: slug, kind });
     if (returnTo) query.set('return', returnTo);
-    return this.request(`/verification/age?${query}`);
+    return this.request(`/plugins/${seg(plugin)}/context?${query}`);
   }
 
-  /** The member's own declaration of their age, where the app accepts one. */
-  async declareAge(slug: string, returnTo?: string): Promise<ApiResponse<{ receipt: AccessReceipt; ageGate: AgeGateStatus; returnTo: string | null }>> {
-    return this.request('/verification/age/declare', { method: 'POST', body: JSON.stringify({ app: slug, confirm: true, ...(returnTo ? { return: returnTo } : {}) }) });
+  /** The passes an app owner can require: those the enabled plugins on this site issue. */
+  async getPassKinds(): Promise<ApiResponse<{ passes: PassKind[] }>> {
+    return this.request('/plugins/passes');
+  }
+
+  /** Admin → Plugins: what is installed, and what ships with FormLogic to install. */
+  async adminGetPlugins(): Promise<ApiResponse<{ installed: InstalledPlugin[]; available: AvailablePlugin[] }>> {
+    return this.request('/admin/plugins');
+  }
+  async adminInstallPlugin(id: string): Promise<ApiResponse<{ plugin: InstalledPlugin }>> {
+    return this.request(`/admin/plugins/${seg(id)}/install`, { method: 'POST', body: '{}' });
+  }
+  async adminSetPluginEnabled(id: string, enabled: boolean): Promise<ApiResponse<{ plugin: InstalledPlugin }>> {
+    return this.request(`/admin/plugins/${seg(id)}`, { method: 'PUT', body: JSON.stringify({ enabled }) });
+  }
+  async adminRemovePlugin(id: string): Promise<ApiResponse<{ removed: boolean }>> {
+    return this.request(`/admin/plugins/${seg(id)}`, { method: 'DELETE' });
   }
 
   async getAccessReceipts(): Promise<ApiResponse<{ receipts: AccessReceipt[] }>> {
@@ -2860,7 +2874,7 @@ class ApiClient {
     return this.request(`/verification/receipts/${seg(id)}`, { method: 'DELETE' });
   }
 
-  async getAppMembership(slug: string): Promise<ApiResponse<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean; ageGate?: AgeGateStatus | null }>> {
+  async getAppMembership(slug: string): Promise<ApiResponse<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean; requirements?: RequirementsStatus | null }>> {
     if (this._demoMode) {
       const stored = await getDemoAppBySlug(slug);
       if (stored) {

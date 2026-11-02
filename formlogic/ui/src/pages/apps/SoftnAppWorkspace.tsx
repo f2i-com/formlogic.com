@@ -11,7 +11,7 @@ import { Textarea } from '../../components/ui/Textarea';
 import { Switch } from '../../components/ui/Switch';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
-import { AgeGateSetting } from '../../components/apps/AgeGateSetting';
+import { RequirementsSetting } from '../../components/apps/RequirementsSetting';
 import { AppEditorDialog, type AppEditorKind } from '../../components/studio/AppEditorDialog';
 import type { EditorBrief } from '../../components/studio/editorAgent';
 import { AppEngineSelect } from '../../components/studio/AppEngineSelect';
@@ -30,7 +30,7 @@ import { useAppStore } from '../../stores/appStore';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { useUIStore, type SoftnOpen } from '../../stores/uiStore';
-import type { AgeGateSetting as AgeGate, App } from '../../types/app';
+import type { App, AppRequirement } from '../../types/app';
 
 type Tab = 'app' | 'data' | 'settings';
 const TABS = [['app', 'App', Globe], ['data', 'Data', Database], ['settings', 'Settings', SettingsIcon]] as const;
@@ -141,17 +141,18 @@ function Workspace({ app }: { app: App }) {
     if (await updateApp(app.id, { status: 'draft' })) toast.success('App unpublished', 'Nobody but you can open it until you publish again.');
   };
 
-  // The age gate is the app's setting, not the project's: it applies at once, published or not.
-  // Merged onto a fresh read, because the server writes settings whole.
+  // What the app requires is the app's setting, not the project's: it applies at once, published or
+  // not. Merged onto a fresh read, because the server writes settings whole.
   const [gateBusy, setGateBusy] = useState(false);
-  const changeAgeGate = async (next: AgeGate | undefined) => {
+  const changeRequirements = async (next: AppRequirement[] | undefined) => {
     setGateBusy(true);
     try {
       await fetchApps();
       const settings = { ...(useAppStore.getState().apps.find(candidate => candidate.id === app.id)?.settings ?? app.settings) };
-      if (next) settings.ageGate = next; else delete settings.ageGate;
+      if (next) settings.requires = next; else delete settings.requires;
       if (await updateApp(app.id, { settings })) {
-        toast.success(next ? `Now only for people aged ${next.minimumAge} and over` : 'The age gate is off', next ? 'Members confirm their age before it opens.' : undefined);
+        const age = next?.find(requirement => requirement.kind === 'age');
+        toast.success(age ? `Now only for people aged ${age.min} and over` : next ? 'Saved' : 'Nothing is asked before it opens', next ? 'Members are asked before it opens.' : undefined);
       }
     } finally { setGateBusy(false); }
   };
@@ -313,9 +314,9 @@ function Workspace({ app }: { app: App }) {
             {!projectHasBackend(project) && <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">This app keeps its records in each visitor&rsquo;s own browser, so changing this starts everyone again from empty.</p>}
             <Link to={`/apps/${app.id}/studio/access`} className="mt-3 inline-flex min-h-10 items-center text-sm font-medium text-indigo-600 dark:text-indigo-300">Members &amp; roles</Link>
           </Panel>
-          {app.ownerId === userId && <Panel title="Age gate" icon={<Lock className="h-4 w-4" />}>
-            <AgeGateSetting value={app.settings?.ageGate} disabled={gateBusy || readOnly} anonymousAccess={project.access === 'application'}
-              onChange={next => void changeAgeGate(next)} />
+          {app.ownerId === userId && <Panel title="Before it opens" icon={<Lock className="h-4 w-4" />}>
+            <RequirementsSetting value={app.settings?.requires} disabled={gateBusy || readOnly} anonymousAccess={project.access === 'application'}
+              onChange={next => void changeRequirements(next)} />
           </Panel>}
           <Panel title="Address" icon={<Globe className="h-4 w-4" />}>
             <Switch label="Open this app at its address" description={`Visitors to /app/${app.slug} get this app. Off: it opens at /app/${app.slug}/native.`}

@@ -1,6 +1,7 @@
 import { useContext, useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import type { AgeGateStatus } from '../../types/app';
+import type { RequirementsStatus } from '../../types/app';
+import { passAction, unmetRequirement } from '../../lib/passes';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
@@ -26,7 +27,7 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const navigate = useNavigate();
-  const [membershipInfo, setMembershipInfo] = useState<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean; ageGate?: AgeGateStatus | null } | null>(null);
+  const [membershipInfo, setMembershipInfo] = useState<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean; requirements?: RequirementsStatus | null } | null>(null);
   const [membershipChecked, setMembershipChecked] = useState(false);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -172,10 +173,12 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
     );
   }
 
-  // A member of an app with an age gate they haven't met. They confirm their age on this site,
-  // never on an app's own domain (as with sign-in), and come back here.
-  if (user && !config && membershipInfo?.isMember && membershipInfo.ageGate && !membershipInfo.ageGate.satisfied) {
-    const gate = membershipInfo.ageGate;
+  // A member of an app that requires a pass they don't hold. They get it on its plugin's page on
+  // this site, never on an app's own domain (as with sign-in), and come back here.
+  const unmet = user && !config && membershipInfo?.isMember ? unmetRequirement(membershipInfo.requirements) : null;
+  if (unmet && membershipInfo) {
+    const gate = unmet;
+    const appName = membershipInfo.appName;
     const confirmAge = () => {
       if (signInAt) {
         window.location.assign(`${signInAt}${gate.verifyPath}&return=${encodeURIComponent(window.location.href)}`);
@@ -189,10 +192,12 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
           <div className="w-12 h-12 mx-auto rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-4">
             <ShieldCheck className="h-6 w-6 text-primary-600 dark:text-primary-400" />
           </div>
-          <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white tracking-tight">For people aged {gate.minimumAge} and over</h2>
-          <p className="text-gray-500 dark:text-slate-400 mb-6">{membershipInfo.appName} asks its members to confirm their age before it opens.</p>
+          <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white tracking-tight">{gate.kind === 'age' ? `For people aged ${gate.min} and over` : `${appName} needs ${gate.label}`}</h2>
+          {gate.available
+            ? <p className="text-gray-500 dark:text-slate-400 mb-6">{gate.kind === 'age' ? `${appName} asks its members to confirm their age before it opens.` : `${appName} asks its members for this before it opens, through ${gate.pluginName}.`}</p>
+            : <p className="text-gray-500 dark:text-slate-400 mb-6">This app needs a plugin that is not available on this site at the moment. Ask the app&apos;s owner.</p>}
           <div className="flex flex-col gap-2">
-            <Button onClick={confirmAge}>Confirm your age</Button>
+            {gate.available && <Button onClick={confirmAge}>{passAction(gate)}</Button>}
             <a href="/" className="text-sm text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white">Go to Home</a>
           </div>
         </div>

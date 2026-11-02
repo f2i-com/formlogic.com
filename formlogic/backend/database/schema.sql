@@ -699,10 +699,11 @@ CREATE TABLE `backup_link_codes` (
   CONSTRAINT `fk_backup_link_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- A member's passes of an app's age gate (AccessGateService): who, which age, how, until when.
+-- A member's passes (AccessGateService): which plugin issued it, what for, the value, how, until when.
 CREATE TABLE `access_receipts` (
   `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `plugin_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
   `kind` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
   `minimum_age` smallint unsigned NOT NULL,
   `assurance` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -714,6 +715,23 @@ CREATE TABLE `access_receipts` (
   PRIMARY KEY (`id`),
   KEY `idx_access_receipts_user` (`user_id`,`kind`,`expires_at`),
   CONSTRAINT `fk_access_receipts_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Installed plugins (PluginService): a SoftN project held as an app of the system Plugins account.
+CREATE TABLE `plugins` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `manifest_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `scope` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'site',
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `grants` json NOT NULL,
+  `installed_by` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `installed_at` datetime NOT NULL,
+  `updated_at` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_plugins_manifest_scope` (`manifest_id`,`scope`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;

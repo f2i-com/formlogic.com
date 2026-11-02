@@ -1,0 +1,40 @@
+<logic>
+// The age gate's page. The site tells it which app the person came from and the age that app asks
+// (pluginContext); the person's own declaration goes to this plugin's backend, which answers with
+// the pass FormLogic records; then the site takes them back (pluginDone).
+var age = 0;
+var ready = false;
+var heading = 'Confirm your age';
+var lead = 'Loading...';
+var button = 'Loading...';
+var message = '';
+function _init() {
+  softn.backend.call('pluginContext', {}, function(reply) {
+    var context = reply && reply.result ? reply.result : null;
+    if (!context || !context.requirement || !context.app) {
+      lead = 'This page was opened without an app to confirm your age for.';
+      button = 'Nothing to confirm';
+      return;
+    }
+    age = context.requirement.min;
+    lead = context.app.name + ' is for people aged ' + age + ' and over.';
+    button = 'I am ' + age + ' or older';
+    ready = true;
+  });
+}
+function confirmAge() {
+  if (!ready) return;
+  ready = false;
+  message = 'Saving...';
+  softn.net.fetch('https://age-gate.plugin/api/pass', {method:'POST',body:{minimumAge:age,confirmed:true}}, function(response) {
+    if (!response.ok) {
+      ready = true;
+      message = 'Your age could not be recorded. Try again.';
+      return;
+    }
+    message = 'Thank you. Taking you back...';
+    softn.backend.call('pluginDone', {}, function() {});
+  });
+}
+</logic>
+<Stack padding="24" gap="16"><Text>{heading}</Text><Text>{lead}</Text><Button @click={confirmAge}>{button}</Button><Text>This is your own word, not a check of your age. It is kept with your account on this site and opens other apps here that ask the same, until it expires or you withdraw it in Settings. Nothing else about you is kept.</Text><Text>{message}</Text></Stack>

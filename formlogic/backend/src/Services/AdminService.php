@@ -97,10 +97,11 @@ class AdminService
     {
         $limit = max(1, min(100, $limit));
         $page = max(1, $page);
-        $where = '';
-        $params = [];
+        // The Plugins account holds the plugins' projects; it is nobody's to manage (PluginService).
+        $where = 'WHERE u.id <> :plugins';
+        $params = ['plugins' => PluginService::SYSTEM_USER_ID];
         if ($search !== '') {
-            $where = 'WHERE u.email LIKE :q OR u.name LIKE :q2';
+            $where .= ' AND (u.email LIKE :q OR u.name LIKE :q2)';
             $like = '%' . addcslashes($search, '%_\\') . '%';
             $params['q'] = $like;
             $params['q2'] = $like;

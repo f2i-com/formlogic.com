@@ -46,7 +46,8 @@ class AdminActAsMiddleware implements MiddlewareInterface
     {
         $route = RouteContext::fromRequest($request)->getRoute();
         $ownerId = (string) ($route?->getArgument('ownerId') ?? '');
-        $owner = $ownerId !== '' ? $this->authService->getUserById($ownerId) : null;
+        $owner = $ownerId !== '' && $ownerId !== \FormLogic\Services\PluginService::SYSTEM_USER_ID ? $this->authService->getUserById($ownerId) : null;
+        // The Plugins account is nobody's to act as: its apps are plugins, changed only by installing them.
         if ($owner === null) {
             return $this->json(['error' => true, 'message' => 'User not found'], 404);
         }

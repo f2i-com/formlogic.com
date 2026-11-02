@@ -40,6 +40,7 @@ export function HostedAppFrame({
   hostedAdmission,
   workspaceOnly = false,
   bare = false,
+  plugin,
 }: {
   /** The app IS the page: no card around it, and no minimum height to overflow a short screen. */
   bare?: boolean;
@@ -50,6 +51,12 @@ export function HostedAppFrame({
   hostedAdmission?: HostedAdmission;
   /** Only trusted built-in clients may use the workspace bridge without hosted actions. */
   workspaceOnly?: boolean;
+  /**
+   * A plugin's own page (PluginVerifyPage): the two things it may ask of this page, and nothing
+   * else. `pluginContext` answers with what the server said the page is for; `pluginDone` hands
+   * back to the host, which decides where to go from the server's answer, never the frame's.
+   */
+  plugin?: { context: Record<string, unknown>; onDone: () => void };
   /**
    * The engine the SERVER decided this app runs on, from the runtime GET, with the revision every
    * action sends back in X-FormLogic-Client-Engine. Absent (a server from before the decision, or
@@ -69,7 +76,7 @@ export function HostedAppFrame({
   // even if it belongs to the same user; NativeAppPage must fetch a fresh project first.
   const sourceKey = JSON.stringify([slug, version, clientIdentity(client), native ? clientIdentity(native) : 0,
     native?.access, native?.storageScope?.access, native?.storageScope?.appId,
-    native?.storageScope?.access === 'members' ? native.storageScope.userId : null, engine?.id, engine?.revision, hosted, hostedAdmissionId, workspaceOnly]);
+    native?.storageScope?.access === 'members' ? native.storageScope.userId : null, engine?.id, engine?.revision, hosted, hostedAdmissionId, workspaceOnly, plugin ? clientIdentity(plugin) : 0]);
   const [admitted, setAdmitted] = useState(() => ({ key: sourceKey, generation }));
   if (admitted.key !== sourceKey) setAdmitted({ key: sourceKey, generation });
   const admission = native || workspaceOnly ? (admitted.key === sourceKey ? admitted.generation : generation) : (hosted?.generation ?? -1);
@@ -367,6 +374,15 @@ export function HostedAppFrame({
             reply(result.error ? { error: result.error } : result.data);
             return;
           }
+          if (mountNative && plugin && action === "pluginContext") {
+            reply({ result: plugin.context });
+            return;
+          }
+          if (mountNative && plugin && action === "pluginDone") {
+            invalidate();
+            plugin.onDone();
+            return;
+          }
           if (["workspaceInfo", "workspaceRecords", "workspaceOpen", "workspaceDashboard"].includes(action)) {
             reply({ result: await workspaceBridge(slug, action, input, (path) => {
               if (!isCurrentMount()) return;
@@ -453,7 +469,7 @@ export function HostedAppFrame({
       if (invalidateMount.current === invalidate) invalidateMount.current = null;
       if (recovery.current?.key === frameKey) recovery.current = null;
     };
-  }, [slug, mountClient, mountVersion, mountNative, storageEpoch, engineId, engineRevision, admission, blocked, decided, frameKey, hosted, workspaceOnly, actorRefused, hostedAdmissionId]);
+  }, [slug, mountClient, mountVersion, mountNative, storageEpoch, engineId, engineRevision, admission, blocked, decided, frameKey, hosted, workspaceOnly, actorRefused, hostedAdmissionId, plugin]);
   // Every engine: the first load is the frame starting, a second is the document being replaced
   // under it. Counted per frame, so a remount (new source, reset data, a new engine) starts over.
   const countLoad = () => {

@@ -1540,12 +1540,14 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
-        // A member's passes of an app's age gate (AccessGateService): who, which age, how, until
-        // when. Never a date of birth, a picture or an estimate.
+        // A member's passes (AccessGateService): which plugin issued it, what for, the value it
+        // establishes (an age, for an age pass), how strongly, until when. Never a date of birth, a
+        // picture or an estimate. `minimum_age` is the pass's value whatever its kind.
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS access_receipts (
                 id VARCHAR(36) PRIMARY KEY,
                 user_id VARCHAR(36) NOT NULL,
+                plugin_id VARCHAR(64) NOT NULL DEFAULT '',
                 kind VARCHAR(16) NOT NULL,
                 minimum_age SMALLINT UNSIGNED NOT NULL,
                 assurance VARCHAR(16) NOT NULL,
@@ -1556,6 +1558,26 @@ class MySQLConnection
                 revoked_at DATETIME NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 KEY idx_access_receipts_user (user_id, kind, expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Installed plugins (PluginService): a SoftN project with a plugin manifest, held as an app
+        // of the system Plugins account, and what the administrator granted it at install. `scope`
+        // is 'site' (an administrator installed it) or an app id (an owner, for that app).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS plugins (
+                id VARCHAR(36) PRIMARY KEY,
+                manifest_id VARCHAR(64) NOT NULL,
+                scope VARCHAR(36) NOT NULL DEFAULT 'site',
+                app_id VARCHAR(36) NOT NULL,
+                name VARCHAR(120) NOT NULL,
+                version VARCHAR(40) NOT NULL,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                grants JSON NOT NULL,
+                installed_by VARCHAR(36) NULL,
+                installed_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                UNIQUE KEY uq_plugins_manifest_scope (manifest_id, scope)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
         // Staged artifact ownership (review FL-002; mirrored in schema.sql +
@@ -1659,6 +1681,11 @@ class MySQLConnection
     public function runMigrations(): void
     {
         $pdo = $this->getConnection();
+
+        // Passes name the plugin that issued them (AccessGateService); an early table had no column for it.
+        if ($pdo->query("SHOW COLUMNS FROM access_receipts LIKE 'plugin_id'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE access_receipts ADD COLUMN plugin_id VARCHAR(64) NOT NULL DEFAULT '' AFTER user_id");
+        }
 
         // MKT: the marketplace catalog carries Application Package v2 aggregates alongside Pack
         // v1. A version row DECLARES what its pack_data is rather than the reader guessing from

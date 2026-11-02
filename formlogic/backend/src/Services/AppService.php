@@ -144,15 +144,18 @@ class AppService
         if (array_key_exists('torch', $settings) && !is_bool($settings['torch'])) {
             unset($settings['torch']);
         }
-        // settings.ageGate: {minimumAge, assurance}, the app's age gate (AccessGateService), or absent.
-        if (array_key_exists('ageGate', $settings)) {
-            $gate = AccessGateService::normalizeSetting($settings['ageGate']);
-            if ($gate === null) {
-                unset($settings['ageGate']);
+        // settings.requires: the passes the app's members need, each naming the plugin whose pass it
+        // accepts (AccessGateService). settings.plugin marks a plugin's own project, and counts only
+        // on an app of the Plugins account (PluginService::forApp), which nobody can sign in as.
+        if (array_key_exists('requires', $settings)) {
+            $requires = AccessGateService::normalizeRequirements($settings['requires']);
+            if ($requires === []) {
+                unset($settings['requires']);
             } else {
-                $settings['ageGate'] = $gate;
+                $settings['requires'] = $requires;
             }
         }
+        unset($settings['ageGate']);
         return $settings;
     }
 

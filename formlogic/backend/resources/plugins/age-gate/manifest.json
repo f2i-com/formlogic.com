@@ -1,0 +1,49 @@
+{
+  "id": "formlogic.plugin.age-gate",
+  "name": "Age gate",
+  "version": "1.0.0",
+  "main": "ui/main.ui",
+  "config": {
+    "server": {
+      "allowedOrigins": [
+        "https://age-gate.plugin"
+      ]
+    }
+  },
+  "server": {
+    "entry": "server/main.logic",
+    "requires": {
+      "apiVersion": 1,
+      "capabilities": []
+    },
+    "database": {
+      "kind": "private-sqlite",
+      "migrations": []
+    },
+    "routes": [
+      {
+        "path": "/api/pass",
+        "method": "POST",
+        "handler": "pass",
+        "transaction": "read",
+        "authorization": "anonymous"
+      }
+    ]
+  },
+  "formlogicPlugin": {
+    "id": "formlogic.age-gate",
+    "name": "Age gate",
+    "description": "Lets an app ask its members to confirm their age before it opens. Each person confirms it once on this site: it is their own word, not a check of their age.",
+    "passes": [
+      {
+        "kind": "age",
+        "label": "Age",
+        "unit": "years",
+        "min": 13,
+        "max": 120,
+        "strengths": ["declared"],
+        "issueRoute": "/api/pass"
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+// The person's own declaration of their age, answered with the pass FormLogic records for them.
+// FormLogic says who is asking (req.context.formlogic.userId) and records the pass for that person
+// only, holding it to what this plugin was granted at install: an age pass, by declaration.
+function pass(req) {
+  let who = req.context && req.context.formlogic ? req.context.formlogic.userId : null;
+  if (typeof who != "string" || who.length == 0) return {status:401,body:{error:"Sign in first"}};
+  let age = req.body ? req.body.minimumAge : null;
+  if (req.body.confirmed !== true || typeof age != "number" || age != Math.floor(age) || age < 13 || age > 120) {
+    return {status:422,body:{error:"Confirm your age to continue"}};
+  }
+  return {status:200,body:{pass:{kind:"age",value:age,strength:"declared",method:"self_declaration"}}};
+}

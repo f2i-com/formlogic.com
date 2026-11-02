@@ -842,10 +842,11 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `backup_link_codes` (
   CONSTRAINT `fk_backup_link_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'backup_link_codes table ensured';
-// A member's passes of an app's age gate (AccessGateService).
+// A member's passes (AccessGateService), each naming the plugin that issued it.
 $pdo->exec("CREATE TABLE IF NOT EXISTS `access_receipts` (
   `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `plugin_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
   `kind` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
   `minimum_age` smallint unsigned NOT NULL,
   `assurance` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -859,6 +860,27 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `access_receipts` (
   CONSTRAINT `fk_access_receipts_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'access_receipts table ensured';
+if (!$columnExists($pdo, $db, 'access_receipts', 'plugin_id')) {
+    $pdo->exec("ALTER TABLE `access_receipts` ADD COLUMN `plugin_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' AFTER `user_id`");
+    $applied[] = 'access_receipts.plugin_id added';
+}
+// Installed plugins (PluginService).
+$pdo->exec("CREATE TABLE IF NOT EXISTS `plugins` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `manifest_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `scope` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'site',
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `grants` json NOT NULL,
+  `installed_by` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `installed_at` datetime NOT NULL,
+  `updated_at` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_plugins_manifest_scope` (`manifest_id`,`scope`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'plugins table ensured';
 if (!$columnExists($pdo, $db, 'data_nodes', 'backup_client_id')) {
     $pdo->exec("ALTER TABLE `data_nodes`
         MODIFY `desktop_connection_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
