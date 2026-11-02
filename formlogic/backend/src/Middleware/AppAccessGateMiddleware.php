@@ -14,7 +14,8 @@ use Slim\Psr7\Response as SlimResponse;
 use Slim\Routing\RouteContext;
 
 /**
- * An app's age gate, on every route that names the app by slug (AccessGateService).
+ * The passes an app requires (an age, from the Age gate plugin), on every route that names the app
+ * by slug (AccessGateService).
  *
  * One place, so that no route can forget it: it rides the /api/app/{slug} group and each such route
  * outside it, and RouteGateWiringTest holds index.php to that. It finds out who is asking as the
@@ -23,7 +24,7 @@ use Slim\Routing\RouteContext;
  *
  * Left open: what a page needs before the member can pass the gate — the app's manifests, whether
  * they are a member, joining, and the native entry metadata. Everything else that names a gated
- * app refuses a member without a receipt.
+ * app refuses a member without the pass.
  */
 final class AppAccessGateMiddleware implements MiddlewareInterface
 {

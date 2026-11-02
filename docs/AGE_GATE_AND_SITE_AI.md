@@ -4,9 +4,10 @@ Design, 2026-11-02. Two features the site owner asked for together:
 
 1. **The site's AI on the owner's OAIY.** The administrator links their own OAIY and makes it the
    site's AI, so every member uses the AI the owner hosts. Nothing on a member's side changes.
-2. **A waterfall age gate.** An app can require that a member is verified 18+ (or another age)
-   before it opens. FormLogic enforces this on the server, on every route of the app. The checks
-   run on the owner's OAIY, through a plugin.
+2. **A waterfall age gate, as a plugin.** An app can require that a member is 18+ (or another
+   age) before it opens. FormLogic enforces this on the server, on every route of the app. How the
+   age is shown is a plugin's: a SoftN app that runs sandboxed, as anyone could write one. Stronger
+   checks run on the owner's OAIY.
 
 What exists, and the facts this design rests on, are in "Grounding" at the end.
 
@@ -52,9 +53,39 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
 
 ## 2. The waterfall age gate
 
+### Plugins and passes
+
+- A **plugin** is a SoftN project whose manifest has a `formlogicPlugin` section: an id, a name,
+  and the passes it may issue, each with its kind (`age`), value range, strengths
+  (`declared`, `estimated`, `verified`) and the POST route of its own backend that issues it
+  (`PluginService::pluginManifest`). Its backend runs in the SoftN runner and its pages in the
+  sandboxed frame, like any SoftN app's: it reaches nothing of the site but what FormLogic hands it.
+- **Installing.** Admin → Plugins lists the plugins that ship with FormLogic
+  (`backend/resources/plugins`) with what each would be granted, and installs one in a click.
+  What it was granted is recorded with it (`plugins` table); turning it off closes the apps that
+  need it, and removing it withdraws every pass it issued. Uploading other plugins, with a review
+  of what they ask for, and plugins an owner installs for one app (`scope`) come later.
+- **Where its project lives.** In an app of the system Plugins account, which nobody can sign in
+  as (no password matches), act as or manage (`PluginAccountGuardMiddleware`, `AdminActAsMiddleware`),
+  and which has no members (`AccessGateService::admitsMember`). So its files change only by
+  installing it, and it is in nobody's apps, backups, quota or erasure. A setting naming a plugin
+  counts only on an app of that account (`PluginService::forApp`).
+- **Its page.** `/plugins/{id}/verify?app=&kind=&return=` on the main site runs the plugin's app
+  for the signed-in person, as a member with no membership row. The frame offers it two actions
+  and no more: `pluginContext` (the app's name and what it asks, from the server) and `pluginDone`
+  (the host reads the server's answer again and goes to the `return` the server allowed).
+- **Issuing.** On the route its manifest names for a kind of pass, a success whose body carries
+  `pass: {kind, value, strength, method}` is recorded for the person who asked, held to the grant:
+  that kind, a strength granted, a whole value in its range. Never from another route or method,
+  never for a user the body names, never while the plugin is off
+  (`AccessGateService::recordFromPluginAnswer`). The page gets the answer without the pass. A
+  plugin may take the value from its page only for a declaration, which is the person's word
+  anyway; any stronger method has to work the value out in its backend.
+
 ### The gate (FormLogic core)
 
-- An app can carry an **access requirement**, `age: 18` to start (any whole age the owner sets).
+- An app can carry **requirements** (`settings.requires`): up to four of `{plugin, kind, min,
+  strength}`, each naming the plugin whose pass it accepts. A pass from another plugin never counts.
 - One service decides access for a member of a gated app (`AccessGateService`), in three places:
   a middleware on the whole `/api/app/{slug}` group and on each such route outside it (left open:
   the manifests, membership, joining and the native entry metadata, which a page needs first);
@@ -65,12 +96,15 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
   the gate fails it.
 - The app's owner is not gated. A gated app needs signed-in members: it cannot also allow
   anonymous `application` access, because there is nobody to attach a check to.
-- **Receipts.** A pass is stored as a receipt: member, age, how it was shown, verifier, issued and
-  expiry times (a year, `AGE_GATE_RECEIPT_DAYS`). Never a date of birth, a picture, an estimate or a
-  document. Apps learn "passed" and nothing else. A receipt is the member's for the whole site: it
-  opens every app here that asks the same age or less, by the same method or a weaker one, as the
-  declaration page tells them before they confirm. They see and withdraw receipts in Settings →
-  Security; a withdrawn one gates those apps again.
+- **Passes kept.** A pass is stored as a receipt (`access_receipts`): member, plugin, kind, value,
+  strength, method, issued and expiry times (a year, `PLUGIN_PASS_DAYS`). Never a date of birth, a
+  picture, an estimate or a document. Apps learn "passed" and nothing else. A pass is the member's
+  for the whole site: it opens every app here that asks the same plugin's pass for the same value
+  or less, by the same strength or a weaker one, as the plugin's page tells them before they
+  confirm. They see and withdraw passes in Settings → Security; a withdrawn one gates those apps
+  again.
+- A requirement whose plugin is off or gone refuses with `plugin_unavailable`, and the owner's
+  setting says so; the app keeps its setting.
 - **Where it happens.** Verification runs on the main FormLogic site, like sign-in. An app on its
   own domain sends the member there and gets them back through the same one-time code; no
   verification screen is ever shown on a custom domain.
@@ -80,10 +114,21 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
 The site chooses which methods it offers and the order; an app chooses the strength it needs.
 
 1. **Self-declaration.** The member confirms their age. Labelled honestly: it is not verification.
+   This is the built-in Age gate plugin (`formlogic.age-gate`): its page asks, its backend answers
+   with a declared age pass.
 2. **Face check on OAIY.** A camera check with a server-issued, random order of turns (up, down,
    left, right), each step with a one-time nonce and a deadline. The browser guides the person
    (head pose in the page) and picks one frame per step, then seals the frames to the verifier's
-   key. The verifier checks that each frame faces the asked direction, that it is one face
+   key.
+   - **The camera is the host page's, not the plugin's.** Tried in Chrome on the real frame
+     document with production's headers (`Permissions-Policy: camera=(self)`, the runtime's
+     `sandbox allow-scripts`): `getUserMedia` in the frame fails with `SecurityError: Invalid
+     security origin`, with or without `allow="camera"`, because the frame's origin is opaque. So a
+     plugin that declares `camera` gets it through the trusted plugin page, which asks the person,
+     shows the preview, and hands the plugin only the frames it captured, through a third bridge
+     action. Giving the frame `allow-same-origin` instead would give the plugin the site's origin,
+     and is never done.
+   - The verifier checks that each frame faces the asked direction, that it is one face
    throughout, a spoof score, and, once a cleared model is installed, an age estimate. It signs a
    verdict: `passed`, `failed`, or `stronger_check_required`, and deletes the frames.
    - The turns show a fresh response to a random challenge. They do not prove a live person: a
@@ -117,13 +162,17 @@ The site chooses which methods it offers and the order; an app chooses the stren
 ## Phases
 
 1. The gate: requirement setting, the gate service and its wiring test, receipts, the
-   verification page with self-declaration, custom domains, withdrawal. Built.
+   verification page with self-declaration, custom domains, withdrawal. Built, then made general:
+   plugins, passes per plugin, Admin → Plugins, the built-in Age gate plugin, its page in the
+   frame (e2e from the main site, `/native` and a custom domain).
 2. The site's AI on OAIY: the admin choice and pinned key, the server-sealed upstream, metering,
    the offline check and queue cap, the no-grant test. Built and tested against the contract's
    test desktop; still to do before it ships: a real run against a scratch OAIY.
-3. The verifier: link and keys, the verification lane, the camera page with the challenge, the
-   plugin with head-pose and spoof models, signed verdicts.
-4. Later: age model (after a licence and a labelled evaluation), photo ID, wallet, provider adapter.
+3. The verifier: link and keys, the verification lane, the camera in the plugin page with the
+   challenge, a face-check plugin whose backend checks the verdict, the OAIY plugin with head-pose
+   and spoof models, signed verdicts.
+4. Later: uploaded plugins with a review of what they ask, plugins an owner adds to one app, age
+   model (after a licence and a labelled evaluation), photo ID, wallet, provider adapter.
 
 Nothing here is released until the owner says so.
 
