@@ -233,6 +233,48 @@ final class SoftnDirectoryServiceTest extends TestCase
         self::assertSame('published', $service->approve($this->owner, $draft['draftId'], true)['status'], 'unless the person says to');
     }
 
+    public function testNoDraftIsLeftPublishing(): void
+    {
+        $service = $this->service('https://dir.test');
+        $ask = function () use ($service): string {
+            $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+            $service->requestPublish($this->owner, $draft['draftId']);
+            return $draft['draftId'];
+        };
+
+        // The connection drops once the bundle is on its way: it may be listed.
+        $this->answer = fn () => throw new \RuntimeException('Connection reset');
+        self::assertSame('uncertain', $service->approve($this->owner, $ask())['status']);
+        // The directory says yes without an edit key: listed, but not keepable.
+        $this->answer = fn () => ['status' => 201, 'body' => json_encode(['ok' => true, 'app' => ['slug' => 'keyless', 'name' => 'Booking']])];
+        self::assertSame('uncertain', $service->approve($this->owner, $ask())['status']);
+        $this->answer = null;
+
+        // A version whose key cannot be opened (the server's key was replaced): nothing went, so it failed.
+        $first = $ask();
+        $slug = $service->approve($this->owner, $first)['publication']['slug'];
+        $publicationId = (string) self::$pdo->query('SELECT id FROM softn_directory_publications WHERE slug = ' . self::$pdo->quote($slug))->fetchColumn();
+        $other = DataEncryption::generateKey();
+        putenv(DataEncryption::KEY_ENV . '=' . $other);
+        $_ENV[DataEncryption::KEY_ENV] = $other;
+        $sealedElsewhere = DataEncryption::fromEnvironment()->seal('a-key-this-server-cannot-open', 'softn_directory_publications.edit_key:' . $publicationId);
+        putenv(DataEncryption::KEY_ENV . '=' . $this->key);
+        $_ENV[DataEncryption::KEY_ENV] = $this->key;
+        self::$pdo->prepare('UPDATE softn_directory_publications SET edit_key = ? WHERE id = ?')->execute([$sealedElsewhere, $publicationId]);
+        $next = $service->createDraft($this->owner, $this->appId, [], $slug);
+        $service->requestPublish($this->owner, $next['draftId']);
+        $posts = count($this->posts());
+        $failed = $service->approve($this->owner, $next['draftId']);
+        self::assertSame('failed', $failed['status']);
+        self::assertSame($posts, count($this->posts()), 'and nothing was sent');
+
+        // A publish whose worker was stopped mid-upload reads as unclear once it is stale.
+        $stuck = $ask();
+        self::$pdo->prepare("UPDATE softn_directory_drafts SET status = 'publishing', updated_at = ? WHERE id = ?")->execute([gmdate('Y-m-d H:i:s', time() - SoftnDirectoryService::PUBLISHING_STALE_SECONDS - 60), $stuck]);
+        self::assertSame('uncertain', $service->draft($this->owner, $stuck)['status']);
+        self::assertSame('published', $service->approve($this->owner, $stuck, true)['status'], 'and the person can settle it');
+    }
+
     public function testAnExpiredDraftIsNotPublished(): void
     {
         $service = $this->service('https://dir.test');

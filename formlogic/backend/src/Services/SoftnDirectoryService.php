@@ -34,6 +34,9 @@ final class SoftnDirectoryService
     public const MAX_DRAFTS = 10;
     /** Publications (and new versions) an account may make in an hour. */
     public const PUBLISH_PER_HOUR = 10;
+    /** Longer than any publish can take (the transport gives up after 120 s): a draft still `publishing` is unclear. */
+    public const PUBLISHING_STALE_SECONDS = 300;
+    private const UNCERTAIN = 'No clear answer from the directory: the app may have been published. Look for it there before trying again.';
 
     private PDO $pdo;
     /** @var \Closure(string, string, array<string,string>, array<string,string>, ?string): array{status:int, body:string, error?:string, sent?:bool} */
@@ -59,6 +62,12 @@ final class SoftnDirectoryService
     }
 
     // ── The administrator's setting ─────────────────────────────────────────────
+
+    /** Where an edit key is sealed: its row (DataEncryption's associated data), which DataEncryptionMigrator reseals too. */
+    public static function editKeyContext(string $publicationId): string
+    {
+        return 'softn_directory_publications.edit_key:' . $publicationId;
+    }
 
     /** The directory this site publishes to, or null: off. */
     public function directory(): ?string
@@ -266,34 +275,45 @@ final class SoftnDirectoryService
             }
             return $this->draft($ownerId, $draftId);
         }
-        $listing = json_decode((string) $row['listing'], true) ?: [];
-        $file = $this->stagingPath($draftId);
-        if (!is_file($file) || hash_file('sha256', $file) !== $row['sha256']) {
-            $this->fail($draftId, 'failed', 'The draft’s bundle is gone or changed. Make a new draft.');
-            return $this->draft($ownerId, $draftId);
-        }
-        $publication = null;
-        if ($row['target_slug'] !== null) {
-            $publication = $this->ownPublication($ownerId, (string) $row['directory_url'], (string) $row['target_slug']);
-            $key = $this->encryption()->open((string) $publication['edit_key'], 'softn_directory_publications.edit_key:' . $publication['id']);
-            $answer = ($this->transport)('POST', $row['directory_url'] . '/api/apps/' . rawurlencode((string) $row['target_slug']) . '/versions', ['X-Edit-Key' => $key], ['notes' => (string) ($listing['notes'] ?? '')], $file);
-        } else {
-            $fields = array_filter(['name' => $listing['name'] ?? null, 'description' => $listing['description'] ?? null, 'category' => $listing['category'] ?? null,
-                'author' => $listing['author'] ?? null, 'tags' => isset($listing['tags']) ? implode(',', $listing['tags']) : null], fn ($v) => is_string($v) && $v !== '');
-            $answer = ($this->transport)('POST', $row['directory_url'] . '/api/apps', [], $fields, $file);
-        }
-        $data = json_decode($answer['body'] ?? '', true);
-        if (($answer['status'] ?? 0) >= 200 && ($answer['status'] ?? 0) < 300 && is_array($data) && is_array($data['app'] ?? null)) {
-            $publicationId = $this->record($ownerId, $row, $data, $publication);
-            $this->pdo->prepare("UPDATE softn_directory_drafts SET status = 'published', publication_id = ?, updated_at = ? WHERE id = ?")->execute([$publicationId, gmdate('Y-m-d H:i:s'), $draftId]);
-            @unlink($file);
-        } elseif (($answer['status'] ?? 0) >= 400 && ($answer['status'] ?? 0) < 500) {
-            $this->fail($draftId, 'failed', 'The directory refused it: ' . mb_substr(is_array($data) && is_string($data['error'] ?? null) ? $data['error'] : 'HTTP ' . $answer['status'], 0, 400));
-        } elseif (($answer['sent'] ?? true) === false) {
-            $this->fail($draftId, 'failed', 'The directory could not be reached: ' . mb_substr((string) ($answer['error'] ?? 'no answer'), 0, 300));
-        } else {
-            // A 5xx or a timeout after the bundle went: the directory may have listed it. Never retried by itself.
-            $this->fail($draftId, 'uncertain', 'No clear answer from the directory: the app may have been published. Look for it there before trying again.');
+        // From here the draft is this request's: whatever happens, it leaves `publishing` — `failed` while nothing has
+        // gone to the directory, `uncertain` once the bundle may have (the app could be listed), never stuck.
+        $sent = false;
+        try {
+            $listing = json_decode((string) $row['listing'], true) ?: [];
+            $file = $this->stagingPath($draftId);
+            if (!is_file($file) || hash_file('sha256', $file) !== $row['sha256']) {
+                $this->fail($draftId, 'failed', 'The draft’s bundle is gone or changed. Make a new draft.');
+                return $this->draft($ownerId, $draftId);
+            }
+            $publication = null;
+            if ($row['target_slug'] !== null) {
+                $publication = $this->ownPublication($ownerId, (string) $row['directory_url'], (string) $row['target_slug']);
+                $key = $this->encryption()->open((string) $publication['edit_key'], self::editKeyContext((string) $publication['id']));
+                $sent = true;
+                $answer = ($this->transport)('POST', $row['directory_url'] . '/api/apps/' . rawurlencode((string) $row['target_slug']) . '/versions', ['X-Edit-Key' => $key], ['notes' => (string) ($listing['notes'] ?? '')], $file);
+            } else {
+                $fields = array_filter(['name' => $listing['name'] ?? null, 'description' => $listing['description'] ?? null, 'category' => $listing['category'] ?? null,
+                    'author' => $listing['author'] ?? null, 'tags' => isset($listing['tags']) ? implode(',', $listing['tags']) : null], fn ($v) => is_string($v) && $v !== '');
+                $sent = true;
+                $answer = ($this->transport)('POST', $row['directory_url'] . '/api/apps', [], $fields, $file);
+            }
+            $data = json_decode($answer['body'] ?? '', true);
+            if (($answer['status'] ?? 0) >= 200 && ($answer['status'] ?? 0) < 300 && is_array($data) && is_array($data['app'] ?? null)) {
+                $publicationId = $this->record($ownerId, $row, $data, $publication);
+                $this->pdo->prepare("UPDATE softn_directory_drafts SET status = 'published', publication_id = ?, updated_at = ? WHERE id = ?")->execute([$publicationId, gmdate('Y-m-d H:i:s'), $draftId]);
+                @unlink($file);
+            } elseif (($answer['status'] ?? 0) >= 400 && ($answer['status'] ?? 0) < 500) {
+                $this->fail($draftId, 'failed', 'The directory refused it: ' . mb_substr(is_array($data) && is_string($data['error'] ?? null) ? $data['error'] : 'HTTP ' . $answer['status'], 0, 400));
+            } elseif (($answer['sent'] ?? true) === false) {
+                $this->fail($draftId, 'failed', 'The directory could not be reached: ' . mb_substr((string) ($answer['error'] ?? 'no answer'), 0, 300));
+            } else {
+                // A 5xx or a timeout after the bundle went: the directory may have listed it. Never retried by itself.
+                $this->fail($draftId, 'uncertain', self::UNCERTAIN);
+            }
+        } catch (\Throwable $e) {
+            $this->fail($draftId, $sent ? 'uncertain' : 'failed', $sent
+                ? self::UNCERTAIN . ' (' . mb_substr($e->getMessage(), 0, 200) . ')'
+                : 'It could not be published: ' . mb_substr($e->getMessage(), 0, 300));
         }
         return $this->draft($ownerId, $draftId);
     }
@@ -337,6 +357,13 @@ final class SoftnDirectoryService
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             throw new \DomainException('No draft of yours has that id.');
+        }
+        // A publish that never finished (its worker was stopped mid-upload) may or may not have reached the
+        // directory: after the longest a publish can take, it reads as unclear, which the person can settle.
+        if ($row['status'] === 'publishing' && strtotime((string) ($row['updated_at'] ?? $row['created_at']) . ' UTC') < time() - self::PUBLISHING_STALE_SECONDS) {
+            $this->pdo->prepare("UPDATE softn_directory_drafts SET status = 'uncertain', error = ? WHERE id = ? AND status = 'publishing'")->execute([self::UNCERTAIN, $draftId]);
+            $row['status'] = 'uncertain';
+            $row['error'] = self::UNCERTAIN;
         }
         return $row;
     }
@@ -400,7 +427,7 @@ final class SoftnDirectoryService
         $this->pdo->prepare('INSERT INTO softn_directory_publications (id, owner_user_id, directory_url, slug, name, edit_key, page_url, play_url, version, app_id, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
             $id, $ownerId, $base, $slug, mb_substr((string) ($app['name'] ?? $slug), 0, 120),
-            $this->encryption()->seal($key, 'softn_directory_publications.edit_key:' . $id),
+            $this->encryption()->seal($key, self::editKeyContext($id)),
             $absolute($page), $base . '/play/' . rawurlencode($slug), max(1, $version), $draft['app_id'], $now, $now,
         ]);
         return $id;

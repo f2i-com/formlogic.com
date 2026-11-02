@@ -8,6 +8,7 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Services\DataEncryptionMigrator;
 use FormLogic\Services\HostedAppService;
 use FormLogic\Services\MfaService;
+use FormLogic\Services\SoftnDirectoryService;
 use FormLogic\Services\TotpService;
 use FormLogic\Services\WebhookService;
 use FormLogic\Support\DataEncryption;
@@ -309,6 +310,27 @@ final class DataEncryptionSecretsTest extends TestCase
         } finally {
             unlink($path);
             rmdir($hosted);
+        }
+    }
+
+    public function testASoftnDirectoryEditKeyMovesToTheNewKey(): void
+    {
+        $id = bin2hex(random_bytes(16));
+        $sealed = DataEncryption::fromEnvironment()->seal('the-edit-key', SoftnDirectoryService::editKeyContext($id));
+        self::$pdo->prepare("INSERT INTO softn_directory_publications (id, owner_user_id, directory_url, slug, name, edit_key, page_url, play_url, version, created_at, updated_at)
+            VALUES (?, ?, 'https://dir.test', ?, 'App', ?, 'https://dir.test/app/x', 'https://dir.test/play/x', 1, NOW(), NOW())")->execute([$id, $this->userId, 'x-' . $id, $sealed]);
+        $this->key(DataEncryption::generateKey());
+        $_ENV[DataEncryption::PREVIOUS_KEYS_ENV] = self::KEY;
+        try {
+            $result = $this->migrator()->run(DataEncryption::fromEnvironment());
+            self::assertSame([], $result['failed']);
+            $stored = (string) self::$pdo->query('SELECT edit_key FROM softn_directory_publications WHERE id = ' . self::$pdo->quote($id))->fetchColumn();
+            self::assertNotSame($sealed, $stored, 'resealed under the new key');
+            unset($_ENV[DataEncryption::PREVIOUS_KEYS_ENV]);
+            self::assertSame('the-edit-key', DataEncryption::fromEnvironment()->open($stored, SoftnDirectoryService::editKeyContext($id)), 'it opens with the new key alone');
+        } finally {
+            unset($_ENV[DataEncryption::PREVIOUS_KEYS_ENV]);
+            self::$pdo->prepare('DELETE FROM softn_directory_publications WHERE id = ?')->execute([$id]);
         }
     }
 

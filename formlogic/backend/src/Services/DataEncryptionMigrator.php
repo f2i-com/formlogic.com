@@ -34,7 +34,9 @@ final class DataEncryptionMigrator
         }
         $failed = [];
         $secrets = $this->moveSecrets($crypto, 'users', 'mfa_secret', [MfaService::class, 'secretContext'], $failed)
-            + $this->moveSecrets($crypto, 'webhooks', 'secret', [WebhookService::class, 'secretContext'], $failed);
+            + $this->moveSecrets($crypto, 'webhooks', 'secret', [WebhookService::class, 'secretContext'], $failed)
+            // The SoftN directory's edit keys, which only this site holds (SoftnDirectoryService).
+            + $this->moveSecrets($crypto, 'softn_directory_publications', 'edit_key', [SoftnDirectoryService::class, 'editKeyContext'], $failed);
 
         $apps = 0;
         $records = 0;

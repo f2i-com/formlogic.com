@@ -585,7 +585,11 @@ An agent never publishes. It drafts and asks; the account's person approves on a
   approve again ("I checked: try again"). A refusal (4xx) or a directory that could not be reached
   leaves it `failed`, and it can be approved again.
 - **The edit key** is sealed with `DataEncryption` for its row, used only for that account's new versions,
-  and never returned by a tool or a page.
+  and never returned by a tool or a page. Moving to a new `DATA_ENCRYPTION_KEY` (`bin/encrypt-data.php`) reseals it
+  with the other secrets.
+- **A publish never stays in `publishing`**: anything that fails before the bundle goes leaves the draft
+  `failed`, after it `uncertain`, and one still `publishing` after five minutes (its worker was stopped)
+  reads as `uncertain`.
 - Drafts live in `storage/softn-drafts/`, expire after 24 hours, and an account keeps at most ten; an
   update is refused for an app the account did not publish.
 
