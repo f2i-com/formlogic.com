@@ -99,9 +99,10 @@ export function AdminPluginsCard() {
     let cancelled = false;
     void api.adminGetPlugins().then((result) => {
       if (cancelled) return;
-      if (result.error || !result.data) { setError(result.error ?? 'Could not read the plugins.'); return; }
+      // (an answer without its lists, as from a server older than plugins, is not one this card can show)
+      if (result.error || !result.data || !Array.isArray(result.data.installed)) { setError(result.error ?? 'Could not read the plugins.'); return; }
       setError(null);
-      setState(result.data);
+      setState({ ...result.data, available: Array.isArray(result.data.available) ? result.data.available : [] });
     });
     return () => { cancelled = true; };
   }, [revision]);

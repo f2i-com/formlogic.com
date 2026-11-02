@@ -20,7 +20,8 @@ export function AdminSiteAiDesktop() {
     let cancelled = false;
     void api.adminGetSiteAiDesktop().then((result) => {
       if (cancelled) return;
-      if (result.error || !result.data) { setError(result.error ?? 'Could not read this setting.'); return; }
+      // (an answer without its list, as from a server older than this card, is not one it can show)
+      if (result.error || !result.data || !Array.isArray(result.data.candidates)) { setError(result.error ?? 'Could not read this setting.'); return; }
       setState(result.data);
     });
     return () => { cancelled = true; };
@@ -31,7 +32,7 @@ export function AdminSiteAiDesktop() {
     setError(null);
     const result = await call();
     setBusy(false);
-    if (result.error || !result.data) { setError(result.error ?? 'It could not be saved.'); return; }
+    if (result.error || !result.data || !Array.isArray(result.data.candidates)) { setError(result.error ?? 'It could not be saved.'); return; }
     setState(result.data);
     setChoice(null);
     setRevision((n) => n + 1);

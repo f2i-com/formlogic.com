@@ -30,7 +30,7 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
     let cancelled = false;
     void api.adminGetCameraCheck().then((result) => {
       if (cancelled) return;
-      if (result.error || !result.data) { setError(result.error ?? 'Could not read this setting.'); return; }
+      if (result.error || !result.data || !Array.isArray(result.data.candidates)) { setError(result.error ?? 'Could not read this setting.'); return; }
       setState(result.data);
     });
     return () => { cancelled = true; };
