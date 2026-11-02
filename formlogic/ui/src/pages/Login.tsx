@@ -179,7 +179,7 @@ export function Login() {
                     checked={rememberBrowser}
                     onChange={(e) => setRememberBrowser(e.target.checked)}
                     disabled={isLoading}
-                    className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
+                    className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-primary-700 focus:ring-primary-500"
                   />
                   Remember this browser for 60 days
                 </label>

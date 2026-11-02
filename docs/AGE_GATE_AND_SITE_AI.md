@@ -192,7 +192,9 @@ How to write one is `docs/PLUGINS.md`. In short:
      read the pictures (a timeout, a picture it would not read, too few answers) is never "no model":
      since 1.4.2 that check did not run and is not counted, or whoever could send a picture it cannot
      read would choose the weaker check. The same goes for an answer that leaves out what only it
-     can say (a screen, one person, the detector's count, the angles of one picture). Why both: in an independent benchmark
+     can say (a screen, one person, the detector's count, the angles of one picture). One gap is left:
+     an OAIY that has the model and whose final frame is lost on the relay looks like one with no model,
+     so `prefer` falls to the AI there; `require` does not. Why both: in an independent benchmark
      (arXiv 2602.07815, v3 of 24 October 2026) MiVOLO was the best specialised estimator (5.10 years'
      error across eight datasets) but read 21% of minors as adults at a plain 18 line; a general vision
      model read 16 to 29%. Nothing newer was usable: MiVOLO-Next (May 2026) keeps its weights private

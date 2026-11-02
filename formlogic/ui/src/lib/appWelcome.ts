@@ -119,21 +119,20 @@ function findableOn(page: RGB, colour: RGB, toward: RGB): RGB {
  * The app's look for the part of the page it styles: the site's primary palette set to its accent (on that element,
  * not the document, so nothing else changes) with a readable text colour on it, and its font. Only a #rrggbb colour
  * and a font from the list reach a style; anything else leaves the site's own. The buttons wear the accent as it is.
- * The links ("Forgot password?", "Create one") are the platform's, on a password page, and use shades 700 and 400:
- * those are moved until they can be found, so an owner's near-white hides nothing.
+ * The links ("Forgot password?", "Create one") and the focus ring are the platform's, on a password page, and use
+ * shades 700, 400 and 500: those are moved until they can be found, so an owner's near-white hides nothing. The ring
+ * is the same shade on both pages, so it is moved for each.
  */
 export function welcomeStyle(look: AppWelcome['look']): CSSProperties {
   const style: Record<string, string> = {};
   const palette = look.accent ? paletteFromHex(look.accent) : null;
   const accent = look.accent ? parseHex(look.accent) : null;
   if (palette && accent) {
-    const tone = (shade: number, toward: RGB, page: RGB) => {
-      const t = SHADES[shade];
-      palette[shade] = triplet(findableOn(page, t >= 0 ? mix(accent, WHITE, t) : mix(accent, BLACK, -t), toward));
-    };
-    tone(700, BLACK, LIGHT_PAGE);
-    tone(800, BLACK, LIGHT_PAGE);
-    tone(400, WHITE, DARK_PAGE);
+    const shade = (n: number) => (SHADES[n] >= 0 ? mix(accent, WHITE, SHADES[n]) : mix(accent, BLACK, -SHADES[n]));
+    palette[700] = triplet(findableOn(LIGHT_PAGE, shade(700), BLACK));
+    palette[800] = triplet(findableOn(LIGHT_PAGE, shade(800), BLACK));
+    palette[400] = triplet(findableOn(DARK_PAGE, shade(400), WHITE));
+    palette[500] = triplet(findableOn(DARK_PAGE, findableOn(LIGHT_PAGE, shade(500), BLACK), WHITE));
     for (const [shade, rgb] of Object.entries(palette)) {
       style[`--primary-${shade}`] = rgb;
       style[`--color-primary-${shade}`] = `rgb(${rgb})`;
