@@ -36,7 +36,7 @@ final class PluginController
     /** GET /api/admin/plugins: what is installed, and what ships with FormLogic to install. */
     public function adminList(Request $request, Response $response): Response
     {
-        $installed = $this->plugins->installed();
+        $installed = array_map(fn (array $plugin) => $plugin + ['update' => $this->plugins->pendingUpdate($plugin)], $this->plugins->installed());
         $have = array_column($installed, 'manifestId');
         $available = [];
         foreach ($this->plugins->builtins() as $id => $plugin) {
@@ -61,6 +61,21 @@ final class PluginController
         }
         $this->log($request, 'admin.plugin_install', $plugin['manifestId'], ['version' => $plugin['version'], 'grants' => array_column($plugin['grants'], 'kind')]);
         return $this->jsonResponse($response, ['plugin' => $plugin], 201);
+    }
+
+    /** POST /api/admin/plugins/{plugin}/update: take the version that ships with this FormLogic, and what it asks. */
+    public function adminUpdatePlugin(Request $request, Response $response, array $args): Response
+    {
+        try {
+            $plugin = $this->plugins->updateBuiltin((string) $args['plugin']);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Throwable $e) {
+            error_log('Plugin update failed: ' . $e->getMessage());
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'The plugin could not be updated: its SoftN runtime refused the new version. See the server log.'], 503);
+        }
+        $this->log($request, 'admin.plugin_update', $plugin['manifestId'], ['version' => $plugin['version'], 'grants' => array_column($plugin['grants'], 'kind')]);
+        return $this->jsonResponse($response, ['plugin' => $plugin]);
     }
 
     /** PUT /api/admin/plugins/{plugin} {enabled}: turn it on or off. Off, the apps that require it are closed. */
@@ -160,7 +175,7 @@ final class PluginController
 
     private function visibleApp(mixed $slug, string $userId): ?array
     {
-        if (!is_string($slug) || !preg_match('/^[a-z0-9][a-z0-9-]{0,60}$/', $slug)) {
+        if (!is_string($slug) || !preg_match(AppService::SLUG_FORMAT, $slug)) {
             return null;
         }
         $app = $this->apps->getAppBySlug($slug);

@@ -414,6 +414,60 @@ final class PluginPassTest extends TestCase
             array_map(fn ($p) => array_intersect_key($p, array_flip(['kind', 'min', 'max', 'strengths', 'issueRoute'])), $builtin['passes']));
     }
 
+    public function testABuiltInPluginInstallsIssuesThroughItsOwnBackendUpdatesAndRemoves(): void
+    {
+        $native = new NativeAppService(self::$tmpRoot . '/native-' . bin2hex(random_bytes(3)));
+        if (!$native->available()) {
+            $this->markTestSkipped('No SoftN runner here (set FORMLOGIC_NODE_BIN)');
+        }
+        // A copy of the plugin that ships, so a newer version can be laid beside it.
+        $shipped = dirname(__DIR__, 2) . '/resources/plugins/age-gate';
+        $builtins = self::$tmpRoot . '/builtins-' . bin2hex(random_bytes(3));
+        foreach (['manifest.json', 'ui/main.ui', 'server/main.logic'] as $file) {
+            @mkdir(dirname("{$builtins}/age-gate/{$file}"), 0777, true);
+            copy("{$shipped}/{$file}", "{$builtins}/age-gate/{$file}");
+        }
+        $plugins = new PluginService(self::$mysql, self::$apps, $native, $builtins);
+        $gate = new AccessGateService(self::$mysql, $plugins);
+        self::$pdo->prepare("DELETE FROM plugins WHERE manifest_id = 'formlogic.age-gate' AND scope = 'site'")->execute();
+        $this->pluginIds[] = 'formlogic.age-gate';
+
+        $plugin = $plugins->installBuiltin('formlogic.age-gate', $this->ownerId);
+        $this->appIds[] = $plugin['appId'];
+        self::assertSame(['formlogic.age-gate', '1.0.0', true], [$plugin['manifestId'], $plugin['version'], $plugin['enabled']]);
+        $app = self::$apps->getApp($plugin['appId']);
+        self::assertSame([PluginService::SYSTEM_USER_ID, 'published'], [$app['ownerId'], $app['status']]);
+        self::assertNotNull($plugins->forApp($app));
+        self::assertNull($plugins->pendingUpdate($plugin), 'what was installed is what ships');
+
+        // Its own backend, in the runner, answers a declaration with a pass, recorded for whoever asked.
+        $identity = ['formlogic' => ['appId' => $plugin['appId'], 'userId' => $this->memberId, 'roleId' => 'member']];
+        $ask = fn (array $body) => $native->request($plugin['appId'], ['method' => 'POST', 'path' => '/api/pass', 'query' => (object) [], 'body' => (object) $body,
+            'headers' => (object) ['authorization' => '', 'idempotency-key' => ''], 'client_ip' => '127.0.0.1', 'photos' => false], $identity, [], null, true);
+        $refused = $ask(['minimumAge' => 18]);
+        self::assertSame(422, $refused['status'], 'a declaration is made, not assumed');
+        $answer = $gate->recordFromPluginAnswer($plugin, $this->memberId, 'POST', '/api/pass', $ask(['minimumAge' => 18, 'confirmed' => true]));
+        self::assertSame(200, $answer['status']);
+        self::assertSame(1, $this->receiptCount($this->memberId));
+        self::assertTrue($gate->satisfies($this->memberId, ['plugin' => 'formlogic.age-gate', 'kind' => 'age', 'min' => 18, 'strength' => 'declared']));
+
+        // A newer version laid beside it is offered, taken, and then no longer offered.
+        $manifest = json_decode((string) file_get_contents("{$builtins}/age-gate/manifest.json"), true);
+        $manifest['version'] = '1.0.1';
+        file_put_contents("{$builtins}/age-gate/manifest.json", json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        $plugins = new PluginService(self::$mysql, self::$apps, $native, $builtins);
+        self::assertSame('1.0.1', $plugins->pendingUpdate($plugins->find('formlogic.age-gate'))['version'] ?? null);
+        $updated = $plugins->updateBuiltin('formlogic.age-gate');
+        self::assertSame('1.0.1', $updated['version']);
+        self::assertNull($plugins->pendingUpdate($updated));
+        self::assertSame(1, $this->receiptCount($this->memberId), 'its passes stay');
+
+        $plugins->remove('formlogic.age-gate');
+        self::assertNull($plugins->find('formlogic.age-gate'));
+        self::assertNull(self::$apps->getApp($plugin['appId']));
+        self::assertSame(0, (int) self::$pdo->query('SELECT COUNT(*) FROM access_receipts WHERE revoked_at IS NULL AND user_id = ' . self::$pdo->quote($this->memberId))->fetchColumn());
+    }
+
     /** A plugin's answer on its own route, recorded (or not) for the member. Returns what the page gets. */
     private function answer(string $method, string $path, int $status, ?array $pass): array
     {

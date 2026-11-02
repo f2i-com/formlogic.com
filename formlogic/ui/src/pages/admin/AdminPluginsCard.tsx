@@ -78,6 +78,16 @@ export function AdminPluginsCard() {
                       onChange={(on) => void act(plugin.manifestId, () => api.adminSetPluginEnabled(plugin.manifestId, on), on ? `${plugin.name} is on` : `${plugin.name} is off`)}
                     />
                   </div>
+                  {plugin.update && (
+                    <div className="space-y-2 rounded-lg bg-primary-50 p-3 dark:bg-primary-500/10">
+                      <p className="text-sm text-gray-900 dark:text-white">Version {plugin.update.version} ships with this FormLogic. Updating grants it:</p>
+                      <ul className="list-disc pl-5 text-xs leading-5 text-gray-600 dark:text-slate-300">
+                        {grantsOf(plugin.update.passes).map((grant) => <li key={grant}>{grant}</li>)}
+                      </ul>
+                      <Button size="sm" isLoading={busy === plugin.manifestId}
+                        onClick={() => void act(plugin.manifestId, () => api.adminUpdatePlugin(plugin.manifestId), `${plugin.name} is updated`)}>Update</Button>
+                    </div>
+                  )}
                   <Button size="sm" variant="outline" isLoading={busy === plugin.manifestId}
                     onClick={() => {
                       if (!window.confirm(`Remove ${plugin.name}? Everything it issued is withdrawn, and apps that ask for it stay closed until they stop asking or it is installed again.`)) return;

@@ -2859,6 +2859,9 @@ class ApiClient {
   async adminInstallPlugin(id: string): Promise<ApiResponse<{ plugin: InstalledPlugin }>> {
     return this.request(`/admin/plugins/${seg(id)}/install`, { method: 'POST', body: '{}' });
   }
+  async adminUpdatePlugin(id: string): Promise<ApiResponse<{ plugin: InstalledPlugin }>> {
+    return this.request(`/admin/plugins/${seg(id)}/update`, { method: 'POST', body: '{}' });
+  }
   async adminSetPluginEnabled(id: string, enabled: boolean): Promise<ApiResponse<{ plugin: InstalledPlugin }>> {
     return this.request(`/admin/plugins/${seg(id)}`, { method: 'PUT', body: JSON.stringify({ enabled }) });
   }

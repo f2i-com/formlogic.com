@@ -176,6 +176,68 @@ final class PluginService
         return null;
     }
 
+    /** A built-in plugin's files as a SoftN project, checked. */
+    private static function builtinProject(array $builtin, int $version): array
+    {
+        $files = [];
+        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($builtin['dir'], \FilesystemIterator::SKIP_DOTS));
+        foreach ($iterator as $file) {
+            $relative = str_replace('\\', '/', substr((string) $file, strlen($builtin['dir']) + 1));
+            $files[$relative] = (string) file_get_contents((string) $file);
+        }
+        ksort($files);
+        $project = ['home' => true, 'version' => $version, 'files' => $files, 'assets' => [], 'access' => 'members'];
+        NativeAppService::validateProject($project);
+        return $project;
+    }
+
+    /**
+     * What an update would bring an installed plugin, when this FormLogic ships it in another
+     * version or with other files: the version and the passes it would be granted. Null otherwise.
+     */
+    public function pendingUpdate(array $plugin): ?array
+    {
+        $builtin = $this->builtins()[$plugin['manifestId']] ?? null;
+        if ($builtin === null) {
+            return null;
+        }
+        $installed = null;
+        try {
+            $installed = $this->native->get($plugin['appId']);
+        } catch (\Throwable) {
+            // Unreadable: offered, so the administrator can put it right.
+        }
+        $files = is_array($installed['files'] ?? null) ? $installed['files'] : [];
+        ksort($files);
+        $same = $builtin['version'] === $plugin['version'] && $files === self::builtinProject($builtin, 0)['files'];
+        return $same ? null : ['version' => $builtin['version'], 'passes' => $builtin['passes']];
+    }
+
+    /**
+     * Update an installed plugin to the version that ships with this FormLogic, granting what the
+     * new manifest declares: the administrator saw it on Admin → Plugins and chose to. Its passes
+     * stay; a kind the new version no longer issues stops counting, as its grant is gone.
+     */
+    public function updateBuiltin(string $manifestId): array
+    {
+        $builtin = $this->builtins()[$manifestId] ?? null;
+        $plugin = $this->find($manifestId);
+        if ($builtin === null || $plugin === null) {
+            throw new \InvalidArgumentException('That plugin is not installed, or does not ship with FormLogic.');
+        }
+        if ($this->pendingUpdate($plugin) === null) {
+            throw new \InvalidArgumentException('That plugin is up to date.');
+        }
+        $current = $this->native->project($plugin['appId']);
+        $version = (int) ($current['version'] ?? 0);
+        $this->native->install($plugin['appId'], self::builtinProject($builtin, $version), $version);
+        $this->apps->publishApp($plugin['appId'], 'Updated to ' . $builtin['version'], self::SYSTEM_USER_ID);
+        $this->pdo->prepare('UPDATE plugins SET name = ?, version = ?, grants = ?, updated_at = ? WHERE id = ?')
+            ->execute([$builtin['name'], $builtin['version'], json_encode($builtin['passes'], JSON_THROW_ON_ERROR), gmdate('Y-m-d H:i:s'), $plugin['id']]);
+        unset($this->rows[$manifestId]);
+        return $this->find($manifestId) ?? $plugin;
+    }
+
     /** Install a plugin that ships with FormLogic, granting what its manifest declares. */
     public function installBuiltin(string $manifestId, string $adminUserId): array
     {
@@ -186,14 +248,7 @@ final class PluginService
         if ($this->find($manifestId) !== null) {
             throw new \InvalidArgumentException('That plugin is already installed.');
         }
-        $files = [];
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($builtin['dir'], \FilesystemIterator::SKIP_DOTS));
-        foreach ($iterator as $file) {
-            $relative = str_replace('\\', '/', substr((string) $file, strlen($builtin['dir']) + 1));
-            $files[$relative] = (string) file_get_contents((string) $file);
-        }
-        $project = ['home' => true, 'version' => 0, 'files' => $files, 'assets' => [], 'access' => 'members'];
-        NativeAppService::validateProject($project);
+        $project = self::builtinProject($builtin, 0);
 
         $this->ensureSystemUser();
         $slug = 'plugin-' . substr(preg_replace('/[^a-z0-9-]/', '-', $manifestId) ?? 'x', 0, 40) . '-' . bin2hex(random_bytes(3));

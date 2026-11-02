@@ -1637,6 +1637,9 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     $group->post('/plugins/{plugin:[a-z0-9][a-z0-9.-]{2,63}}/install', function ($request, $response) use ($plugins, $adminArgs) {
         return $plugins()->adminInstall($request, $response, $adminArgs($request));
     });
+    $group->post('/plugins/{plugin:[a-z0-9][a-z0-9.-]{2,63}}/update', function ($request, $response) use ($plugins, $adminArgs) {
+        return $plugins()->adminUpdatePlugin($request, $response, $adminArgs($request));
+    });
     $group->put('/plugins/{plugin:[a-z0-9][a-z0-9.-]{2,63}}', function ($request, $response) use ($plugins, $adminArgs) {
         return $plugins()->adminUpdate($request, $response, $adminArgs($request));
     });

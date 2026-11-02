@@ -143,6 +143,8 @@ export interface InstalledPlugin {
   enabled: boolean;
   grants: Array<Omit<PassKind, 'plugin' | 'pluginName'> & { issueRoute: string }>;
   installedAt: string;
+  /** This FormLogic ships it in another version: what updating would bring, and grant it. */
+  update?: { version: string; passes: Array<Omit<PassKind, 'plugin' | 'pluginName'> & { issueRoute: string }> } | null;
 }
 
 /** A plugin that ships with FormLogic and is not installed yet. */

@@ -37,4 +37,10 @@ function confirmAge() {
   });
 }
 </logic>
-<Stack padding="24" gap="16"><Text>{heading}</Text><Text>{lead}</Text><Button @click={confirmAge}>{button}</Button><Text>This is your own word, not a check of your age. It is kept with your account on this site and opens other apps here that ask the same, until it expires or you withdraw it in Settings. Nothing else about you is kept.</Text><Text>{message}</Text></Stack>
+<Stack padding="lg" gap="md">
+  <Heading level={2}>{heading}</Heading>
+  <Text size="lg">{lead}</Text>
+  <Button @click={confirmAge}>{button}</Button>
+  <Text size="sm" variant="muted" lineHeight="relaxed">This is your own word, not a check of your age. It is kept with your account on this site and opens other apps here that ask the same, until it expires or you withdraw it in Settings. Nothing else about you is kept.</Text>
+  <Text size="sm">{message}</Text>
+</Stack>
