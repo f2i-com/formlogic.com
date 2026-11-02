@@ -150,6 +150,15 @@ describe('resolveDefaultLlmTools — Site AI', () => {
     expect(readSiteToolsReply('<br /><b>Fatal error</b>', 200)).toMatchObject({ ok: false, error: { code: 'request_failed' } });
   });
 
+  it('reads the site\'s AI on OAIY (501 tools-unsupported) as tools-unsupported, so the editor asks in words', async () => {
+    vi.stubGlobal('document', { cookie: 'formlogic_csrf=tok123' });
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ error: true, code: 'tools-unsupported', message: 'This site\'s AI runs on OAIY, which takes no tools.' }, 501)));
+    const result = await resolveDefaultLlmTools({ messages: MESSAGES, tools: TOOLS }, {
+      fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'site' }) }),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: TOOLS_UNSUPPORTED, status: 501 } });
+  });
+
   it('passes a typed refusal (allowance) through unchanged', async () => {
     const result = await resolveDefaultLlmTools({ messages: MESSAGES, tools: TOOLS }, {
       fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'site' }) }),

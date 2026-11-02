@@ -44,8 +44,12 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
   and pointed to New form), the reply carries `X-FormLogic-Chat-Tools: off-on-oaiy` (exposed to a
   split-domain page) and the chat notes "this reply is text only", and `GET /api/ai/preferences`
   says `siteAiActions: false`, so the chat box no longer offers to create forms. An embedded
-  editor's own tools (`aiTools`) are still refused, until FormLogic calls tools by prompt or OAIY
-  passes tools through (an OAIY change). Images in messages pass through, within the lane's
+  editor's own tools (`aiTools`, AI Studio's agent) are answered `501 tools-unsupported` before
+  anything is charged, the code on which the editor switches its agent to its text protocol
+  (`editor: 1`), which OAIY carries; not yet run against a real OAIY. The generators (a form from a
+  sentence, app plans, screens, scripts) are plain requests and run as they are: a form generated
+  on a real model through OAIY came back right although OAIY drops `response_format` and
+  `max_tokens`. Images in messages pass through, within the lane's
   256 KiB a request: a larger picture is refused with 413 and says so, so most photos are too big.
 - **Metering.** Every site request is charged to the member's `ai_messages` as the `.env`
   upstream's are.
@@ -192,9 +196,12 @@ How to write one is `docs/PLUGINS.md`. In short:
    2026-11-02 through the pages: a scratch `oaiy-server` from OAIY's release (v0.1.12), linked as
    the administrator's computer, a provider stored in it reaching a real model (Qwen3-VL 8B in LM
    Studio); the administrator chose it in the Site AI card; a member's chat (asking for tools, as
-   it does) streamed the model's answer back in under a second, with the text-only note; the
-   computer off was said at once (503 `site_ai_offline`, under 0.1 s) and on the page. Not run on
-   OAIY's own engine (`oaiy-engine`, through Studio): the scratch server has no Studio.
+   it does) streamed the model's answer back in under a second, with the text-only note; a form
+   generated from a sentence had the four fields asked for (the model took 0.9 s, but OAIY took
+   17 s to pick the turn up, on a local server whose `php -S` processes answer one request at a
+   time: not seen as a delay of OAIY's, cause not proven); the computer off was said at once (503
+   `site_ai_offline`, under 0.1 s) and on the page. Not run on OAIY's own engine (`oaiy-engine`,
+   through Studio): the scratch server has no Studio. AI Studio's agent on it not run.
 3. The camera check and the Age gate's face check. Built: `CameraCheckServiceTest` (the plugin in
    the real runner, the contract's test desktop as OAIY, honest and hostile answers), a run with
    Chrome's fake camera, a scratch `oaiy-server` and a stub vision provider stored in it (an honest

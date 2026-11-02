@@ -455,6 +455,8 @@ final class PluginPassTest extends TestCase
             @mkdir(dirname("{$builtins}/age-gate/{$file}"), 0777, true);
             copy((string) $source, "{$builtins}/age-gate/{$file}");
         }
+        $version = json_decode((string) file_get_contents("{$shipped}/manifest.json"), true)['version'];
+        $next = preg_replace_callback('/(\d+)$/', fn ($m) => (string) ((int) $m[1] + 1), $version);
         $plugins = new PluginService(self::$mysql, self::$apps, $native, $builtins);
         $gate = new AccessGateService(self::$mysql, $plugins);
         self::$pdo->prepare("DELETE FROM plugins WHERE manifest_id = 'formlogic.age-gate' AND scope = 'site'")->execute();
@@ -462,7 +464,7 @@ final class PluginPassTest extends TestCase
 
         $plugin = $plugins->installBuiltin('formlogic.age-gate', $this->ownerId);
         $this->appIds[] = $plugin['appId'];
-        self::assertSame(['formlogic.age-gate', '1.1.0', true, 'builtin', ['camera']], [$plugin['manifestId'], $plugin['version'], $plugin['enabled'], $plugin['source'], $plugin['uses']]);
+        self::assertSame(['formlogic.age-gate', $version, true, 'builtin', ['camera']], [$plugin['manifestId'], $plugin['version'], $plugin['enabled'], $plugin['source'], $plugin['uses']]);
         self::assertSame(['bufferYears' => 7, 'turns' => 'all'], $plugin['settings'], 'its settings start at their defaults');
         $app = self::$apps->getApp($plugin['appId']);
         self::assertSame([PluginService::SYSTEM_USER_ID, 'published'], [$app['ownerId'], $app['status']]);
@@ -482,10 +484,10 @@ final class PluginPassTest extends TestCase
 
         // A newer version laid beside it is offered, taken, and then no longer offered.
         $manifest = json_decode((string) file_get_contents("{$builtins}/age-gate/manifest.json"), true);
-        $manifest['version'] = '1.1.1';
+        $manifest['version'] = $next;
         file_put_contents("{$builtins}/age-gate/manifest.json", json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         $plugins = new PluginService(self::$mysql, self::$apps, $native, $builtins);
-        self::assertSame('1.1.1', $plugins->pendingUpdate($plugins->find('formlogic.age-gate'))['version'] ?? null);
+        self::assertSame($next, $plugins->pendingUpdate($plugins->find('formlogic.age-gate'))['version'] ?? null);
         $plugins->setSettings('formlogic.age-gate', ['bufferYears' => 10]);
         try {
             $plugins->setSettings('formlogic.age-gate', ['bufferYears' => 99]);
@@ -493,7 +495,7 @@ final class PluginPassTest extends TestCase
         } catch (\InvalidArgumentException) {
         }
         $updated = $plugins->updateBuiltin('formlogic.age-gate');
-        self::assertSame('1.1.1', $updated['version']);
+        self::assertSame($next, $updated['version']);
         self::assertSame(['bufferYears' => 10, 'turns' => 'all'], $updated['settings'], 'settings that still fit are kept');
         self::assertNull($plugins->pendingUpdate($updated));
         self::assertSame(1, $this->receiptCount($this->memberId), 'its passes stay');

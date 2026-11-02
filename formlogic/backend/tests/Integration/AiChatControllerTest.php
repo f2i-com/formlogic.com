@@ -191,6 +191,18 @@ class AiChatControllerTest extends TestCase
         $this->assertSame(503, $refused['status']);
         $this->assertSame('site_ai_offline', $refused['body']['code']);
         $this->assertSame(1, (int) $this->meter()['count'], 'a refusal is not charged');
+
+        // An editor's own tools cannot go to OAIY: said before any charge, in the code the editor
+        // reads as "ask in words", so AI Studio's agent switches to its text protocol.
+        $oaiy->unavailable = null;
+        $editor = $this->chat($this->controller(true, $oaiy), [
+            'aiTools' => 1, 'stream' => false,
+            'messages' => [['role' => 'user', 'content' => 'Read the manifest.']],
+            'tools' => [['name' => 'read_file', 'description' => 'Read a file.', 'inputSchema' => ['type' => 'object', 'properties' => ['path' => ['type' => 'string']], 'required' => ['path']]]],
+        ]);
+        $this->assertSame(501, $editor['status']);
+        $this->assertSame('tools-unsupported', $editor['body']['code']);
+        $this->assertSame(1, (int) $this->meter()['count'], 'not charged either');
     }
 
     public function testValidationAndAuthErrors(): void

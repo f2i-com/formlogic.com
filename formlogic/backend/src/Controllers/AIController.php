@@ -684,6 +684,12 @@ class AIController
         if (!$this->aiService->isEnabled() || !$this->aiService->isConfigured()) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).'], 503);
         }
+        // The site's AI on the administrator's OAIY takes messages only. Said before anything is
+        // charged, in the code the editor reads as "ask in words" (its text protocol, `editor: 1`).
+        if ($this->aiService->servedByOaiy()) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'tools-unsupported',
+                'message' => 'This site\'s AI runs on OAIY, which takes no tools: the editor asks it in words instead.'], 501);
+        }
         if ($this->planService !== null) {
             try {
                 $this->planService->checkAndIncrement($userId, 'ai_messages', 1);
