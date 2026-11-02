@@ -121,9 +121,10 @@ function cameraDecide(req) {
   softn.sql.execute("DELETE FROM checks WHERE id = ?", [body.check]);
   let buffer = body.settings && typeof body.settings.bufferYears == "number" ? body.settings.bufferYears : 7;
   let need = body.settings && body.settings.ageModel == "require" ? "require" : "prefer";
+  let degrees = body.settings && typeof body.settings.turnDegrees == "number" ? body.settings.turnDegrees : 8;
   let answer = body.answer ? body.answer.json : null;
   let verification = body.answer ? body.answer.verification : null;
-  return {status:200,body:decide(row, JSON.parse(row.turns), answer, buffer, verification, need)};
+  return {status:200,body:decide(row, JSON.parse(row.turns), answer, buffer, verification, need, degrees)};
 }
 
 // What OAIY's age model said of the camera pictures, when it read every one of them: each one's face count and age.
@@ -144,11 +145,95 @@ function unavailable() {
   return {outcome: "unavailable", message: "The face check is not working right now. This did not count as one of your tries."};
 }
 
+let ORDINAL = ["", "first", "second", "third", "fourth", "fifth"];
+let TURN_WORDS = {left: "your head to your left", right: "your head to your right", up: "your head up", down: "your head down"};
+
+// How far each turn went, in degrees the way it was asked, from the angles OAIY measured on each face
+// (from the face detector's landmarks, by geometry: no model judges them). Each is read against the
+// straight-on picture, so a camera above the screen or a face not square to it counts against no one.
+// "left" and "right" are the person's own (the page shows a mirror), so their left points the face to
+// the picture's right. `mirrored` reads every left and right the other way round. Null without angles.
+function turnAngles(read, turns, mirrored) {
+  let base = read[0];
+  if (typeof base.yaw != "number" || typeof base.pitch != "number") return null;
+  let moved = [];
+  let n = 1;
+  while (n < turns.length) {
+    let image = read[n];
+    if (typeof image.yaw != "number" || typeof image.pitch != "number") return null;
+    let yaw = mirrored ? base.yaw - image.yaw : image.yaw - base.yaw;
+    let pitch = image.pitch - base.pitch;
+    let turn = turns[n];
+    moved.push(turn == "left" ? yaw : turn == "right" ? -yaw : turn == "up" ? pitch : -pitch);
+    n = n + 1;
+  }
+  return moved;
+}
+
+// The first turn (1, 2, ...) that did not go far enough the way it was asked, or 0 when all did.
+function shortTurn(moved, degrees) {
+  let n = 0;
+  while (n < moved.length) {
+    if (moved[n] < degrees) return n + 1;
+    n = n + 1;
+  }
+  return 0;
+}
+
+// The turns, judged by their angles. A camera that mirrors its own picture (some do, by a setting) turns
+// every left and right round: the same turns, read the other way, still count. {failed: why, or null;
+// measured: what each turn came to, for the administrator's own trial}.
+function anglesTurned(read, turns, degrees) {
+  let moved = turnAngles(read, turns, false);
+  let words = [];
+  let n = 0;
+  while (n < moved.length) {
+    words.push(turns[n + 1] + " " + Math.floor(moved[n] + 0.5) + "°");
+    n = n + 1;
+  }
+  let measured = " Measured from the straight-on picture: " + words.join(", ") + " (each needs " + degrees + "°).";
+  let short = shortTurn(moved, degrees);
+  if (short == 0) return {failed: null, measured: measured};
+  let sideways = turns.indexOf("left") >= 0 || turns.indexOf("right") >= 0;
+  if (sideways && shortTurn(turnAngles(read, turns, true), degrees) == 0) return {failed: null, measured: measured};
+  let how = moved[short - 1] <= -degrees ? " went the other way." : " was too small to measure.";
+  return {failed: "Your " + ORDINAL[short] + " turn (" + TURN_WORDS[turns[short]] + ")" + how + " Try again, following each arrow and turning a little further.", measured: measured};
+}
+
+// Without the angles (an OAIY without the age model, or older than its angles), the AI's description of
+// where each face points. Models often read left and right from the person's side rather than the
+// picture's: a sequence whose every left and right is exactly reversed, with up and down right, is that
+// convention, not a wrong turn.
+function modelTurned(seen, turns) {
+  let straight = true;
+  let flipped = true;
+  let n = 0;
+  while (n < turns.length) {
+    let expected = IN_PICTURE[turns[n]];
+    let mirrored = expected == "picture_left" ? "picture_right" : expected == "picture_right" ? "picture_left" : expected;
+    if (seen[n].facing != expected) straight = false;
+    if (seen[n].facing != mirrored) flipped = false;
+    n = n + 1;
+  }
+  if (straight || flipped) return null;
+  return {outcome: "turns", message: "The turns did not match what was asked. Try again, turning your head a little further each time."};
+}
+
+// The administrator trying it on themselves is told how far each turn measured, whatever the outcome.
+function decide(row, turns, answer, buffer, verification, need, turnDegrees) {
+  let result = decideCheck(row, turns, answer, buffer, verification, need, turnDegrees);
+  let out = {outcome: result.outcome, message: result.message};
+  if (row.mode == "trial" && typeof result.measured == "string") out.message = out.message + result.measured;
+  if (result.pass) out.pass = result.pass;
+  return out;
+}
+
 // Only what the model saw is read; anything it writes about passing is not. The turns were never
 // told to it, so it cannot echo them. A wrong control digit means the pictures did not reach it.
-// Where OAIY's age model read the pictures, its detector must find one face in each, and its age decides,
-// with the AI's as the backup: both must clear the line, or a stronger check is asked for.
-function decide(row, turns, answer, buffer, verification, need) {
+// Where OAIY's age model read the pictures, its detector must find one face in each, the turns are read
+// from the angles it measured, and its age decides, with the AI's as the backup: both must clear the
+// line, or a stronger check is asked for.
+function decideCheck(row, turns, answer, buffer, verification, need, turnDegrees) {
   let count = turns.length + 1;
   if (!answer || !Array.isArray(answer.images) || answer.images.length != count) return unavailable();
   let seen = [];
@@ -175,8 +260,16 @@ function decide(row, turns, answer, buffer, verification, need) {
     return {outcome: "unavailable", message: "The face check needs the site's age model, which is not ready. This did not count as one of your tries."};
   }
   if (read != null) {
-    for (let image of read) {
-      if (image.faces !== 1) return {outcome: "no_face", message: "We need one face, and only one, in every picture. Try again in good light."};
+    let k = 0;
+    while (k < read.length) {
+      if (read[k].faces !== 1) {
+        // A face lost on a turn alone was turned too far for the detector; anywhere else, there was no one face.
+        if (read[k].faces === 0 && k > 0 && read[0].faces === 1) {
+          return {outcome: "no_face", message: "Your face was lost on your " + ORDINAL[k] + " turn (" + TURN_WORDS[turns[k]] + "). Turn a little less, so your whole face stays in view."};
+        }
+        return {outcome: "no_face", message: "We need one face, and only one, in every picture. Try again in good light."};
+      }
+      k = k + 1;
     }
   }
   for (let image of seen) {
@@ -187,13 +280,22 @@ function decide(row, turns, answer, buffer, verification, need) {
       return {outcome: "not_live", message: "The pictures looked like a photo, a screen or had writing in them. Try again with your own face in front of the camera."};
     }
   }
-  let n = 0;
-  while (n < turns.length) {
-    if (seen[n].facing != IN_PICTURE[turns[n]]) {
-      return {outcome: "turns", message: "The turns did not match what was asked. Try again, turning your head a little further each time."};
-    }
-    n = n + 1;
+  let measured = null;
+  if (read != null && turnAngles(read, turns, false) != null) {
+    let judged = anglesTurned(read, turns, turnDegrees);
+    measured = judged.measured;
+    if (judged.failed != null) return {outcome: "turns", message: judged.failed, measured: measured};
+  } else {
+    let failed = modelTurned(seen, turns);
+    if (failed != null) return failed;
   }
+  let result = ageDecision(row, answer, buffer, read);
+  result.measured = measured;
+  return result;
+}
+
+// The age, once the pictures and the turns are right.
+function ageDecision(row, answer, buffer, read) {
   if (answer.same_person !== true) return {outcome: "not_same", message: "The pictures did not all show the same person. Try again."};
   let low = answer.age_low;
   let estimate = answer.age_estimate;

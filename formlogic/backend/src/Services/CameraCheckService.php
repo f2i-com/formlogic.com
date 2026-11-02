@@ -320,6 +320,12 @@ final class CameraCheckService
             if (is_int($image['age'] ?? null) || is_float($image['age'] ?? null)) {
                 $one['age'] = round((float) $image['age'], 1);
             }
+            // Which way the one face points, in degrees (OAIY measures it from the face's landmarks).
+            foreach (['yaw', 'pitch'] as $angle) {
+                if ((is_int($image[$angle] ?? null) || is_float($image[$angle] ?? null)) && abs((float) $image[$angle]) <= 90) {
+                    $one[$angle] = round((float) $image[$angle], 1);
+                }
+            }
             $images[] = $one;
         }
         return $out + ['images' => $images];

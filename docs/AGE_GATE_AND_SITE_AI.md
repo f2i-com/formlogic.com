@@ -121,7 +121,7 @@ How to write one is `docs/PLUGINS.md`. In short:
   media worker before the language model answers: YuNet (OpenCV Zoo, MIT) finds the faces, and MiVOLO v2
   (`iitolstykh/mivolo_v2`, Apache-2.0, ported to Candle and matched against the authors' own code) reads the age
   of the one face. Both are loaded for the check and gone when the worker ends. Its readings (each picture's face
-  count and one face's age, nothing else) come back in the turn's final frame as `verification`, which the plugin's
+  count, and for one face its age and which way it points, nothing else) come back in the turn's final frame as `verification`, which the plugin's
   decide route gets as `answer.verification`. An OAIY without it ignores the field; one without the models says
   `not_installed`. The models come from OAIY's Models page (the catalog's Age check, pinned revisions).
 - A plugin's page cannot call `/api/site/` routes on its own backend (`NativeAppController`).
@@ -193,6 +193,19 @@ How to write one is `docs/PLUGINS.md`. In short:
      model read 16 to 29%. Nothing newer was usable: MiVOLO-Next (May 2026) keeps its weights private
      and its terms forbid age gating; FAHR-FaceAge's are non-commercial; FaceAge ClientScan (April 2026)
      is one author's, unbenchmarked, trained on an undisclosed collection.
+   - **The turns from the face itself (1.3.0).** With the age model, OAIY also measures which way each
+     face points (yaw and pitch in degrees, from the detector's five landmarks by geometry: the nose
+     tip's place between the eyes and the mouth, the eye line levelled first; no model judges it). The
+     plugin reads each turn against the straight-on picture, so a camera above the screen or a face not
+     square to it counts against no one; each must go `turnDegrees` (8 by default, 4 to 25) the way it
+     was asked. The AI's own left and right are not asked then: in a webcam trial they were what failed.
+     A camera that mirrors its picture turns every left and right round, and still counts (up and down
+     must be right). A face the detector loses on a turn alone is "turn a little less". The
+     administrator's trial says what each turn measured. Without the angles (no age model, or an older
+     OAIY) the AI's description is used, and a sequence whose every left and right it reads exactly
+     reversed counts too (models often name sides from the person's view). A flat photo held up and
+     turned barely moves these angles, as nothing in it stands out; a replayed video or a face swap
+     still can.
    - What this is not: a general vision model is not an evaluated age estimator, and the turns show
      a fresh response to a random challenge, not a live person (a virtual camera running a face swap
      can follow them). It suits a site that wants more than a declaration and accepts an estimate;

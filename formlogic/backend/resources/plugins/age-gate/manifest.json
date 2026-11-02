@@ -1,7 +1,7 @@
 {
   "id": "formlogic.age-gate",
   "name": "Age gate",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "main": "ui/main.ui",
   "config": {
     "server": {
@@ -62,13 +62,22 @@
       {
         "key": "turns",
         "label": "Head turns a face check asks for",
-        "help": "Some AI models tell up from down better than left from right. Try it on yourself to see.",
+        "help": "Where OAIY has its age model, the turns are measured from the face itself. Without it, an AI judges them, and some AI models tell up from down better than left from right.",
         "type": "choice",
         "options": [
           { "value": "all", "label": "Left, right, up and down" },
           { "value": "updown", "label": "Up and down only" }
         ],
         "default": "all"
+      },
+      {
+        "key": "turnDegrees",
+        "label": "How far each head turn must go, in degrees",
+        "help": "Measured from the face where OAIY has its age model, against the person's own straight-on picture. Lower is easier with a webcam. Try it on yourself: the result says how far your turns measured.",
+        "type": "integer",
+        "min": 4,
+        "max": 25,
+        "default": 8
       },
       {
         "key": "ageModel",

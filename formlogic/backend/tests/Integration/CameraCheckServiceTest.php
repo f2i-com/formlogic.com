@@ -212,6 +212,63 @@ final class CameraCheckServiceTest extends TestCase
         }
     }
 
+    /**
+     * Where OAIY measured which way each face points (from its landmarks), the turns are read from those angles, each
+     * against the straight-on picture, and the AI's left and right are not asked. A camera that mirrors its picture
+     * turns every left and right round, and still counts.
+     */
+    public function testTheTurnsAreReadFromTheAnglesOaiyMeasured(): void
+    {
+        // A camera above the screen: the straight-on picture looks down 12° and a little aside. `by` degrees each turn.
+        $angles = fn (float $by, bool $mirrored = false, array $lost = []) => function (?array $asked, int $count, array $hints) use ($by, $mirrored, $lost) {
+            $side = $mirrored ? -$by : $by;
+            $images = [];
+            foreach ($hints as $i => $hint) {
+                [$yaw, $pitch] = match ($hint) {
+                    'center' => [5.0, -12.0],
+                    'left' => [5.0 + $side, -12.0],
+                    'right' => [5.0 - $side, -12.0],
+                    'up' => [5.0, -12.0 + $by],
+                    'down' => [5.0, -12.0 - $by],
+                };
+                $images[] = in_array($i, $lost, true) ? ['faces' => 0] : ['faces' => 1, 'age' => 35.0, 'yaw' => $yaw, 'pitch' => $pitch];
+            }
+            return ['task' => 'face-age', 'model' => 'mivolo-v2', 'detector' => 'yunet-2023mar', 'images' => $images];
+        };
+        $wrongWay = fn ($a) => self::turnAll($a, 'camera');
+
+        // Turned as asked: a pass, though the AI said every face looked straight at it.
+        [$check] = $this->check($wrongWay, null, true, $angles(15.0));
+        self::assertSame('passed', $check['outcome']);
+        self::assertSame('face_check_age_model', $this->gate->receiptsFor($this->memberId)[0]['method']);
+
+        $cases = [
+            'turns too small to measure' => [$angles(4.0), 'turns', 'too small'],
+            'every turn the other way' => [$angles(-15.0), 'turns', 'the other way'],
+            'a camera that mirrors its picture' => [$angles(15.0, true), 'passed', 'Done'],
+            'a face lost on the second turn' => [$angles(15.0, false, [2]), 'no_face', 'second turn'],
+        ];
+        foreach ($cases as $what => [$readings, $expected, $words]) {
+            self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
+            self::$pdo->prepare('DELETE FROM passes WHERE user_id = ?')->execute([$this->memberId]);
+            [$check] = $this->check($wrongWay, null, true, $readings);
+            self::assertSame($expected, $check['outcome'], $what);
+            self::assertStringContainsString($words, (string) $check['message'], $what);
+            self::assertStringNotContainsString('Measured', (string) $check['message'], 'a member is not shown the numbers');
+        }
+
+        // How far a turn must go is the site's setting.
+        $this->plugins->setSettings('formlogic.age-gate', ['turnDegrees' => 20]);
+        self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
+        [$check] = $this->check(fn ($a) => $a, null, true, $angles(15.0));
+        self::assertSame('turns', $check['outcome']);
+
+        // The administrator trying it on themselves is told what each turn measured.
+        [$check] = $this->check(fn ($a) => $a, null, true, $angles(15.0), true);
+        self::assertSame('turns', $check['outcome']);
+        self::assertMatchesRegularExpression('/Measured from the straight-on picture: (left|right|up|down) 15°, .* \(each needs 20°\)/', (string) $check['message']);
+    }
+
     public function testWithoutOaiysAgeModelTheAisEstimateIsUsedUnlessTheSiteRequiresTheModel(): void
     {
         $missing = fn (?array $asked) => ['task' => 'face-age', 'error' => 'not_installed', 'message' => 'this OAIY has no age model'];
@@ -323,14 +380,17 @@ final class CameraCheckServiceTest extends TestCase
      * to an honest description (or $raw text), then ask until it is decided. Returns [the last
      * status, the turn as OAIY opened it].
      */
-    private function check(\Closure $twist, ?string $raw = null, bool $ask = true, ?\Closure $readings = null): array
+    private function check(\Closure $twist, ?string $raw = null, bool $ask = true, ?\Closure $readings = null, bool $trial = false): array
     {
-        $started = $this->checks->start($this->memberId, 'formlogic.age-gate', $this->slug, 'age');
+        $who = $trial ? $this->adminId : $this->memberId;
+        $started = $trial
+            ? $this->checks->startTrial($this->adminId, 'formlogic.age-gate', 18)
+            : $this->checks->start($this->memberId, 'formlogic.age-gate', $this->slug, 'age');
         self::assertSame('started', $started['status']);
         $steps = $started['steps'];
         self::assertSame('center', $steps[0]['hint']);
         $frames = array_map(fn () => 'data:image/jpeg;base64,' . base64_encode("\xFF\xD8\xFF\xE0" . random_bytes(40000)), $steps);
-        $this->checks->submit($this->memberId, $started['id'], $frames);
+        $this->checks->submit($who, $started['id'], $frames);
 
         // The desktop: claims the turn, opens it, describes each picture as an honest model would.
         $pending = $this->relay->listPending($this->adminId, null, 10, 'inst-camera');
@@ -357,7 +417,7 @@ final class CameraCheckServiceTest extends TestCase
         // OAIY's age model, where the test gives it readings: for the pictures the turn named, as OAIY answers.
         $final = ['kind' => 'final'];
         if ($readings !== null) {
-            $final['verification'] = $readings($turn['verify'] ?? null, count($steps));
+            $final['verification'] = $readings($turn['verify'] ?? null, count($steps), array_column($steps, 'hint'));
         }
         $this->relay->appendFrame($claimed['requestId'], $this->adminId, SiteDesktopAi::seal($final, 1, 1, $pair), 'inst-camera');
         $this->relay->complete($claimed['requestId'], $this->adminId, ['status' => 'done', 'instanceId' => 'inst-camera']);
@@ -365,9 +425,11 @@ final class CameraCheckServiceTest extends TestCase
             return [null, $turn, $started['id']];
         }
 
-        $status = $this->checks->status($this->memberId, $started['id']);
+        $status = $this->checks->status($who, $started['id']);
         self::assertSame('done', $status['status']);
-        self::assertArrayNotHasKey('answer', $status, 'a member never sees the model\'s answer');
+        if (!$trial) {
+            self::assertArrayNotHasKey('answer', $status, 'a member never sees the model\'s answer');
+        }
         return [$status, $turn];
     }
 
