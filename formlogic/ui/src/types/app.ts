@@ -28,7 +28,26 @@ export const KIND_LABELS: Record<AppKind, string> = {
   custom: 'Custom',
 };
 
+/**
+ * settings.signInPage: how the site's sign-in and sign-up pages greet people coming to use the app (the server keeps
+ * only these, as plain words and design tokens: AppService::signInPage).
+ */
+export interface SignInPageSettings {
+  /** A line of up to 80 characters beside or over the form; the site's own heading stays. */
+  title?: string;
+  /** Up to 280 characters of plain text. */
+  message?: string;
+  /** A panel beside the form, or one card in the middle. */
+  layout?: 'split' | 'centered';
+  /** The panel's colour (#rrggbb); the accent when not set. */
+  panelColor?: string;
+  /** false: the site's font rather than the app's. */
+  appFont?: boolean;
+}
+
 export interface AppSettings {
+  /** How the sign-in and sign-up pages greet people coming to use the app. */
+  signInPage?: SignInPageSettings;
   /** Use the published portable project for the app's home dashboard. */
   hostedDashboard?: boolean;
   aokieWorkspace?: boolean;

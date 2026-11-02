@@ -7,6 +7,9 @@ import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
 import { usePublicConfig } from '../../hooks/usePublicConfig';
 import { DomainSignInContext, startDomainSignIn } from '../../lib/domainSignIn';
+import { useAppWelcome } from '../../hooks/useAppWelcome';
+import { welcomeStyle } from '../../lib/appWelcome';
+import { AppWelcomeBanner } from '../auth/AppWelcome';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { PasswordInput } from '../ui/PasswordInput';
@@ -31,6 +34,8 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
   const [membershipChecked, setMembershipChecked] = useState(false);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+  // Asked only while someone has to sign in: the card then names the app and wears its look.
+  const welcome = useAppWelcome(!user && appSlug ? `/app/${appSlug}` : null);
 
   // Logged in but the app didn't load (likely not a member): discover whether
   // self-registration is allowed or we're awaiting approval. Track when the probe
@@ -93,9 +98,16 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
     };
 
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 p-4">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 p-4" style={welcome ? welcomeStyle(welcome.look) : undefined}>
         <div className="w-full max-w-md">
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20">
+            {welcome ? (
+              <div className="mb-6">
+                <AppWelcomeBanner welcome={welcome} mode="login" className="mb-6" />
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white tracking-tight">Sign in to {welcome.app.name}</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">With your FormLogic account.</p>
+              </div>
+            ) : (
             <div className="text-center mb-6">
               <div className="w-12 h-12 mx-auto rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-3">
                 <Lock className="h-6 w-6 text-primary-600 dark:text-primary-400" />
@@ -103,6 +115,7 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white tracking-tight">Sign in to continue</h2>
               <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">Please log in to access this app</p>
             </div>
+            )}
 
             {signInAt ? (
               <div className="space-y-3">

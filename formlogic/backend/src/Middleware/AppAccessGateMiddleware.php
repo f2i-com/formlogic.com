@@ -22,14 +22,14 @@ use Slim\Routing\RouteContext;
  * route's own authentication will, because a group's middleware runs before its routes', and that
  * authentication runs again after it as before.
  *
- * Left open: what a page needs before the member can pass the gate — the app's manifests, whether
- * they are a member, joining, and the native entry metadata. Everything else that names a gated
+ * Left open: what a page needs before the member can pass the gate — the app's manifests, what the
+ * sign-in pages show of it, whether they are a member, joining, and the native entry metadata. Everything else that names a gated
  * app refuses a member without the pass.
  */
 final class AppAccessGateMiddleware implements MiddlewareInterface
 {
     /** Route patterns, by their ending, that stay open on a gated app. */
-    public const OPEN = ['/manifest.json', '/client-manifest', '/membership', '/join', '/entry'];
+    public const OPEN = ['/manifest.json', '/client-manifest', '/welcome', '/membership', '/join', '/entry'];
 
     public function __construct(
         private AppService $apps,

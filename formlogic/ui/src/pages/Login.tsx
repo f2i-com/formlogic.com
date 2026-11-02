@@ -8,6 +8,9 @@ import { Logo, LogoWhite } from '../components/ui/Logo';
 import { Mail, Lock, AlertCircle, ShieldCheck, ArrowLeft } from 'lucide-react';
 import { usePublicConfig } from '../hooks/usePublicConfig';
 import { signInDestination } from '../lib/authRedirect';
+import { useAppWelcome } from '../hooks/useAppWelcome';
+import { welcomeStyle } from '../lib/appWelcome';
+import { AppWelcomeBanner, AppWelcomePanel } from '../components/auth/AppWelcome';
 
 export function Login() {
   const [email, setEmail] = useState('');
@@ -29,6 +32,9 @@ export function Login() {
   // signInDestination refuses other origins and sign-in pages. Signing in replaces this page
   // in history: once signed in, /login only sends you on (SignedInRedirect, to the same place).
   const dest = signInDestination(searchParams.get('redirect'));
+  // Signing in to use an app: the page names it and wears its look (its colours, font and words).
+  const welcome = useAppWelcome(dest === '/' ? null : dest);
+  const split = welcome?.look.layout === 'split';
 
   useEffect(() => {
     if (!user) return;
@@ -94,8 +100,9 @@ export function Login() {
   const displayError = localError || error;
 
   return (
-    <div className="min-h-[100dvh] bg-gray-50 dark:bg-transparent flex">
-      {/* Left panel - Branding */}
+    <div className="min-h-[100dvh] bg-gray-50 dark:bg-transparent flex" style={welcome ? welcomeStyle(welcome.look) : undefined}>
+      {welcome ? (split && <AppWelcomePanel welcome={welcome} mode="login" className="hidden lg:flex lg:w-[45%]" />) : (
+      /* Left panel - Branding */
       <div className="hidden lg:flex lg:w-[45%] bg-gradient-to-br from-primary-700 via-primary-800 to-slate-900 dark:from-slate-900/80 dark:via-primary-950/60 dark:to-slate-950/80 backdrop-blur-xl p-12 flex-col justify-between relative overflow-hidden">
         {/* Decorative elements. The extra scrim keeps the white copy WCAG-AA readable
             even when the user picks a light accent color (e.g. lime, cyan). */}
@@ -121,15 +128,20 @@ export function Login() {
           Trusted by developers and agencies worldwide.
         </p>
       </div>
+      )}
 
       {/* Right panel - Form */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-8">
         <div className="w-full max-w-[400px]">
+          {welcome ? (
+            <AppWelcomeBanner welcome={welcome} mode="login" className={split ? 'lg:hidden' : undefined} />
+          ) : (
           <div className="lg:hidden mb-8">
             <Link to="/">
               <Logo size="lg" />
             </Link>
           </div>
+          )}
 
           {mfaToken ? (
             <>
@@ -206,8 +218,9 @@ export function Login() {
             </>
           ) : (
             <>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Sign in</h1>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">{welcome ? `Sign in to ${welcome.app.name}` : 'Sign in'}</h1>
               <p className="text-gray-500 dark:text-slate-400 mb-8">
+                {welcome && <>With your FormLogic account. </>}
                 Don't have an account?{' '}
                 <Link to={dest === '/' ? '/signup' : `/signup?redirect=${encodeURIComponent(dest)}`} className="text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
                   Create one

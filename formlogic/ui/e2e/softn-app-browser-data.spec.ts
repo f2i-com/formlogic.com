@@ -50,7 +50,7 @@ test('what a member saves in the browser survives a session ending, a rename and
   // The session ends by itself, and the same person comes back.
   await context.clearCookies();
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: /^Sign in to / })).toBeVisible({ timeout: 30_000 });
   expect((await signIn(context, email)).ok()).toBe(true);
   await page.goto(`/app/${slug}`);
   await count(page, 1);

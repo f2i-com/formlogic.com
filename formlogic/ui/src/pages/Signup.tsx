@@ -9,6 +9,9 @@ import { Mail, Lock, User, AlertCircle, Check, Sparkles } from 'lucide-react';
 import { useBetaMode } from '../hooks/useBetaMode';
 import { passwordError as getPasswordError } from '../lib/passwordPolicy';
 import { signInDestination } from '../lib/authRedirect';
+import { useAppWelcome } from '../hooks/useAppWelcome';
+import { joiningNote, welcomeStyle } from '../lib/appWelcome';
+import { AppWelcomeBanner, AppWelcomePanel } from '../components/auth/AppWelcome';
 
 export function Signup() {
   const [email, setEmail] = useState('');
@@ -24,6 +27,10 @@ export function Signup() {
 
   // Same rule as Login: a same-origin path that is not itself a sign-in page, else home.
   const dest = signInDestination(searchParams.get('redirect'));
+  // Signing up to use an app: the page names it and wears its look (its colours, font and words).
+  const welcome = useAppWelcome(dest === '/' ? null : dest);
+  const split = welcome?.look.layout === 'split';
+  const joining = welcome ? joiningNote(welcome) : null;
 
   useEffect(() => {
     if (!user) return;
@@ -75,8 +82,9 @@ export function Signup() {
   ];
 
   return (
-    <div className="min-h-[100dvh] bg-gray-50 dark:bg-transparent flex">
-      {/* Left panel - Branding */}
+    <div className="min-h-[100dvh] bg-gray-50 dark:bg-transparent flex" style={welcome ? welcomeStyle(welcome.look) : undefined}>
+      {welcome ? (split && <AppWelcomePanel welcome={welcome} mode="signup" className="hidden lg:flex lg:w-[45%]" />) : (
+      /* Left panel - Branding */
       <div className="hidden lg:flex lg:w-[45%] bg-gradient-to-br from-primary-700 via-primary-800 to-slate-900 dark:from-slate-900/80 dark:via-primary-950/60 dark:to-slate-950/80 backdrop-blur-xl p-12 flex-col justify-between relative overflow-hidden">
         {/* Decorative elements. The extra scrim keeps the white copy WCAG-AA readable
             even when the user picks a light accent color (e.g. lime, cyan). */}
@@ -112,23 +120,30 @@ export function Signup() {
           No credit card required. Get started in seconds.
         </p>
       </div>
+      )}
 
       {/* Right panel - Form */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-8">
         <div className="w-full max-w-[400px]">
+          {welcome ? (
+            <AppWelcomeBanner welcome={welcome} mode="signup" className={split ? 'lg:hidden' : undefined} />
+          ) : (
           <div className="lg:hidden mb-8">
             <Link to="/">
               <Logo size="lg" />
             </Link>
           </div>
+          )}
 
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Create your account</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">{welcome ? `Create an account for ${welcome.app.name}` : 'Create your account'}</h1>
           <p className="text-gray-500 dark:text-slate-400 mb-8">
+            {welcome && <>A FormLogic account, which works for this site's other apps too. </>}
             Already have an account?{' '}
             <Link to={dest === '/' ? '/login' : `/login?redirect=${encodeURIComponent(dest)}`} className="text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
               Sign in
             </Link>
           </p>
+          {joining && <p className="-mt-5 mb-8 text-sm text-gray-500 dark:text-slate-400">{joining}</p>}
 
           {beta && (
             <div className="mb-6 flex items-start gap-2 rounded-xl border border-primary-200/70 dark:border-primary-500/25 bg-primary-50/70 dark:bg-primary-500/10 px-3.5 py-2.5 text-sm text-primary-800 dark:text-primary-200">

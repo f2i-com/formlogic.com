@@ -93,7 +93,7 @@ test('a SoftN app runs full screen on its own domain, and a sign-in for it opens
     if (response.url().includes('/api/') && [401, 403].includes(response.status())) refused.push(`${response.status()} ${new URL(response.url()).pathname}`);
   });
   await home.goto(`${site(MEMBERS_DOMAIN)}/`);
-  await expect(home.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
+  await expect(home.getByRole('heading', { name: /^Sign in to / })).toBeVisible();
   expect(new URL(home.url()).pathname).toBe('/');
   // Nothing on the domain takes a password: the browser would offer it to the next server there.
   await expect(home.locator('input[type="password"]')).toHaveCount(0);

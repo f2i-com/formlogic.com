@@ -3798,11 +3798,16 @@ $app->group('/api/flow-kv', function (RouteCollectorProxy $group) use ($containe
 })->add($cloudWriteGate)->add($authRequired);
 
 // App Runtime routes (public-facing, auth required for most)
-$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $appSubmissionRateLimiter, $flowRunRateLimiter, $connectorRelayRateLimiter, $serviceCapabilityRateLimiter, $cloudWriteGate, $reportRateLimiter) {
+$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $authOptional, $publicFormRateLimiter, $appSubmissionRateLimiter, $flowRunRateLimiter, $connectorRelayRateLimiter, $serviceCapabilityRateLimiter, $cloudWriteGate, $reportRateLimiter) {
     // PWA manifest (public, no auth)
     $group->get('/manifest.json', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->manifest($request, $response, $getArgs($request));
     });
+
+    // What the sign-in and sign-up pages show of the app (public, for the apps the manifest is served for).
+    $group->get('/welcome', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->welcome($request, $response, $getArgs($request));
+    })->add($publicFormRateLimiter)->add($authOptional);
 
     // Signed client app manifest for the native runtime (public metadata only).
     $group->get('/client-manifest', function ($request, $response) use ($container, $getArgs) {

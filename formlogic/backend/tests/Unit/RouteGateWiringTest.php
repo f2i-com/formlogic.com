@@ -62,7 +62,7 @@ final class RouteGateWiringTest extends TestCase
 
     public function testWhatStaysOpenIsWhatAPageNeedsBeforeTheGate(): void
     {
-        self::assertSame(['/manifest.json', '/client-manifest', '/membership', '/join', '/entry'], AppAccessGateMiddleware::OPEN);
+        self::assertSame(['/manifest.json', '/client-manifest', '/welcome', '/membership', '/join', '/entry'], AppAccessGateMiddleware::OPEN);
         foreach (['/api/app/{slug}', '/api/app/{slug}/forms/{formId}/responses', '/api/app/{slug}/native', '/api/app/{slug}/native/request',
             '/api/app/{slug}/hosting', '/api/app/{slug}/actions/{action}', '/api/app/{slug}/flows', '/api/app/{slug}/my-permissions'] as $pattern) {
             self::assertFalse(AppAccessGateMiddleware::isOpen($pattern), $pattern);

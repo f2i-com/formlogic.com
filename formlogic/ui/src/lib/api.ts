@@ -2950,6 +2950,11 @@ class ApiClient {
     return this.request(`/app/${seg(slug)}/membership`);
   }
 
+  /** What the sign-in and sign-up pages show of an app (public; not found for an app that isn't published). */
+  async getAppWelcome(slug: string): Promise<ApiResponse<unknown>> {
+    return this.request(`/app/${seg(slug)}/welcome`);
+  }
+
   async joinApp(slug: string): Promise<ApiResponse<{ success: boolean; status: string }>> {
     return this.request(`/app/${seg(slug)}/join`, { method: 'POST' });
   }

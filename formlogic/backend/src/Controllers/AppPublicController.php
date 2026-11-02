@@ -1411,6 +1411,20 @@ class AppPublicController
     }
 
     /**
+     * GET /api/app/{slug}/welcome: what the site's sign-in and sign-up pages show of the app a visitor is signing in to
+     * use (AppService::welcome). Public, as its web app manifest is, and for the same apps; any other is not found.
+     */
+    public function welcome(Request $request, Response $response, array $args): Response
+    {
+        $slug = (string) ($args['slug'] ?? '');
+        $app = $this->validateSlug($slug) ? $this->appService->getAppBySlug($slug) : null;
+        if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        return $this->jsonResponse($response, AppService::welcome($app))->withHeader('Cache-Control', 'no-store');
+    }
+
+    /**
      * PWA manifest served at a CUSTOM DOMAIN root: GET /manifest.json. Resolves the request Host
      * (or ?host=) to a connected+active domain of a PUBLISHED app and returns a same-origin
      * installable manifest rooted at "/" (the branded launch page). Chrome refuses a cross-origin

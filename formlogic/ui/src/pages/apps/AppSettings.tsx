@@ -11,6 +11,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ConnectAiModal } from '../../components/mcp/ConnectAiModal';
 import { Switch } from '../../components/ui/Switch';
 import { RequirementsSetting } from '../../components/apps/RequirementsSetting';
+import { SignInPageFields } from '../../components/apps/SignInPageFields';
 import { TimezoneSelect } from '../../components/ui/TimezoneSelect';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { IconPicker } from '../../components/ui/IconPicker';
@@ -586,6 +587,9 @@ export function AppSettings() {
                 </div>
               </div>
             </div>
+          </SettingsCard>
+          <SettingsCard title="Sign-in page" description="What people see when they sign in or create an account to use this app. The page stays this site's, and tells them it's their FormLogic account.">
+            <SignInPageFields app={app} onChange={(page) => updateSetting('signInPage', page)} />
           </SettingsCard>
           </TabsContent>
 

@@ -156,7 +156,110 @@ class AppService
             }
         }
         unset($settings['ageGate']);
+        // settings.signInPage: how the site's sign-in and sign-up pages greet the app's visitors (AppService::welcome).
+        if (array_key_exists('signInPage', $settings)) {
+            $page = self::signInPage($settings['signInPage']);
+            if ($page === null) {
+                unset($settings['signInPage']);
+            } else {
+                $settings['signInPage'] = $page;
+            }
+        }
         return $settings;
+    }
+
+    /** The fonts an app's theme offers (AppSettings → Appearance), the only ones its sign-in page takes. */
+    public const SIGN_IN_FONTS = ['DM Sans', 'Plus Jakarta Sans', 'system-ui', 'Georgia', 'monospace'];
+
+    /**
+     * settings.signInPage as it may be kept: {title?, message?, layout?, panelColor?, appFont?}. The owner's words are
+     * plain text, held to a line of 80 and a message of 280 characters (no control or direction characters); layout is
+     * split or centered, the panel a #rrggbb colour, appFont a boolean. Anything else is dropped. Null when nothing is
+     * left. Read again whenever the page is served, as settings reach the database by more than one path.
+     *
+     * Design tokens and words only, never style sheets: the page is the site's, where people type their password. An
+     * owner's CSS there could hide or fake its parts, or read what is typed through selectors on the inputs.
+     */
+    public static function signInPage(mixed $value): ?array
+    {
+        if (!is_array($value)) {
+            return null;
+        }
+        $text = static function (mixed $words, int $max, bool $lines): ?string {
+            if (!is_string($words)) {
+                return null;
+            }
+            $words = str_replace(["\r\n", "\r"], "\n", $words);
+            $words = (string) preg_replace($lines ? '/(?!\n)\p{C}/u' : '/\p{C}/u', $lines ? '' : ' ', $words);
+            $words = $lines ? (string) preg_replace("/\n{3,}/", "\n\n", $words) : (string) preg_replace('/\s+/u', ' ', $words);
+            $words = trim(mb_substr(trim($words), 0, $max));
+            return $words === '' ? null : $words;
+        };
+        $page = [];
+        if (($title = $text($value['title'] ?? null, 80, false)) !== null) {
+            $page['title'] = $title;
+        }
+        if (($message = $text($value['message'] ?? null, 280, true)) !== null) {
+            $page['message'] = $message;
+        }
+        if (in_array($value['layout'] ?? null, ['split', 'centered'], true)) {
+            $page['layout'] = $value['layout'];
+        }
+        if (($panel = self::hexColor($value['panelColor'] ?? null)) !== null) {
+            $page['panelColor'] = $panel;
+        }
+        if (is_bool($value['appFont'] ?? null)) {
+            $page['appFont'] = $value['appFont'];
+        }
+        return $page === [] ? null : $page;
+    }
+
+    /** A #rgb or #rrggbb colour as #rrggbb in lower case, or null. */
+    public static function hexColor(mixed $value): ?string
+    {
+        if (!is_string($value) || !preg_match('/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $value)) {
+            return null;
+        }
+        $hex = strtolower(substr($value, 1));
+        if (strlen($hex) === 3) {
+            $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+        }
+        return '#' . $hex;
+    }
+
+    /**
+     * What the site's sign-in and sign-up pages show of an app someone is signing in to use (GET
+     * /api/app/{slug}/welcome): its name, its logo (only a picture this site serves or one written into the address:
+     * the page loads nothing from elsewhere) or icon, its look as design tokens, the owner's words, and whether a new
+     * account can join it. The site writes the headings and keeps its own mark; the owner's words come under them.
+     */
+    public static function welcome(array $app): array
+    {
+        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+        $theme = is_array($app['theme'] ?? null) ? $app['theme'] : [];
+        $page = self::signInPage($settings['signInPage'] ?? null) ?? [];
+        $accent = self::hexColor($theme['primaryColor'] ?? null);
+        $font = in_array($theme['fontFamily'] ?? null, self::SIGN_IN_FONTS, true) ? $theme['fontFamily'] : null;
+        $icon = is_string($settings['icon'] ?? null) && preg_match('/^[A-Za-z][A-Za-z0-9]{0,39}$/', $settings['icon']) ? $settings['icon'] : null;
+        $logo = $app['logoUrl'] ?? null;
+        $sameSite = is_string($logo) && strlen($logo) <= 500 && preg_match('#^/(?![/\\\\])[A-Za-z0-9._~%!$&+,;=:@/?-]*$#', $logo);
+        $written = is_string($logo) && strlen($logo) <= 400_000 && preg_match('#^data:image/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+=*$#', $logo);
+        return [
+            'app' => [
+                'name' => mb_substr(trim((string) ($app['name'] ?? '')), 0, 120),
+                'slug' => (string) ($app['slug'] ?? ''),
+                'icon' => $icon,
+                'logo' => $sameSite || $written ? $logo : null,
+            ],
+            'look' => [
+                'accent' => $accent,
+                'font' => ($page['appFont'] ?? true) ? $font : null,
+                'panel' => $page['panelColor'] ?? $accent,
+                'layout' => $page['layout'] ?? 'split',
+            ],
+            'text' => ['title' => $page['title'] ?? null, 'message' => $page['message'] ?? null],
+            'joining' => empty($settings['allowSelfRegistration']) ? 'invite' : (empty($settings['requireApproval']) ? 'open' : 'approval'),
+        ];
     }
 
     /** The user's account timezone (IANA name), or null if unset. Used to seed

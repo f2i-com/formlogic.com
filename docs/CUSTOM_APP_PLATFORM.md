@@ -974,6 +974,26 @@ and gets back a one-time code for a session limited to its app. `Support/AppDoma
 - **What stays the member's.** Their account is the same one, so changing a password ends these
   sessions too. Account settings are on the platform, and so is everything that takes a password.
 
+### The app on the platform's sign-in pages
+
+`/login` and `/signup` name the app someone is signing in to use, and wear its look, when their
+`?redirect=` leads to `/app/<slug>…` or to `/sign-in/domain?origin=…` (the slug then comes from the
+domain's public launch config). So does the sign-in card a visitor meets at `/app/<slug>`. They read
+`GET /api/app/{slug}/welcome` (`AppService::welcome`), public for the apps whose web app manifest is
+(published, or a draft to its owner) and the same 404 for any other. It gives the app's name, its logo
+only when this site serves it or it is written into the address (the page loads nothing from
+elsewhere), its icon, its accent and font (a font from the theme's list), whether a new account joins
+by itself, and the owner's `settings.signInPage` (App settings → Appearance → Sign-in page): a welcome
+line of up to 80 characters, a message of up to 280, plain text, a layout (a panel beside the form or
+one card), a panel colour and whether to use the app's font. `AppService::signInPage` holds those to
+their shape whenever settings are saved, and again whenever the page is served.
+
+Colours, a font and words only, never style sheets: these are the pages where people type their
+password, and an owner's CSS there could hide or fake their parts, or read what is typed through
+selectors on the inputs. The site writes the headings ("Sign in to {app}"), says it is their FormLogic
+account, and keeps its own mark; the app's colours are set on the page's own element, so nothing else
+changes.
+
 Browser storage belongs to an origin, so what an app keeps in the browser on its domain is separate
 from what it keeps at `/app/<slug>` on the platform. Moving an app to a domain does not bring that
 data along; records in its server database are the same everywhere.
