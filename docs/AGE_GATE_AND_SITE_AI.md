@@ -51,36 +51,66 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
   A member's own linked desktop keeps its browser-to-desktop sealing; this upstream does not
   replace it.
 
-## 2. The waterfall age gate
+## 2. The waterfall age gate, as a plugin
 
-### Plugins and passes
+### Plugins (generic)
 
-- A **plugin** is a SoftN project whose manifest has a `formlogicPlugin` section: an id, a name,
-  and the passes it may issue, each with its kind (`age`), value range, strengths
-  (`declared`, `estimated`, `verified`) and the POST route of its own backend that issues it
-  (`PluginService::pluginManifest`). Its backend runs in the SoftN runner and its pages in the
-  sandboxed frame, like any SoftN app's: it reaches nothing of the site but what FormLogic hands it.
-- **Installing.** Admin → Plugins lists the plugins that ship with FormLogic
-  (`backend/resources/plugins`) with what each would be granted, and installs one in a click.
-  What it was granted is recorded with it (`plugins` table); turning it off closes the apps that
-  need it, and removing it withdraws every pass it issued. Uploading other plugins, with a review
-  of what they ask for, and plugins an owner installs for one app (`scope`) come later.
+How to write one is `docs/PLUGINS.md`. In short:
+
+- A **plugin** is a SoftN project whose manifest has a `formlogicPlugin` section. Its code is ZIPP
+  code: its backend in the SoftN runner's sandbox (no network, no files, its own database if it
+  asks), its pages in the sandboxed frame. Nothing in FormLogic's PHP or pages knows what a plugin
+  does; the words the site shows for its passes come from its manifest.
+- **What it may do** is what its manifest asks and the administrator granted at install, shown to
+  them first in words: the passes it issues (kind, value range, strengths, the route that issues
+  them, its words for them), what else of the site it `uses` (the `camera`), its `settings`
+  (declared by it, set in Admin, handed to its code), and its sandbox permissions (`sql`, `crypto`,
+  `time`, `transaction-scope`; nothing else). `PluginService::pluginManifest` holds it to that.
+- **Installing.** Admin → Plugins installs one that ships with FormLogic (`backend/resources/plugins`,
+  ids `formlogic.*`) or an upload (`.softn`, read first, then installed or updated; it cannot take a
+  `formlogic.` id). Updates show what the new version asks. Off closes the apps that need it;
+  removing it withdraws every pass it issued. Tables: `plugins`, `passes`, `camera_checks`.
 - **Where its project lives.** In an app of the system Plugins account, which nobody can sign in
   as (no password matches), act as or manage (`PluginAccountGuardMiddleware`, `AdminActAsMiddleware`),
   and which has no members (`AccessGateService::admitsMember`). So its files change only by
   installing it, and it is in nobody's apps, backups, quota or erasure. A setting naming a plugin
   counts only on an app of that account (`PluginService::forApp`).
 - **Its page.** `/plugins/{id}/verify?app=&kind=&return=` on the main site runs the plugin's app
-  for the signed-in person, as a member with no membership row. The frame offers it two actions
-  and no more: `pluginContext` (the app's name and what it asks, from the server) and `pluginDone`
-  (the host reads the server's answer again and goes to the `return` the server allowed).
+  for the signed-in person. The frame offers it `pluginContext` (the app, what it asks, whether the
+  camera check is there, its settings), `pluginDone` (the host reads the server's answer again and
+  goes where the server allowed), and, for a plugin granted the camera, `pluginCamera`. No others.
 - **Issuing.** On the route its manifest names for a kind of pass, a success whose body carries
-  `pass: {kind, value, strength, method}` is recorded for the person who asked, held to the grant:
-  that kind, a strength granted, a whole value in its range. Never from another route or method,
-  never for a user the body names, never while the plugin is off
-  (`AccessGateService::recordFromPluginAnswer`). The page gets the answer without the pass. A
-  plugin may take the value from its page only for a declaration, which is the person's word
-  anyway; any stronger method has to work the value out in its backend.
+  `pass` is recorded for the person who asked, held to the grant
+  (`AccessGateService::recordFromPluginAnswer`). A plugin that uses the camera issues nothing
+  stronger than a declaration from its own routes: stronger passes come through a camera check.
+
+### The camera check (generic)
+
+- **The camera is the site's page's, not the plugin's.** Tried in Chrome on the real frame
+  document with production's headers (`Permissions-Policy: camera=(self)`, the runtime's
+  `sandbox allow-scripts`): `getUserMedia` in the frame fails with `SecurityError: Invalid security
+  origin`, with or without `allow="camera"`, because the frame's origin is opaque. Giving the frame
+  `allow-same-origin` would give the plugin the site's origin, and is never done.
+- **The plugin decides, in its sandbox; the site carries** (`CameraCheckService`). When a member
+  starts one, the plugin's `/api/site/camera/start` route answers the steps to show (its words, an
+  arrow) and its turn for the model, with places for the pictures and its own pictures (a control).
+  The site's page shows a mirror and takes one unmirrored picture per step, 360 pixels wide, under
+  40 KB; the server fills them in, seals the turn to the administrator's OAIY (Admin → Plugins →
+  Camera checks: the computer, and a provider on it, listed by asking it; OAIY's own engine uses
+  the model chosen in OAIY) and queues it; the page asks where it stands, and each ask reads what
+  OAIY has sent without waiting, so no request holds a PHP worker on the model. When OAIY has
+  answered, the plugin's `/api/site/camera/decide` route gets the model's text and the JSON in it,
+  never a picture, and answers `{outcome, message, pass?}`.
+- A plugin's page cannot call `/api/site/` routes on its own backend (`NativeAppController`).
+- The site keeps the limits (three tries a day, one at a time, an hour after `not_confirmed`),
+  refunds a check that did not run (`unavailable`), and records a pass only for a member's check,
+  within the grant, while the app still asks it. It keeps the outcome and nothing else; the relay
+  drops the sealed pictures once OAIY has answered (`DesktopAiRelayService::complete`, `abandon`,
+  `expireStale`).
+- What OAIY does with it (read from its release, v0.1.12): image parts reach its own engine and
+  OpenAI-protocol providers intact (Anthropic-protocol providers drop them, which the control
+  catches); it stores no chat history of relay turns; some engines keep model state on disk, which
+  OAIY's privacy (incognito) setting stops, and the setup says so. OAIY needs no change.
 
 ### The gate (FormLogic core)
 
@@ -96,12 +126,11 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
   the gate fails it.
 - The app's owner is not gated. A gated app needs signed-in members: it cannot also allow
   anonymous `application` access, because there is nobody to attach a check to.
-- **Passes kept.** A pass is stored as a receipt (`access_receipts`): member, plugin, kind, value,
-  strength, method, issued and expiry times (a year, `PLUGIN_PASS_DAYS`). Never a date of birth, a
-  picture, an estimate or a document. Apps learn "passed" and nothing else. A pass is the member's
-  for the whole site: it opens every app here that asks the same plugin's pass for the same value
-  or less, by the same strength or a weaker one, as the plugin's page tells them before they
-  confirm. They see and withdraw passes in Settings → Security; a withdrawn one gates those apps
+- **Passes kept** (`passes`): member, plugin, kind, value, strength, method, issued and expiry
+  times (a year, `PLUGIN_PASS_DAYS`). Never a date of birth, a picture, an estimate or a document.
+  Apps learn "passed" and nothing else. A pass is the member's for the whole site: it opens every
+  app here that asks the same plugin's pass for the same value or less, by the same strength or a
+  weaker one. They see and withdraw passes in Settings → Security; a withdrawn one gates those apps
   again.
 - A requirement whose plugin is off or gone refuses with `plugin_unavailable`, and the owner's
   setting says so; the app keeps its setting.
@@ -109,70 +138,54 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
   own domain sends the member there and gets them back through the same one-time code; no
   verification screen is ever shown on a custom domain.
 
-### The methods (the waterfall)
+### The Age gate plugin (the waterfall)
 
-The site chooses which methods it offers and the order; an app chooses the strength it needs.
+`backend/resources/plugins/age-gate`, all ZIPP code. An app chooses the strength it needs.
 
-1. **Self-declaration.** The member confirms their age. Labelled honestly: it is not verification.
-   This is the built-in Age gate plugin (`formlogic.age-gate`): its page asks, its backend answers
-   with a declared age pass.
-2. **Face check on OAIY.** A camera check with a server-issued, random order of turns (up, down,
-   left, right), each step with a one-time nonce and a deadline. The browser guides the person
-   (head pose in the page) and picks one frame per step, then seals the frames to the verifier's
-   key.
-   - **The camera is the host page's, not the plugin's.** Tried in Chrome on the real frame
-     document with production's headers (`Permissions-Policy: camera=(self)`, the runtime's
-     `sandbox allow-scripts`): `getUserMedia` in the frame fails with `SecurityError: Invalid
-     security origin`, with or without `allow="camera"`, because the frame's origin is opaque. So a
-     plugin that declares `camera` gets it through the trusted plugin page, which asks the person,
-     shows the preview, and hands the plugin only the frames it captured, through a third bridge
-     action. Giving the frame `allow-same-origin` instead would give the plugin the site's origin,
-     and is never done.
-   - The verifier checks that each frame faces the asked direction, that it is one face
-   throughout, a spoof score, and, once a cleared model is installed, an age estimate. It signs a
-   verdict: `passed`, `failed`, or `stronger_check_required`, and deletes the frames.
-   - The turns show a fresh response to a random challenge. They do not prove a live person: a
-     virtual camera running a face swap can follow them. The spoof model is what speaks to that,
-     and only to the attacks it was tested on.
-   - Age estimation is weakest near the line, so it passes only well above it (a buffer chosen by
-     testing on labelled faces) and sends everyone else to a stronger check. It stays off until a
-     model with commercial rights is chosen.
-3. **Photo ID plus face match** (later). Date of birth read from the ID by a vision model on the
-   site's OAIY; the ID's portrait matched to the face check's frames. Telling a real document from
-   an edited picture of one is beyond it; a site needing that uses a provider adapter.
-4. **Digital ID wallet** (later). OpenID4VP with an `age_over_18` presentation: the site learns
-   that and nothing else.
-5. **Provider adapter** (later). A commercial verifier's signed answer, for regulator-grade checks.
-
-### The verifier (an OAIY plugin)
-
-- A process plugin in this repository (`formlogic/oaiy-verifier-plugin`), installed into the
-  owner's OAIY like the Backups plugin, and linked the same way: a one-time code from the admin
-  page, then a key of its own limited to the verification lane. It never reads OAIY's linked key.
-- It mints two keys and publishes their public halves: X25519, which the browser seals frames to,
-  and Ed25519, which signs verdicts. The administrator confirms the fingerprint in FormLogic.
-- It polls a verification lane of its own over HTTPS (pending, claim, complete), so frames never
-  pass through OAIY's 16 KiB command relay, and their deletion stays inside one process.
-- It runs ONNX models through ONNX Runtime. It ships no weights: the administrator installs the
-  models, each with its licence noted, because the right to use a face model commercially is the
-  site's to establish. Head pose in the page uses MediaPipe Face Landmarker (Apache-2.0).
-- The verdict binds the session, the challenge digest, the nonces, the requirement and a deadline.
-  FormLogic checks the signature and every binding, then issues the receipt.
+1. **Self-declaration** (`declared`). The member confirms their age on the plugin's page; its
+   backend answers with a declared pass. Labelled honestly: it is not verification.
+2. **Face check** (`estimated`), on the site's camera check and the administrator's OAIY:
+   - the plugin asks the member to look at the camera and then three random turns (left, right, up,
+     down; or up and down only, its `turns` setting), and puts one of its control pictures (a large
+     digit on a coloured square) at a random place among the pictures;
+   - it tells the model to describe each picture (which is the control and its digit, how many
+     faces, which way each faces in the picture, a screen, print or mask, any writing), whether they
+     are one person, and an estimated and a youngest likely age; it tells the model nothing of the
+     turns it asked for, and to follow no writing in a picture;
+   - it decides: the wrong control digit or a malformed answer means the check did not run; then
+     one face per picture, no screen, print or writing, the turns as asked (mapped from the mirror),
+     the same person; then a pass only when the youngest likely age is at least the app's age plus
+     its `bufferYears` setting (7 by default), recorded at the app's age, never at the estimate.
+     Between the app's age and that margin it asks for a stronger check; below the app's age it
+     says the check could not confirm it, never that the member is under age.
+   - What this is not: a general vision model is not an evaluated age estimator, and the turns show
+     a fresh response to a random challenge, not a live person (a virtual camera running a face swap
+     can follow them). It suits a site that wants more than a declaration and accepts an estimate;
+     the administrator should try it on themselves (Admin → Plugins → Camera checks) and choose the
+     buffer and turns from what they see. A regulator-grade check needs the later methods.
+3. **Photo ID plus face match** (later, `verified`). Date of birth read from the ID by a vision
+   model on the site's OAIY; the ID's portrait matched to the face check's pictures. Telling a real
+   document from an edited picture of one is beyond it; a site needing that uses a provider adapter.
+4. **Digital ID wallet** (later). OpenID4VP with an `age_over_18` presentation.
+5. **Provider adapter** (later). A commercial verifier's signed answer.
 
 ## Phases
 
-1. The gate: requirement setting, the gate service and its wiring test, receipts, the
-   verification page with self-declaration, custom domains, withdrawal. Built, then made general:
-   plugins, passes per plugin, Admin → Plugins, the built-in Age gate plugin, its page in the
-   frame (e2e from the main site, `/native` and a custom domain).
+1. The gate, then plugins: requirement setting, the gate service and its wiring test, passes,
+   withdrawal, custom domains; generic plugins (manifest permissions, settings, uploads, updates,
+   the Plugins account); the Age gate's declaration. Built (e2e: main site, `/native`, a custom
+   domain).
 2. The site's AI on OAIY: the admin choice and pinned key, the server-sealed upstream, metering,
-   the offline check and queue cap, the no-grant test. Built and tested against the contract's
-   test desktop; still to do before it ships: a real run against a scratch OAIY.
-3. The verifier: link and keys, the verification lane, the camera in the plugin page with the
-   challenge, a face-check plugin whose backend checks the verdict, the OAIY plugin with head-pose
-   and spoof models, signed verdicts.
-4. Later: uploaded plugins with a review of what they ask, plugins an owner adds to one app, age
-   model (after a licence and a labelled evaluation), photo ID, wallet, provider adapter.
+   the offline check and queue cap, the no-grant test. Built; the sealed lane it uses was run end to
+   end against a scratch OAIY with the camera check.
+3. The camera check and the Age gate's face check. Built: `CameraCheckServiceTest` (the plugin in
+   the real runner, the contract's test desktop as OAIY, honest and hostile answers) and a run with
+   Chrome's fake camera, a scratch `oaiy-server` from OAIY's release and a stub vision provider
+   stored in it (listing providers and models sealed, the image test, an honest check opening the
+   app, a provider that never saw the pictures passing nobody, two faces, the page refused the
+   plugin's site routes). Not run with a real vision model here.
+4. Later: plugins an owner adds to one app, signed plugin packages, photo ID, wallet, provider
+   adapter, a dedicated evaluated age model.
 
 Nothing here is released until the owner says so.
 

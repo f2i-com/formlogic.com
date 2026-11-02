@@ -14,6 +14,8 @@ type Loaded = {
   requirement: PassRequirement;
   /** The site's camera check is there for this plugin and requirement. */
   camera?: boolean;
+  /** The plugin's settings, as the administrator set them. */
+  settings?: Record<string, unknown>;
   returnTo: string;
 };
 
@@ -70,6 +72,7 @@ export function PluginVerifyPage() {
     app: { name: loaded.app.name },
     requirement: { kind: loaded.requirement.kind, label: loaded.requirement.label, unit: loaded.requirement.unit, min: loaded.requirement.min, strength: loaded.requirement.strength },
     camera: loaded.camera === true,
+    settings: loaded.settings ?? {},
   } : null, [loaded]);
   const openCamera = useCallback(() => setCamera(true), []);
   const bridge = useMemo(() => context ? { context, onDone, ...(loaded?.camera ? { onCamera: openCamera } : {}) } : undefined, [context, onDone, loaded, openCamera]);
