@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { appFromDestination, paletteFromHex, panelColors, previewWelcome, readWelcome, welcomeStyle } from './appWelcome';
+import { contrastRatio } from './color';
 
 const welcome = {
   app: { name: 'Late Night', slug: 'late-night', icon: 'Moon', logo: null },
@@ -75,6 +76,14 @@ describe('the app look', () => {
     expect(style['--color-primary-foreground']).toBe('rgb(255 255 255)');
     expect(style.fontFamily).toBe('"Georgia", system-ui, sans-serif');
     expect(welcomeStyle({ accent: 'red', font: 'Papyrus', panel: null, layout: 'split' })).toEqual({});
+    // An accent the platform's own links would vanish in is moved for them; the buttons keep it.
+    const triple = (value: string) => { const [r, g, b] = value.split(' ').map(Number); return { r, g, b }; };
+    for (const accent of ['#f9fafb', '#fde047', '#000000', '#0f172a']) {
+      const links = welcomeStyle({ accent, font: null, panel: null, layout: 'split' }) as Record<string, string>;
+      expect(contrastRatio(triple(links['--primary-700']), { r: 249, g: 250, b: 251 })).toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(triple(links['--primary-400']), { r: 15, g: 23, b: 42 })).toBeGreaterThanOrEqual(3);
+      expect(links['--primary-600']).toBe(paletteFromHex(accent)![600]);
+    }
     expect((welcomeStyle({ accent: '#fde047', font: 'system-ui', panel: null, layout: 'split' }) as Record<string, string>)['--primary-foreground']).toBe('17 24 39');
   });
 

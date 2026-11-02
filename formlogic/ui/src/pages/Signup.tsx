@@ -139,7 +139,7 @@ export function Signup() {
           <p className="text-gray-500 dark:text-slate-400 mb-8">
             {welcome && <>A FormLogic account, which works for this site's other apps too. </>}
             Already have an account?{' '}
-            <Link to={dest === '/' ? '/login' : `/login?redirect=${encodeURIComponent(dest)}`} className="text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
+            <Link to={dest === '/' ? '/login' : `/login?redirect=${encodeURIComponent(dest)}`} className="text-primary-700 dark:text-primary-400 hover:text-primary-800 dark:hover:text-primary-300 font-medium transition-colors">
               Sign in
             </Link>
           </p>
@@ -214,9 +214,9 @@ export function Signup() {
 
             <p className="text-center text-xs text-gray-500 dark:text-slate-500">
               By creating an account you agree to the{' '}
-              <Link to="/terms" className="text-primary-600 dark:text-primary-400 hover:underline">Terms</Link>{' '}
+              <Link to="/terms" className="text-primary-700 dark:text-primary-400 hover:underline">Terms</Link>{' '}
               and{' '}
-              <Link to="/privacy" className="text-primary-600 dark:text-primary-400 hover:underline">Privacy Policy</Link>.
+              <Link to="/privacy" className="text-primary-700 dark:text-primary-400 hover:underline">Privacy Policy</Link>.
             </p>
           </form>
 

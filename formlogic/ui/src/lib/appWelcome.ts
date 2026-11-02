@@ -3,7 +3,7 @@
 // the app's look comes as design tokens, never style sheets, as these are the pages where people type their password.
 import type { CSSProperties } from 'react';
 import type { SignInPageSettings } from '../types/app';
-import { parseHex, readableForeground, type RGB } from './color';
+import { contrastRatio, parseHex, readableForeground, type RGB } from './color';
 
 export interface AppWelcome {
   app: { name: string; slug: string; icon: string | null; logo: string | null };
@@ -101,20 +101,44 @@ export function paletteFromHex(hex: string): Record<number, string> | null {
   return out;
 }
 
+/** The pages' backgrounds, light and dark: the site's links sit on these in shades 600 and 400. */
+const LIGHT_PAGE: RGB = { r: 249, g: 250, b: 251 };
+const DARK_PAGE: RGB = { r: 15, g: 23, b: 42 };
+const FINDABLE = 3;
+
+/** A colour moved toward another as little as it takes to be findable on a page. */
+function findableOn(page: RGB, colour: RGB, toward: RGB): RGB {
+  for (let t = 0; t < 1; t += 0.05) {
+    const moved = mix(colour, toward, t);
+    if (contrastRatio(moved, page) >= FINDABLE) return moved;
+  }
+  return toward;
+}
+
 /**
  * The app's look for the part of the page it styles: the site's primary palette set to its accent (on that element,
  * not the document, so nothing else changes) with a readable text colour on it, and its font. Only a #rrggbb colour
- * and a font from the list reach a style; anything else leaves the site's own.
+ * and a font from the list reach a style; anything else leaves the site's own. The buttons wear the accent as it is.
+ * The links ("Forgot password?", "Create one") are the platform's, on a password page, and use shades 700 and 400:
+ * those are moved until they can be found, so an owner's near-white hides nothing.
  */
 export function welcomeStyle(look: AppWelcome['look']): CSSProperties {
   const style: Record<string, string> = {};
   const palette = look.accent ? paletteFromHex(look.accent) : null;
-  if (palette && look.accent) {
+  const accent = look.accent ? parseHex(look.accent) : null;
+  if (palette && accent) {
+    const tone = (shade: number, toward: RGB, page: RGB) => {
+      const t = SHADES[shade];
+      palette[shade] = triplet(findableOn(page, t >= 0 ? mix(accent, WHITE, t) : mix(accent, BLACK, -t), toward));
+    };
+    tone(700, BLACK, LIGHT_PAGE);
+    tone(800, BLACK, LIGHT_PAGE);
+    tone(400, WHITE, DARK_PAGE);
     for (const [shade, rgb] of Object.entries(palette)) {
       style[`--primary-${shade}`] = rgb;
       style[`--color-primary-${shade}`] = `rgb(${rgb})`;
     }
-    const ink = triplet(readableForeground(parseHex(look.accent) as RGB));
+    const ink = triplet(readableForeground(accent));
     style['--primary-foreground'] = ink;
     style['--color-primary-foreground'] = `rgb(${ink})`;
   }

@@ -207,7 +207,7 @@ export function Login() {
                     Lost your phone and your recovery codes?{' '}
                     <a
                       href={`mailto:${supportEmail}?subject=${encodeURIComponent('Two-factor reset request')}`}
-                      className="font-medium text-primary-600 hover:underline dark:text-primary-400"
+                      className="font-medium text-primary-700 hover:underline dark:text-primary-400"
                     >
                       Email {supportEmail}
                     </a>{' '}
@@ -222,7 +222,7 @@ export function Login() {
               <p className="text-gray-500 dark:text-slate-400 mb-8">
                 {welcome && <>With your FormLogic account. </>}
                 Don't have an account?{' '}
-                <Link to={dest === '/' ? '/signup' : `/signup?redirect=${encodeURIComponent(dest)}`} className="text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
+                <Link to={dest === '/' ? '/signup' : `/signup?redirect=${encodeURIComponent(dest)}`} className="text-primary-700 dark:text-primary-400 hover:text-primary-800 dark:hover:text-primary-300 font-medium transition-colors">
                   Create one
                 </Link>
               </p>
@@ -259,7 +259,7 @@ export function Login() {
                 />
 
                 <div className="flex justify-end -mt-1">
-                  <Link to="/forgot-password" className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
+                  <Link to="/forgot-password" className="text-sm text-primary-700 dark:text-primary-400 hover:text-primary-800 dark:hover:text-primary-300 font-medium transition-colors">
                     Forgot password?
                   </Link>
                 </div>

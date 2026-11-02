@@ -87,6 +87,24 @@ describe('signing in to use an app', () => {
     expect(page().getAttribute('style')).toBeNull();
   });
 
+  it('is a working sign-in when the answer fails, is not one, or never comes (a stale page, an older server)', async () => {
+    const answers: Array<() => Promise<unknown>> = [
+      () => Promise.reject(new Error('Failed to fetch')),
+      () => Promise.resolve({ data: '<html>an old server’s page</html>' }),
+      () => new Promise(() => {}),
+    ];
+    for (const answer of answers) {
+      welcome.mockImplementation(answer as never);
+      await open(`/login?redirect=${encodeURIComponent('/app/late-night')}`);
+      expect(heading()).toBe('Sign in');
+      expect(container.querySelector('input[type="password"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="app-welcome-panel"]')).toBeNull();
+      await act(async () => root?.unmount());
+      container.remove();
+    }
+    await open('/login');
+  });
+
   it('draws one card in the middle when the app asks for it', async () => {
     welcome.mockResolvedValue({ data: { ...lateNight, look: { ...lateNight.look, layout: 'centered' } } } as never);
     await open(`/login?redirect=${encodeURIComponent('/app/late-night')}`);
