@@ -19,14 +19,31 @@ function size(bytes: number): string {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-/** What the app asks to use, in words, from its permission.json. */
+const PERMISSION_WORDS: Record<string, string> = {
+  net: 'the network',
+  network: 'the network',
+  camera: 'the camera',
+  mic: 'the microphone',
+  files: 'files the visitor picks',
+  filesystem: 'files the visitor picks',
+  qr: 'QR codes',
+  ai: 'AI models',
+  gpu: 'the graphics processor',
+  sync: 'syncing between devices',
+  storage: 'storage on the directory',
+  accel: 'fast number crunching',
+};
+
+/** What the app asks to use, in words, from its permission.json. No list of hosts means any site. */
 function permissionWords(permissions: Record<string, unknown>): string[] {
   return Object.entries(permissions).flatMap(([name, value]) => {
     const on = value === true || (typeof value === 'object' && value !== null && (value as { enabled?: unknown }).enabled !== false);
     if (!on) return [];
-    const hosts = typeof value === 'object' && value !== null && Array.isArray((value as { allowed_hosts?: unknown }).allowed_hosts)
-      ? ` (${((value as { allowed_hosts: unknown[] }).allowed_hosts).filter((h) => typeof h === 'string').join(', ')})` : '';
-    return [`${name}${hosts}`];
+    const words = PERMISSION_WORDS[name] ?? name;
+    if (name !== 'net' && name !== 'network') return [words];
+    const listed = typeof value === 'object' && value !== null ? (value as { allowed_hosts?: unknown }).allowed_hosts : null;
+    const hosts = Array.isArray(listed) ? listed.filter((host) => typeof host === 'string') : [];
+    return [`${words} (${hosts.length ? hosts.join(', ') : 'any site'})`];
   });
 }
 
@@ -55,23 +72,31 @@ export function SoftnDirectoryApprove() {
     setWorking(true);
     setError('');
     const answer = await api.approveSoftnDraft(draftId, anyway);
+    if (answer.data && !answer.error) {
+      setDraft(answer.data);
+      setWorking(false);
+      return;
+    }
+    // Refused: the draft may have moved on (another tab, an unclear try), and the buttons should say what is left.
+    setError(answer.error ?? 'It could not be published.');
+    const current = await api.getSoftnDraft(draftId);
+    if (current.data && !current.error) setDraft(current.data);
     setWorking(false);
-    if (answer.error || !answer.data) setError(answer.error ?? 'It could not be published.');
-    else setDraft(answer.data);
   };
 
+  // The app shell already holds the page's <main>.
   if (!draft) {
     return (
-      <main className="mx-auto max-w-2xl p-6">
+      <div className="mx-auto max-w-2xl p-6">
         {error ? <p role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>
           : <p role="status" className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading the draft…</p>}
-      </main>
+      </div>
     );
   }
   const asks = permissionWords(draft.permissions);
-  const canApprove = draft.status === 'awaiting_approval' || draft.status === 'failed';
+  const canApprove = (draft.status === 'awaiting_approval' || draft.status === 'failed') && !draft.appChanged;
   return (
-    <main className="mx-auto max-w-2xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto max-w-2xl space-y-6 p-4 sm:p-6">
       <header>
         <p className="text-xs font-semibold uppercase tracking-wider text-primary-600 dark:text-primary-300">{draft.target ? 'A new version for the SoftN directory' : 'Publish to the SoftN directory'}</p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900 dark:text-white">{draft.listing.name ?? draft.target?.slug ?? 'Untitled app'}</h1>
@@ -87,10 +112,26 @@ export function SoftnDirectoryApprove() {
           {draft.target && <><dt className="font-medium text-gray-500 dark:text-slate-400">Updates</dt><dd className="text-gray-900 dark:text-white">{draft.target.slug}, an app this account published</dd></>}
           {draft.listing.description && <><dt className="font-medium text-gray-500 dark:text-slate-400">Description</dt><dd className="text-gray-900 dark:text-white">{draft.listing.description}</dd></>}
           {draft.listing.category && <><dt className="font-medium text-gray-500 dark:text-slate-400">Category</dt><dd className="text-gray-900 dark:text-white">{draft.listing.category}</dd></>}
+          {draft.listing.author && <><dt className="font-medium text-gray-500 dark:text-slate-400">Shown as made by</dt><dd className="text-gray-900 dark:text-white">{draft.listing.author}</dd></>}
+          {draft.listing.tags && draft.listing.tags.length > 0 && <><dt className="font-medium text-gray-500 dark:text-slate-400">Tags</dt><dd className="text-gray-900 dark:text-white">{draft.listing.tags.join(', ')}</dd></>}
+          {draft.listing.notes && <><dt className="font-medium text-gray-500 dark:text-slate-400">Notes</dt><dd className="text-gray-900 dark:text-white">{draft.listing.notes}</dd></>}
           <dt className="font-medium text-gray-500 dark:text-slate-400">What it may use</dt>
           <dd className="text-gray-900 dark:text-white">{asks.length ? asks.join(', ') : 'Nothing beyond the page: no network, camera or server storage.'}</dd>
           <dt className="font-medium text-gray-500 dark:text-slate-400">The bundle</dt>
           <dd className="break-all font-mono text-xs text-gray-700 dark:text-slate-300">{size(draft.bytes)} · sha256 {draft.sha256}</dd>
+          {draft.files && draft.files.length > 0 && (
+            <>
+              <dt className="font-medium text-gray-500 dark:text-slate-400">What goes public</dt>
+              <dd className="text-gray-900 dark:text-white">
+                <details>
+                  <summary className="cursor-pointer">{draft.files.length === 1 ? '1 file' : `${draft.files.length} files`}, readable by anyone</summary>
+                  <ul className="mt-2 max-h-48 overflow-auto font-mono text-xs text-gray-700 dark:text-slate-300">
+                    {draft.files.map((file) => <li key={file} className="break-all">{file}</li>)}
+                  </ul>
+                </details>
+              </dd>
+            </>
+          )}
         </dl>
         {draft.warnings.length > 0 && (
           <ul className="mt-4 space-y-2">
@@ -101,6 +142,12 @@ export function SoftnDirectoryApprove() {
         )}
       </section>
 
+      {draft.appChanged && (
+        <p role="alert" className="flex gap-2 rounded-xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          The app has changed since this draft was made, so what you can try is not what this would publish. Ask for a new draft.
+        </p>
+      )}
       {error && <p role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
       {draft.error && <p role="status" className="rounded-xl bg-red-50 p-4 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{draft.error}</p>}
 
@@ -116,10 +163,10 @@ export function SoftnDirectoryApprove() {
       ) : (
         <div className="flex flex-wrap items-center gap-3">
           {canApprove && <Button onClick={() => void approve()} isLoading={working} leftIcon={<ShieldCheck className="h-4 w-4" />}>{draft.target ? 'Publish this version' : 'Publish to the SoftN directory'}</Button>}
-          {draft.status === 'uncertain' && <Button variant="outline" onClick={() => void approve(true)} isLoading={working}>I checked: try again</Button>}
+          {draft.status === 'uncertain' && !draft.appChanged && <Button variant="outline" onClick={() => void approve(true)} isLoading={working}>I checked: try again</Button>}
           <Link className="text-sm text-gray-600 underline dark:text-slate-300" to={draft.previewUrl}>Try the app first</Link>
         </div>
       )}
-    </main>
+    </div>
   );
 }

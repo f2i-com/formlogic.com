@@ -214,6 +214,195 @@ final class SoftnDirectoryServiceTest extends TestCase
         $this->assertRefused(fn () => $service->createDraft($this->other, $theirs, [], $slug), 'only its own apps');
     }
 
+    public function testAppChangedSinceItsDraftIsNotWhatThePersonWouldApprove(): void
+    {
+        $service = $this->service('https://dir.test');
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        $service->requestPublish($this->owner, $draft['draftId']);
+        self::assertFalse($service->draft($this->owner, $draft['draftId'])['appChanged']);
+
+        // The workspace the person tries is the app now; the bundle is the app when the draft was made.
+        $tried = $this->project;
+        $this->project['files']['index.html'] = '<h1>Something else</h1>';
+        self::assertTrue($service->draft($this->owner, $draft['draftId'])['appChanged']);
+        $this->assertRefused(fn () => $service->approve($this->owner, $draft['draftId']), 'changed since this draft');
+        $this->assertRefused(fn () => $service->approve($this->owner, $draft['draftId'], true), 'changed since this draft');
+
+        $this->project = $tried;
+        $this->project['assets']['images/extra.png'] = base64_encode('another picture');
+        self::assertTrue($service->draft($this->owner, $draft['draftId'])['appChanged'], 'a file added counts');
+        self::assertSame([], $this->posts(), 'and nothing went');
+
+        // The backend is not in the bundle: changing it changes nothing the person is approving.
+        $this->project = $tried;
+        $this->project['files']['server/main.logic'] = 'function book(req) { return {status: 201}; }';
+        self::assertFalse($service->draft($this->owner, $draft['draftId'])['appChanged']);
+        self::assertSame('published', $service->approve($this->owner, $draft['draftId'])['status']);
+        self::assertFalse($service->draft($this->owner, $draft['draftId'])['appChanged'], 'a published draft has nothing left to compare');
+    }
+
+    public function testNothingBrowsersAreNotServedHereGoesPublic(): void
+    {
+        $this->project['files'] += [
+            'private/keys.json' => '{"key":"sk-very-secret"}',
+            'backend/db.logic' => 'let password = "hunter2";',
+            'Server/x.logic' => 'function x() {}',
+            'db/seed.sql' => "INSERT INTO users VALUES ('secret');",
+        ];
+        $this->project['files']['manifest.json'] = json_encode([
+            'id' => 'local.booking', 'name' => 'Booking', 'version' => '1.0.0', 'main' => 'index.html', 'engine' => 'zipp-web-python', 'logicEngine' => 'x',
+            'server' => ['routes' => ['/api/x' => 'server/main.logic'], 'secret' => 'sk-in-the-manifest'],
+            'config' => ['server' => ['allowedOrigins' => ['https://me.example']], 'engine' => 'y', 'theme' => (object) []],
+        ]);
+        $service = $this->service('https://dir.test');
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        self::assertSame(['images/logo.png', 'index.html', 'manifest.json', 'permission.json'], $draft['files']);
+        self::assertStringContainsString('5 files', $draft['warnings'][0]);
+        $zip = new \ZipArchive();
+        $zip->open(self::$tmp . '/staging/' . $draft['draftId'] . '.softn');
+        $manifest = (string) $zip->getFromName('manifest.json');
+        $zip->close();
+        self::assertStringNotContainsString('sk-in-the-manifest', $manifest);
+        self::assertStringNotContainsString('me.example', $manifest);
+        self::assertSame(['id', 'name', 'version', 'main', 'config'], array_keys(json_decode($manifest, true)));
+        self::assertStringContainsString('"theme":{}', $manifest, 'an empty object stays one');
+        self::assertFalse($draft['appChanged'], 'and that is what the app is compared with');
+    }
+
+    public function testAByteOrderMarkDoesNotHideWhatAnAppAsksFor(): void
+    {
+        $this->project['files']['permission.json'] = "\xEF\xBB\xBF" . $this->project['files']['permission.json'];
+        $this->project['files']['manifest.json'] = "\xEF\xBB\xBF" . $this->project['files']['manifest.json'];
+        $draft = $this->service('https://dir.test')->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        self::assertTrue($draft['permissions']['net']['enabled']);
+    }
+
+    public function testADraftOfADeletedAppIsNotPublished(): void
+    {
+        $service = $this->service('https://dir.test');
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        $service->requestPublish($this->owner, $draft['draftId']);
+        self::$apps->deleteApp($this->appId);
+        $this->assertRefused(fn () => $service->approve($this->owner, $draft['draftId']), 'has been deleted');
+        self::assertSame([], $this->posts());
+    }
+
+    public function testAPublishedDraftAnswersWithItsAppAfterItsDayIsOver(): void
+    {
+        $service = $this->service('https://dir.test');
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        $service->requestPublish($this->owner, $draft['draftId']);
+        $service->approve($this->owner, $draft['draftId']);
+        self::$pdo->prepare('UPDATE softn_directory_drafts SET expires_at = ? WHERE id = ?')->execute([gmdate('Y-m-d H:i:s', time() - 60), $draft['draftId']]);
+        self::assertSame('published', $service->requestPublish($this->owner, $draft['draftId'])['status']);
+    }
+
+    public function testASlugGivenOutAgainIsTheNewAppsAndAKnownAppIsNotCalledUnclear(): void
+    {
+        $service = $this->service('https://dir.test');
+        $ask = function () use ($service): string {
+            $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+            $service->requestPublish($this->owner, $draft['draftId']);
+            return $draft['draftId'];
+        };
+        $answer = fn (string $key) => fn () => ['status' => 201, 'body' => json_encode(['ok' => true, 'app' => ['slug' => 'booking', 'name' => 'Booking'], 'editKey' => $key])];
+        $this->answer = $answer('first-key');
+        self::assertSame('published', $service->approve($this->owner, $ask())['status']);
+        // Removed from the directory, then the same name published again: the same slug, and only the new key works.
+        $this->answer = $answer('second-key');
+        self::assertSame('published', $service->approve($this->owner, $ask())['status']);
+        self::assertCount(1, $service->publications($this->owner));
+
+        // The directory took it and only keeping it here failed: the page must not invite a second one.
+        $this->answer = fn () => ['status' => 201, 'body' => json_encode(['ok' => true, 'app' => ['slug' => 'keyless', 'name' => 'Booking']])];
+        $kept = $service->approve($this->owner, $ask());
+        self::assertSame('uncertain', $kept['status']);
+        self::assertStringContainsString('Do not publish it again', (string) $kept['error']);
+        self::assertStringContainsString('https://dir.test/app/keyless', (string) $kept['error']);
+    }
+
+    public function testExpiredBundlesGoAndAnErasedAccountLeavesNone(): void
+    {
+        $staging = self::$tmp . '/staging';
+        $service = $this->service('https://dir.test');
+        $old = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        $older = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        $live = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        self::$pdo->prepare('UPDATE softn_directory_drafts SET expires_at = ? WHERE id = ?')->execute([gmdate('Y-m-d H:i:s', time() - 60), $old['draftId']]);
+        self::$pdo->prepare('UPDATE softn_directory_drafts SET expires_at = ? WHERE id = ?')->execute([gmdate('Y-m-d H:i:s', time() - 8 * 86400), $older['draftId']]);
+
+        self::assertGreaterThanOrEqual(2, SoftnDirectoryService::sweepExpired(self::$pdo, $staging));
+        self::assertFileDoesNotExist($staging . '/' . $old['draftId'] . '.softn');
+        self::assertFileDoesNotExist($staging . '/' . $older['draftId'] . '.softn');
+        self::assertFileExists($staging . '/' . $live['draftId'] . '.softn');
+        self::assertSame('expired', $service->draft($this->owner, $old['draftId'])['status'], 'it can still be read for a week');
+        $this->assertRefused(fn () => $service->draft($this->owner, $older['draftId']), 'No draft of yours');
+
+        SoftnDirectoryService::eraseStaged(self::$pdo, $this->owner, $staging);
+        self::assertFileDoesNotExist($staging . '/' . $live['draftId'] . '.softn');
+    }
+
+    public function testNothingGoesWhoseEditKeyCouldNotBeKept(): void
+    {
+        $service = $this->service('https://dir.test');
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        $service->requestPublish($this->owner, $draft['draftId']);
+        putenv(DataEncryption::KEY_ENV);
+        unset($_ENV[DataEncryption::KEY_ENV], $_SERVER[DataEncryption::KEY_ENV]);
+        $unkeyed = $this->service('https://dir.test');
+        $this->assertRefused(fn () => $unkeyed->approve($this->owner, $draft['draftId']), 'DATA_ENCRYPTION_KEY');
+        self::assertSame([], $this->posts());
+    }
+
+    public function testANewAppsNotesGoWithIt(): void
+    {
+        $service = $this->service('https://dir.test');
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools', 'notes' => 'The first cut.']);
+        $service->requestPublish($this->owner, $draft['draftId']);
+        $service->approve($this->owner, $draft['draftId']);
+        self::assertSame('The first cut.', $this->posts()[0]['fields']['notes']);
+    }
+
+    public function testATokenKeptToOneAppIsKeptFromAnothersDraftsAndListing(): void
+    {
+        $service = $this->service('https://dir.test');
+        $tools = new \FormLogic\Services\ChatToolsService(
+            new FormService(self::$mysql, new SQLiteConnection(self::$tmp . '/sqlite')), self::$apps,
+            new \FormLogic\Services\ResponseService(self::$mysql, new SQLiteConnection(self::$tmp . '/sqlite')), softnDirectory: $service,
+        );
+        $second = (string) self::$apps->createApp(['name' => 'Second ' . bin2hex(random_bytes(3)), 'settings' => ['softnApp' => true]], $this->owner)['id'];
+        $context = fn (?string $app, bool $creator = false) => new \FormLogic\Services\ChatToolsContext(
+            userId: $this->owner, requireScope: function (string $scope): void {}, audit: function (string $action, array $details): void {},
+            scopedAppId: $app, creatorMode: $creator, createdApps: $creator && $app !== null ? [$app] : [],
+        );
+        $denied = function (\Closure $call): void {
+            try {
+                $call();
+            } catch (\FormLogic\Services\ChatToolDeniedException) {
+                $this->addToAssertionCount(1);
+                return;
+            }
+            self::fail('Expected the token to be kept out');
+        };
+
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        $service->requestPublish($this->owner, $draft['draftId']);
+        $slug = $service->approve($this->owner, $draft['draftId'])['publication']['slug'];
+        $waiting = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+
+        foreach ([$context($second), $context($second, true)] as $kept) {
+            foreach (['softn_get_app', 'softn_validate_draft', 'softn_preview_draft', 'softn_publish_draft'] as $tool) {
+                $denied(fn () => $tools->call($tool, ['draftId' => $waiting['draftId']], $kept));
+            }
+            // Its own app may not go out as a new version of the other's listing.
+            $denied(fn () => $tools->call('softn_publish_version', ['appId' => $second, 'slug' => $slug], $kept));
+            self::assertSame([], $tools->call('softn_list_my_apps', [], $kept)['apps']);
+        }
+        self::assertSame('draft', $tools->call('softn_get_app', ['draftId' => $waiting['draftId']], $context($this->appId))['status']);
+        self::assertCount(1, $tools->call('softn_list_my_apps', [], $context($this->appId))['apps']);
+        self::assertCount(1, $tools->call('softn_list_my_apps', [], $context(null))['apps'], 'an account-wide token sees the account’s');
+    }
+
     public function testADirectoryThatRefusesOrDoesNotAnswerSaysSo(): void
     {
         $service = $this->service('https://dir.test');

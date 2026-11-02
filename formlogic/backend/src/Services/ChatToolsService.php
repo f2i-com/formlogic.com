@@ -1540,6 +1540,8 @@ class ChatToolsService
                 $slug = is_string($args['slug'] ?? null) ? $args['slug'] : '';
                 $appId = (string) ($args['appId'] ?? $ctx->scopedAppId ?? '');
                 $this->assertAppScope($ctx, $appId);
+                // A token kept to one app is kept from another app's listing in the directory too.
+                $this->assertAppScope($ctx, (string) ($this->softnDirectory->publication($userId, $slug)['appId'] ?? ''));
                 $draft = $this->softnDirectory->createDraft($userId, $appId, is_array($args['listing'] ?? null) ? $args['listing'] : [], $slug);
                 $asked = $this->softnDirectory->requestPublish($userId, $draft['draftId']);
                 $ctx->audit('softn_publish_version', ['appId' => $appId, 'draftId' => $draft['draftId'], 'slug' => $slug]);
@@ -1547,15 +1549,28 @@ class ChatToolsService
             }
             case 'softn_validate_draft':
             case 'softn_preview_draft':
-            case 'softn_get_app':
-                return $withLinks($this->softnDirectory->draft($userId, $draftId));
+            case 'softn_get_app': {
+                $draft = $this->softnDirectory->draft($userId, $draftId);
+                $this->assertAppScope($ctx, (string) $draft['appId']);
+                return $withLinks($draft);
+            }
             case 'softn_publish_draft': {
+                $this->assertAppScope($ctx, (string) $this->softnDirectory->draft($userId, $draftId)['appId']);
                 $asked = $this->softnDirectory->requestPublish($userId, $draftId);
                 $ctx->audit('softn_publish_draft', ['draftId' => $draftId]);
                 return $withLinks($asked) + ($asked['status'] === 'published' ? [] : ['next' => 'Give the person approvalUrl: the app is published when they approve it there. softn_get_app tells you when.']);
             }
-            case 'softn_list_my_apps':
-                return ['directory' => $this->softnDirectory->directory(), 'apps' => $this->softnDirectory->publications($userId)];
+            case 'softn_list_my_apps': {
+                $inScope = function (array $app) use ($ctx): bool {
+                    try {
+                        $this->assertAppScope($ctx, (string) ($app['appId'] ?? ''));
+                        return true;
+                    } catch (ChatToolDeniedException) {
+                        return false;
+                    }
+                };
+                return ['directory' => $this->softnDirectory->directory(), 'apps' => array_values(array_filter($this->softnDirectory->publications($userId), $inScope))];
+            }
         }
         throw new \Exception("Unknown or unavailable tool: {$name}");
     }

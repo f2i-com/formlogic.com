@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -58,10 +60,63 @@ describe('approving a draft for the SoftN directory', () => {
     expect(text).toContain('Nothing is public until you approve');
     expect(text).toContain('https://softn.com');
     expect(text).toContain('Anyone. It is listed in the directory');
-    expect(text).toContain('net (api.tides.example)');
+    expect(text).toContain('the network (api.tides.example)');
     expect(text).toContain('sha256 ' + 'b'.repeat(64));
     expect(text).toContain('server/');
     expect(approve).not.toHaveBeenCalled();
+  });
+
+  it('shows everything that goes public: the words an agent chose and the files', async () => {
+    getDraft.mockResolvedValue({ data: { ...waiting, listing: { ...waiting.listing, author: 'A. N. Agent', tags: ['tides', 'sea'], notes: 'First cut.' }, files: ['index.html', 'manifest.json'] } });
+    await open();
+    const text = container.textContent ?? '';
+    expect(text).toContain('A. N. Agent');
+    expect(text).toContain('tides, sea');
+    expect(text).toContain('First cut.');
+    expect(text).toContain('2 files, readable by anyone');
+    expect(text).toContain('manifest.json');
+  });
+
+  it('says so when an app may reach any site, in words and not capability names', async () => {
+    getDraft.mockResolvedValue({ data: { ...waiting, permissions: { net: { enabled: true }, camera: { enabled: true }, mic: { enabled: false } } } });
+    await open();
+    const text = container.textContent ?? '';
+    expect(text).toContain('the network (any site), the camera');
+    expect(text).not.toContain('microphone');
+  });
+
+  it('offers no way to publish a draft the app has moved on from', async () => {
+    getDraft.mockResolvedValue({ data: { ...waiting, appChanged: true } });
+    await open();
+    expect(container.textContent).toContain('The app has changed since this draft was made');
+    expect(button(/Publish/)).toBeUndefined();
+    getDraft.mockResolvedValue({ data: { ...waiting, status: 'uncertain', appChanged: true } });
+    await act(async () => root?.unmount());
+    container.remove();
+    await open();
+    expect(button(/try again/)).toBeUndefined();
+  });
+
+  it('when refused, reads the draft again so the buttons say what is left', async () => {
+    await open();
+    approve.mockResolvedValue({ error: 'The last attempt may have reached the directory.' });
+    getDraft.mockResolvedValue({ data: { ...waiting, status: 'uncertain', error: 'No clear answer from the directory.' } });
+    await act(async () => { button(/Publish to the SoftN directory/)!.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.textContent).toContain('The last attempt may have reached the directory.');
+    expect(button(/Publish to the SoftN directory/)).toBeUndefined();
+    expect(button(/I checked: try again/)).toBeDefined();
+  });
+
+  it('sends someone signed out (or in the demo) through sign-in, not to a 404', () => {
+    const routes = readFileSync(join(__dirname, '../App.tsx'), 'utf8');
+    expect(routes.match(/path="\/softn-directory\/approve\/:draftId" element=\{<SignInFirst \/>\}/g)).toHaveLength(2);
+    expect(routes).toContain('path="/softn-directory/approve/:draftId" element={<SoftnDirectoryApprove />}');
+  });
+
+  it('is not a second main landmark inside the app shell', async () => {
+    await open();
+    expect(container.querySelector('main')).toBeNull();
   });
 
   it('publishes on the person’s click, then shows the app’s links and no button', async () => {

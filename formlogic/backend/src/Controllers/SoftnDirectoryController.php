@@ -61,8 +61,7 @@ final class SoftnDirectoryController
 
     private function ip(Request $request): ?string
     {
-        $ip = $request->getServerParams()['REMOTE_ADDR'] ?? null;
-        return is_string($ip) ? $ip : null;
+        return \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request);
     }
 
     private function user(Request $request): string

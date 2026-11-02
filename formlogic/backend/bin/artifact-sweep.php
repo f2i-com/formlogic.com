@@ -51,13 +51,16 @@ $config = [
 try {
     $mysql = new MySQLConnection($config);
     $summary = (new ArtifactService($mysql))->sweep(2000);
+    // Drafts for the SoftN directory expire the same way: a site where nobody drafts again would keep them.
+    $drafts = \FormLogic\Services\SoftnDirectoryService::sweepExpired($mysql->getConnection());
 } catch (\Throwable $e) {
     fwrite(STDERR, 'Artifact sweep failed: ' . $e->getMessage() . "\n");
     exit(1);
 }
 
 printf(
-    "Artifact sweep: removed %d artifact(s), freed %s bytes.\n",
+    "Artifact sweep: removed %d artifact(s), freed %s bytes; %d expired directory draft(s).\n",
     $summary['removed'],
-    number_format($summary['bytesFreed'])
+    number_format($summary['bytesFreed']),
+    $drafts
 );

@@ -743,4 +743,8 @@ export interface SoftnDraft {
   expiresAt: string;
   error: string | null;
   publication: SoftnPublication | null;
+  /** The app no longer holds what this draft froze: it cannot be published, and a new draft is needed. */
+  appChanged?: boolean;
+  /** The names in the bundle: all of it goes public. */
+  files?: string[];
 }

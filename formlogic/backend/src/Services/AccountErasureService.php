@@ -48,6 +48,11 @@ class AccountErasureService
         // explicitly below (and verified empty before the account may drop).
         $encryptionFormIds = [];
 
+        // Drafts for the SoftN directory: their rows go with the user, and the rows are all that names their files.
+        if ($this->pdo) {
+            SoftnDirectoryService::eraseStaged($this->pdo, $userId);
+        }
+
         // Delete apps the user owns (membership of other people's apps is
         // removed via the user FK cascade on the users delete).
         if ($this->appService) {

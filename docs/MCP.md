@@ -569,17 +569,24 @@ An agent never publishes. It drafts and asks; the account's person approves on a
 | Tool | Scope | What it does |
 | --- | --- | --- |
 | `softn_get_started` | `apps:read` | The directory, its categories, the limits (32 MB, 4,000 files, drafts kept 24 hours, 10 publications an hour), the workflow and the rules. |
-| `softn_create_draft` | `apps:write` | Packs the app's current files as a `.softn` draft and checks it: file names, size, the manifest, the permissions it declares. Its `server/` files stay here, with a warning. Returns `draftId`, `sha256`, `previewUrl` and `approvalUrl`. A new app needs `listing.name` and `listing.category`. |
+| `softn_create_draft` | `apps:write` | Packs the app's current files as a `.softn` draft and checks it: file names, size, the manifest, the permissions it declares. What browsers are never served here stays here (`server/`, `backend/`, `private/`, `.sql` files, the manifest's server and engine settings), with a warning. Returns `draftId`, `sha256`, `previewUrl` and `approvalUrl`. A new app needs `listing.name` and `listing.category`. |
 | `softn_validate_draft`, `softn_preview_draft`, `softn_get_app` | `apps:read` | A draft: its checks, where its owner can try it, and its status (`draft`, `awaiting_approval`, `publishing`, `published`, `failed`, `uncertain`, `expired`) with the app's page and play links once published. |
 | `softn_publish_draft` | `apps:write` | Asks for publication and returns `approvalUrl` for the person. Publishes nothing. Asking again changes nothing. |
-| `softn_publish_version` | `apps:write` | A draft as a new version of an app this account published (`slug` from `softn_list_my_apps`), asked for the same way. |
+| `softn_publish_version` | `apps:write` | Takes `appId` and `slug` (from `softn_list_my_apps`), packs the app's current files as a new version of that app, and asks for it the same way. |
 | `softn_list_my_apps` | `apps:read` | This account's apps in the directory. |
 
+A token kept to one app (an app-scoped token, or a creator token's own apps) reaches only that app's drafts and
+listings.
+
 - **The approval** is `/softn-directory/approve/<draftId>`, a signed-in page with the CSRF check, which an
-  MCP token cannot call. It shows the destination, who can see the app, its listing, what it may use,
-  the bundle's size and hash, and the warnings. Approving moves the draft to `publishing` in one
-  conditional update, so a second click, a second tab or a retrying agent cannot make a second app. A
-  published draft answers with its publication.
+  MCP token cannot call; someone signed out signs in first and comes back to it. It shows the destination,
+  who can see the app, its listing, what it may use, the bundle's size and hash, and the warnings.
+  Approving moves the draft to `publishing` in one conditional update, so a second click, a second tab or a
+  retrying agent cannot make a second app. A published draft answers with its publication.
+- **A draft is the files as they were when it was made.** The person tries the app itself in its workspace, so
+  a draft is only what they tried while the two match: once the app changes (`appChanged` on the draft), it
+  cannot be approved, and the agent makes a new one. Changes to what is not in the bundle do not count. A
+  draft of an app that has been deleted or put in the bin is not published.
 - **An unclear answer** from the directory (a 5xx, or a timeout after the bundle went) leaves the draft
   `uncertain`. It is never tried again by itself; the person checks the directory and can then
   approve again ("I checked: try again"). A refusal (4xx) or a directory that could not be reached
@@ -591,7 +598,10 @@ An agent never publishes. It drafts and asks; the account's person approves on a
   `failed`, after it `uncertain`, and one still `publishing` after five minutes (its worker was stopped)
   reads as `uncertain`.
 - Drafts live in `storage/softn-drafts/`, expire after 24 hours, and an account keeps at most ten; an
-  update is refused for an app the account did not publish.
+  update is refused for an app the account did not publish. An expired draft's bundle goes at the next
+  draft anyone makes, or at `bin/artifact-sweep.php` on cron, and the draft a week later. Erasing an
+  account removes its bundles and edit keys; what it published stays in the directory, which holds no
+  account to remove it by.
 
 ---
 

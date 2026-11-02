@@ -56,7 +56,7 @@ final class SoftnDirectoryService
     ) {
         $this->pdo = $mysql->getConnection();
         $this->settingsPath ??= dirname(__DIR__, 2) . '/storage/softn-directory.json';
-        $this->stagingDir ??= dirname(__DIR__, 2) . '/storage/softn-drafts';
+        $this->stagingDir ??= self::stagingRoot();
         $this->transport = $transport ?? \Closure::fromCallable([self::class, 'curl']);
         $this->projectOf = $projectOf ?? fn (string $appId): ?array => ($this->native ??= new NativeAppService())->get($appId);
     }
@@ -131,11 +131,12 @@ final class SoftnDirectoryService
                 'softn_validate_draft and softn_preview_draft {draftId}: the checks, the permissions the app declares, and the link where its owner can try it.',
                 'softn_publish_draft {draftId} asks for publication and returns approvalUrl: give it to the person. Only they can publish, by approving on that page. Calling it again changes nothing.',
                 'softn_get_app {draftId} tells you when it is published, with the app’s page and play links. softn_list_my_apps lists this account’s apps in the directory.',
-                'softn_publish_version {draftId, slug} asks to publish a draft as a new version of an app this account published; the person approves it the same way.',
+                'softn_publish_version {appId, slug, listing?:{notes}} packs the app’s current files as a new version of an app this account published and asks for it; the person approves it the same way.',
+                'A draft is the files as they were when it was made. Change the app afterwards and that draft can no longer be published: make a new one, so what the person tries is what goes out.',
             ],
             'rules' => [
                 'Everything in the bundle is public: the directory shows every app’s source. Never put keys, passwords or private data in an app’s files.',
-                'The app’s server/ files (its backend here) are left out of the directory’s copy, which runs in the browser alone.',
+                'What browsers are never served here stays here: server/, backend/, private/, .sql files and the manifest’s server settings. The directory’s copy runs in the browser alone.',
                 'Declare only the permissions the app needs in permission.json; the directory and the person see them before it runs.',
                 'Pages are SoftN’s UI language or HTML with SoftN in it; scripts and stylesheets from other sites are not loaded (see the HTML and SoftN guide).',
             ],
@@ -226,6 +227,8 @@ final class SoftnDirectoryService
             'expiresAt' => $row['expires_at'],
             'error' => $row['error'],
             'publication' => $publication ? self::publicView($publication) : null,
+            'appChanged' => !$expired && $this->appChanged($row),
+            'files' => $this->bundleFiles((string) $row['id']),
         ];
     }
 
@@ -236,6 +239,9 @@ final class SoftnDirectoryService
     public function requestPublish(string $ownerId, string $draftId): array
     {
         $row = $this->row($ownerId, $draftId);
+        if ($row['status'] === 'published') {
+            return $this->draft($ownerId, $draftId);
+        }
         $this->requireLive($row);
         if (in_array($row['status'], ['draft', 'failed'], true)) {
             $this->pdo->prepare("UPDATE softn_directory_drafts SET status = 'awaiting_approval', error = NULL WHERE id = ? AND status = ?")->execute([$draftId, $row['status']]);
@@ -256,6 +262,16 @@ final class SoftnDirectoryService
         $this->requireLive($row);
         if ($row['directory_url'] !== $this->directory()) {
             throw new \DomainException('This site no longer publishes to ' . $row['directory_url'] . '.');
+        }
+        // Without it the directory would take the app and its edit key could not be kept.
+        $this->requireDirectory();
+        // An app deleted (or in the bin) is one its owner withdrew: its draft does not go out after it.
+        $app = $this->apps->getApp((string) $row['app_id']);
+        if (!$app || ($app['ownerId'] ?? null) !== $ownerId) {
+            throw new \DomainException('This draft’s app has been deleted, so it is not published.');
+        }
+        if ($this->appChanged($row)) {
+            throw new \DomainException('The app has changed since this draft was made, so what you can try is not what this would publish. Ask for a new draft.');
         }
         $from = $anyway ? ['awaiting_approval', 'failed', 'uncertain'] : ['awaiting_approval', 'failed'];
         $published = (int) $this->pdo->query("SELECT COUNT(*) FROM softn_directory_drafts WHERE owner_user_id = " . $this->pdo->quote($ownerId)
@@ -293,13 +309,20 @@ final class SoftnDirectoryService
                 $answer = ($this->transport)('POST', $row['directory_url'] . '/api/apps/' . rawurlencode((string) $row['target_slug']) . '/versions', ['X-Edit-Key' => $key], ['notes' => (string) ($listing['notes'] ?? '')], $file);
             } else {
                 $fields = array_filter(['name' => $listing['name'] ?? null, 'description' => $listing['description'] ?? null, 'category' => $listing['category'] ?? null,
-                    'author' => $listing['author'] ?? null, 'tags' => isset($listing['tags']) ? implode(',', $listing['tags']) : null], fn ($v) => is_string($v) && $v !== '');
+                    'author' => $listing['author'] ?? null, 'notes' => $listing['notes'] ?? null, 'tags' => isset($listing['tags']) ? implode(',', $listing['tags']) : null], fn ($v) => is_string($v) && $v !== '');
                 $sent = true;
                 $answer = ($this->transport)('POST', $row['directory_url'] . '/api/apps', [], $fields, $file);
             }
             $data = json_decode($answer['body'] ?? '', true);
             if (($answer['status'] ?? 0) >= 200 && ($answer['status'] ?? 0) < 300 && is_array($data) && is_array($data['app'] ?? null)) {
-                $publicationId = $this->record($ownerId, $row, $data, $publication);
+                try {
+                    $publicationId = $this->record($ownerId, $row, $data, $publication);
+                } catch (\Throwable $e) {
+                    // The directory answered: the app is there. Saying "no clear answer" here would invite a second one.
+                    $where = is_string($data['app']['slug'] ?? null) ? ' It is at ' . $row['directory_url'] . '/app/' . rawurlencode($data['app']['slug']) . '.' : '';
+                    $this->fail($draftId, 'uncertain', 'The directory took the app, but this site could not keep its record, so it cannot be updated from here.' . $where . ' Do not publish it again.');
+                    return $this->draft($ownerId, $draftId);
+                }
                 $this->pdo->prepare("UPDATE softn_directory_drafts SET status = 'published', publication_id = ?, updated_at = ? WHERE id = ?")->execute([$publicationId, gmdate('Y-m-d H:i:s'), $draftId]);
                 @unlink($file);
             } elseif (($answer['status'] ?? 0) >= 400 && ($answer['status'] ?? 0) < 500) {
@@ -423,6 +446,8 @@ final class SoftnDirectoryService
         if (!is_string($key) || $key === '') {
             throw new \RuntimeException('The directory published the app without an edit key.');
         }
+        // A slug the directory gives out again names a new app (the old one was removed there): this key is its key.
+        $this->pdo->prepare('DELETE FROM softn_directory_publications WHERE directory_url = ? AND slug = ?')->execute([$base, $slug]);
         $id = bin2hex(random_bytes(16));
         $this->pdo->prepare('INSERT INTO softn_directory_publications (id, owner_user_id, directory_url, slug, name, edit_key, page_url, play_url, version, app_id, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
@@ -465,31 +490,14 @@ final class SoftnDirectoryService
     private function pack(array $project, string $path): array
     {
         $warnings = [];
-        $entries = [];
-        foreach ($project['files'] as $name => $source) {
-            $entries[(string) $name] = (string) $source;
+        [$entries, $left] = self::entries($project);
+        if ($left > 0) {
+            $warnings[] = 'The app’s backend (' . $left . ' file' . ($left === 1 ? '' : 's') . ' in server/, backend/, private/ or .sql) is left out: the directory’s copy runs in the browser alone, and what needs the backend will not work there.';
         }
-        foreach (is_array($project['assets'] ?? null) ? $project['assets'] : [] as $name => $data) {
-            $raw = is_string($data) ? base64_decode((string) preg_replace('#^data:[^,]*,#', '', $data), true) : false;
-            if ($raw === false) throw new \InvalidArgumentException('The asset ' . $name . ' could not be read.');
-            $entries[(string) $name] = $raw;
-        }
-        if (count($entries) > self::MAX_FILES) throw new \InvalidArgumentException('The project has more than ' . self::MAX_FILES . ' files.');
-        $left = [];
-        foreach (array_keys($entries) as $name) {
-            if ($name === '' || str_contains($name, '\\') || str_starts_with($name, '/') || preg_match('#(^|/)\.\.?(/|$)#', $name) || preg_match('/[\x00-\x1f]/', $name)) {
-                throw new \InvalidArgumentException('The project has a file named ' . json_encode($name) . ', which a bundle cannot hold.');
-            }
-            if (str_starts_with($name, 'server/')) $left[] = $name;
-        }
-        if ($left !== []) {
-            foreach ($left as $name) unset($entries[$name]);
-            $warnings[] = 'The app’s backend (' . count($left) . ' file' . (count($left) === 1 ? '' : 's') . ' in server/) is left out: the directory’s copy runs in the browser alone, and what needs the backend will not work there.';
-        }
-        $manifest = json_decode($entries['manifest.json'] ?? '', true);
+        $manifest = self::json($entries['manifest.json'] ?? '');
         if (!is_array($manifest)) throw new \InvalidArgumentException('The project has no manifest.json the directory can read.');
         if (!is_string($manifest['main'] ?? null) || !isset($entries[$manifest['main']])) $warnings[] = 'manifest.json’s main does not name a file in the bundle.';
-        $declared = json_decode($entries['permission.json'] ?? '', true);
+        $declared = self::json($entries['permission.json'] ?? '');
         $permissions = is_array($declared['permissions'] ?? null) ? $declared['permissions'] : (is_array($manifest['permissions'] ?? null) ? $manifest['permissions'] : []);
         $zip = new \ZipArchive();
         @mkdir(dirname($path), 0775, true);
@@ -503,18 +511,154 @@ final class SoftnDirectoryService
         return [$warnings, $permissions];
     }
 
+    /** A JSON file as the runtime and the directory read it: a byte order mark does not stop it being read. */
+    private static function json(string $text): mixed
+    {
+        return json_decode(str_starts_with($text, "\xEF\xBB\xBF") ? substr($text, 3) : $text, true);
+    }
+
+    /**
+     * What a bundle of this project holds: its files and assets, name to bytes, and how many files were left out.
+     * Exactly what a browser is served here and no more (NativeAppService::clientFiles, and the manifest as
+     * NativeAppController serves it, without its server and engine settings): the bundle is public, so nothing the
+     * host keeps from browsers goes in it.
+     *
+     * @return array{0: array<string,string>, 1: int}
+     */
+    private static function entries(array $project): array
+    {
+        $entries = [];
+        $client = NativeAppService::clientFiles($project);
+        foreach ($client as $name => $source) {
+            $entries[(string) $name] = (string) $source;
+        }
+        if (isset($entries['manifest.json'])) {
+            // As objects, so an empty {} in it stays one.
+            $text = $entries['manifest.json'];
+            $manifest = json_decode(str_starts_with($text, "\xEF\xBB\xBF") ? substr($text, 3) : $text);
+            if ($manifest instanceof \stdClass) {
+                unset($manifest->server, $manifest->engine, $manifest->logicEngine);
+                if (($manifest->config ?? null) instanceof \stdClass) {
+                    unset($manifest->config->server, $manifest->config->engine);
+                }
+                $entries['manifest.json'] = (string) json_encode($manifest, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            }
+        }
+        foreach (is_array($project['assets'] ?? null) ? $project['assets'] : [] as $name => $data) {
+            $raw = is_string($data) ? base64_decode((string) preg_replace('#^data:[^,]*,#', '', $data), true) : false;
+            if ($raw === false) throw new \InvalidArgumentException('The asset ' . $name . ' could not be read.');
+            $entries[(string) $name] = $raw;
+        }
+        if (count($entries) > self::MAX_FILES) throw new \InvalidArgumentException('The project has more than ' . self::MAX_FILES . ' files.');
+        foreach (array_keys($entries) as $name) {
+            if ($name === '' || str_contains($name, '\\') || str_starts_with($name, '/') || preg_match('#(^|/)\.\.?(/|$)#', $name) || preg_match('/[\x00-\x1f]/', $name)) {
+                throw new \InvalidArgumentException('The project has a file named ' . json_encode($name) . ', which a bundle cannot hold.');
+            }
+        }
+        return [$entries, count(is_array($project['files'] ?? null) ? $project['files'] : []) - count($client)];
+    }
+
+    /** @return list<string> The names in a draft's bundle, for its page, or [] once it is gone. */
+    private function bundleFiles(string $draftId): array
+    {
+        $zip = new \ZipArchive();
+        $path = $this->stagingPath($draftId);
+        if (!is_file($path) || $zip->open($path, \ZipArchive::RDONLY) !== true) {
+            return [];
+        }
+        $names = [];
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $names[] = (string) $zip->getNameIndex($i);
+        }
+        $zip->close();
+        sort($names);
+        return $names;
+    }
+
+    /**
+     * Whether the app no longer holds what the draft froze. The person tries the app itself, in its workspace, so a
+     * draft is only what they tried while the two match: an agent could otherwise draft one thing, change the app to
+     * another, and have that approved in its place. A draft already out, or one whose bundle is gone, has nothing to
+     * compare (approve says so about the bundle).
+     */
+    private function appChanged(array $row): bool
+    {
+        if (!in_array($row['status'], ['draft', 'awaiting_approval', 'failed', 'uncertain'], true)) {
+            return false;
+        }
+        $zip = new \ZipArchive();
+        $path = $this->stagingPath((string) $row['id']);
+        if (!is_file($path) || $zip->open($path, \ZipArchive::RDONLY) !== true) {
+            return false;
+        }
+        try {
+            $project = ($this->projectOf)((string) $row['app_id']);
+            if (!is_array($project) || !is_array($project['files'] ?? null)) {
+                return true;
+            }
+            [$entries] = self::entries($project);
+            if ($zip->numFiles !== count($entries)) {
+                return true;
+            }
+            foreach ($entries as $name => $bytes) {
+                if ($zip->getFromName($name) !== $bytes) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (\InvalidArgumentException) {
+            return true;
+        } finally {
+            $zip->close();
+        }
+    }
+
     private function stagingPath(string $draftId): string
     {
         return $this->stagingDir . '/' . $draftId . '.softn';
     }
 
-    /** Expired drafts' bundles go, and an account keeps MAX_DRAFTS - 1 before a new one. */
+    private static function stagingRoot(): string
+    {
+        return dirname(__DIR__, 2) . '/storage/softn-drafts';
+    }
+
+    /**
+     * Expired drafts' bundles go, and a draft a week past its expiry goes altogether. On every new draft, and from
+     * bin/artifact-sweep.php so a site where nobody drafts again keeps nothing past its time.
+     *
+     * @return int the bundles removed
+     */
+    public static function sweepExpired(PDO $pdo, ?string $stagingDir = null): int
+    {
+        $stagingDir ??= self::stagingRoot();
+        $stale = $pdo->prepare("SELECT id FROM softn_directory_drafts WHERE expires_at < ? AND status <> 'published'");
+        $stale->execute([gmdate('Y-m-d H:i:s')]);
+        $removed = 0;
+        foreach ($stale->fetchAll(PDO::FETCH_COLUMN) as $id) {
+            $file = $stagingDir . '/' . $id . '.softn';
+            if (is_file($file) && @unlink($file)) $removed++;
+        }
+        $pdo->prepare("DELETE FROM softn_directory_drafts WHERE expires_at < ? AND status <> 'published'")->execute([gmdate('Y-m-d H:i:s', time() - 7 * 86400)]);
+        return $removed;
+    }
+
+    /** An account's staged bundles, when it is erased: its rows go with it, and nothing could find these after. */
+    public static function eraseStaged(PDO $pdo, string $ownerId, ?string $stagingDir = null): void
+    {
+        $stagingDir ??= self::stagingRoot();
+        $mine = $pdo->prepare('SELECT id FROM softn_directory_drafts WHERE owner_user_id = ?');
+        $mine->execute([$ownerId]);
+        foreach ($mine->fetchAll(PDO::FETCH_COLUMN) as $id) {
+            @unlink($stagingDir . '/' . $id . '.softn');
+        }
+    }
+
+    /** Expired drafts go, and an account keeps MAX_DRAFTS - 1 before a new one. */
     private function sweep(string $ownerId): void
     {
         $now = gmdate('Y-m-d H:i:s');
-        $stale = $this->pdo->prepare("SELECT id FROM softn_directory_drafts WHERE expires_at < ? AND status <> 'published'");
-        $stale->execute([$now]);
-        foreach ($stale->fetchAll(PDO::FETCH_COLUMN) as $id) @unlink($this->stagingPath((string) $id));
+        self::sweepExpired($this->pdo, $this->stagingDir);
         $mine = $this->pdo->prepare("SELECT id FROM softn_directory_drafts WHERE owner_user_id = ? AND status NOT IN ('published', 'publishing') AND expires_at >= ? ORDER BY created_at DESC");
         $mine->execute([$ownerId, $now]);
         foreach (array_slice($mine->fetchAll(PDO::FETCH_COLUMN), self::MAX_DRAFTS - 1) as $id) {
@@ -524,8 +668,8 @@ final class SoftnDirectoryService
     }
 
     /**
-     * The real transport: curl, a multipart body when a file goes. `sent` false: the request never reached the
-     * directory (it could not connect), so trying again cannot make a second app.
+     * The real transport: curl, a multipart body when a file goes. `sent` false: nothing of the request's body left
+     * this server (no connection, a certificate refused), so trying again cannot make a second app.
      */
     private static function curl(string $method, string $url, array $headers, array $fields, ?string $file): array
     {
@@ -534,6 +678,11 @@ final class SoftnDirectoryService
         foreach ($headers as $k => $v) $head[] = $k . ': ' . $v;
         $options = [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 120, CURLOPT_CONNECTTIMEOUT => 10, CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP, CURLOPT_HTTPHEADER => $head, CURLOPT_CUSTOMREQUEST => $method];
+        // The bundled roots, where PHP has none of its own (Windows and WAMP): as WebhookService and the others do.
+        $caBundle = dirname(__DIR__, 2) . '/resources/cacert.pem';
+        if (!ini_get('curl.cainfo') && !getenv('CURL_CA_BUNDLE') && is_file($caBundle)) {
+            $options[CURLOPT_CAINFO] = $caBundle;
+        }
         if ($method !== 'GET') {
             $body = $fields;
             if ($file !== null) $body['bundle'] = new \CURLFile($file, 'application/zip', 'app.softn');
@@ -541,12 +690,12 @@ final class SoftnDirectoryService
         }
         curl_setopt_array($ch, $options);
         $body = curl_exec($ch);
-        $errno = curl_errno($ch);
+        $uploaded = (int) curl_getinfo($ch, CURLINFO_SIZE_UPLOAD_T);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $error = curl_error($ch);
         curl_close($ch);
         if ($body === false) {
-            return ['status' => 0, 'body' => '', 'error' => $error, 'sent' => !in_array($errno, [CURLE_COULDNT_CONNECT, CURLE_COULDNT_RESOLVE_HOST], true)];
+            return ['status' => 0, 'body' => '', 'error' => $error, 'sent' => $uploaded > 0];
         }
         return ['status' => $status, 'body' => (string) $body];
     }

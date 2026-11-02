@@ -59,6 +59,11 @@ lerna-debug.log*
 # Admin-panel runtime state: the maintenance flag, uploaded/staged upgrade
 # packages, and pre-upgrade backups (DB exports + code snapshots).
 /backend/storage/maintenance.json
+/backend/storage/camera-check.json
+/backend/storage/platform-plans.json
+/backend/storage/site-ai-desktop.json
+/backend/storage/softn-directory.json
+/backend/storage/softn-drafts/
 /backend/storage/upgrades/
 /backend/storage/backups/
 # Account-backup staging (export zips are built + streamed from here)

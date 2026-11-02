@@ -230,6 +230,12 @@ function AuthRedirector() {
   return null;
 }
 
+/** A page of an account that someone is sent a link to (an agent's approval link): sign in, then on to it. */
+function SignInFirst() {
+  const location = useLocation();
+  return <Navigate to={`/login?redirect=${encodeURIComponent(location.pathname + location.search)}`} replace />;
+}
+
 function AppRoutes() {
   const user = useAuthStore((state) => state.user);
 
@@ -252,6 +258,8 @@ function AppRoutes() {
         <Route path="/sign-in/domain" element={<AppDomainSignIn />} />
         {/* A pass an app requires, met on its plugin's page on this site (it sends signed-out visitors through login) */}
         <Route path="/plugins/:plugin/verify" element={<PluginVerifyPage />} />
+        {/* An agent's link to a draft for the SoftN directory: its owner signs in first */}
+        <Route path="/softn-directory/approve/:draftId" element={<SignInFirst />} />
         {/* Public form response route - accessible without auth */}
         <Route path="/form/:formId" element={<FormResponse />} />
         {/* Pack marketplace (public) */}
@@ -296,6 +304,7 @@ function AppRoutes() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/connect-ai" element={<Navigate to="/login?redirect=%2Fconnect-ai" replace />} />
+        <Route path="/softn-directory/approve/:draftId" element={<SignInFirst />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
 
