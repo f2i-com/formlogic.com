@@ -109,6 +109,33 @@ final class SiteDesktopAiTest extends TestCase
         self::assertSame([$this->memberId, $this->adminId, 'inst-site-ai'], [$row['requesting_user_id'], $row['owner_user_id'], $row['target_instance_id']]);
     }
 
+    public function testAProviderStoredInOaiyIsAskedForTheModelChosenForIt(): void
+    {
+        $this->connection($this->adminId, 'inst-site-ai', self::$vectors['desktop']['publicKey']);
+        $id = (string) self::$pdo->query("SELECT id FROM desktop_connections WHERE desktop_instance_id = 'inst-site-ai' AND owner_user_id = " . self::$pdo->quote($this->adminId))->fetchColumn();
+        foreach ([['all', 'm'], ['lm-studio', null], ['lm-studio', ''], ['bad id!', 'm']] as [$provider, $model]) {
+            try {
+                $this->settings->choose($this->adminId, $id, $provider, $model);
+                self::fail("$provider / " . var_export($model, true) . ' is not a choice');
+            } catch (\InvalidArgumentException) {
+            }
+        }
+        self::assertNull($this->settings->current());
+        // OAIY's own engine never names a model: it answers with the one chosen in OAIY.
+        self::assertNull($this->settings->choose($this->adminId, $id, 'oaiy-engine', 'ignored')['model']);
+
+        $this->settings->choose($this->adminId, $id, 'lm-studio', 'some-vision-model');
+        self::assertSame(['lm-studio', 'some-vision-model'], [$this->settings->current()['providerId'], $this->settings->current()['model']]);
+        $seen = [];
+        $desktop = $this->desktop(function (array $turn, string $pair, string $id) use (&$seen): void {
+            $seen = $turn;
+            $this->append($id, ['v' => 1, 'type' => 'final', 'kind' => 'final', 'completion' => ['choices' => [['message' => ['role' => 'assistant', 'content' => 'ok']]]]], 0, $pair);
+            $this->relay->complete($id, $this->adminId, ['status' => 'done', 'instanceId' => 'inst-site-ai']);
+        });
+        self::assertSame('ok', $desktop->chat([['role' => 'user', 'content' => 'hi']], $this->memberId, null, null, 30)['content']);
+        self::assertSame(['lm-studio', 'some-vision-model'], [$seen['providerId'], $seen['model']]);
+    }
+
     public function testAnAnswerSentWholeInTheFinalFrameIsTheAnswer(): void
     {
         $this->chooseTheTestDesktop();

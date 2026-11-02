@@ -229,6 +229,13 @@ describe('sendChatTurn — routing', () => {
     expect(activities).toMatchObject([{ name: 'create_app', status: 'running' }]);
   });
 
+  it('site source on the administrator\'s OAIY (answered without tools) notes the reply is text only', async () => {
+    const response = sseResponse(['data: {"content":"Yellow"}\n\n', 'event: done\ndata: {}\n\n']);
+    response.headers.set('X-FormLogic-Chat-Tools', 'off-on-oaiy');
+    const out = await sendChatTurn(turn(), prefsDeps(prefs(), { fetchFn: vi.fn(async () => response) }));
+    expect(out).toEqual({ ok: true, source: 'site', content: 'Yellow', note: 'This site’s AI can’t take actions in FormLogic, so this reply is text only.' });
+  });
+
   it('site source surfaces a mid-stream error event as a typed failure', async () => {
     const fetchFn = vi.fn(async () =>
       sseResponse(['data: {"content":"partial"}\n\n', 'event: error\ndata: {"code":"request_failed","message":"upstream died"}\n\n'])

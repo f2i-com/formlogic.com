@@ -81,42 +81,6 @@ final class CameraCheckController
         ]));
     }
 
-    /** GET /api/admin/camera-check/providers?connectionId=: the providers on that computer, asked of it now. */
-    public function adminProviders(Request $request, Response $response): Response
-    {
-        $query = $request->getQueryParams();
-        return $this->run($response, function () use ($request, $query) {
-            $target = $this->settings->listingTarget((string) $request->getAttribute('userId'), (string) ($query['connectionId'] ?? ''), null);
-            $final = $this->desktop->request($target, ['kind' => 'providers'], 20);
-            $providers = [];
-            foreach (is_array($final['providers'] ?? null) ? $final['providers'] : [] as $provider) {
-                if (is_array($provider) && is_string($provider['id'] ?? null) && ($provider['enabled'] ?? true) !== false
-                    && in_array('chat', is_array($provider['capabilities'] ?? null) ? $provider['capabilities'] : ['chat'], true)) {
-                    $providers[] = ['id' => $provider['id'], 'label' => is_string($provider['label'] ?? null) ? $provider['label'] : $provider['id'],
-                        'model' => is_string($provider['model'] ?? null) ? $provider['model'] : null];
-                }
-            }
-            return ['providers' => $providers];
-        });
-    }
-
-    /** GET /api/admin/camera-check/models?connectionId=&providerId=: that provider's models, asked of the computer now. */
-    public function adminModels(Request $request, Response $response): Response
-    {
-        $query = $request->getQueryParams();
-        return $this->run($response, function () use ($request, $query) {
-            $target = $this->settings->listingTarget((string) $request->getAttribute('userId'), (string) ($query['connectionId'] ?? ''), (string) ($query['providerId'] ?? ''));
-            $final = $this->desktop->request($target, ['kind' => 'models'], 20);
-            $models = [];
-            foreach (is_array($final['models'] ?? null) ? $final['models'] : [] as $model) {
-                if (is_array($model) && is_string($model['id'] ?? null)) {
-                    $models[] = ['id' => $model['id'], 'name' => is_string($model['name'] ?? null) ? $model['name'] : $model['id']];
-                }
-            }
-            return ['models' => $models];
-        });
-    }
-
     /** PUT /api/admin/camera-check {connectionId, providerId, model?}. */
     public function adminPut(Request $request, Response $response): Response
     {

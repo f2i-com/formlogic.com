@@ -60,7 +60,9 @@ final class SiteDesktopAi
     public function chat(array $messages, ?string $requester, ?callable $onDelta, ?callable $onHeartbeat, int $timeoutSeconds): array
     {
         $site = $this->active() ?? throw new \RuntimeException('This site\'s AI is not served from OAIY.');
-        [$id, $pair] = $this->send($site, ['kind' => 'chat', 'messages' => array_values($messages)], $requester);
+        // A provider stored in OAIY is asked for the model chosen for it; OAIY's own engine uses its own.
+        $body = ['kind' => 'chat', 'messages' => array_values($messages)] + (($site['model'] ?? null) !== null ? ['model' => $site['model']] : []);
+        [$id, $pair] = $this->send($site, $body, $requester);
         try {
             $answer = $this->read($id, $site['ownerUserId'], $pair, $onDelta, $onHeartbeat, $timeoutSeconds);
             unset($answer['final']);

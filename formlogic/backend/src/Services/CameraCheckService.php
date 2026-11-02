@@ -444,20 +444,48 @@ final class CameraCheckService
         return $strengths[0];
     }
 
-    /** The JSON object in a model's answer: the first `{` to the last `}`, code fences and all around it. */
+    /**
+     * The JSON object in a model's answer, whatever is around it: code fences, words, or a reasoning
+     * model's thinking (dropped first). The first `{` to the last `}`; failing that, the last whole
+     * object in the text that parses, as when thinking that was not marked off has braces of its own.
+     */
     public static function parse(string $content): ?array
     {
+        $content = (string) preg_replace('#<think>.*?(</think>|$)#s', '', $content);
         $start = strpos($content, '{');
         $end = strrpos($content, '}');
         if ($start === false || $end === false || $end < $start) {
             return null;
         }
-        try {
-            $decoded = json_decode(substr($content, $start, $end - $start + 1), true, 16, JSON_THROW_ON_ERROR);
-        } catch (\JsonException) {
-            return null;
+        $decoded = json_decode(substr($content, $start, $end - $start + 1), true, 16);
+        if (is_array($decoded)) {
+            return $decoded;
         }
-        return is_array($decoded) ? $decoded : null;
+        // Each `{` in turn, to the `}` that closes it (strings and escapes followed): one that parses
+        // is an answer, and the search goes on after it; one that does not is skipped.
+        $last = null;
+        $n = strlen($content);
+        for ($at = $start; $at !== false && $at < $n; $at = strpos($content, '{', $at + 1)) {
+            $depth = 0;
+            $inString = false;
+            for ($i = $at; $i < $n; $i++) {
+                $c = $content[$i];
+                if ($inString) {
+                    if ($c === '\\') { $i++; } elseif ($c === '"') { $inString = false; }
+                    continue;
+                }
+                if ($c === '"') { $inString = true; } elseif ($c === '{') { $depth++; } elseif ($c === '}' && --$depth === 0) { break; }
+            }
+            if ($i >= $n) {
+                continue;
+            }
+            $decoded = json_decode(substr($content, $at, $i - $at + 1), true, 16);
+            if (is_array($decoded)) {
+                $last = $decoded;
+                $at = $i;
+            }
+        }
+        return $last;
     }
 
     /** Pictures as sent: JPEG data URLs, the number expected, each within the size. */

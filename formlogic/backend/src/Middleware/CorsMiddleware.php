@@ -121,6 +121,9 @@ class CorsMiddleware implements MiddlewareInterface
         return $this->validateOrigin($requestOrigin === '' ? null : $requestOrigin);
     }
 
+    /** The reply headers a page on another allowed origin may read. */
+    private const EXPOSED_HEADERS = ReleaseHeaderMiddleware::HEADER . ', X-FormLogic-Chat-Tools';
+
     /**
      * Emit the CORS headers via raw header() for SSE routes that take over the
      * connection (echo + exit): the PSR response this middleware decorates never
@@ -142,6 +145,7 @@ class CorsMiddleware implements MiddlewareInterface
             header('Access-Control-Allow-Credentials: true');
         }
         header('Vary: Origin');
+        header('Access-Control-Expose-Headers: ' . self::EXPOSED_HEADERS);
     }
 
     /**
@@ -200,8 +204,9 @@ class CorsMiddleware implements MiddlewareInterface
             ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization, X-CSRF-Token, X-Admin-Confirmation, X-FormLogic-Client-Engine, X-FormLogic-Hosted-Actor')
             ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
             // A page can read only the headers named here on a reply from another origin, so on a
-            // split-domain site it would never learn that the release changed.
-            ->withHeader('Access-Control-Expose-Headers', ReleaseHeaderMiddleware::HEADER)
+            // split-domain site it would never learn that the release changed, or that a chat ran
+            // without tools (AIController).
+            ->withHeader('Access-Control-Expose-Headers', self::EXPOSED_HEADERS)
             ->withHeader('Access-Control-Max-Age', '3600');
 
         // Only allow credentials for non-wildcard origins

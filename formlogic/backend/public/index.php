@@ -867,6 +867,9 @@ $container->set(\FormLogic\Services\CameraCheckService::class, function (Contain
         $c->get(\FormLogic\Services\NativeAppService::class)
     );
 });
+$container->set(\FormLogic\Controllers\OaiyComputerController::class, function (Container $c) {
+    return new \FormLogic\Controllers\OaiyComputerController($c->get(\FormLogic\Services\SiteAiDesktopSettings::class), $c->get(\FormLogic\Services\SiteDesktopAi::class));
+});
 $container->set(\FormLogic\Controllers\CameraCheckController::class, function (Container $c) {
     return new \FormLogic\Controllers\CameraCheckController(
         $c->get(\FormLogic\Services\CameraCheckService::class),
@@ -1685,11 +1688,12 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     $group->get('/camera-check', function ($request, $response) use ($cameraChecks) {
         return $cameraChecks()->adminGet($request, $response);
     });
-    $group->get('/camera-check/providers', function ($request, $response) use ($cameraChecks) {
-        return $cameraChecks()->adminProviders($request, $response);
+    // What one of the administrator's OAIY computers offers, asked of it now (OaiyComputerController).
+    $group->get('/oaiy/providers', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\OaiyComputerController::class)->providers($request, $response);
     });
-    $group->get('/camera-check/models', function ($request, $response) use ($cameraChecks) {
-        return $cameraChecks()->adminModels($request, $response);
+    $group->get('/oaiy/models', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\OaiyComputerController::class)->models($request, $response);
     });
     $group->put('/camera-check', function ($request, $response) use ($cameraChecks) {
         return $cameraChecks()->adminPut($request, $response);

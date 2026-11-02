@@ -59,6 +59,8 @@ export interface AiPreferences {
   chatToolMode: 'auto' | 'confirm' | null;
   /** Default reasoning effort for the Codex/ChatGPT desktop connector (null = provider default). */
   desktopReasoning?: string | null;
+  /** False when the Site AI cannot take actions in FormLogic (served from the administrator's OAIY). */
+  siteAiActions?: boolean;
 }
 
 /**
@@ -206,6 +208,7 @@ function parsePreferences(raw: unknown): AiPreferences | null {
     customProviderId: stringOrNull(rec.customProviderId),
     chatToolMode: rec.chatToolMode === 'auto' || rec.chatToolMode === 'confirm' ? rec.chatToolMode : null,
     desktopReasoning: stringOrNull(rec.desktopReasoning),
+    ...(rec.siteAiActions === false ? { siteAiActions: false } : {}),
   };
 }
 

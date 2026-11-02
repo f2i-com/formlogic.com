@@ -176,6 +176,8 @@ final class CameraCheckServiceTest extends TestCase
             'not the same person' => [fn ($a) => ['same_person' => false] + $a, 'not_same'],
             'old enough, but not by the buffer' => [fn ($a) => ['age_low' => 21, 'age_estimate' => 24] + $a, 'stronger_check'],
             'one entry missing' => [fn ($a) => ['images' => array_slice($a['images'], 1)] + $a, 'unavailable'],
+            // Seen with a real model on a test pattern: every picture called the control.
+            'a camera picture taken for the control' => [fn ($a) => self::set($a, 'kind', 'control'), 'unavailable'],
         ];
         foreach ($cases as $what => [$twist, $expected]) {
             self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);

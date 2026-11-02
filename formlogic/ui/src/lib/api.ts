@@ -162,8 +162,10 @@ export interface AdminCameraCheckState {
 
 /** The site's AI on the administrator's own OAIY (SiteDesktopAi on the server). */
 export interface SiteAiDesktopState {
-  current: { connectionId: string; deviceName: string; fingerprint: string; chosenAt: string | null; yours: boolean } | null;
+  current: { connectionId: string; deviceName: string; fingerprint: string; chosenAt: string | null; providerId?: string; model?: string | null; yours: boolean } | null;
   candidates: { connectionId: string; instanceId: string; deviceName: string; fingerprint: string; online: boolean; lastSeenAt: string | null }[];
+  /** OAIY's own engine's provider id: it answers with the model chosen in OAIY. */
+  engineProvider?: string;
 }
 
 export interface PlatformPlans {
@@ -2876,11 +2878,12 @@ class ApiClient {
   async adminGetCameraCheck(): Promise<ApiResponse<AdminCameraCheckState>> {
     return this.request('/admin/camera-check');
   }
-  async adminCameraCheckProviders(connectionId: string): Promise<ApiResponse<{ providers: Array<{ id: string; label: string; model: string | null }> }>> {
-    return this.request(`/admin/camera-check/providers?${new URLSearchParams({ connectionId })}`);
+  /** What one of the administrator's OAIY computers offers, asked of it now: its providers, and one provider's models. */
+  async adminOaiyProviders(connectionId: string): Promise<ApiResponse<{ providers: Array<{ id: string; label: string; model: string | null }>; engineProvider: string }>> {
+    return this.request(`/admin/oaiy/providers?${new URLSearchParams({ connectionId })}`);
   }
-  async adminCameraCheckModels(connectionId: string, providerId: string): Promise<ApiResponse<{ models: Array<{ id: string; name: string }> }>> {
-    return this.request(`/admin/camera-check/models?${new URLSearchParams({ connectionId, providerId })}`);
+  async adminOaiyModels(connectionId: string, providerId: string): Promise<ApiResponse<{ models: Array<{ id: string; name: string }> }>> {
+    return this.request(`/admin/oaiy/models?${new URLSearchParams({ connectionId, providerId })}`);
   }
   async adminPutCameraCheck(choice: { connectionId: string; providerId: string; model: string | null }): Promise<ApiResponse<{ saved: boolean }>> {
     return this.request('/admin/camera-check', { method: 'PUT', body: JSON.stringify(choice) });
@@ -4570,8 +4573,8 @@ class ApiClient {
   async adminGetSiteAiDesktop(): Promise<ApiResponse<SiteAiDesktopState>> {
     return this.request('/admin/site-ai-desktop');
   }
-  async adminPutSiteAiDesktop(connectionId: string): Promise<ApiResponse<SiteAiDesktopState>> {
-    return this.request('/admin/site-ai-desktop', { method: 'PUT', body: JSON.stringify({ connectionId }) });
+  async adminPutSiteAiDesktop(connectionId: string, providerId?: string, model?: string | null): Promise<ApiResponse<SiteAiDesktopState>> {
+    return this.request('/admin/site-ai-desktop', { method: 'PUT', body: JSON.stringify({ connectionId, ...(providerId ? { providerId, model: model ?? null } : {}) }) });
   }
   async adminDeleteSiteAiDesktop(): Promise<ApiResponse<SiteAiDesktopState>> {
     return this.request('/admin/site-ai-desktop', { method: 'DELETE' });
@@ -5811,6 +5814,8 @@ export interface AiPreferencesState {
   desktopReasoning: string | null;
   /** Present only when the backend meters Site AI; absent = "not tracked". */
   usage?: AiUsageInfo | null;
+  /** False when the Site AI cannot take actions in FormLogic (served from the administrator's OAIY). */
+  siteAiActions?: boolean;
 }
 
 /** PUT /api/ai/preferences body — usage is server-owned and never sent. */
@@ -5850,6 +5855,7 @@ function normalizeAiPreferences(raw: unknown): AiPreferencesState {
     customProviderId: nullableTrimmedString(inner.customProviderId),
     chatToolMode: inner.chatToolMode === 'confirm' ? 'confirm' : 'auto',
     desktopReasoning: nullableTrimmedString(inner.desktopReasoning),
+    ...(inner.siteAiActions === false ? { siteAiActions: false } : {}),
     ...(usage
       ? {
           usage: {

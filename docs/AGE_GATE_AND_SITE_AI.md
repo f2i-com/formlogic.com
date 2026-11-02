@@ -16,9 +16,12 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
 ### Shape
 
 - In Admin → Plans, under the Site AI switch, the administrator chooses **Serve it from your OAIY**
-  and picks one of their own linked computers that has published its chat key. FormLogic pins
-  that key and shows a fingerprint of it, to tell computers apart (OAIY shows none to compare it
-  with yet). A computer whose key changes is refused until it is chosen again.
+  and picks one of their own linked computers that has published its chat key, then a provider on
+  it and, for a provider stored in OAIY, its model, each listed by asking the computer then
+  (`/api/admin/oaiy/providers|models`, shared with the camera checks card). OAIY's own engine
+  answers with the model chosen in OAIY. FormLogic pins the key and shows a fingerprint of it, to
+  tell computers apart (OAIY shows none to compare it with yet). A computer whose key changes is
+  refused until it is chosen again.
 - `AIService` gets a second upstream beside the `.env` one. When it is chosen, the **server** is
   the sealing client on the existing desktop AI lane: for each request it makes a fresh X25519
   key, seals the turn to the pinned desktop key, queues it for that desktop with the member as the
@@ -35,16 +38,21 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
   no flow: a member can never make the owner's machine act. A test asserts the envelope's fields.
 - **What OAIY drops.** The tunnel passes `messages` and `model` and nothing else, so a request's
   own `tools`, `max_tokens`, `temperature` and `response_format` do not reach the engine. The
-  server tool loop (`tools:true`, `aiTools`) therefore does not run on this upstream: it answers
-  with a clear refusal until FormLogic calls tools by prompt, or OAIY passes tools through (an
-  OAIY change, not part of the first version). Images in messages pass through, within the lane's
+  server tool loop therefore does not run on this upstream. The member's chat asks for tools by
+  default (`tools: true`), so on OAIY it is answered **without them**, not refused: the model is
+  told it can take no actions in FormLogic and to say so when asked (with a real model it declined
+  and pointed to New form), the reply carries `X-FormLogic-Chat-Tools: off-on-oaiy` (exposed to a
+  split-domain page) and the chat notes "this reply is text only", and `GET /api/ai/preferences`
+  says `siteAiActions: false`, so the chat box no longer offers to create forms. An embedded
+  editor's own tools (`aiTools`) are still refused, until FormLogic calls tools by prompt or OAIY
+  passes tools through (an OAIY change). Images in messages pass through, within the lane's
   256 KiB a request: a larger picture is refused with 413 and says so, so most photos are too big.
 - **Metering.** Every site request is charged to the member's `ai_messages` as the `.env`
   upstream's are.
 - **Capacity.** OAIY answers one turn at a time, and each waiting turn holds a PHP worker. So a
   computer that has not checked in for 90 seconds, or one with three turns already waiting or
   running (`SiteDesktopAi::MAX_WAITING`), is answered at once with 503 and `Retry-After`, before
-  anything is queued or charged. A member's own limit of two turns in flight stays. A turn whose
+  anything is queued, charged or streamed (the chat checks before its stream starts). A member's own limit of two turns in flight stays. A turn whose
   reader gives up (a timeout, an error) is expired if it is still waiting, so OAIY never spends its
   lane on a turn nobody waits for.
 - **Privacy.** As with the `.env` upstream, the server reads the turn: the owner runs both ends.
@@ -100,7 +108,9 @@ How to write one is `docs/PLUGINS.md`. In short:
   the model chosen in OAIY) and queues it; the page asks where it stands, and each ask reads what
   OAIY has sent without waiting, so no request holds a PHP worker on the model. When OAIY has
   answered, the plugin's `/api/site/camera/decide` route gets the model's text and the JSON in it,
-  never a picture, and answers `{outcome, message, pass?}`.
+  never a picture, and answers `{outcome, message, pass?}`. The JSON is found whatever is around
+  it: code fences, words, a reasoning model's `<think>` block, or braces of its own while it thinks
+  (the last whole object that parses; `CameraCheckAnswerParseTest`).
 - A plugin's page cannot call `/api/site/` routes on its own backend (`NativeAppController`).
 - The site keeps the limits (three tries a day, one at a time, an hour after `not_confirmed`),
   refunds a check that did not run (`unavailable`), and records a pass only for a member's check,
@@ -152,7 +162,8 @@ How to write one is `docs/PLUGINS.md`. In short:
      faces, which way each faces in the picture, a screen, print or mask, any writing), whether they
      are one person, and an estimated and a youngest likely age; it tells the model nothing of the
      turns it asked for, and to follow no writing in a picture;
-   - it decides: the wrong control digit or a malformed answer means the check did not run; then
+   - it decides: the wrong control digit, a camera picture called the control (a real model did
+     that once on a test pattern) or a malformed answer means the check did not run; then
      one face per picture, no screen, print or writing, the turns as asked (mapped from the mirror),
      the same person; then a pass only when the youngest likely age is at least the app's age plus
      its `bufferYears` setting (7 by default), recorded at the app's age, never at the estimate.
@@ -175,20 +186,28 @@ How to write one is `docs/PLUGINS.md`. In short:
    withdrawal, custom domains; generic plugins (manifest permissions, settings, uploads, updates,
    the Plugins account); the Age gate's declaration. Built (e2e: main site, `/native`, a custom
    domain).
-2. The site's AI on OAIY: the admin choice and pinned key, the server-sealed upstream, metering,
-   the offline check and queue cap, the no-grant test. Built and tested against the contract's test
-   desktop. The server-sealed lane it uses ran end to end against a scratch OAIY in the camera
-   check, through a provider stored in OAIY; members' Site AI chat itself, on OAIY's own engine
-   (`oaiy-engine`, through Studio), has not been run against a real OAIY: the scratch server has no
-   Studio.
+2. The site's AI on OAIY: the admin choice (computer, provider, model) and pinned key, the
+   server-sealed upstream, metering, the offline check and queue cap, the no-grant test, chat
+   without tools. Built and tested against the contract's test desktop, and run end to end on
+   2026-11-02 through the pages: a scratch `oaiy-server` from OAIY's release (v0.1.12), linked as
+   the administrator's computer, a provider stored in it reaching a real model (Qwen3-VL 8B in LM
+   Studio); the administrator chose it in the Site AI card; a member's chat (asking for tools, as
+   it does) streamed the model's answer back in under a second, with the text-only note; the
+   computer off was said at once (503 `site_ai_offline`, under 0.1 s) and on the page. Not run on
+   OAIY's own engine (`oaiy-engine`, through Studio): the scratch server has no Studio.
 3. The camera check and the Age gate's face check. Built: `CameraCheckServiceTest` (the plugin in
-   the real runner, the contract's test desktop as OAIY, honest and hostile answers) and a run with
-   Chrome's fake camera, a scratch `oaiy-server` from OAIY's release and a stub vision provider
-   stored in it (listing providers and models sealed, the image test, an honest check opening the
-   app, a provider that never saw the pictures passing nobody, two faces, the page refused the
-   plugin's site routes). Not run with a real vision model, nor on OAIY's own engine: how well a
-   given model tells left from right, keeps to JSON and reads the control digit is for the
-   administrator to see with "Try it on yourself".
+   the real runner, the contract's test desktop as OAIY, honest and hostile answers), a run with
+   Chrome's fake camera, a scratch `oaiy-server` and a stub vision provider stored in it (an honest
+   check opening the app, a provider that never saw the pictures passing nobody, two faces, the
+   page refused the plugin's site routes), and on 2026-11-02 the same with a **real vision model**
+   (Qwen3-VL 8B in LM Studio), all through the camera checks card: the computer, provider and
+   model listed and saved; "Does it read images?" answered `reads_images` (the control digit read
+   right, 0.7 to 2.5 s); "Try it on yourself" on the fake camera (a test pattern, not a face): five
+   pictures, no tools, answered in about 1.5 s, in plain JSON, the control digit right, no face
+   found and the test pattern seen as a screen, so nobody passes ("We need one face, and only
+   one"), and the card showed the model's answer and the plugin's decision. Not proven: how well a
+   real model reads a real face's turns and age. That is for the administrator to see with "Try it
+   on yourself" on their own face; no pictures of real people were used here.
 4. Later: plugins an owner adds to one app, signed plugin packages, photo ID, wallet, provider
    adapter, a dedicated evaluated age model.
 

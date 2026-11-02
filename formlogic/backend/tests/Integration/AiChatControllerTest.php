@@ -87,11 +87,11 @@ class AiChatControllerTest extends TestCase
         return json_decode((string) $resp->getBody(), true) ?: [];
     }
 
-    private function controller(bool $enforced = true): AIController
+    private function controller(bool $enforced = true, ?AIService $ai = null): AIController
     {
         $files = new FileStorageService(['storagePath' => sys_get_temp_dir() . '/fl-test-uploads']);
         return new AIController(
-            new StubChatAiService(),
+            $ai ?? new StubChatAiService(),
             new DocumentConverter(),
             [],
             null,
@@ -163,6 +163,34 @@ class AiChatControllerTest extends TestCase
         // The allowance refusal answers BEFORE any SSE starts, so it is ordinary JSON.
         $this->assertSame(402, $out['status']);
         $this->assertSame('ai_allowance_exceeded', $out['body']['code']);
+    }
+
+    /**
+     * The member's chat asks for tools by default. On the administrator's OAIY, which takes messages
+     * only, it is answered without them (and says so), rather than refused; a computer that is offline
+     * or full is said before anything is charged.
+     */
+    public function testOnTheSitesOaiyAChatAskingForToolsIsAnsweredWithoutThem(): void
+    {
+        $oaiy = new StubOaiyChatAiService();
+        $req = (new ServerRequestFactory())->createServerRequest('POST', self::BASE . '/api/ai/chat')
+            ->withParsedBody(['messages' => [['role' => 'user', 'content' => 'Hello']], 'tools' => true])
+            ->withAttribute('userId', $this->userId);
+        $resp = $this->controller(true, $oaiy)->chat($req, (new ResponseFactory())->createResponse());
+        $this->assertSame(200, $resp->getStatusCode());
+        $this->assertSame('stub reply', self::decode($resp)['data']['content']);
+        $this->assertSame('off-on-oaiy', $resp->getHeaderLine('X-FormLogic-Chat-Tools'));
+        // The model was told it can take no actions here, so it does not claim to have.
+        $this->assertSame('system', $oaiy->sent[0]['role']);
+        $this->assertStringContainsString('you cannot do anything in FormLogic', $oaiy->sent[0]['content']);
+        $this->assertSame(['role' => 'user', 'content' => 'Hello'], $oaiy->sent[1]);
+        $this->assertSame(1, (int) $this->meter()['count']);
+
+        $oaiy->unavailable = new \FormLogic\Services\SiteAiBusyException('The computer is off.', 'site_ai_offline');
+        $refused = $this->chat($this->controller(true, $oaiy), ['messages' => [['role' => 'user', 'content' => 'again']], 'tools' => true, 'stream' => true]);
+        $this->assertSame(503, $refused['status']);
+        $this->assertSame('site_ai_offline', $refused['body']['code']);
+        $this->assertSame(1, (int) $this->meter()['count'], 'a refusal is not charged');
     }
 
     public function testValidationAndAuthErrors(): void
@@ -247,5 +275,33 @@ class StubChatAiService extends AIService
     protected function chatCompletionsRequest(array $payload, bool $stream, ?callable $onDelta, ?callable $onHeartbeat): array
     {
         return ['content' => 'stub reply', 'usage' => ['promptTokens' => 11, 'completionTokens' => 7, 'totalTokens' => 18]];
+    }
+}
+
+/** The stub, as if the site's AI were served from the administrator's OAIY. */
+class StubOaiyChatAiService extends StubChatAiService
+{
+    public ?\FormLogic\Services\SiteAiBusyException $unavailable = null;
+    public array $sent = [];
+
+    protected function chatCompletionsRequest(array $payload, bool $stream, ?callable $onDelta, ?callable $onHeartbeat): array
+    {
+        $this->sent = $payload['messages'];
+        return parent::chatCompletionsRequest($payload, $stream, $onDelta, $onHeartbeat);
+    }
+
+    public function servedByOaiy(): bool
+    {
+        return true;
+    }
+
+    public function siteAiUnavailable(): ?\FormLogic\Services\SiteAiBusyException
+    {
+        return $this->unavailable;
+    }
+
+    protected function chatCompletionsToolsRequest(array $payload): array
+    {
+        throw new \LogicException('no tool round on OAIY');
     }
 }

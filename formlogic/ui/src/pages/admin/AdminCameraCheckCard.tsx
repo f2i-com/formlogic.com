@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Camera } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Card, CardContent } from '../../components/ui/Card';
 import { CameraCheckPanel } from '../../components/plugins/CameraCheckPanel';
+import { OaiyTargetPicker, type OaiyTarget } from '../../components/admin/OaiyTargetPicker';
 import { api, type AdminCameraCheckState } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import type { InstalledPlugin } from '../../types/app';
@@ -18,11 +19,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(r
 export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }) {
   const [state, setState] = useState<AdminCameraCheckState | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [connectionId, setConnectionId] = useState('');
-  const [providers, setProviders] = useState<Array<{ id: string; label: string; model: string | null }> | null>(null);
-  const [providerId, setProviderId] = useState('');
-  const [models, setModels] = useState<Array<{ id: string; name: string }> | null>(null);
-  const [model, setModel] = useState('');
+  const [choice, setChoice] = useState<OaiyTarget | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [plugin, setPlugin] = useState(plugins[0]?.manifestId ?? '');
   const [probe, setProbe] = useState<string | null>(null);
@@ -39,35 +36,15 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
     return () => { cancelled = true; };
   }, [revision]);
 
-  const listProviders = async (id: string) => {
-    setConnectionId(id);
-    setProviders(null);
-    setProviderId('');
-    setModels(null);
-    setBusy('providers');
-    const result = await api.adminCameraCheckProviders(id);
-    setBusy(null);
-    if (result.error || !result.data) { toast.error('That computer did not answer', result.error ?? ''); return; }
-    setProviders(result.data.providers);
-  };
-  const listModels = async (id: string) => {
-    setProviderId(id);
-    setModels(null);
-    setModel('');
-    if (!state || id === state.engineProvider) return;
-    setBusy('models');
-    const result = await api.adminCameraCheckModels(connectionId, id);
-    setBusy(null);
-    if (result.error || !result.data) { toast.error('That provider did not list its models', result.error ?? ''); return; }
-    setModels(result.data.models);
-  };
+  const onChange = useCallback((target: OaiyTarget | null) => setChoice(target), []);
   const save = async () => {
+    if (!choice) return;
     setBusy('save');
-    const result = await api.adminPutCameraCheck({ connectionId, providerId, model: providerId === state?.engineProvider ? null : model });
+    const result = await api.adminPutCameraCheck(choice);
     setBusy(null);
     if (result.error) { toast.error('Not saved', result.error); return; }
     toast.success('Camera checks are set up');
-    setProviders(null);
+    setChoice(null);
     setRevision((n) => n + 1);
   };
   const turnOff = async () => {
@@ -94,7 +71,6 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
   if (!state) return error ? <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p> : null;
   const current = state.current;
   const chosenPlugin = plugins.find((p) => p.manifestId === plugin) ?? plugins[0];
-  const canSave = connectionId !== '' && providerId !== '' && (providerId === state.engineProvider || model !== '');
 
   return (
     <Card>
@@ -104,7 +80,7 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
           <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
             {plugins.map((p) => p.name).join(', ')} use{plugins.length === 1 ? 's' : ''} the camera. The pictures are read by an AI on one of your computers running OAIY:
             sealed to it, deleted once read, and never seen by the plugin. Choose a model that reads images.
-            Some OAIY engines keep a model's working state on disk; turning on OAIY&apos;s privacy (incognito) setting stops that.
+            Some OAIY engines keep a model&apos;s working state on disk; turning on OAIY&apos;s privacy (incognito) setting stops that.
           </p>
         </div>
         {current && (
@@ -119,43 +95,12 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
         {state.candidates.length === 0 ? (
           <p className="text-sm text-gray-500 dark:text-slate-400">None of your linked computers has published its chat key. Link OAIY on your computer in Settings → AI &amp; devices, open it, and come back.</p>
         ) : (
-          <fieldset className="space-y-2" disabled={busy !== null}>
-            <legend className="text-sm font-medium text-gray-700 dark:text-slate-300">{current ? 'Change where they are read' : 'Where the pictures are read'}</legend>
-            {state.candidates.map((candidate) => (
-              <label key={candidate.connectionId} className="flex cursor-pointer items-start gap-3 text-sm">
-                <input type="radio" name="camera-check-computer" className="mt-1" checked={connectionId === candidate.connectionId} onChange={() => void listProviders(candidate.connectionId)} />
-                <span>
-                  <span className="font-medium text-gray-900 dark:text-white">{candidate.deviceName || candidate.instanceId}</span>
-                  <span className={candidate.online ? 'ml-2 text-xs text-green-700 dark:text-green-300' : 'ml-2 text-xs text-gray-400'}>{candidate.online ? 'online' : 'offline'}</span>
-                  <span className="block text-xs text-gray-500 dark:text-slate-400">key {candidate.fingerprint}</span>
-                </span>
-              </label>
-            ))}
-            {busy === 'providers' && <p role="status" className="text-sm text-gray-500">Asking the computer what it offers…</p>}
-            {providers && (
-              <div className="space-y-1">
-                <label htmlFor="camera-check-provider" className="text-sm font-medium text-gray-700 dark:text-slate-300">Provider</label>
-                <select id="camera-check-provider" value={providerId} onChange={(e) => void listModels(e.target.value)}
-                  className="block min-h-10 rounded-lg border border-gray-300 bg-white px-2.5 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
-                  <option value="">Choose…</option>
-                  {providers.map((p) => <option key={p.id} value={p.id}>{p.label}{p.id === state.engineProvider && p.model ? ` (${p.model})` : ''}</option>)}
-                </select>
-                {providerId === state.engineProvider && <p className="text-xs text-gray-500 dark:text-slate-400">OAIY&apos;s own engine answers with the model chosen in OAIY&apos;s Engines. Choose one there that reads images.</p>}
-              </div>
-            )}
-            {busy === 'models' && <p role="status" className="text-sm text-gray-500">Listing its models…</p>}
-            {models && (
-              <div className="space-y-1">
-                <label htmlFor="camera-check-model" className="text-sm font-medium text-gray-700 dark:text-slate-300">Model</label>
-                <select id="camera-check-model" value={model} onChange={(e) => setModel(e.target.value)}
-                  className="block min-h-10 rounded-lg border border-gray-300 bg-white px-2.5 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
-                  <option value="">Choose…</option>
-                  {models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
-              </div>
-            )}
-            {canSave && <Button size="sm" isLoading={busy === 'save'} onClick={() => void save()}>Read the pictures here</Button>}
-          </fieldset>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-gray-700 dark:text-slate-300">{current ? 'Change where they are read' : 'Where the pictures are read'}</p>
+            <OaiyTargetPicker key={revision} name="camera-check" candidates={state.candidates} onChange={onChange} disabled={busy !== null}
+              engineHint="OAIY's own engine answers with the model chosen in OAIY's Engines. Choose one there that reads images." />
+            {choice && <Button size="sm" isLoading={busy === 'save'} onClick={() => void save()}>Read the pictures here</Button>}
+          </div>
         )}
         {current && chosenPlugin && (
           <div className="space-y-2 border-t border-gray-200 pt-4 dark:border-slate-700">

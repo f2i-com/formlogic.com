@@ -45,29 +45,14 @@ final class CameraCheckSettings
         return $this->computers->candidates($adminUserId);
     }
 
-    /** A computer as a target for its listings: `providers` (every provider on it) or one provider's `models`. */
-    public function listingTarget(string $adminUserId, string $connectionId, ?string $providerId): array
-    {
-        if ($providerId !== null) {
-            self::assertProvider($providerId);
-        }
-        return ['providerId' => $providerId ?? 'all'] + $this->computers->pin($adminUserId, $connectionId);
-    }
-
     /**
      * Save the choice. $model is required for a provider stored in OAIY and ignored for OAIY's own
      * engine, which always answers with the model chosen in OAIY.
      */
     public function choose(string $adminUserId, string $connectionId, string $providerId, ?string $model): array
     {
-        self::assertProvider($providerId);
-        $target = ['providerId' => $providerId] + $this->computers->pin($adminUserId, $connectionId);
-        if ($providerId === SiteDesktopAi::PROVIDER) {
-            $model = null;
-        } elseif (!is_string($model) || $model === '' || strlen($model) > 256 || preg_match('/[\x00-\x1f\x7f]/', $model)) {
-            throw new \InvalidArgumentException('Choose the model that reads the pictures.');
-        }
-        $chosen = $target + ['model' => $model];
+        $chosen = ['providerId' => SiteAiDesktopSettings::provider($providerId), 'model' => SiteAiDesktopSettings::model($providerId, $model)]
+            + $this->computers->pin($adminUserId, $connectionId);
         $this->write($chosen);
         return $chosen;
     }
@@ -76,13 +61,6 @@ final class CameraCheckSettings
     {
         if (is_file($this->path) && !@unlink($this->path)) {
             throw new \RuntimeException('Cannot turn camera checks off: storage/camera-check.json could not be removed.');
-        }
-    }
-
-    private static function assertProvider(string $providerId): void
-    {
-        if ($providerId === '' || strlen($providerId) > 128 || !preg_match('/^[A-Za-z0-9._:-]+$/D', $providerId) || $providerId === 'all') {
-            throw new \InvalidArgumentException('Choose a provider on that computer.');
         }
     }
 

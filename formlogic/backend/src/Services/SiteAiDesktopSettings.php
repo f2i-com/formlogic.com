@@ -23,7 +23,7 @@ final class SiteAiDesktopSettings
         $this->path ??= dirname(__DIR__, 2) . '/storage/site-ai-desktop.json';
     }
 
-    /** {ownerUserId, connectionId, instanceId, publicKey, providerId, deviceName, chosenAt}, or null. */
+    /** {ownerUserId, connectionId, instanceId, publicKey, providerId, model, deviceName, chosenAt}, or null. */
     public function current(): ?array
     {
         $raw = @file_get_contents($this->path);
@@ -39,6 +39,7 @@ final class SiteAiDesktopSettings
                 return null;
             }
         }
+        $data['model'] = is_string($data['model'] ?? null) && $data['model'] !== '' && $data['providerId'] !== SiteDesktopAi::PROVIDER ? $data['model'] : null;
         return $data;
     }
 
@@ -81,12 +82,43 @@ final class SiteAiDesktopSettings
         ], $stmt->fetchAll(PDO::FETCH_ASSOC));
     }
 
-    /** Pin one of the administrator's computers, with the key it has published now. */
-    public function choose(string $adminUserId, string $connectionId): array
+    /**
+     * Pin one of the administrator's computers, with the key it has published now, and the
+     * provider on it that answers: OAIY's own engine (the model chosen in OAIY), or a provider
+     * stored in OAIY with $model, which every turn then names.
+     */
+    public function choose(string $adminUserId, string $connectionId, string $providerId = SiteDesktopAi::PROVIDER, ?string $model = null): array
     {
-        $chosen = $this->pin($adminUserId, $connectionId);
+        $chosen = ['providerId' => self::provider($providerId), 'model' => self::model($providerId, $model)] + $this->pin($adminUserId, $connectionId);
         $this->write($chosen);
         return $chosen;
+    }
+
+    /** A computer as a target for its listings: `providers` (every provider on it) or one provider's `models`. */
+    public function listingTarget(string $adminUserId, string $connectionId, ?string $providerId): array
+    {
+        return ['providerId' => $providerId === null ? 'all' : self::provider($providerId)] + $this->pin($adminUserId, $connectionId);
+    }
+
+    /** A provider id as OAIY lists them; never `all`, which names no provider. */
+    public static function provider(string $providerId): string
+    {
+        if ($providerId === '' || strlen($providerId) > 128 || !preg_match('/^[A-Za-z0-9._:-]+$/D', $providerId) || $providerId === 'all') {
+            throw new \InvalidArgumentException('Choose a provider on that computer.');
+        }
+        return $providerId;
+    }
+
+    /** The model a stored provider is asked for; none for OAIY's own engine, which uses the one chosen in OAIY. */
+    public static function model(string $providerId, ?string $model): ?string
+    {
+        if ($providerId === SiteDesktopAi::PROVIDER) {
+            return null;
+        }
+        if (!is_string($model) || $model === '' || strlen($model) > 256 || preg_match('/[\x00-\x1f\x7f]/', $model)) {
+            throw new \InvalidArgumentException('Choose the model on that provider.');
+        }
+        return $model;
     }
 
     /**

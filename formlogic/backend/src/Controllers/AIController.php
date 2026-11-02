@@ -564,6 +564,19 @@ class AIController
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
 
+        // The site's AI on the administrator's OAIY takes messages only (SiteDesktopAi), so a chat
+        // that asks for FormLogic's tools runs without them there, rather than being refused: the
+        // member's chat sends `tools` by default. An offline or busy computer is said now, before
+        // anything is charged or streamed.
+        $withoutTools = false;
+        if ($this->aiService->servedByOaiy()) {
+            $withoutTools = $tools;
+            $tools = false;
+            if (($unavailable = $this->aiService->siteAiUnavailable()) !== null) {
+                return $this->siteAiRefusal($response, $unavailable);
+            }
+        }
+
         // Hosted tool loop (plan Phase 6 §5.4): tools run server-side AS THE SESSION USER,
         // so all three refusals answer BEFORE the allowance charges a unit.
         if ($tools) {
@@ -616,6 +629,15 @@ class AIController
             return $this->jsonResponse($response, ['data' => ['content' => $result['content'], 'usage' => $result['usage']]]);
         }
 
+        if ($withoutTools) {
+            // The model is told it can take no actions here, so it does not claim any. Said to the
+            // page too, which can tell the member; a stream writes its own headers, so it is set there.
+            $messages = self::withToolDataNotice($messages, self::CHAT_NO_TOOLS_NOTICE);
+            $response = $response->withHeader('X-FormLogic-Chat-Tools', 'off-on-oaiy');
+            if ($stream && !headers_sent()) {
+                header('X-FormLogic-Chat-Tools: off-on-oaiy');
+            }
+        }
         if ($stream) {
             $this->emitChatStream((string) $userId, $messages);
         }
@@ -699,6 +721,9 @@ class AIController
                 'limit' => $allowance['monthlyValue'] >= 0 ? $allowance['monthlyValue'] : null,
             ];
         }
+        // Whether the Site AI can take actions in FormLogic: not on the administrator's OAIY, which
+        // takes messages only, so the chat does not offer what it cannot do.
+        $data['siteAiActions'] = !$this->aiService->servedByOaiy();
         return $this->jsonResponse($response, ['data' => $data]);
     }
 
@@ -930,15 +955,21 @@ class AIController
      * system message when there is one (some model templates take a single system message, and
      * only first), else as a system message of its own.
      */
-    private static function withToolDataNotice(array $messages): array
+    private static function withToolDataNotice(array $messages, string $notice = self::CHAT_TOOL_DATA_NOTICE): array
     {
         $first = $messages[0] ?? null;
         if (is_array($first) && ($first['role'] ?? null) === 'system' && is_string($first['content'] ?? null)) {
-            $messages[0]['content'] = self::CHAT_TOOL_DATA_NOTICE . "\n\n" . $first['content'];
+            $messages[0]['content'] = $notice . "\n\n" . $first['content'];
             return $messages;
         }
-        return array_merge([['role' => 'system', 'content' => self::CHAT_TOOL_DATA_NOTICE]], $messages);
+        return array_merge([['role' => 'system', 'content' => $notice]], $messages);
     }
+
+    /** Told to the model when a chat that asked for tools runs without them, on the site's OAIY. */
+    private const CHAT_NO_TOOLS_NOTICE = 'In this chat you cannot do anything in FormLogic: you cannot create, change, run or look up '
+        . 'forms, apps, flows or data. If you are asked to, say plainly that it cannot be done from this chat, and do not '
+        . 'say or suggest that it was done. You can still explain how the person can do it themselves in FormLogic: '
+        . 'New form on the Forms page, Create app, or Flows in the sidebar.';
 
     /**
      * Whether a call may run while the user's chat tool mode is "Ask first". Reading is not an

@@ -453,13 +453,19 @@ class AdminController
                 'deviceName' => $current['deviceName'] ?? '',
                 'fingerprint' => \FormLogic\Services\SiteAiDesktopSettings::fingerprint($current['publicKey']),
                 'chosenAt' => $current['chosenAt'] ?? null,
+                'providerId' => $current['providerId'],
+                'model' => $current['model'],
                 'yours' => $current['ownerUserId'] === $request->getAttribute('userId'),
             ],
             'candidates' => $this->siteAiDesktop->candidates((string) $request->getAttribute('userId')),
+            'engineProvider' => \FormLogic\Services\SiteDesktopAi::PROVIDER,
         ]);
     }
 
-    /** PUT /api/admin/site-ai-desktop {connectionId}: serve the site's AI from that computer, pinned to its key now. */
+    /**
+     * PUT /api/admin/site-ai-desktop {connectionId, providerId?, model?}: serve the site's AI from that
+     * computer, pinned to its key now, through OAIY's own engine or a provider stored in OAIY.
+     */
     public function putSiteAiDesktop(Request $request, Response $response): Response
     {
         if ($this->siteAiDesktop === null) {
@@ -471,14 +477,16 @@ class AdminController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Choose a computer.'], 400);
         }
         try {
-            $chosen = $this->siteAiDesktop->choose((string) $request->getAttribute('userId'), $connectionId);
+            $chosen = $this->siteAiDesktop->choose((string) $request->getAttribute('userId'), $connectionId,
+                is_string($body['providerId'] ?? null) && $body['providerId'] !== '' ? $body['providerId'] : \FormLogic\Services\SiteDesktopAi::PROVIDER,
+                is_string($body['model'] ?? null) ? $body['model'] : null);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 503);
         }
         $fingerprint = \FormLogic\Services\SiteAiDesktopSettings::fingerprint($chosen['publicKey']);
-        $this->audit($request, 'admin.site_ai_desktop', $chosen['connectionId'], ['deviceName' => $chosen['deviceName'], 'fingerprint' => $fingerprint]);
+        $this->audit($request, 'admin.site_ai_desktop', $chosen['connectionId'], ['deviceName' => $chosen['deviceName'], 'fingerprint' => $fingerprint, 'providerId' => $chosen['providerId'], 'model' => $chosen['model']]);
         return $this->getSiteAiDesktop($request, $response);
     }
 

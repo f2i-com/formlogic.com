@@ -806,7 +806,7 @@ async function runSiteSource(
       const body = asRecord(await res.json());
       const data = asRecord(body?.data) ?? body;
       const content = data?.content;
-      if (typeof content === 'string') return { ok: true, source: 'site', content };
+      if (typeof content === 'string') return { ok: true, source: 'site', content, ...siteToolsNote(res) };
     } catch {
       /* fall through to the honest failure */
     }
@@ -868,7 +868,14 @@ async function runSiteSource(
     return { ok: false, source: 'site', error: err };
   }
   opts.events?.onState?.({ state: 'done' });
-  return { ok: true, source: 'site', content: finalContent ?? accumulated };
+  return { ok: true, source: 'site', content: finalContent ?? accumulated, ...siteToolsNote(res) };
+}
+
+/** The site's AI on the administrator's OAIY answers without FormLogic's tools, and says so in a header. */
+function siteToolsNote(res: Response): { note?: string } {
+  return res.headers.get('X-FormLogic-Chat-Tools') === 'off-on-oaiy'
+    ? { note: 'This site’s AI can’t take actions in FormLogic, so this reply is text only.' }
+    : {};
 }
 
 async function runDesktopSource(

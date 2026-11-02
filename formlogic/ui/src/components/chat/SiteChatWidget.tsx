@@ -1236,7 +1236,11 @@ function AccountChatWidget() {
             }
           }}
           aria-label="Chat message"
-          placeholder={isDemo ? 'Pick a guided build below — or ask what this demo can do.' : 'Ask anything — I can create forms, apps and flows.'}
+          placeholder={isDemo
+              ? 'Pick a guided build below — or ask what this demo can do.'
+              : prefs?.aiSource === 'site' && prefs.siteAiActions === false
+                ? 'Ask anything. This site’s AI answers in words: it can’t make changes for you.'
+                : 'Ask anything — I can create forms, apps and flows.'}
           className="max-h-28 min-h-[3.5rem] min-w-0 flex-1 resize-none rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-primary-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
         />
         {sending ? (

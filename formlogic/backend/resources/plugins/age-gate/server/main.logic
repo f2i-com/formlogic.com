@@ -139,6 +139,9 @@ function decide(row, turns, answer, buffer) {
         return unavailable();
       }
     } else {
+      // A camera picture taken for the control: the model did not tell them apart, so it did not
+      // do the check (seen with a real model on a test pattern). Not one of their tries.
+      if (image.kind != "camera" && row.mode != "probe") return unavailable();
       seen.push(image);
     }
     i = i + 1;
