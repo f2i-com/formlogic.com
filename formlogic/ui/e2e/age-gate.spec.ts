@@ -96,6 +96,32 @@ test('a member confirms their age before an age-gated app opens, and withdrawing
   await member.close();
 });
 
+test('at its /native address too, the page says how to confirm and comes back to the app', async ({ page, browser }) => {
+  test.setTimeout(180_000);
+  await register(page.context().request, `age-native-owner-${RUN}@e2e-apps.com`);
+  const app = await publishGatedApp(page.context(), `grown-ups-native-${RUN}`);
+  // Off: the app opens at /app/<slug>/native rather than at its address.
+  const csrf = (await page.context().cookies()).find(cookie => cookie.name === 'formlogic_csrf')!.value;
+  const saved = await page.context().request.put(`/api/apps/${app.id}/native`, { headers: { 'X-CSRF-Token': csrf }, data: { project: { ...project, home: false }, expectedVersion: 1 } });
+  expect(saved.status(), await saved.text()).toBe(200);
+  await turnOnTheGate(page, app.id);
+
+  const member = await browser.newContext();
+  await register(member.request, `age-native-member-${RUN}@e2e-apps.com`);
+  const memberCsrf = (await member.cookies()).find(cookie => cookie.name === 'formlogic_csrf')!.value;
+  expect((await member.request.post(`/api/app/${app.slug}/join`, { headers: { 'X-CSRF-Token': memberCsrf } })).ok()).toBe(true);
+  const visit = await member.newPage();
+  await visit.goto(`/app/${app.slug}/native`);
+  await expect(visit.getByText('This app is for people aged 18 and over. Confirm your age to open it.')).toBeVisible({ timeout: 30_000 });
+  await visit.getByRole('link', { name: 'Confirm your age' }).click();
+  await expect(visit.getByRole('heading', { name: 'Confirm your age' })).toBeVisible();
+  await visit.getByLabel('I am 18 or older.').check();
+  await visit.getByRole('button', { name: 'Confirm and continue' }).click();
+  await expect(visit).toHaveURL(new RegExp(`/app/${app.slug}/native$`));
+  await expect(visit.frameLocator(FRAME).getByText('Grown-ups only app is running')).toBeVisible({ timeout: 60_000 });
+  await member.close();
+});
+
 test('on its own domain the age is confirmed on FormLogic, and the member comes back to the domain', async ({ page, browser }) => {
   test.setTimeout(240_000);
   await register(page.context().request, `age-domain-owner-${RUN}@e2e-apps.com`);

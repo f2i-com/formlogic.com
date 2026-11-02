@@ -14,9 +14,10 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
 
 ### Shape
 
-- In Admin → Plans & AI, the administrator chooses **Serve the site's AI from my OAIY** and picks
-  one of their linked desktops that has published its chat key. FormLogic pins that key and shows
-  its fingerprint; the administrator confirms it against the one OAIY shows.
+- In Admin → Plans, under the Site AI switch, the administrator chooses **Serve it from your OAIY**
+  and picks one of their own linked computers that has published its chat key. FormLogic pins
+  that key and shows a fingerprint of it, to tell computers apart (OAIY shows none to compare it
+  with yet). A computer whose key changes is refused until it is chosen again.
 - `AIService` gets a second upstream beside the `.env` one. When it is chosen, the **server** is
   the sealing client on the existing desktop AI lane: for each request it makes a fresh X25519
   key, seals the turn to the pinned desktop key, queues it for that desktop with the member as the
@@ -35,12 +36,16 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
   own `tools`, `max_tokens`, `temperature` and `response_format` do not reach the engine. The
   server tool loop (`tools:true`, `aiTools`) therefore does not run on this upstream: it answers
   with a clear refusal until FormLogic calls tools by prompt, or OAIY passes tools through (an
-  OAIY change, not part of the first version). Images in messages pass through unchanged.
+  OAIY change, not part of the first version). Images in messages pass through, within the lane's
+  256 KiB a request: a larger picture is refused with 413 and says so, so most photos are too big.
 - **Metering.** Every site request is charged to the member's `ai_messages` as the `.env`
   upstream's are.
-- **Capacity.** OAIY answers one turn at a time. FormLogic caps the queue for the site desktop and
-  answers a request past it at once with 503 and `Retry-After`, instead of holding a PHP worker
-  while it waits. Per-member in-flight limits stay as they are.
+- **Capacity.** OAIY answers one turn at a time, and each waiting turn holds a PHP worker. So a
+  computer that has not checked in for 90 seconds, or one with three turns already waiting or
+  running (`SiteDesktopAi::MAX_WAITING`), is answered at once with 503 and `Retry-After`, before
+  anything is queued or charged. A member's own limit of two turns in flight stays. A turn whose
+  reader gives up (a timeout, an error) is expired if it is still waiting, so OAIY never spends its
+  lane on a turn nobody waits for.
 - **Privacy.** As with the `.env` upstream, the server reads the turn: the owner runs both ends.
   A member's own linked desktop keeps its browser-to-desktop sealing; this upstream does not
   replace it.
@@ -50,18 +55,22 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
 ### The gate (FormLogic core)
 
 - An app can carry an **access requirement**, `age: 18` to start (any whole age the owner sets).
-- One function decides access for a member of a gated app, and every place that admits a member
-  today calls it: the checks in `AppPublicController`, `FlowController`/`FlowKvController`,
-  `ConnectorCommandController`, `ServiceInvokeController`, `FileController`, `HostedAppController`,
-  `NativeAppController`, the routes outside the `/api/app/{slug}` group, and `appDomainCode`. A
-  test lists every route from the route collector and asserts that each one refuses an unverified
-  member of a gated app, so a route added later cannot skip it.
+- One service decides access for a member of a gated app (`AccessGateService`), in three places:
+  a middleware on the whole `/api/app/{slug}` group and on each such route outside it (left open:
+  the manifests, membership, joining and the native entry metadata, which a page needs first);
+  file downloads of the app's forms (`FileController`); and every permission a member holds
+  (`AppUserService::hasPermission` and `getUserPermissions`), so paths that reach an app by id —
+  the member's app list and detail, Aokie Companion, the MCP grants — give an unverified member
+  nothing either. `RouteGateWiringTest` reads `index.php`, so a `{slug}` route added later without
+  the gate fails it.
 - The app's owner is not gated. A gated app needs signed-in members: it cannot also allow
   anonymous `application` access, because there is nobody to attach a check to.
-- **Receipts.** A pass is stored as a receipt: member, requirement, method, verifier, issued and
-  expiry times. Never a date of birth, a picture, an estimate or a document. Apps learn "passed"
-  and nothing else. A member can see and revoke their receipts; a receipt can be reused by another
-  app on the site only with the member's consent. Receipts outlive the check that made them.
+- **Receipts.** A pass is stored as a receipt: member, age, how it was shown, verifier, issued and
+  expiry times (a year, `AGE_GATE_RECEIPT_DAYS`). Never a date of birth, a picture, an estimate or a
+  document. Apps learn "passed" and nothing else. A receipt is the member's for the whole site: it
+  opens every app here that asks the same age or less, by the same method or a weaker one, as the
+  declaration page tells them before they confirm. They see and withdraw receipts in Settings →
+  Security; a withdrawn one gates those apps again.
 - **Where it happens.** Verification runs on the main FormLogic site, like sign-in. An app on its
   own domain sends the member there and gets them back through the same one-time code; no
   verification screen is ever shown on a custom domain.
@@ -107,10 +116,11 @@ The site chooses which methods it offers and the order; an app chooses the stren
 
 ## Phases
 
-1. The gate: requirement setting, the one admission function and its route-enumeration test,
-   receipts, the verification page with self-declaration, custom domains, revocation.
+1. The gate: requirement setting, the gate service and its wiring test, receipts, the
+   verification page with self-declaration, custom domains, withdrawal. Built.
 2. The site's AI on OAIY: the admin choice and pinned key, the server-sealed upstream, metering,
-   the queue cap, the no-grant test, a real run against a scratch OAIY.
+   the offline check and queue cap, the no-grant test. Built and tested against the contract's
+   test desktop; still to do before it ships: a real run against a scratch OAIY.
 3. The verifier: link and keys, the verification lane, the camera page with the challenge, the
    plugin with head-pose and spoof models, signed verdicts.
 4. Later: age model (after a licence and a labelled evaluation), photo ID, wallet, provider adapter.

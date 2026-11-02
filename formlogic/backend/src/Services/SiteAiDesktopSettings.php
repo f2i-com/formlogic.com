@@ -42,7 +42,17 @@ final class SiteAiDesktopSettings
         return $data;
     }
 
-    /** A short, readable fingerprint of a public key, as OAIY can show it beside its own. */
+    /** Whether the chosen computer has checked in within the last 90 seconds, as a desktop counts as fresh. */
+    public function online(array $site): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT 1 FROM desktop_connections WHERE id = ? AND owner_user_id = ? AND last_seen_at > (NOW() - INTERVAL 90 SECOND)'
+        );
+        $stmt->execute([$site['connectionId'], $site['ownerUserId']]);
+        return $stmt->fetchColumn() !== false;
+    }
+
+    /** A short, readable fingerprint of a public key, to tell two computers' keys apart. */
     public static function fingerprint(string $publicKey): string
     {
         $hex = substr(hash('sha256', (string) base64_decode($publicKey, true)), 0, 20);

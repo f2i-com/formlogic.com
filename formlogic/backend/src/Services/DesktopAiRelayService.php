@@ -812,6 +812,27 @@ class DesktopAiRelayService
     }
 
     /** Non-terminal lane occupancy for one target desktop (NULL = the untargeted pool). */
+    /** Turns waiting for or being served by one desktop (SiteDesktopAi keeps its own, smaller cap). */
+    public function inFlightForTarget(string $ownerUserId, string $targetInstanceId): int
+    {
+        $this->expireStale($ownerUserId);
+        return $this->countInFlightForTarget($ownerUserId, $targetInstanceId);
+    }
+
+    /**
+     * A pending request its reader has given up on: expired now, so the desktop never spends its
+     * one lane on a turn nobody waits for. A claimed one is left to finish. True when it was pending.
+     */
+    public function abandon(string $id, string $ownerUserId): bool
+    {
+        $stmt = $this->mysql->prepare("
+            UPDATE desktop_ai_requests SET status = 'expired', envelope = NULL, finished_at = NOW()
+            WHERE id = :id AND owner_user_id = :o AND status = 'pending'
+        ");
+        $stmt->execute(['id' => $id, 'o' => $ownerUserId]);
+        return $stmt->rowCount() === 1;
+    }
+
     private function countInFlightForTarget(string $ownerUserId, ?string $targetInstanceId): int
     {
         $stmt = $this->mysql->prepare("

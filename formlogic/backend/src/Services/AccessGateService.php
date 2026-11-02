@@ -105,6 +105,37 @@ final class AccessGateService
         ];
     }
 
+    /** @var array<string, array{owner: string, requirement: ?array}> the apps looked up in this request */
+    private array $apps = [];
+    /** @var array<string, bool> receipts looked up in this request, by user and requirement */
+    private array $met = [];
+
+    /**
+     * Whether $userId may act as a member of the app $appId: true unless the app has a gate this
+     * member, not its owner, has not met. AppUserService asks this before every permission, so a
+     * path that reaches an app by id rather than by slug (the member's app list and detail, Aokie
+     * Companion, the MCP grants) gives an unverified member nothing as well.
+     */
+    public function admitsMember(string $appId, string $userId): bool
+    {
+        if (!isset($this->apps[$appId])) {
+            $stmt = $this->pdo->prepare('SELECT owner_id, settings FROM apps WHERE id = ?');
+            $stmt->execute([$appId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $settings = is_array($row) ? json_decode((string) ($row['settings'] ?? ''), true) : null;
+            $this->apps[$appId] = [
+                'owner' => is_array($row) ? (string) $row['owner_id'] : '',
+                'requirement' => is_array($settings) ? self::normalizeSetting($settings['ageGate'] ?? null) : null,
+            ];
+        }
+        ['owner' => $owner, 'requirement' => $requirement] = $this->apps[$appId];
+        if ($requirement === null || $owner === $userId) {
+            return true;
+        }
+        $key = $userId . '|' . $requirement['minimumAge'] . '|' . $requirement['assurance'];
+        return $this->met[$key] ??= $this->satisfies($userId, $requirement);
+    }
+
     /** The gate as $userId sees it on $app, or null when the app has none. */
     public function statusFor(array $app, ?string $userId): ?array
     {
@@ -181,6 +212,7 @@ final class AccessGateService
             'INSERT INTO access_receipts (id, user_id, kind, minimum_age, assurance, method, verifier, issued_at, expires_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )->execute([$id, $userId, 'age', $minimumAge, $assurance, $method, $verifier, $receipt['issuedAt'], $receipt['expiresAt']]);
+        $this->met = [];
         return $receipt;
     }
 
@@ -211,6 +243,7 @@ final class AccessGateService
     {
         $stmt = $this->pdo->prepare('UPDATE access_receipts SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL');
         $stmt->execute([gmdate('Y-m-d H:i:s'), $receiptId, $userId]);
+        $this->met = [];
         return $stmt->rowCount() === 1;
     }
 }

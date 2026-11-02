@@ -113,14 +113,28 @@ class AIController
      * so an account whose hosted-AI allowance was exhausted could keep driving
      * 16k-token screen generations against the operator's key indefinitely.
      */
+    /** What the site's OAIY said it cannot do now, in words and with the right status. */
+    private function siteAiRefusal(Response $response, \FormLogic\Services\SiteAiBusyException|\FormLogic\Services\SiteAiTooLargeException $e): Response
+    {
+        if ($e instanceof \FormLogic\Services\SiteAiTooLargeException) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'site_ai_too_large', 'message' => $e->getMessage()], 413);
+        }
+        return $this->jsonResponse($response, ['error' => true, 'code' => $e->reason, 'message' => $e->getMessage()], 503)
+            ->withHeader('Retry-After', (string) \FormLogic\Services\SiteAiBusyException::RETRY_AFTER_SECONDS);
+    }
+
     private function meterGeneration(Request $request, Response $response): ?Response
     {
         // Nothing can run, so nothing to charge, and "try rephrasing" would send them the wrong way.
         if (($missing = $this->siteAiMissing()) !== null) {
             return $this->jsonResponse($response, ['error' => true, 'code' => 'site_ai_unavailable', 'message' => $missing], 503);
         }
-        // On the site's OAIY the member's own in-flight limit applies (SiteDesktopAi).
+        // On the site's OAIY the member's own in-flight limit applies (SiteDesktopAi), and an offline
+        // or full computer is said before anything is charged or started.
         $this->aiService->forRequester(is_string($request->getAttribute('userId')) ? $request->getAttribute('userId') : null);
+        if (($unavailable = $this->aiService->siteAiUnavailable()) !== null) {
+            return $this->siteAiRefusal($response, $unavailable);
+        }
         if ($this->planService === null) {
             return null;
         }
@@ -357,6 +371,8 @@ class AIController
                 'data' => $result,
                 'pagesProcessed' => count($images),
             ]);
+        } catch (\FormLogic\Services\SiteAiBusyException | \FormLogic\Services\SiteAiTooLargeException $e) {
+            return $this->siteAiRefusal($response, $e);
         } catch (\Throwable $e) {
             $this->logger->error('AI file generation error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
@@ -607,9 +623,8 @@ class AIController
         if ($editor) @set_time_limit(AIService::EDITOR_REQUEST_TIMEOUT + 30);
         try {
             $result = $this->aiService->chat($messages, false, null, null, $editor);
-        } catch (\FormLogic\Services\SiteAiBusyException $e) {
-            return $this->jsonResponse($response, ['error' => true, 'code' => 'site_ai_busy', 'message' => $e->getMessage()], 503)
-                ->withHeader('Retry-After', (string) \FormLogic\Services\SiteAiBusyException::RETRY_AFTER_SECONDS);
+        } catch (\FormLogic\Services\SiteAiBusyException | \FormLogic\Services\SiteAiTooLargeException $e) {
+            return $this->siteAiRefusal($response, $e);
         } catch (\Throwable $e) {
             $this->logger->error('AI chat error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'The AI request failed'], 502);
@@ -1138,7 +1153,7 @@ class AIController
             );
             $usage = is_array($result['usage'] ?? null) ? $result['usage'] : $usage;
             echo self::sseChatDone($usage);
-        } catch (\FormLogic\Services\SiteAiBusyException $e) {
+        } catch (\FormLogic\Services\SiteAiBusyException | \FormLogic\Services\SiteAiTooLargeException $e) {
             echo self::sseChatError($e->getMessage());
         } catch (\Throwable $e) {
             $this->logger->error('AI chat stream error', ['exception' => $e->getMessage()]);

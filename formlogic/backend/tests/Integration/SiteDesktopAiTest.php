@@ -7,6 +7,7 @@ namespace FormLogic\Tests\Integration;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Services\DesktopAiRelayService;
 use FormLogic\Services\SiteAiBusyException;
+use FormLogic\Services\SiteAiTooLargeException;
 use FormLogic\Services\SiteAiDesktopSettings;
 use FormLogic\Services\SiteDesktopAi;
 use PDO;
@@ -76,7 +77,7 @@ final class SiteDesktopAiTest extends TestCase
             return;
         }
         @unlink($this->settingsPath);
-        foreach ([$this->adminId, $this->memberId] as $uid) {
+        foreach ([$this->adminId, $this->memberId, ...$this->extraUsers] as $uid) {
             self::$pdo->prepare('DELETE FROM desktop_ai_frames WHERE request_id IN (SELECT id FROM desktop_ai_requests WHERE owner_user_id = ?)')->execute([$uid]);
             self::$pdo->prepare('DELETE FROM desktop_ai_requests WHERE owner_user_id = ?')->execute([$uid]);
             self::$pdo->prepare('DELETE FROM desktop_connections WHERE owner_user_id = ?')->execute([$uid]);
@@ -162,6 +163,62 @@ final class SiteDesktopAiTest extends TestCase
         $idle->chat([['role' => 'user', 'content' => 'one more']], $this->memberId, null, null, 30);
     }
 
+    public function testAnOfflineComputerOrAFullQueueIsSaidAtOnceAndNothingIsQueued(): void
+    {
+        $this->chooseTheTestDesktop();
+        $never = new SiteDesktopAi($this->relay, $this->settings, static function (): void {
+            throw new \LogicException('no wait: the answer comes before any');
+        });
+        self::$pdo->prepare("UPDATE desktop_connections SET last_seen_at = NOW() - INTERVAL 10 MINUTE WHERE owner_user_id = ?")->execute([$this->adminId]);
+        try {
+            $never->chat([['role' => 'user', 'content' => 'hi']], $this->memberId, null, null, 30);
+            self::fail('an offline computer');
+        } catch (SiteAiBusyException $e) {
+            self::assertSame('site_ai_offline', $e->reason);
+        }
+        self::assertSame(0, $this->rows());
+
+        self::$pdo->prepare('UPDATE desktop_connections SET last_seen_at = NOW() WHERE owner_user_id = ?')->execute([$this->adminId]);
+        // Other members' turns fill the site's own cap, which is below the lane's.
+        for ($i = 0; $i < SiteDesktopAi::MAX_WAITING; $i++) {
+            $this->relay->enqueue($this->adminId, $this->makeUser(), [
+                'kind' => 'chat', 'providerId' => 'oaiy-engine', 'targetInstanceId' => 'inst-site-ai',
+                'ephPub' => base64_encode(random_bytes(32)), 'envelope' => base64_encode(random_bytes(64)),
+            ]);
+        }
+        try {
+            $never->chat([['role' => 'user', 'content' => 'hi']], $this->memberId, null, null, 30);
+            self::fail('a full queue');
+        } catch (SiteAiBusyException $e) {
+            self::assertSame('site_ai_busy', $e->reason);
+        }
+        self::assertSame(SiteDesktopAi::MAX_WAITING, $this->rows());
+    }
+
+    public function testATurnTooLargeForTheLaneIsRefusedInWords(): void
+    {
+        $this->chooseTheTestDesktop();
+        $this->expectException(SiteAiTooLargeException::class);
+        $picture = 'data:image/jpeg;base64,' . base64_encode(random_bytes(300000));
+        (new SiteDesktopAi($this->relay, $this->settings))->chat([['role' => 'user', 'content' => [['type' => 'image_url', 'image_url' => ['url' => $picture]]]]], $this->memberId, null, null, 30);
+    }
+
+    public function testATurnNobodyWaitsForAnyMoreIsTakenOffTheQueue(): void
+    {
+        $this->chooseTheTestDesktop();
+        $quiet = new SiteDesktopAi($this->relay, $this->settings, static function (): void {
+            usleep(200000);
+        });
+        try {
+            $quiet->chat([['role' => 'user', 'content' => 'hi']], $this->memberId, null, null, 5);
+            self::fail('nobody answered');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('too long', $e->getMessage());
+        }
+        $status = self::$pdo->query('SELECT status, envelope FROM desktop_ai_requests WHERE owner_user_id = ' . self::$pdo->quote($this->adminId))->fetch(PDO::FETCH_ASSOC);
+        self::assertSame(['expired', null], [$status['status'], $status['envelope']]);
+    }
+
     public function testOnlyTheAdministratorsOwnComputerWithAPublishedKeyCanBeChosen(): void
     {
         $this->connection($this->memberId, 'inst-members', self::$vectors['desktop']['publicKey']);
@@ -223,10 +280,21 @@ final class SiteDesktopAiTest extends TestCase
             ->execute([bin2hex(random_bytes(16)), $owner, 'Test PC', $instance, $key]);
     }
 
+    /** @var string[] users made beyond the two each test has */
+    private array $extraUsers = [];
+
     private function makeUser(): string
     {
         $id = 'u-' . bin2hex(random_bytes(12));
         self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'T')")->execute([$id, $id . '@test.local']);
+        if ($this->adminId !== '' && $this->memberId !== '') {
+            $this->extraUsers[] = $id;
+        }
         return $id;
+    }
+
+    private function rows(): int
+    {
+        return (int) self::$pdo->query('SELECT COUNT(*) FROM desktop_ai_requests WHERE owner_user_id = ' . self::$pdo->quote($this->adminId))->fetchColumn();
     }
 }

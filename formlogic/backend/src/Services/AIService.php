@@ -39,6 +39,12 @@ class AIService
         return $this->siteDesktop?->active() !== null;
     }
 
+    /** Why the site's OAIY cannot take a turn now (offline, or full), or null. */
+    public function siteAiUnavailable(): ?SiteAiBusyException
+    {
+        return $this->siteDesktop?->unavailable();
+    }
+
     public function __construct(private ?PlatformPlansService $platformPlans = null)
     {
         // Provider-neutral AI_* names take precedence (point these at LM Studio / Ollama / any

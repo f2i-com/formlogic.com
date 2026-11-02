@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Tests\Integration;
 
 use Firebase\JWT\JWT;
+use FormLogic\Constants\AppPermissions;
 use FormLogic\Controllers\AgeVerificationController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
@@ -13,6 +14,7 @@ use FormLogic\Middleware\AuthMiddleware;
 use FormLogic\Services\AccessGateService;
 use FormLogic\Services\AppDomainService;
 use FormLogic\Services\AppService;
+use FormLogic\Services\AppUserService;
 use FormLogic\Services\AuthService;
 use FormLogic\Services\FormService;
 use PDO;
@@ -32,6 +34,7 @@ final class AgeGateTest extends TestCase
     private const JWT_SECRET = 'age-gate-test-secret-0123456789abcdef';
 
     private static ?PDO $pdo = null;
+    private static ?MySQLConnection $mysql = null;
     private static AppService $apps;
     private static AccessGateService $gate;
     private static \Slim\App $slim;
@@ -66,6 +69,7 @@ final class AgeGateTest extends TestCase
         } catch (\Throwable $e) {
             self::markTestSkipped('No test database available: ' . $e->getMessage());
         }
+        self::$mysql = $conn;
         self::$pdo = $conn->getConnection();
         self::$tmpRoot = sys_get_temp_dir() . '/formlogic-age-gate-' . bin2hex(random_bytes(4));
         mkdir(self::$tmpRoot, 0777, true);
@@ -237,6 +241,28 @@ final class AgeGateTest extends TestCase
             $status = $this->json($this->call('GET', "/api/verification/age?app={$slug}&return=" . rawurlencode($return), $this->memberId));
             self::assertSame($expected, $status['returnTo'], $return);
         }
+    }
+
+    public function testAnUnverifiedMemberHoldsNoPermissionWhateverPathAsks(): void
+    {
+        $slug = $this->gatedApp(18, 'declared');
+        $appId = (string) self::$apps->getAppBySlug($slug)['id'];
+        $users = new AppUserService(self::$mysql);
+        $users->useAccessGate(new AccessGateService(self::$mysql));
+        $role = $users->createRole($appId, ['name' => 'Reader']);
+        $users->setRolePermissions((string) $role['id'], [['formId' => null, 'permission' => AppPermissions::VIEW_ALL_RESPONSES]], true);
+        self::$pdo->prepare("INSERT INTO app_users (id, app_id, user_id, role_id, status, joined_at) VALUES (?, ?, ?, ?, 'active', NOW())")
+            ->execute(['au-' . bin2hex(random_bytes(10)), $appId, $this->memberId, $role['id']]);
+
+        // The member list and detail, Aokie Companion and the MCP grants all ask through these two.
+        self::assertFalse($users->hasPermission($appId, $this->memberId, AppPermissions::VIEW_ALL_RESPONSES));
+        self::assertSame(['appLevel' => [], 'formLevel' => []], $users->getUserPermissions($appId, $this->memberId));
+        self::assertTrue($users->hasPermission($appId, $this->ownerId, AppPermissions::VIEW_ALL_RESPONSES), 'the owner is never gated');
+
+        self::$gate->issue($this->memberId, 18, 'self_declaration');
+        $fresh = new AppUserService(self::$mysql);
+        $fresh->useAccessGate(new AccessGateService(self::$mysql));
+        self::assertTrue($fresh->hasPermission($appId, $this->memberId, AppPermissions::VIEW_ALL_RESPONSES));
     }
 
     public function testTheSettingIsHeldToItsShape(): void

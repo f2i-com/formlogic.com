@@ -3,7 +3,8 @@
 // workspace and App Studio show the same thing in place as their preview. They used to frame that
 // page instead, and a FormLogic page may not be framed (the web root sends frame-ancestors 'none'
 // for every page of the app shell), so on a real server the preview was refused by the browser.
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { DomainSignInContext } from '../../lib/domainSignIn';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
@@ -17,7 +18,9 @@ export function NativeAppView({ slug, fullScreen = false, signInTo }: { slug: st
   const userId = useAuthStore(state => state.user?.id);
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
   // `engine`: the server's engine decision for this mount (absent from a server before E0).
-  const [result, setResult] = useState<{ slug: string; userId?: string; generation: number; name?: string; project?: NativeRuntimeProject; engine?: { id: string; revision: string }; error?: string } | null>(null);
+  const platform = useContext(DomainSignInContext);
+  // `ageGate`: refused by the app's age gate, which the member meets on the main site.
+  const [result, setResult] = useState<{ slug: string; userId?: string; generation: number; name?: string; project?: NativeRuntimeProject; engine?: { id: string; revision: string }; error?: string; ageGate?: boolean } | null>(null);
   useEffect(() => {
     let cancelled = false;
     const stillCurrent = () => !cancelled && isSessionGenerationCurrent(generation);
@@ -28,7 +31,7 @@ export function NativeAppView({ slug, fullScreen = false, signInTo }: { slug: st
       const admitted = project && isNativeStorageScope(scope) && scope.access === project.access &&
         (scope.access === 'application' || (scope.userId === userId && scope.userId === currentSessionOwner()));
       const error = response.error || (!admitted ? 'This app could not verify its browser storage access. Please reload or sign in again.' : undefined);
-      setResult({ slug, userId, generation, name: response.data?.name, project: error ? undefined : project, engine: response.data?.engine, error });
+      setResult({ slug, userId, generation, name: response.data?.name, project: error ? undefined : project, engine: response.data?.engine, error, ageGate: response.code === 'age_verification_required' });
     }).catch(() => {
       if (stillCurrent()) setResult({ slug, userId, generation, error: 'This app could not be opened. Please reload to try again.' });
     });
@@ -46,5 +49,13 @@ export function NativeAppView({ slug, fullScreen = false, signInTo }: { slug: st
     document.title = title;
     return () => { document.title = previous; };
   }, [title]);
-  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} /></div> : <div className="mx-auto max-w-md p-6">{error ? <><p role="alert" className="text-sm text-slate-800 dark:text-slate-200">{error}</p><Link className="mt-4 inline-flex min-h-11 items-center text-indigo-600 dark:text-indigo-300" to={signInTo ?? `/app/${encodeURIComponent(slug)}`}>Sign in or join this app</Link></> : <p role="status">Opening your app…</p>}</div>;
+  const verify = `/verify/age?app=${encodeURIComponent(slug)}&return=`;
+  const linkClass = 'mt-4 inline-flex min-h-11 items-center text-indigo-600 dark:text-indigo-300';
+  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} /></div> : <div className="mx-auto max-w-md p-6">{error ? <><p role="alert" className="text-sm text-slate-800 dark:text-slate-200">{error}</p>
+    {current?.ageGate
+      // On an app's own domain the age is confirmed on FormLogic, never on the domain.
+      ? (platform
+        ? <a className={linkClass} href={`${platform}${verify}${encodeURIComponent(window.location.href)}`}>Confirm your age</a>
+        : <Link className={linkClass} to={`${verify}${encodeURIComponent(window.location.pathname + window.location.search)}`}>Confirm your age</Link>)
+      : <Link className={linkClass} to={signInTo ?? `/app/${encodeURIComponent(slug)}`}>Sign in or join this app</Link>}</> : <p role="status">Opening your app…</p>}</div>;
 }

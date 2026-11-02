@@ -20,6 +20,12 @@ namespace FormLogic\Services;
 final class SiteDesktopAi
 {
     public const PROVIDER = 'oaiy-engine';
+    /**
+     * Turns the site's OAIY may have waiting or running at once. It answers one at a time, and each
+     * waiting turn holds a PHP worker, so past this the next is told busy at once (the lane's own
+     * cap, 8 a desktop, would drain a small pool first).
+     */
+    public const MAX_WAITING = 3;
     private const NONCE_BYTES = 24;
     private const POLL_MICROSECONDS = 250000;
     private const HEARTBEAT_SECONDS = 15;
@@ -69,6 +75,10 @@ final class SiteDesktopAi
             'messages' => array_values($messages),
         ];
         $envelope = self::seal($turn, 0, 0, $pair);
+        if (strlen((string) base64_decode($envelope, true)) > DesktopAiRelayService::MAX_ENVELOPE_BYTES) {
+            throw new SiteAiTooLargeException('This is too large for the site\'s AI on OAIY, which takes about 250 KB a request. Use a smaller picture or fewer of them.');
+        }
+        $this->assertCanTake();
 
         try {
             $queued = $this->relay->enqueue($site['ownerUserId'], $requester ?? $site['ownerUserId'], [
@@ -92,8 +102,38 @@ final class SiteDesktopAi
 
         try {
             return $this->read($id, $site['ownerUserId'], $pair, $onDelta, $onHeartbeat, $timeoutSeconds);
+        } catch (\Throwable $e) {
+            // Nobody waits for it now: the computer must not spend its one lane on it later.
+            $this->relay->abandon($id, $site['ownerUserId']);
+            throw $e;
         } finally {
             sodium_memzero($pair);
+        }
+    }
+
+    /**
+     * Why the site's OAIY cannot take a turn now, or null. Checked before a turn is queued, and by
+     * callers that want to say so before they start (AIController::meterGeneration).
+     */
+    public function unavailable(): ?SiteAiBusyException
+    {
+        $site = $this->active();
+        if ($site === null) {
+            return null;
+        }
+        if (!$this->settings->online($site)) {
+            return new SiteAiBusyException('The computer the site\'s AI runs on is offline. Try again later.', 'site_ai_offline');
+        }
+        if ($this->relay->inFlightForTarget($site['ownerUserId'], $site['instanceId']) >= self::MAX_WAITING) {
+            return new SiteAiBusyException('The site\'s AI is busy with other people\'s requests. Try again in a moment.');
+        }
+        return null;
+    }
+
+    private function assertCanTake(): void
+    {
+        if (($refusal = $this->unavailable()) !== null) {
+            throw $refusal;
         }
     }
 

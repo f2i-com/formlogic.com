@@ -16,9 +16,17 @@ class AppUserService
 {
     private PDO $mysql;
 
+    /** An app's age gate (AccessGateService::admitsMember): an unverified member holds no permission. */
+    private ?AccessGateService $gate = null;
+
     public function __construct(MySQLConnection $mysql)
     {
         $this->mysql = $mysql->getConnection();
+    }
+
+    public function useAccessGate(?AccessGateService $gate): void
+    {
+        $this->gate = $gate;
     }
 
     // Ownership verification helpers
@@ -1124,6 +1132,9 @@ class AppUserService
 
     public function hasPermission(string $appId, string $userId, string $permission, ?string $formId = null): bool
     {
+        if ($this->gate !== null && !$this->gate->admitsMember($appId, $userId)) {
+            return false;
+        }
         // Get user's role in the app
         $stmt = $this->mysql->prepare("
             SELECT au.role_id, ar.name as role_name
@@ -1166,6 +1177,9 @@ class AppUserService
 
     public function getUserPermissions(string $appId, string $userId): array
     {
+        if ($this->gate !== null && !$this->gate->admitsMember($appId, $userId)) {
+            return ['appLevel' => [], 'formLevel' => []];
+        }
         $stmt = $this->mysql->prepare("
             SELECT au.role_id, ar.name as role_name
             FROM app_users au

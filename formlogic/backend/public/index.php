@@ -850,9 +850,12 @@ $container->set(AppService::class, function (Container $c) {
 });
 
 $container->set(AppUserService::class, function (Container $c) {
-    return new AppUserService(
+    $users = new AppUserService(
         $c->get(MySQLConnection::class)
     );
+    // An app's age gate holds for every permission, whatever path asks (AccessGateService::admitsMember).
+    $users->useAccessGate($c->get(\FormLogic\Services\AccessGateService::class));
+    return $users;
 });
 
 // Validates/sanitizes saved report definitions against an app (used on every reports save path).
