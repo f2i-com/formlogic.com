@@ -141,7 +141,19 @@ test('a SoftN app runs full screen on its own domain, and a sign-in for it opens
   // The app's data goes through its backend, as this member.
   const me = await home.evaluate(() => fetch('/api/auth/me').then(response => response.json()));
   expect(me.user.domainSession).toBe(true);
-  await frame.getByRole('button', { name: 'Save a visit' }).click();
+  // Chrome sends the pointer by where the app's frame was last drawn, which lags the size changes
+  // above on a slow machine. On CI the click went to the <iframe> in the page around it and never
+  // reached the app (v0.1.19's first run, and three runs before v0.1.21); logged, the pointer reached
+  // the frame about 0.6 s after the last resize. So the click waits until the pointer over the
+  // button is the app's: the button says it is hovered. Moved a pixel each time, so that each try
+  // is a new movement.
+  const save = frame.getByRole('button', { name: 'Save a visit' });
+  let tries = 0;
+  await expect(async () => {
+    await save.hover({ position: { x: 20 + (tries++ % 2), y: 10 } });
+    await expect(frame.locator('button:hover')).toHaveText('Save a visit', { timeout: 250 });
+  }).toPass({ timeout: 15_000 });
+  await save.click();
   await expect(frame.getByText(`Saved for ${me.user.id}`)).toBeVisible();
 
   // Nothing the app's own page did was refused: the session's limit fits what the page needs.
