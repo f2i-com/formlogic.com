@@ -10,6 +10,7 @@ import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ConnectAiModal } from '../../components/mcp/ConnectAiModal';
 import { Switch } from '../../components/ui/Switch';
+import { AgeGateSetting } from '../../components/apps/AgeGateSetting';
 import { TimezoneSelect } from '../../components/ui/TimezoneSelect';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { IconPicker } from '../../components/ui/IconPicker';
@@ -49,6 +50,7 @@ const EDITED_SETTING_KEYS = [
   'timezone',
   'hideNav',
   'services',
+  'ageGate',
 ] as const;
 
 // The accent hex lands in an inline CSS custom property, so keep the format strict.
@@ -750,6 +752,9 @@ export function AppSettings() {
                   </div>
                 </>
               )}
+            </SettingsCard>
+            <SettingsCard title="Age gate" description="Keep this app for people over an age. Choose Save changes to apply it.">
+              <AgeGateSetting value={app.settings?.ageGate} onChange={(next) => updateSetting('ageGate', next)} />
             </SettingsCard>
             <SettingsCard title="Members & permissions" description="Invite people and review what they can do.">
             <ManageAppGroup

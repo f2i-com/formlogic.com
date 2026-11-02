@@ -144,6 +144,15 @@ class AppService
         if (array_key_exists('torch', $settings) && !is_bool($settings['torch'])) {
             unset($settings['torch']);
         }
+        // settings.ageGate: {minimumAge, assurance}, the app's age gate (AccessGateService), or absent.
+        if (array_key_exists('ageGate', $settings)) {
+            $gate = AccessGateService::normalizeSetting($settings['ageGate']);
+            if ($gate === null) {
+                unset($settings['ageGate']);
+            } else {
+                $settings['ageGate'] = $gate;
+            }
+        }
         return $settings;
     }
 

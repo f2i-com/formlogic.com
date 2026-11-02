@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = 'cda19a012401f776e35910a8c122bb46';
+    public const SCHEMA_STAMP = '033cca35bb355dbb60c4c721eec4dd97';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -1537,6 +1537,25 @@ class MySQLConnection
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
                 UNIQUE KEY uq_backup_link_code (code_hash),
                 KEY idx_backup_link_owner (owner_user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // A member's passes of an app's age gate (AccessGateService): who, which age, how, until
+        // when. Never a date of birth, a picture or an estimate.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS access_receipts (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                kind VARCHAR(16) NOT NULL,
+                minimum_age SMALLINT UNSIGNED NOT NULL,
+                assurance VARCHAR(16) NOT NULL,
+                method VARCHAR(32) NOT NULL,
+                verifier VARCHAR(64) NULL,
+                issued_at DATETIME NOT NULL,
+                expires_at DATETIME NOT NULL,
+                revoked_at DATETIME NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                KEY idx_access_receipts_user (user_id, kind, expires_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
         // Staged artifact ownership (review FL-002; mirrored in schema.sql +

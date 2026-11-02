@@ -842,6 +842,23 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS `backup_link_codes` (
   CONSTRAINT `fk_backup_link_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 $applied[] = 'backup_link_codes table ensured';
+// A member's passes of an app's age gate (AccessGateService).
+$pdo->exec("CREATE TABLE IF NOT EXISTS `access_receipts` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kind` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `minimum_age` smallint unsigned NOT NULL,
+  `assurance` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `method` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `verifier` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `issued_at` datetime NOT NULL,
+  `expires_at` datetime NOT NULL,
+  `revoked_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_access_receipts_user` (`user_id`,`kind`,`expires_at`),
+  CONSTRAINT `fk_access_receipts_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'access_receipts table ensured';
 if (!$columnExists($pdo, $db, 'data_nodes', 'backup_client_id')) {
     $pdo->exec("ALTER TABLE `data_nodes`
         MODIFY `desktop_connection_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,

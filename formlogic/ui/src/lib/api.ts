@@ -4,7 +4,7 @@
 
 import { ADMIN_CONFIRMATION_DECLINED, ADMIN_CONFIRMATION_REQUIRED, adminConfirmationHeaders, askForAdminConfirmation, canAskForAdminConfirmation } from './adminConfirmation';
 import type { Form } from '../types/form';
-import type { App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, FormAppContext } from '../types/app';
+import type { AccessReceipt, AgeGateStatus, App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, FormAppContext } from '../types/app';
 import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
 import { APP_LOGIC_LANGUAGES } from '../types/customAppLogic';
 import type { ClientEngineId } from './clientEngines';
@@ -2834,7 +2834,27 @@ class ApiClient {
     return this.request(`/app/${seg(slug)}/activity${limit ? `?limit=${limit}` : ''}`);
   }
 
-  async getAppMembership(slug: string): Promise<ApiResponse<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean }>> {
+  /** An app's age gate as the caller stands, the methods this site offers for it, and where to go back to. */
+  async getAgeVerification(slug: string, returnTo?: string): Promise<ApiResponse<{ app: { name: string; slug: string }; ageGate: AgeGateStatus | null; methods: string[]; returnTo: string | null }>> {
+    const query = new URLSearchParams({ app: slug });
+    if (returnTo) query.set('return', returnTo);
+    return this.request(`/verification/age?${query}`);
+  }
+
+  /** The member's own declaration of their age, where the app accepts one. */
+  async declareAge(slug: string, returnTo?: string): Promise<ApiResponse<{ receipt: AccessReceipt; ageGate: AgeGateStatus; returnTo: string | null }>> {
+    return this.request('/verification/age/declare', { method: 'POST', body: JSON.stringify({ app: slug, confirm: true, ...(returnTo ? { return: returnTo } : {}) }) });
+  }
+
+  async getAccessReceipts(): Promise<ApiResponse<{ receipts: AccessReceipt[] }>> {
+    return this.request('/verification/receipts');
+  }
+
+  async revokeAccessReceipt(id: string): Promise<ApiResponse<{ revoked: boolean }>> {
+    return this.request(`/verification/receipts/${seg(id)}`, { method: 'DELETE' });
+  }
+
+  async getAppMembership(slug: string): Promise<ApiResponse<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean; ageGate?: AgeGateStatus | null }>> {
     if (this._demoMode) {
       const stored = await getDemoAppBySlug(slug);
       if (stored) {

@@ -1,5 +1,6 @@
 import { useContext, useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import type { AgeGateStatus } from '../../types/app';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
@@ -8,7 +9,7 @@ import { DomainSignInContext, startDomainSignIn } from '../../lib/domainSignIn';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { PasswordInput } from '../ui/PasswordInput';
-import { AlertCircle, Lock, Mail, UserPlus, Clock } from 'lucide-react';
+import { AlertCircle, Lock, Mail, UserPlus, Clock, ShieldCheck } from 'lucide-react';
 
 interface AppRuntimeAuthGuardProps {
   children: React.ReactNode;
@@ -24,7 +25,8 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [membershipInfo, setMembershipInfo] = useState<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean } | null>(null);
+  const navigate = useNavigate();
+  const [membershipInfo, setMembershipInfo] = useState<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean; ageGate?: AgeGateStatus | null } | null>(null);
   const [membershipChecked, setMembershipChecked] = useState(false);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -164,6 +166,34 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
                 &larr; Back to home
               </a>
             </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // A member of an app with an age gate they haven't met. They confirm their age on this site,
+  // never on an app's own domain (as with sign-in), and come back here.
+  if (user && !config && membershipInfo?.isMember && membershipInfo.ageGate && !membershipInfo.ageGate.satisfied) {
+    const gate = membershipInfo.ageGate;
+    const confirmAge = () => {
+      if (signInAt) {
+        window.location.assign(`${signInAt}${gate.verifyPath}&return=${encodeURIComponent(window.location.href)}`);
+      } else {
+        navigate(`${gate.verifyPath}&return=${encodeURIComponent(location.pathname + location.search)}`);
+      }
+    };
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 p-4">
+        <div className="text-center max-w-md mx-auto bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20">
+          <div className="w-12 h-12 mx-auto rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-4">
+            <ShieldCheck className="h-6 w-6 text-primary-600 dark:text-primary-400" />
+          </div>
+          <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white tracking-tight">For people aged {gate.minimumAge} and over</h2>
+          <p className="text-gray-500 dark:text-slate-400 mb-6">{membershipInfo.appName} asks its members to confirm their age before it opens.</p>
+          <div className="flex flex-col gap-2">
+            <Button onClick={confirmAge}>Confirm your age</Button>
+            <a href="/" className="text-sm text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white">Go to Home</a>
           </div>
         </div>
       </div>

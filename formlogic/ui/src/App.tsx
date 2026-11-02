@@ -66,6 +66,7 @@ const FormResponses = lazyWithRetry(() => import('./pages/FormResponses'));
 const FormResponseView = lazyWithRetry(() => import('./pages/FormResponseView'));
 const Login = lazyWithRetry(() => import('./pages/Login').then(m => ({ default: m.Login })));
 const AppDomainSignIn = lazyWithRetry(() => import('./pages/AppDomainSignIn').then(m => ({ default: m.AppDomainSignIn })));
+const AgeVerificationPage = lazyWithRetry(() => import('./pages/verify/AgeVerificationPage').then(m => ({ default: m.AgeVerificationPage })));
 const Signup = lazyWithRetry(() => import('./pages/Signup').then(m => ({ default: m.Signup })));
 
 // Lazy load app admin pages
@@ -248,6 +249,8 @@ function AppRoutes() {
         <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
         {/* Signing in to an app on its own domain (the same way through login) */}
         <Route path="/sign-in/domain" element={<AppDomainSignIn />} />
+        {/* An app's age gate, met on this site (it sends signed-out visitors through login) */}
+        <Route path="/verify/age" element={<AgeVerificationPage />} />
         {/* Public form response route - accessible without auth */}
         <Route path="/form/:formId" element={<FormResponse />} />
         {/* Pack marketplace (public) */}
@@ -425,6 +428,8 @@ function AppRoutes() {
       <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
       {/* Continuing to an app on its own domain (full screen, no shell) */}
       <Route path="/sign-in/domain" element={<AppDomainSignIn />} />
+      {/* An app's age gate, met on this site and never on an app's own domain (full screen, no shell) */}
+      <Route path="/verify/age" element={<AgeVerificationPage />} />
       {/* Logged-in users shouldn't reach password reset; send them home */}
       <Route path="/forgot-password" element={<Navigate to="/" replace />} />
       <Route path="/reset-password" element={<Navigate to="/" replace />} />

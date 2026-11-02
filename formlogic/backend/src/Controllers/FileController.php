@@ -26,7 +26,7 @@ class FileController
     private ?PlanService $planService;
     private ?ResponseService $responseService;
 
-    public function __construct(FileStorageService $fileStorage, FormService $formService, ?AppService $appService = null, ?AppUserService $appUserService = null, ?PlanService $planService = null, ?ResponseService $responseService = null)
+    public function __construct(FileStorageService $fileStorage, FormService $formService, ?AppService $appService = null, ?AppUserService $appUserService = null, ?PlanService $planService = null, ?ResponseService $responseService = null, private ?\FormLogic\Services\AccessGateService $gate = null)
     {
         $this->fileStorage = $fileStorage;
         $this->formService = $formService;
@@ -416,6 +416,11 @@ class FileController
                 return null;
             }
             foreach ($this->appService->activeAppIdsContainingForm($formId, $userId) as $appId) {
+                // An app's age gate holds for its files as for its routes (AppAccessGateMiddleware).
+                $app = $this->gate !== null ? $this->appService->getApp($appId) : null;
+                if ($app !== null && $this->gate->decide($app, $userId) !== null) {
+                    continue;
+                }
                 if ($this->appUserService->hasPermission($appId, $userId, AppPermissions::VIEW_ALL_RESPONSES, $formId)) {
                     return 'private';
                 }

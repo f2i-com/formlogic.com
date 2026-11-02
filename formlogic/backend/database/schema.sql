@@ -698,6 +698,23 @@ CREATE TABLE `backup_link_codes` (
   KEY `idx_backup_link_owner` (`owner_user_id`),
   CONSTRAINT `fk_backup_link_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- A member's passes of an app's age gate (AccessGateService): who, which age, how, until when.
+CREATE TABLE `access_receipts` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kind` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `minimum_age` smallint unsigned NOT NULL,
+  `assurance` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `method` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `verifier` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `issued_at` datetime NOT NULL,
+  `expires_at` datetime NOT NULL,
+  `revoked_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_access_receipts_user` (`user_id`,`kind`,`expires_at`),
+  CONSTRAINT `fk_access_receipts_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;

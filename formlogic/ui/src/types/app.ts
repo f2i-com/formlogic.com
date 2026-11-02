@@ -69,6 +69,37 @@ export interface AppSettings {
    *  Included services. The backend gates each service's endpoints on `enabled`;
    *  an ABSENT map/entry means enabled (backward compatible). */
   services?: Record<string, { enabled: boolean; title?: string; description?: string }>;
+  /** The app's age gate: members need a check for at least this age, by a method at least this
+   *  strong, before the app opens for them (AccessGateService). Absent: no gate. */
+  ageGate?: AgeGateSetting;
+}
+
+/** How strongly a method establishes an age, weakest first. */
+export type AgeAssurance = 'declared' | 'estimated' | 'verified';
+
+export interface AgeGateSetting {
+  minimumAge: number;
+  assurance: AgeAssurance;
+}
+
+/** An app's age gate as the signed-in member stands with it. */
+export interface AgeGateStatus extends AgeGateSetting {
+  satisfied: boolean;
+  /** Where on the main site the member confirms their age. */
+  verifyPath: string;
+}
+
+/** One of the member's own age checks. Never a date of birth, a picture or an estimate. */
+export interface AccessReceipt {
+  id: string;
+  kind: 'age';
+  minimumAge: number;
+  assurance: AgeAssurance;
+  method: string;
+  issuedAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  live: boolean;
 }
 
 export interface AppNavItem {

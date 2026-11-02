@@ -1,0 +1,62 @@
+import { useEffect, useState } from 'react';
+import { ShieldCheck } from 'lucide-react';
+import { Button } from '../ui/Button';
+import { api } from '../../lib/api';
+import { toast } from '../../stores/toastStore';
+import type { AccessReceipt } from '../../types/app';
+
+const HOW: Record<string, string> = { self_declaration: 'you confirmed it' };
+
+/**
+ * The member's age checks on this site: what each one opens, and a way to withdraw it. What is
+ * kept is only what is listed here; withdrawing one closes the apps it opened until checked again.
+ */
+export function AgeChecksPanel() {
+  const [receipts, setReceipts] = useState<AccessReceipt[] | null>(null);
+  const [withdrawing, setWithdrawing] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.getAccessReceipts().then((result) => {
+      if (!cancelled) setReceipts(result.data?.receipts ?? []);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const withdraw = async (receipt: AccessReceipt) => {
+    setWithdrawing(receipt.id);
+    const result = await api.revokeAccessReceipt(receipt.id);
+    setWithdrawing(null);
+    if (result.error) { toast.error('Could not withdraw it', result.error); return; }
+    setReceipts((all) => (all ?? []).map((r) => (r.id === receipt.id ? { ...r, live: false, revokedAt: new Date().toISOString() } : r)));
+    toast.success('Withdrawn', `Apps for people aged ${receipt.minimumAge} and over will ask you again.`);
+  };
+
+  const live = (receipts ?? []).filter((r) => r.live);
+  return (
+    <div>
+      <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+        <ShieldCheck className="h-4 w-4" aria-hidden="true" />Age checks
+      </h3>
+      <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
+        Apps on this site that are for people over an age ask you once. Only the age, how it was shown and when are kept.
+      </p>
+      {receipts === null ? (
+        <p role="status" className="mt-2 text-sm text-gray-400">Loading…</p>
+      ) : live.length === 0 ? (
+        <p className="mt-2 text-sm text-gray-500 dark:text-slate-400">You have none.</p>
+      ) : (
+        <ul className="mt-3 space-y-2">
+          {live.map((receipt) => (
+            <li key={receipt.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-200 px-3 py-2 dark:border-slate-700">
+              <span className="text-sm text-gray-900 dark:text-white">
+                {receipt.minimumAge}+ · {HOW[receipt.method] ?? receipt.method} · until {new Date(receipt.expiresAt.replace(' ', 'T') + 'Z').toLocaleDateString()}
+              </span>
+              <Button size="sm" variant="outline" isLoading={withdrawing === receipt.id} onClick={() => void withdraw(receipt)}>Withdraw</Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}

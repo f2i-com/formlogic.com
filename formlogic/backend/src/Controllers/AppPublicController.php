@@ -56,7 +56,8 @@ class AppPublicController
         MySQLConnection $mysql,
         SQLiteConnection $sqlite,
         AppDomainService $appDomains,
-        ?RateLimiter $rateLimiter = null
+        ?RateLimiter $rateLimiter = null,
+        private ?\FormLogic\Services\AccessGateService $gate = null
     ) {
         $this->appService = $appService;
         $this->appUserService = $appUserService;
@@ -234,6 +235,8 @@ class AppPublicController
             'status' => $status,
             'isMember' => $appUser && $status === 'active',
             'canSelfRegister' => !$appUser && !empty($settings['allowSelfRegistration']),
+            // The app's age gate, if it has one: what it asks, whether this member meets it, and where to.
+            'ageGate' => $this->gate?->statusFor($app, $userId),
         ]);
     }
 

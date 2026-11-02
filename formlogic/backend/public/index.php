@@ -670,7 +670,8 @@ $container->set(FileController::class, function (Container $c) {
         $c->get(AppService::class),
         $c->get(AppUserService::class),
         $c->get(\FormLogic\Services\PlanService::class),
-        $c->get(ResponseService::class)
+        $c->get(ResponseService::class),
+        $c->get(\FormLogic\Services\AccessGateService::class)
     );
 });
 
@@ -817,6 +818,17 @@ $container->set(ExternalApiController::class, function (Container $c) {
 });
 
 // Register App services
+$container->set(\FormLogic\Services\AccessGateService::class, function (Container $c) {
+    return new \FormLogic\Services\AccessGateService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\AgeVerificationController::class, function (Container $c) {
+    return new \FormLogic\Controllers\AgeVerificationController(
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\AccessGateService::class),
+        $c->get(\FormLogic\Services\AppDomainService::class)
+    );
+});
+
 $container->set(AppService::class, function (Container $c) {
     return new AppService(
         $c->get(MySQLConnection::class),
@@ -1081,7 +1093,8 @@ $container->set(AppPublicController::class, function (Container $c) {
         $c->get(MySQLConnection::class),
         $c->get(SQLiteConnection::class),
         $c->get(\FormLogic\Services\AppDomainService::class),
-        $c->get(\FormLogic\Services\RateLimiter::class)
+        $c->get(\FormLogic\Services\RateLimiter::class),
+        $c->get(\FormLogic\Services\AccessGateService::class)
     );
 });
 
@@ -1318,6 +1331,12 @@ $appDomainSessions = new \FormLogic\Support\AppDomainSession(
 );
 $authRequired = new AuthMiddleware($container->get(AuthService::class), false, $cookieName, $appDomainSessions);
 $authOptional = new AuthMiddleware($container->get(AuthService::class), true, $cookieName, $appDomainSessions);
+// An app's age gate, on every route that names an app by slug (RouteGateWiringTest holds this file to it).
+$appAccessGate = new \FormLogic\Middleware\AppAccessGateMiddleware(
+    $container->get(AppService::class),
+    $container->get(\FormLogic\Services\AccessGateService::class),
+    $authOptional
+);
 
 // Routes
 $app->options('/{routes:.+}', function ($request, $response) {
@@ -2553,7 +2572,7 @@ $app->get('/.well-known/aokie-companion.json', $aokieDiscoveryHandler);
 $app->get('/api/app/{slug}/aokie-discovery', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\AokieCompanionController::class)
         ->appDiscovery($request, $response, $getArgs($request));
-});
+})->add($appAccessGate);
 
 // Native OAuth bearer -> one-use/short-lived v2 gateway admission. The
 // controller additionally binds client, resource, app and device; this bucket
@@ -3175,10 +3194,10 @@ $app->put('/api/apps/{id}/engine', function ($request, $response) use ($containe
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
 $app->get('/api/app/{slug}/hosting', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\HostedAppController::class)->runtime($request, $response, $getArgs($request));
-})->add($hostingRuntimeLimiter)->add($authRequired);
+})->add($appAccessGate)->add($hostingRuntimeLimiter)->add($authRequired);
 $app->post('/api/app/{slug}/actions/{action}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\HostedAppController::class)->runtime($request, $response, $getArgs($request));
-})->add($cloudWriteGate)->add($hostingRuntimeLimiter)->add($authRequired);
+})->add($appAccessGate)->add($cloudWriteGate)->add($hostingRuntimeLimiter)->add($authRequired);
 
 // Native SoftN app administration and isolated application requests.
 $app->get('/api/apps/{id}/native', function ($request, $response) use ($container, $getArgs) {
@@ -3199,13 +3218,28 @@ $app->map(['GET', 'POST'], '/api/apps/{id}/native/{operation:records}', function
 $nativeLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'native_apps', true, true, null, true);
 $app->get('/api/app/{slug}/entry', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->entry($request, $response, $getArgs($request));
-})->add($nativeLimiter)->add($authOptional);
+})->add($appAccessGate)->add($nativeLimiter)->add($authOptional);
 $app->get('/api/app/{slug}/native', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->runtime($request, $response, $getArgs($request));
-})->add($nativeLimiter)->add($authOptional);
+})->add($appAccessGate)->add($nativeLimiter)->add($authOptional);
 $app->post('/api/app/{slug}/native/request', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->runtime($request, $response, $getArgs($request));
-})->add($nativeLimiter)->add($authOptional);
+})->add($appAccessGate)->add($nativeLimiter)->add($authOptional);
+
+// An app's age gate, met on the main site (AgeVerificationController); a domain's session never reaches these.
+$ageVerificationLimiter = new RateLimitMiddleware($rateLimiter, 20, 60, 'age_verification', true);
+$app->get('/api/verification/age', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AgeVerificationController::class)->status($request, $response);
+})->add($ageVerificationLimiter)->add($authRequired);
+$app->post('/api/verification/age/declare', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AgeVerificationController::class)->declare($request, $response);
+})->add($ageVerificationLimiter)->add($authRequired);
+$app->get('/api/verification/receipts', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AgeVerificationController::class)->receipts($request, $response);
+})->add($authRequired);
+$app->delete('/api/verification/receipts/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AgeVerificationController::class)->revoke($request, $response, $getArgs($request));
+})->add($ageVerificationLimiter)->add($authRequired);
 
 // App Admin routes (protected - require authentication + ownership)
 $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, $getArgs) {
@@ -3787,7 +3821,7 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     $group->delete('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->clearFormResponses($request, $response, $getArgs($request));
     })->add($authRequired);
-});
+})->add($appAccessGate);
 
 // Run app
 $app->run();
