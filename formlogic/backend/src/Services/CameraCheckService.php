@@ -165,6 +165,9 @@ final class CameraCheckService
         $detail = null;
         if ($row['status'] === 'assessing') {
             [$row, $detail] = $this->advance($row);
+        } elseif ($row['status'] === 'deciding' && self::expired($row)) {
+            // The ask that was deciding it never finished.
+            $row = $this->finish($row, 'unavailable', true);
         }
         return $this->describe($row, $detail);
     }
@@ -341,7 +344,14 @@ final class CameraCheckService
             }
             return [$row, null];
         }
-        return $this->decide($row, mb_substr($seen['content'], 0, self::MAX_ANSWER));
+        // Claimed before the plugin decides, so two asks at once (two tabs, a reload) decide once:
+        // the other reads the check as it then stands.
+        $claim = $this->pdo->prepare("UPDATE camera_checks SET status = 'deciding' WHERE id = ? AND status = 'assessing'");
+        $claim->execute([$row['id']]);
+        if ($claim->rowCount() !== 1) {
+            return [$this->row((string) $row['id'], (string) $row['user_id']), null];
+        }
+        return $this->decide(['status' => 'deciding'] + $row, mb_substr($seen['content'], 0, self::MAX_ANSWER));
     }
 
     /**
@@ -483,7 +493,7 @@ final class CameraCheckService
     private function assertMayStart(string $userId): void
     {
         $this->expireOld($userId);
-        $open = $this->pdo->prepare("SELECT COUNT(*) FROM camera_checks WHERE user_id = ? AND status IN ('sending', 'assessing')");
+        $open = $this->pdo->prepare("SELECT COUNT(*) FROM camera_checks WHERE user_id = ? AND status IN ('sending', 'assessing', 'deciding')");
         $open->execute([$userId]);
         if ((int) $open->fetchColumn() > 0) {
             throw new \InvalidArgumentException('Your last check is still being looked at. Wait for it to finish.');
@@ -509,7 +519,7 @@ final class CameraCheckService
     /** Checks past their time with OAIY are ended, and their turn given up. */
     private function expireOld(string $userId): void
     {
-        $stmt = $this->pdo->prepare("SELECT * FROM camera_checks WHERE user_id = ? AND status IN ('sending', 'assessing') AND expires_at < ?");
+        $stmt = $this->pdo->prepare("SELECT * FROM camera_checks WHERE user_id = ? AND status IN ('sending', 'assessing', 'deciding') AND expires_at < ?");
         $stmt->execute([$userId, gmdate('Y-m-d H:i:s')]);
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             if ($row['relay_id'] !== null) {
@@ -535,12 +545,19 @@ final class CameraCheckService
         return $row;
     }
 
-    /** End a check with its outcome; $refund: it did not run, so it is not a try. */
+    /**
+     * End a check with its outcome; $refund: it did not run, so it is not a try. A check already
+     * ended keeps its outcome: a late expiry or a losing ask never overwrites one.
+     */
     private function finish(array $row, string $outcome, bool $refund = false, ?string $message = null): array
     {
-        $this->pdo->prepare(
-            'UPDATE camera_checks SET status = ?, outcome = ?, message = ?, finished_at = ?, channel = NULL, turn = NULL' . ($refund ? ', submitted_at = NULL' : '') . ' WHERE id = ?'
-        )->execute(['done', $outcome, $message, gmdate('Y-m-d H:i:s'), $row['id']]);
+        $done = $this->pdo->prepare(
+            "UPDATE camera_checks SET status = 'done', outcome = ?, message = ?, finished_at = ?, channel = NULL, turn = NULL" . ($refund ? ', submitted_at = NULL' : '') . " WHERE id = ? AND status <> 'done'"
+        );
+        $done->execute([$outcome, $message, gmdate('Y-m-d H:i:s'), $row['id']]);
+        if ($done->rowCount() !== 1) {
+            return $this->row((string) $row['id'], (string) $row['user_id']);
+        }
         return ['status' => 'done', 'outcome' => $outcome, 'message' => $message, 'channel' => null, 'turn' => null] + ($refund ? ['submitted_at' => null] : []) + $row;
     }
 
@@ -553,7 +570,7 @@ final class CameraCheckService
 
     private function describe(array $row, ?array $detail): array
     {
-        $status = $row['status'] === 'sending' ? 'assessing' : (string) $row['status'];
+        $status = in_array($row['status'], ['sending', 'deciding'], true) ? 'assessing' : (string) $row['status'];
         $outcome = $row['outcome'];
         $out = [
             'id' => (string) $row['id'],

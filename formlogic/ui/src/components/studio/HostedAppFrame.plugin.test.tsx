@@ -20,6 +20,7 @@ import { HostedAppFrame } from './HostedAppFrame';
 import { NATIVE_PROTOCOL } from '../../lib/softn/protocol';
 import { HOSTED_ACTOR_ERROR } from '../../lib/hostedActor';
 import { api } from '../../lib/api';
+import { workspaceBridge } from '../../lib/softn/workspaceBridge';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 const identity = { version: '0.0.17', sha256: 'current' };
@@ -101,6 +102,14 @@ it('opens the site\'s camera check for a plugin granted the camera, and tells th
   await call(channel, 'pluginCamera', 1);
   expect(onCamera).toHaveBeenCalledTimes(1);
   expect(replies(channel)).toEqual([{ id: 1, result: { result: { opened: true } } }]);
+});
+
+it('refuses a plugin page the workspace bridge, which other native apps have', async () => {
+  const channel = await mount({ context: {}, onDone: vi.fn() });
+  const names = ['workspaceInfo', 'workspaceRecords', 'workspaceOpen', 'workspaceDashboard'];
+  for (const [i, name] of names.entries()) await call(channel, name, i + 1);
+  expect(replies(channel)).toEqual(names.map((_, i) => ({ id: i + 1, result: { error: HOSTED_ACTOR_ERROR } })));
+  expect(workspaceBridge).not.toHaveBeenCalled();
 });
 
 it('gives a plugin page no third action either', async () => {

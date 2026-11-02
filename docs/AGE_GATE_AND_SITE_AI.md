@@ -176,14 +176,19 @@ How to write one is `docs/PLUGINS.md`. In short:
    the Plugins account); the Age gate's declaration. Built (e2e: main site, `/native`, a custom
    domain).
 2. The site's AI on OAIY: the admin choice and pinned key, the server-sealed upstream, metering,
-   the offline check and queue cap, the no-grant test. Built; the sealed lane it uses was run end to
-   end against a scratch OAIY with the camera check.
+   the offline check and queue cap, the no-grant test. Built and tested against the contract's test
+   desktop. The server-sealed lane it uses ran end to end against a scratch OAIY in the camera
+   check, through a provider stored in OAIY; members' Site AI chat itself, on OAIY's own engine
+   (`oaiy-engine`, through Studio), has not been run against a real OAIY: the scratch server has no
+   Studio.
 3. The camera check and the Age gate's face check. Built: `CameraCheckServiceTest` (the plugin in
    the real runner, the contract's test desktop as OAIY, honest and hostile answers) and a run with
    Chrome's fake camera, a scratch `oaiy-server` from OAIY's release and a stub vision provider
    stored in it (listing providers and models sealed, the image test, an honest check opening the
    app, a provider that never saw the pictures passing nobody, two faces, the page refused the
-   plugin's site routes). Not run with a real vision model here.
+   plugin's site routes). Not run with a real vision model, nor on OAIY's own engine: how well a
+   given model tells left from right, keeps to JSON and reads the control digit is for the
+   administrator to see with "Try it on yourself".
 4. Later: plugins an owner adds to one app, signed plugin packages, photo ID, wallet, provider
    adapter, a dedicated evaluated age model.
 

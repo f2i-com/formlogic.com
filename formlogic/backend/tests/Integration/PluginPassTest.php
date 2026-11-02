@@ -504,6 +504,67 @@ final class PluginPassTest extends TestCase
         self::assertSame(0, (int) self::$pdo->query('SELECT COUNT(*) FROM passes WHERE revoked_at IS NULL AND user_id = ' . self::$pdo->quote($this->memberId))->fetchColumn());
     }
 
+    public function testAnUploadedPluginInstallsAndItsNextVersionUpdatesIt(): void
+    {
+        $native = new NativeAppService(self::$tmpRoot . '/native-' . bin2hex(random_bytes(3)));
+        if (!$native->available()) {
+            $this->markTestSkipped('No SoftN runner here (set FORMLOGIC_NODE_BIN)');
+        }
+        $plugins = new PluginService(self::$mysql, self::$apps, $native);
+        // The Age gate's own files, as someone's upload under another id.
+        $project = function (string $id, string $version) {
+            $dir = dirname(__DIR__, 2) . '/resources/plugins/age-gate';
+            $files = [];
+            $assets = [];
+            foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)) as $file) {
+                $relative = str_replace('\\', '/', substr((string) $file, strlen($dir) + 1));
+                if (str_starts_with($relative, 'assets/')) {
+                    $assets[$relative] = base64_encode((string) file_get_contents((string) $file));
+                } else {
+                    $files[$relative] = (string) file_get_contents((string) $file);
+                }
+            }
+            $manifest = json_decode($files['manifest.json'], true);
+            $manifest['id'] = $id;
+            $manifest['version'] = $version;
+            $manifest['formlogicPlugin']['id'] = $id;
+            $manifest['formlogicPlugin']['name'] = 'Someone\'s age check';
+            $files['manifest.json'] = json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            return ['files' => $files, 'assets' => $assets];
+        };
+        $id = 'someone.age-' . bin2hex(random_bytes(3));
+        $this->pluginIds[] = $id;
+
+        $read = $plugins->inspect($project($id, '2.0.0'), 'upload');
+        self::assertSame([$id, null, ['camera'], ['Keep its own records, in a database only it can read', 'Make random numbers and seal its own data']],
+            [$read['id'], $read['updates'], $read['uses'], PluginService::review($read)['sandbox']]);
+        $installed = $plugins->installUpload($project($id, '2.0.0'), $this->ownerId);
+        $this->appIds[] = $installed['appId'];
+        self::assertSame([$id, 'upload', '2.0.0', true], [$installed['manifestId'], $installed['source'], $installed['version'], $installed['enabled']]);
+        self::assertNull($plugins->pendingUpdate($installed), 'an upload is updated by uploading, never from what ships');
+        $plugins->setSettings($id, ['turns' => 'updown']);
+
+        // Its own backend runs, in the runner, under its new id.
+        $identity = ['formlogic' => ['appId' => $installed['appId'], 'userId' => $this->memberId, 'roleId' => 'member']];
+        $answer = $native->request($installed['appId'], ['method' => 'POST', 'path' => '/api/pass', 'query' => (object) [], 'body' => (object) ['minimumAge' => 18, 'confirmed' => true],
+            'headers' => (object) ['authorization' => '', 'idempotency-key' => ''], 'client_ip' => '127.0.0.1', 'photos' => false], $identity, [], null, true);
+        self::assertSame(200, $answer['status']);
+
+        // The next version, uploaded: read as an update, then taken, keeping what still fits.
+        self::assertSame(['version' => '2.0.0'], $plugins->inspect($project($id, '2.1.0'), 'upload')['updates']);
+        $updated = $plugins->installUpload($project($id, '2.1.0'), $this->ownerId);
+        self::assertSame([$installed['appId'], '2.1.0', 'updown'], [$updated['appId'], $updated['version'], $updated['settings']['turns']]);
+
+        // A built-in's id cannot be uploaded, and neither can the same id from elsewhere.
+        try {
+            $plugins->installUpload($project('formlogic.age-gate', '9.0.0'), $this->ownerId);
+            self::fail('an upload took a built-in\'s id');
+        } catch (\InvalidArgumentException) {
+        }
+        $plugins->remove($id);
+        self::assertNull($plugins->find($id));
+    }
+
     /** A plugin's answer on its own route, recorded (or not) for the member. Returns what the page gets. */
     private function answer(string $method, string $path, int $status, ?array $pass): array
     {

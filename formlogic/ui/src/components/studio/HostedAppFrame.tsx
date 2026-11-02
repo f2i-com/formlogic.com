@@ -391,7 +391,8 @@ export function HostedAppFrame({
             reply({ result: { opened: true } });
             return;
           }
-          if (["workspaceInfo", "workspaceRecords", "workspaceOpen", "workspaceDashboard"].includes(action)) {
+          // Not for a plugin's page: a plugin is anyone's code, and workspaceOpen moves this page.
+          if (!plugin && ["workspaceInfo", "workspaceRecords", "workspaceOpen", "workspaceDashboard"].includes(action)) {
             reply({ result: await workspaceBridge(slug, action, input, (path) => {
               if (!isCurrentMount()) return;
               invalidate();

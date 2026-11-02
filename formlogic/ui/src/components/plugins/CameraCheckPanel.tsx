@@ -185,7 +185,7 @@ export function CameraCheckPanel({ start, mode = 'member', pluginName, onPassed,
           <div className="space-y-3 text-sm text-gray-600 dark:text-slate-300">
             <p>This takes about 20 seconds. {pluginName} asks you to look at the camera and move a few ways, and a picture is taken at each step.</p>
             <p>The pictures go to an AI on the site administrator's own computer, which describes them for {pluginName} to decide. They are not kept: only the result is. {pluginName} never sees them.</p>
-            <p>Use good light, with only your face in view.</p>
+            <p>Use good light, with only you in view.</p>
             <Button className="w-full" onClick={() => void begin()}>Start</Button>
           </div>
         )}

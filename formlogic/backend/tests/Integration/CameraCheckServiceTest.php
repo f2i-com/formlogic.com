@@ -187,6 +187,20 @@ final class CameraCheckServiceTest extends TestCase
         self::assertSame([], $this->gate->receiptsFor($this->memberId), 'none of these recorded a pass');
     }
 
+    public function testTwoAsksAtOnceDecideItOnce(): void
+    {
+        [, , $id] = $this->check(fn (array $honest) => $honest, null, false);
+        // Another ask is deciding it: this one reads it as still being checked, and asks the plugin nothing.
+        self::$pdo->prepare("UPDATE camera_checks SET status = 'deciding' WHERE id = ?")->execute([$id]);
+        self::assertSame('assessing', $this->checks->status($this->memberId, $id)['status']);
+        self::assertSame([], $this->gate->receiptsFor($this->memberId));
+        self::$pdo->prepare("UPDATE camera_checks SET status = 'assessing' WHERE id = ?")->execute([$id]);
+        $first = $this->checks->status($this->memberId, $id);
+        $again = $this->checks->status($this->memberId, $id);
+        self::assertSame(['done', 'passed', 'done', 'passed'], [$first['status'], $first['outcome'], $again['status'], $again['outcome']]);
+        self::assertCount(1, $this->gate->receiptsFor($this->memberId), 'one pass');
+    }
+
     public function testTriesAreCountedAndAnUnconfirmedAgeWaitsAnHour(): void
     {
         // A check that did not run is not a try.
@@ -238,7 +252,7 @@ final class CameraCheckServiceTest extends TestCase
      * to an honest description (or $raw text), then ask until it is decided. Returns [the last
      * status, the turn as OAIY opened it].
      */
-    private function check(\Closure $twist, ?string $raw = null): array
+    private function check(\Closure $twist, ?string $raw = null, bool $ask = true): array
     {
         $started = $this->checks->start($this->memberId, 'formlogic.age-gate', $this->slug, 'age');
         self::assertSame('started', $started['status']);
@@ -271,6 +285,9 @@ final class CameraCheckServiceTest extends TestCase
         $this->relay->appendFrame($claimed['requestId'], $this->adminId, SiteDesktopAi::seal(['kind' => 'delta', 'delta' => $content], 1, 0, $pair), 'inst-camera');
         $this->relay->appendFrame($claimed['requestId'], $this->adminId, SiteDesktopAi::seal(['kind' => 'final'], 1, 1, $pair), 'inst-camera');
         $this->relay->complete($claimed['requestId'], $this->adminId, ['status' => 'done', 'instanceId' => 'inst-camera']);
+        if (!$ask) {
+            return [null, $turn, $started['id']];
+        }
 
         $status = $this->checks->status($this->memberId, $started['id']);
         self::assertSame('done', $status['status']);

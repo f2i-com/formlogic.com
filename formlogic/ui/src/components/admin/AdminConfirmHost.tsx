@@ -53,7 +53,7 @@ export function AdminConfirmHost() {
   return (
     <Modal isOpen={open} onClose={() => finish(false)} title="Confirm it's you">
       <form onSubmit={submit} className="space-y-4 p-6">
-        <p className="text-sm text-gray-500 dark:text-slate-400">This opens someone else's account, so we check first. It lasts 15 minutes.</p>
+        <p className="text-sm text-gray-500 dark:text-slate-400">Changes to the site, and opening someone else's account, are checked first. It lasts 15 minutes.</p>
         {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p>}
         <PasswordInput label="Your password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" disabled={busy} required />
         {mfaEnabled && <Input label="Authenticator code" value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code" inputMode="numeric" disabled={busy} required />}

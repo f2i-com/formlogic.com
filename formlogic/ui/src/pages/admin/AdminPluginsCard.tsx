@@ -12,7 +12,7 @@ import { AdminCameraCheckCard } from './AdminCameraCheckCard';
 
 /** What else of the site a plugin may use, in words. */
 const USES: Record<string, string> = {
-  camera: 'Use the camera, in this site\'s own page: it asks for pictures, an AI on your OAIY describes them, and the plugin decides from the description. It never sees a picture.',
+  camera: 'Use the camera, in this site\'s own page: it asks members for pictures and sends its own instructions with them to the AI on your computer running OAIY (Camera checks, below), which uses that computer; it decides from what the AI says. It never sees a picture.',
 };
 
 /** What a plugin may do, in words: the passes it issues, what it uses, and its sandbox's own permissions. */
