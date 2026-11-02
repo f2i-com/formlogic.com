@@ -1,7 +1,7 @@
 {
   "id": "formlogic.age-gate",
   "name": "Age gate",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "main": "ui/main.ui",
   "config": {
     "server": {
@@ -69,6 +69,17 @@
           { "value": "updown", "label": "Up and down only" }
         ],
         "default": "all"
+      },
+      {
+        "key": "ageModel",
+        "label": "OAIY's age model",
+        "help": "OAIY can read ages with an age model of its own (its Age check: MiVOLO v2), with the AI's estimate as the backup. Where it has none, the AI's estimate is used, unless you require the age model.",
+        "type": "choice",
+        "options": [
+          { "value": "prefer", "label": "Use it where OAIY has it" },
+          { "value": "require", "label": "Require it: no face check without it" }
+        ],
+        "default": "prefer"
       }
     ],
     "passes": [

@@ -264,7 +264,65 @@ final class CameraCheckService
         if ($text > self::MAX_TEXT || count($seen) !== $frames) {
             throw new \RuntimeException('The plugin\'s turn is too long, or does not place every picture once.');
         }
-        return ['system' => $turn['system'], 'parts' => $parts];
+        $template = ['system' => $turn['system'], 'parts' => $parts];
+        // A check the administrator's OAIY runs on the pictures itself, beside the model's turn (an age model, for
+        // one): its name, and which pictures (the camera's, or every one in the turn). An OAIY without it answers
+        // the turn as before.
+        if (array_key_exists('verify', $turn)) {
+            $verify = $turn['verify'];
+            if (!is_array($verify) || !is_string($verify['task'] ?? null) || !preg_match('/^[a-z0-9-]{1,32}$/D', $verify['task'])
+                || !in_array($verify['images'] ?? null, ['frames', 'all'], true)) {
+                throw new \RuntimeException('The plugin asks OAIY for a check the site cannot send.');
+            }
+            $template['verify'] = ['task' => $verify['task'], 'images' => $verify['images']];
+        }
+        return $template;
+    }
+
+    /** The positions, among the turn's pictures in order, of those its check names: the camera's, or all. */
+    private static function verifyImages(array $turn): array
+    {
+        $at = 0;
+        $named = [];
+        foreach ($turn['parts'] as $part) {
+            if (isset($part['text'])) {
+                continue;
+            }
+            if (($turn['verify']['images'] ?? null) === 'all' || isset($part['frame'])) {
+                $named[] = $at;
+            }
+            $at++;
+        }
+        return $named;
+    }
+
+    /**
+     * What OAIY said of the turn's check, for the plugin: as it said it, held to its shape (the task, an error and
+     * its words, or each picture's face count and age), or null when it said nothing (an OAIY without the check).
+     */
+    public static function verification(mixed $said): ?array
+    {
+        if (!is_array($said) || !is_string($said['task'] ?? null)) {
+            return null;
+        }
+        $out = ['task' => mb_substr($said['task'], 0, 32)];
+        if (is_string($said['error'] ?? null)) {
+            return $out + ['error' => mb_substr($said['error'], 0, 32), 'message' => is_string($said['message'] ?? null) ? mb_substr($said['message'], 0, 300) : ''];
+        }
+        foreach (['model', 'detector'] as $key) {
+            if (is_string($said[$key] ?? null)) {
+                $out[$key] = mb_substr($said[$key], 0, 64);
+            }
+        }
+        $images = [];
+        foreach (array_slice(is_array($said['images'] ?? null) ? $said['images'] : [], 0, 16) as $image) {
+            $one = ['faces' => is_int($image['faces'] ?? null) && $image['faces'] >= 0 ? min($image['faces'], 99) : 0];
+            if (is_int($image['age'] ?? null) || is_float($image['age'] ?? null)) {
+                $one['age'] = round((float) $image['age'], 1);
+            }
+            $images[] = $one;
+        }
+        return $out + ['images' => $images];
     }
 
     /** The plugin's turn with the camera pictures in their places, as messages for OAIY. */
@@ -304,6 +362,9 @@ final class CameraCheckService
         $body = ['kind' => 'chat', 'messages' => self::messages($turn, $images)];
         if ($settings['model'] !== null) {
             $body['model'] = $settings['model'];
+        }
+        if (isset($turn['verify']) && ($named = self::verifyImages($turn)) !== []) {
+            $body['verify'] = ['task' => $turn['verify']['task'], 'images' => $named];
         }
         try {
             [$relayId, $pair] = $this->desktop->send($settings, $body, $row['mode'] === 'member' ? (string) $row['user_id'] : null);
@@ -351,14 +412,14 @@ final class CameraCheckService
         if ($claim->rowCount() !== 1) {
             return [$this->row((string) $row['id'], (string) $row['user_id']), null];
         }
-        return $this->decide(['status' => 'deciding'] + $row, mb_substr($seen['content'], 0, self::MAX_ANSWER));
+        return $this->decide(['status' => 'deciding'] + $row, mb_substr($seen['content'], 0, self::MAX_ANSWER), self::verification($seen['final']['verification'] ?? null));
     }
 
     /**
      * The plugin's decide route reads the model's answer (the text, and the JSON object in it) and
      * answers {outcome, message, pass?}. A pass is recorded only for a member's check that passed.
      */
-    private function decide(array $row, string $content): array
+    private function decide(array $row, string $content, ?array $verification = null): array
     {
         $json = self::parse($content);
         $plugin = $this->plugins->find((string) $row['plugin_id']);
@@ -369,12 +430,12 @@ final class CameraCheckService
             $answer = $this->callPlugin($plugin, (string) $row['user_id'], PluginService::CAMERA_ROUTES['decide'], [
                 'check' => (string) $row['id'],
                 'mode' => (string) $row['mode'],
-                'answer' => ['content' => $content, 'json' => $json],
+                'answer' => ['content' => $content, 'json' => $json, 'verification' => $verification],
                 'settings' => $plugin['settings'],
             ]);
         } catch (\Throwable $e) {
             error_log('Camera check ' . $row['id'] . ' decide: ' . $e->getMessage());
-            return [$this->finish($row, 'unavailable', true), ['error' => $e->getMessage(), 'model' => $json ?? mb_substr($content, 0, 400)]];
+            return [$this->finish($row, 'unavailable', true), ['error' => $e->getMessage(), 'model' => $json ?? mb_substr($content, 0, 400), 'verification' => $verification]];
         }
         $outcome = is_string($answer['outcome'] ?? null) && preg_match('/^[a-z_]{1,32}$/D', $answer['outcome']) ? $answer['outcome'] : 'unavailable';
         $message = is_string($answer['message'] ?? null) && trim($answer['message']) !== '' ? mb_substr(trim($answer['message']), 0, 300) : null;
@@ -383,7 +444,7 @@ final class CameraCheckService
             $message = null;
         }
         $row = $this->finish($row, $outcome, $outcome === 'unavailable', $message);
-        return [$row, ['model' => $json ?? mb_substr($content, 0, 400), 'plugin' => ['outcome' => $outcome, 'message' => $message]]];
+        return [$row, ['model' => $json ?? mb_substr($content, 0, 400), 'verification' => $verification, 'plugin' => ['outcome' => $outcome, 'message' => $message]]];
     }
 
     /**

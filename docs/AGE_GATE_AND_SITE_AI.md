@@ -115,6 +115,15 @@ How to write one is `docs/PLUGINS.md`. In short:
   never a picture, and answers `{outcome, message, pass?}`. The JSON is found whatever is around
   it: code fences, words, a reasoning model's `<think>` block, or braces of its own while it thinks
   (the last whole object that parses; `CameraCheckAnswerParseTest`).
+- **OAIY's own age model.** A plugin's turn may also ask OAIY for a check it runs on the pictures itself
+  (`turn.verify: {task, images: "frames" | "all"}`; the site sends the pictures' places, so the camera's alone
+  never includes the plugin's control picture). OAIY (branch `age-model`, not released) runs `face-age` in its
+  media worker before the language model answers: YuNet (OpenCV Zoo, MIT) finds the faces, and MiVOLO v2
+  (`iitolstykh/mivolo_v2`, Apache-2.0, ported to Candle and matched against the authors' own code) reads the age
+  of the one face. Both are loaded for the check and gone when the worker ends. Its readings (each picture's face
+  count and one face's age, nothing else) come back in the turn's final frame as `verification`, which the plugin's
+  decide route gets as `answer.verification`. An OAIY without it ignores the field; one without the models says
+  `not_installed`. The models come from OAIY's Models page (the catalog's Age check, pinned revisions).
 - A plugin's page cannot call `/api/site/` routes on its own backend (`NativeAppController`).
 - The site keeps the limits (three tries a day, one at a time, an hour after `not_confirmed`),
   refunds a check that did not run (`unavailable`), and records a pass only for a member's check,
@@ -173,6 +182,17 @@ How to write one is `docs/PLUGINS.md`. In short:
      its `bufferYears` setting (7 by default), recorded at the app's age, never at the estimate.
      Between the app's age and that margin it asks for a stronger check; below the app's age it
      says the check could not confirm it, never that the member is under age.
+   - Where OAIY's age model read the pictures (1.2.0), it decides, with the AI as the backup: its
+     detector must find one face in every camera picture, the youngest of its ages must clear the
+     app's age plus the buffer, and the AI's youngest likely age must not fall below the app's age;
+     either one short of that asks for a stronger check. The pass's method says `face_check_age_model`.
+     Its `ageModel` setting: `prefer` (the AI's estimate where OAIY has no age model) or `require` (no
+     face check without it, and that one not counted as a try). Why both: in an independent benchmark
+     (arXiv 2602.07815, v3 of 24 October 2026) MiVOLO was the best specialised estimator (5.10 years'
+     error across eight datasets) but read 21% of minors as adults at a plain 18 line; a general vision
+     model read 16 to 29%. Nothing newer was usable: MiVOLO-Next (May 2026) keeps its weights private
+     and its terms forbid age gating; FAHR-FaceAge's are non-commercial; FaceAge ClientScan (April 2026)
+     is one author's, unbenchmarked, trained on an undisclosed collection.
    - What this is not: a general vision model is not an evaluated age estimator, and the turns show
      a fresh response to a random challenge, not a live person (a virtual camera running a face swap
      can follow them). It suits a site that wants more than a declaration and accepts an estimate;

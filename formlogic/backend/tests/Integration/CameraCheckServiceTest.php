@@ -165,6 +165,75 @@ final class CameraCheckServiceTest extends TestCase
         self::assertSame([null, null], [$row['turn'], $row['channel']]);
     }
 
+    /**
+     * OAIY's age model reads the camera pictures (never the control), and its readings decide with the AI's as the
+     * backup: its detector must find one face in each, and both ages must clear the line.
+     */
+    public function testOaiysAgeModelDecidesWithTheAiAsItsBackup(): void
+    {
+        $ages = fn (array $years) => function (?array $asked, int $count) use ($years) {
+            self::assertSame('face-age', $asked['task'] ?? null);
+            self::assertCount($count, $asked['images'], 'the camera pictures only');
+            return ['task' => 'face-age', 'model' => 'mivolo-v2', 'detector' => 'yunet-2023mar',
+                'images' => array_map(fn ($a) => is_array($a) ? $a : ['faces' => 1, 'age' => $a], array_slice($years + array_fill(0, $count, 40.0), 0, $count))];
+        };
+
+        // Both well above: a pass, by the age model.
+        [$check, $turn] = $this->check(fn ($a) => $a, null, true, $ages([31.5, 33.0, 30.2, 34.8]));
+        self::assertSame('passed', $check['outcome']);
+        self::assertSame('face_check_age_model', $this->gate->receiptsFor($this->memberId)[0]['method']);
+        // The turn named the camera pictures by their places among its pictures, the control left out.
+        $places = [];
+        $at = 0;
+        foreach ($turn['messages'][1]['content'] as $part) {
+            if ($part['type'] !== 'image_url') {
+                continue;
+            }
+            $bytes = (string) base64_decode(substr($part['image_url']['url'], strpos($part['image_url']['url'], ',') + 1), true);
+            if (!isset($this->controls[hash('sha256', $bytes)])) {
+                $places[] = $at;
+            }
+            $at++;
+        }
+        self::assertSame($places, $turn['verify']['images']);
+
+        $cases = [
+            'the age model reads one picture young, the AI does not' => [$ages([19.5]), fn ($a) => $a, 'stronger_check'],
+            'the age model reads them old, the AI young: the backup holds' => [$ages([35.0, 36.0]), fn ($a) => ['age_low' => 15, 'age_estimate' => 17] + $a, 'stronger_check'],
+            'both read a child' => [$ages([11.0, 12.0, 11.5, 12.5]), fn ($a) => ['age_low' => 9, 'age_estimate' => 12] + $a, 'not_confirmed'],
+            'the detector finds two faces in one picture' => [$ages([['faces' => 2, 'age' => 30.0]]), fn ($a) => $a, 'no_face'],
+            'an age the model could not give' => [$ages([['faces' => 1]]), fn ($a) => $a, 'unavailable'],
+        ];
+        foreach ($cases as $what => [$readings, $twist, $expected]) {
+            self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
+            self::$pdo->prepare('DELETE FROM passes WHERE user_id = ?')->execute([$this->memberId]);
+            [$check] = $this->check($twist, null, true, $readings);
+            self::assertSame($expected, $check['outcome'], $what);
+        }
+    }
+
+    public function testWithoutOaiysAgeModelTheAisEstimateIsUsedUnlessTheSiteRequiresTheModel(): void
+    {
+        $missing = fn (?array $asked) => ['task' => 'face-age', 'error' => 'not_installed', 'message' => 'this OAIY has no age model'];
+        // Preferred, not there: the AI's estimate, as before.
+        [$check] = $this->check(fn ($a) => $a, null, true, $missing);
+        self::assertSame('passed', $check['outcome']);
+        self::assertSame('face_check', $this->gate->receiptsFor($this->memberId)[0]['method']);
+
+        // Required: no face check without it, and not one of their tries.
+        $this->plugins->setSettings('formlogic.age-gate', ['ageModel' => 'require']);
+        self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
+        self::$pdo->prepare('DELETE FROM passes WHERE user_id = ?')->execute([$this->memberId]);
+        [$check] = $this->check(fn ($a) => $a, null, true, $missing);
+        self::assertSame('unavailable', $check['outcome']);
+        self::assertStringContainsString('age model', (string) $check['message']);
+        self::assertSame('0', (string) self::$pdo->query('SELECT COUNT(*) FROM camera_checks WHERE submitted_at IS NOT NULL AND user_id = ' . self::$pdo->quote($this->memberId))->fetchColumn());
+        // An OAIY that says nothing of it (older than the age check) is the same as none.
+        self::$pdo->prepare('DELETE FROM camera_checks WHERE user_id = ?')->execute([$this->memberId]);
+        [$check] = $this->check(fn ($a) => $a);
+        self::assertSame('unavailable', $check['outcome']);
+    }
+
     public function testWhatTheModelSaysIsReadAsItsDescriptionAndNothingMore(): void
     {
         $cases = [
@@ -254,7 +323,7 @@ final class CameraCheckServiceTest extends TestCase
      * to an honest description (or $raw text), then ask until it is decided. Returns [the last
      * status, the turn as OAIY opened it].
      */
-    private function check(\Closure $twist, ?string $raw = null, bool $ask = true): array
+    private function check(\Closure $twist, ?string $raw = null, bool $ask = true, ?\Closure $readings = null): array
     {
         $started = $this->checks->start($this->memberId, 'formlogic.age-gate', $this->slug, 'age');
         self::assertSame('started', $started['status']);
@@ -285,7 +354,12 @@ final class CameraCheckServiceTest extends TestCase
         $honest = ['images' => $images, 'same_person' => true, 'age_estimate' => 34, 'age_low' => 29];
         $content = $raw ?? "```json\n" . json_encode($twist($honest)) . "\n```";
         $this->relay->appendFrame($claimed['requestId'], $this->adminId, SiteDesktopAi::seal(['kind' => 'delta', 'delta' => $content], 1, 0, $pair), 'inst-camera');
-        $this->relay->appendFrame($claimed['requestId'], $this->adminId, SiteDesktopAi::seal(['kind' => 'final'], 1, 1, $pair), 'inst-camera');
+        // OAIY's age model, where the test gives it readings: for the pictures the turn named, as OAIY answers.
+        $final = ['kind' => 'final'];
+        if ($readings !== null) {
+            $final['verification'] = $readings($turn['verify'] ?? null, count($steps));
+        }
+        $this->relay->appendFrame($claimed['requestId'], $this->adminId, SiteDesktopAi::seal($final, 1, 1, $pair), 'inst-camera');
         $this->relay->complete($claimed['requestId'], $this->adminId, ['status' => 'done', 'instanceId' => 'inst-camera']);
         if (!$ask) {
             return [null, $turn, $started['id']];

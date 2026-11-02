@@ -465,7 +465,7 @@ final class PluginPassTest extends TestCase
         $plugin = $plugins->installBuiltin('formlogic.age-gate', $this->ownerId);
         $this->appIds[] = $plugin['appId'];
         self::assertSame(['formlogic.age-gate', $version, true, 'builtin', ['camera']], [$plugin['manifestId'], $plugin['version'], $plugin['enabled'], $plugin['source'], $plugin['uses']]);
-        self::assertSame(['bufferYears' => 7, 'turns' => 'all'], $plugin['settings'], 'its settings start at their defaults');
+        self::assertSame(['bufferYears' => 7, 'turns' => 'all', 'ageModel' => 'prefer'], $plugin['settings'], 'its settings start at their defaults');
         $app = self::$apps->getApp($plugin['appId']);
         self::assertSame([PluginService::SYSTEM_USER_ID, 'published'], [$app['ownerId'], $app['status']]);
         self::assertNotNull($plugins->forApp($app));
@@ -496,7 +496,7 @@ final class PluginPassTest extends TestCase
         }
         $updated = $plugins->updateBuiltin('formlogic.age-gate');
         self::assertSame($next, $updated['version']);
-        self::assertSame(['bufferYears' => 10, 'turns' => 'all'], $updated['settings'], 'settings that still fit are kept');
+        self::assertSame(['bufferYears' => 10, 'turns' => 'all', 'ageModel' => 'prefer'], $updated['settings'], 'settings that still fit are kept');
         self::assertNull($plugins->pendingUpdate($updated));
         self::assertSame(1, $this->receiptCount($this->memberId), 'its passes stay');
 

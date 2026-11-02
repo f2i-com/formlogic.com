@@ -104,7 +104,11 @@ function cameraStart(req) {
   for (let turn of turns) {
     steps.push({say: SAY[turn], hint: turn});
   }
-  return {status:200,body:{steps: steps, turn: {system: SYSTEM, parts: parts}}};
+  // OAIY's own age model reads the camera pictures too, where the administrator's OAIY has it (its Age check):
+  // a face detector's count and an age model's estimate, beside the AI's description. The image test sends it the
+  // control picture, to see that it runs.
+  let verify = {task: "face-age", images: mode == "probe" ? "all" : "frames"};
+  return {status:200,body:{steps: steps, turn: {system: SYSTEM, parts: parts, verify: verify}}};
 }
 
 // The model has answered: decide, and forget the check.
@@ -116,7 +120,24 @@ function cameraDecide(req) {
   if (!row) return {status:404,body:{error:"No such check"}};
   softn.sql.execute("DELETE FROM checks WHERE id = ?", [body.check]);
   let buffer = body.settings && typeof body.settings.bufferYears == "number" ? body.settings.bufferYears : 7;
-  return {status:200,body:decide(row, JSON.parse(row.turns), body.answer ? body.answer.json : null, buffer)};
+  let need = body.settings && body.settings.ageModel == "require" ? "require" : "prefer";
+  let answer = body.answer ? body.answer.json : null;
+  let verification = body.answer ? body.answer.verification : null;
+  return {status:200,body:decide(row, JSON.parse(row.turns), answer, buffer, verification, need)};
+}
+
+// What OAIY's age model said of the camera pictures, when it read every one of them: each one's face count and age.
+function readings(verification, count) {
+  if (!verification || verification.error || !Array.isArray(verification.images) || verification.images.length != count) return null;
+  return verification.images;
+}
+
+// The image test's words for OAIY's age model.
+function ageModelWords(verification) {
+  if (!verification) return " This OAIY does not run an age model: the AI's own estimate is used.";
+  if (verification.error == "not_installed") return " OAIY has no age model yet: add the Age check on its Models page, and ages are read by it.";
+  if (verification.error) return " OAIY's age model did not run: " + verification.message;
+  return " OAIY's age model ran too, and reads the ages.";
 }
 
 function unavailable() {
@@ -125,7 +146,9 @@ function unavailable() {
 
 // Only what the model saw is read; anything it writes about passing is not. The turns were never
 // told to it, so it cannot echo them. A wrong control digit means the pictures did not reach it.
-function decide(row, turns, answer, buffer) {
+// Where OAIY's age model read the pictures, its detector must find one face in each, and its age decides,
+// with the AI's as the backup: both must clear the line, or a stronger check is asked for.
+function decide(row, turns, answer, buffer, verification, need) {
   let count = turns.length + 1;
   if (!answer || !Array.isArray(answer.images) || answer.images.length != count) return unavailable();
   let seen = [];
@@ -146,7 +169,16 @@ function decide(row, turns, answer, buffer) {
     }
     i = i + 1;
   }
-  if (row.mode == "probe") return {outcome: "reads_images", message: "The model read the control picture: it reads images."};
+  if (row.mode == "probe") return {outcome: "reads_images", message: "The model read the control picture: it reads images." + ageModelWords(verification)};
+  let read = readings(verification, seen.length);
+  if (read == null && need == "require") {
+    return {outcome: "unavailable", message: "The face check needs the site's age model, which is not ready. This did not count as one of your tries."};
+  }
+  if (read != null) {
+    for (let image of read) {
+      if (image.faces !== 1) return {outcome: "no_face", message: "We need one face, and only one, in every picture. Try again in good light."};
+    }
+  }
   for (let image of seen) {
     if (image.faces !== 1) return {outcome: "no_face", message: "We need one face, and only one, in every picture. Try again in good light."};
   }
@@ -167,6 +199,21 @@ function decide(row, turns, answer, buffer) {
   let estimate = answer.age_estimate;
   if (typeof low != "number" || typeof estimate != "number" || low <= 0 || estimate > 120 || low > estimate) return unavailable();
   let min = row.min_value;
+  if (read != null) {
+    // The age model's youngest reading across the pictures.
+    let youngest = 1000;
+    for (let image of read) {
+      if (typeof image.age != "number" || image.age <= 0 || image.age > 120) return unavailable();
+      if (image.age < youngest) youngest = image.age;
+    }
+    if (youngest >= min + buffer && low >= min) {
+      return {outcome: "passed", message: "Done. The app now opens for you.", pass: {kind: "age", value: min, strength: "estimated", method: "face_check_age_model"}};
+    }
+    if (youngest >= min || estimate >= min) {
+      return {outcome: "stronger_check", message: "This check could not confirm your age with enough margin. A stronger check is needed, and this site does not offer one yet."};
+    }
+    return {outcome: "not_confirmed", message: "This check could not confirm your age. You can try again in an hour, or ask the app's owner about other ways."};
+  }
   if (low >= min + buffer) {
     return {outcome: "passed", message: "Done. The app now opens for you.", pass: {kind: "age", value: min, strength: "estimated", method: "face_check"}};
   }
