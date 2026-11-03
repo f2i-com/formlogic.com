@@ -32,6 +32,8 @@ final class CameraCheckServiceTest extends TestCase
 
     private static ?PDO $pdo = null;
     private static ?MySQLConnection $mysql = null;
+    /** @var array<string, string> the test database, for a second process */
+    private static array $config = [];
     private static AppService $apps;
     private static array $vectors = [];
     private static string $tmpRoot = '';
@@ -57,7 +59,7 @@ final class CameraCheckServiceTest extends TestCase
             \Dotenv\Dotenv::createImmutable($root)->safeLoad();
         }
         try {
-            $conn = new MySQLConnection([
+            self::$config = [
                 'host' => $_ENV['DB_HOST'] ?? '127.0.0.1',
                 'port' => $_ENV['DB_PORT'] ?? '3306',
                 'database' => $_ENV['DB_TEST_DATABASE'] ?? 'formlogic_test',
@@ -65,7 +67,8 @@ final class CameraCheckServiceTest extends TestCase
                 'password' => $_ENV['DB_PASSWORD'] ?? '',
                 'charset' => 'utf8mb4',
                 'collation' => 'utf8mb4_unicode_ci',
-            ]);
+            ];
+            $conn = new MySQLConnection(self::$config);
             $conn->getConnection()->query('SELECT 1');
             $conn->initializeSchema();
             $conn->runMigrations();
@@ -549,6 +552,74 @@ final class CameraCheckServiceTest extends TestCase
                 ->execute([bin2hex(random_bytes(16)), $this->memberId, $now = gmdate('Y-m-d H:i:s'), $now, $now, $now]);
         }
         $refused($second, 'today');
+    }
+
+    /**
+     * The same, sent at the same moment rather than one after the other. One send has taken the
+     * member's lock and claimed its check, but not yet committed; the other, in its own process
+     * and connection, must wait for that lock, then see the first one's claim and be refused.
+     * Without the lock, it reads the limits before the first claim is visible and is sent too.
+     */
+    public function testTwoChecksSentAtTheSameMomentAreTakenOneAtATime(): void
+    {
+        $first = $this->checks->start($this->memberId, 'formlogic.age-gate', $this->slug, 'age');
+        $second = $this->checks->start($this->memberId, 'formlogic.age-gate', $this->slug, 'age');
+        $turn = self::$pdo->query('SELECT turn FROM camera_checks WHERE id = ' . self::$pdo->quote($second['id']))->fetchColumn();
+        self::$pdo->prepare("UPDATE camera_checks SET status = 'started', outcome = NULL, finished_at = NULL, turn = ? WHERE id = ?")->execute([$turn, $first['id']]);
+
+        // The first send, inside its lock: the member's row held and its check claimed, not yet committed.
+        $other = new PDO(
+            sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', self::$config['host'], self::$config['port'], self::$config['database']),
+            self::$config['username'],
+            self::$config['password'],
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+        );
+        $other->beginTransaction();
+        $other->prepare('SELECT id FROM users WHERE id = ? FOR UPDATE')->execute([$this->memberId]);
+        $other->prepare("UPDATE camera_checks SET status = 'sending' WHERE id = ? AND status = 'started'")->execute([$first['id']]);
+
+        // The second send, in a process of its own: the service's own claim, as submit() makes it.
+        $script = tempnam(sys_get_temp_dir(), 'fl-camera-');
+        file_put_contents($script, '<?php require $argv[1]; $c = json_decode($argv[2], true);'
+            . ' $pdo = (new FormLogic\Database\MySQLConnection($c))->getConnection();'
+            . ' $service = (new ReflectionClass(FormLogic\Services\CameraCheckService::class))->newInstanceWithoutConstructor();'
+            . ' (new ReflectionProperty($service, "pdo"))->setValue($service, $pdo);'
+            . ' $row = $pdo->query("SELECT * FROM camera_checks WHERE id = " . $pdo->quote($argv[3]))->fetch(PDO::FETCH_ASSOC);'
+            . ' try { (new ReflectionMethod($service, "claimWithinLimits"))->invoke($service, $row); echo "sent"; }'
+            . ' catch (InvalidArgumentException $e) { echo "refused: ", $e->getMessage(); }');
+        $send = proc_open(
+            [PHP_BINARY, '-d', 'xdebug.mode=off', $script, dirname(__DIR__, 2) . '/vendor/autoload.php', (string) json_encode(self::$config), $second['id']],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+        self::assertIsResource($send);
+        try {
+            // Until the second is waiting on the lock, or has finished without waiting.
+            $waiting = $other->prepare("SELECT COUNT(*) FROM information_schema.processlist WHERE db = DATABASE() AND info LIKE 'SELECT id FROM users WHERE id = % FOR UPDATE'");
+            for ($i = 0; $i < 600; $i++) { // up to 30 s for the process to start
+                usleep(50000);
+                $waiting->execute();
+                if ((int) $waiting->fetchColumn() > 0 || !proc_get_status($send)['running']) {
+                    break;
+                }
+            }
+            $other->commit();
+            $out = stream_get_contents($pipes[1]);
+            $err = stream_get_contents($pipes[2]);
+            self::assertSame(0, proc_close($send), $err);
+            $send = null;
+        } finally {
+            if ($other->inTransaction()) {
+                $other->rollBack();
+            }
+            if (is_resource($send)) {
+                proc_terminate($send);
+                proc_close($send);
+            }
+            @unlink($script);
+        }
+        self::assertStringContainsString('refused: Your last check is still being looked at', $out, 'both were sent');
+        self::assertSame('started', self::$pdo->query('SELECT status FROM camera_checks WHERE id = ' . self::$pdo->quote($second['id']))->fetchColumn(), 'and not claimed');
     }
 
     public function testOnlyWhatTheSiteCanRunIsOffered(): void
