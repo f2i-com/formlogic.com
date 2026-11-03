@@ -749,7 +749,9 @@ class CloudFlowRunner
         }
 
         try {
-            $result = $this->ai->chat($messages, false);
+            // Named as the flow's own: on the site's OAIY a turn with no requester is the computer's
+            // owner's, which goes to their computer whether or not they are an administrator still.
+            $result = $this->ai->forRequester($userId)->chat($messages, false);
         } catch (\Throwable $e) {
             // The provider's message can name the operator's private AI endpoint
             // ("Could not resolve host: llm.corp.internal") or echo an API-key

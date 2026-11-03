@@ -400,7 +400,10 @@ final class CameraCheckService
             $body['verify'] = ['task' => $turn['verify']['task'], 'images' => $named];
         }
         try {
-            [$relayId, $pair] = $this->desktop->send($settings, $body, $row['mode'] === 'member' ? (string) $row['user_id'] : null);
+            // Always the person whose check it is, a trial's administrator too: a turn with no requester
+            // is the computer's owner's own, and would go to it even once they were no longer an
+            // administrator (DesktopAiRelayService::SERVED_SQL).
+            [$relayId, $pair] = $this->desktop->send($settings, $body, (string) $row['user_id']);
         } catch (\Throwable $e) {
             // Not sent: not a try. The page says why.
             $this->finish($row, 'unavailable', true);

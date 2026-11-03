@@ -434,6 +434,24 @@ final class CameraCheckServiceTest extends TestCase
         self::assertSame('started', $started['status']);
     }
 
+    public function testAnotherAdministratorsTrialIsTheirsAndIsNotHandedToAComputerWhoseOwnerWasDemoted(): void
+    {
+        $other = $this->makeUser();
+        self::$pdo->prepare('UPDATE users SET is_admin = 1 WHERE id = ?')->execute([$other]);
+        $started = $this->checks->startTrial($other, 'formlogic.age-gate', 18);
+        $frames = array_map(fn () => 'data:image/jpeg;base64,' . base64_encode("\xFF\xD8\xFF\xE0" . random_bytes(40000)), $started['steps']);
+        $this->checks->submit($other, $started['id'], $frames);
+        // The other administrator's own face, queued for this one's computer: theirs, not the computer owner's.
+        $row = self::$pdo->query('SELECT requesting_user_id FROM desktop_ai_requests WHERE owner_user_id = ' . self::$pdo->quote($this->adminId))->fetchColumn();
+        self::assertSame($other, $row);
+        self::$pdo->prepare('UPDATE users SET is_admin = 0 WHERE id = ?')->execute([$this->adminId]);
+        try {
+            self::assertSame([], $this->relay->listPending($this->adminId, null, 10, 'inst-camera'), 'nor handed to it once its owner is demoted');
+        } finally {
+            self::$pdo->prepare('UPDATE users SET is_admin = 1 WHERE id = ?')->execute([$this->adminId]);
+        }
+    }
+
     public function testWhatTheModelSaysIsReadAsItsDescriptionAndNothingMore(): void
     {
         $cases = [

@@ -424,8 +424,10 @@ class DesktopAiRelayTest extends TestCase
     public function testFifoOrderAndLiveQueuePosition(): void
     {
         // Three pending requests for the same lane. The per-user cap (≤ 2) means they can't
-        // all come from one requester — member-delegated rows keep the test honest.
+        // all come from one requester — member-delegated rows keep the test honest. Members'
+        // turns are the site's AI's, which go only to an administrator's computer.
         $extraUsers = [$this->addUser(), $this->addUser()];
+        self::$pdo->prepare('UPDATE users SET is_admin = 1 WHERE id = ?')->execute([$this->ownerId]);
         try {
             $ids = [];
             $ids[] = self::$relay->enqueue($this->ownerId, $extraUsers[0], $this->sealedBody())['request']['requestId'];
@@ -446,7 +448,13 @@ class DesktopAiRelayTest extends TestCase
 
             $read = $this->webGet($this->ownerId, $ids[2]);
             $this->assertSame(2, $read['body']['request']['queuePos']);
+
+            // Demoted, the owner's computer is handed only the owner's own turn, which nothing is ahead of.
+            self::$pdo->prepare('UPDATE users SET is_admin = 0 WHERE id = ?')->execute([$this->ownerId]);
+            $this->assertSame([$ids[2]], array_map(static fn ($r) => $r['requestId'], self::$relay->pollPending($this->ownerId, null, 0)));
+            $this->assertSame(0, self::$relay->queuePosition($ids[2], $this->ownerId));
         } finally {
+            self::$pdo->prepare('UPDATE users SET is_admin = 0 WHERE id = ?')->execute([$this->ownerId]);
             foreach ($extraUsers as $uid) {
                 self::$pdo->prepare('DELETE FROM desktop_ai_requests WHERE requesting_user_id = ?')->execute([$uid]);
                 self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$uid]);

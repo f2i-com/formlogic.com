@@ -27,6 +27,14 @@ use Slim\Psr7\Factory\ServerRequestFactory;
 class CloudFlowRunnerFakeAi extends AIService
 {
     public array $calls = [];
+    /** Who the last turn was said to be for. */
+    public ?string $requestedFor = null;
+
+    public function forRequester(?string $userId): static
+    {
+        $this->requestedFor = $userId;
+        return parent::forRequester($userId);
+    }
 
     protected function chatCompletionsRequest(array $payload, bool $stream, ?callable $onDelta, ?callable $onHeartbeat): array
     {
@@ -393,9 +401,13 @@ class CloudFlowRunnerTest extends TestCase
         $flow = $this->flowRow($userId, [
             ['id' => 'llm', 'type' => 'llm_chat', 'data' => ['system' => 'You are brief.', 'prompt' => 'Say hi to {{inputs.name}}']],
         ]);
+        self::$ai->requestedFor = null;
         $outcome = $this->runner()->run($flow, $userId, ['name' => 'Bo']);
         $this->assertSame('done', $outcome['status'], json_encode($outcome));
         $this->assertSame('fake-answer', $outcome['result']['content']);
+        // The turn is said to be the flow's user's: on the site's OAIY one said to be no one's is the
+        // computer's owner's, and reaches their computer after they stop being an administrator.
+        $this->assertSame($userId, self::$ai->requestedFor);
         // The fake transport saw the assembled messages.
         $this->assertCount(1, self::$ai->calls);
         $messages = self::$ai->calls[0]['messages'];

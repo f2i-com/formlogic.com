@@ -23,7 +23,9 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
   tell computers apart (OAIY shows none to compare it with yet). A computer whose key changes is
   refused until it is chosen again. A computer whose owner is no longer an administrator is sent
   nothing: the Site AI and camera check choices read as unmade while that is so (asked at every
-  read), so members' chats and pictures do not go to it.
+  read), so members' chats and pictures do not go to it. A member's turn already queued for it is
+  not handed over either: the lane lists and lets a computer claim a member's turn only while its
+  owner is an administrator (`DesktopAiRelayService`), so it waits out its five minutes unread.
 - `AIService` gets a second upstream beside the `.env` one. When it is chosen, the **server** is
   the sealing client on the existing desktop AI lane: for each request it makes a fresh X25519
   key, seals the turn to the pinned desktop key, queues it for that desktop with the member as the

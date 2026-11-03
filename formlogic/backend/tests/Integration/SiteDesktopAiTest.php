@@ -140,6 +140,32 @@ final class SiteDesktopAiTest extends TestCase
         @unlink($this->settingsPath . '.camera.json');
     }
 
+    public function testATurnQueuedBeforeTheOwnerWasDemotedIsNotHandedToTheirComputer(): void
+    {
+        $this->chooseTheTestDesktop();
+        $desktop = new SiteDesktopAi($this->relay, $this->settings);
+        [$id] = $desktop->send($this->settings->current(), ['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => 'Say hello.']]], $this->memberId);
+        // The owner's own turn, queued beside it, is still theirs to take.
+        $own = $this->relay->enqueue($this->adminId, $this->adminId, [
+            'kind' => 'chat', 'providerId' => 'oaiy-engine', 'targetInstanceId' => 'inst-site-ai',
+            'ephPub' => base64_encode(random_bytes(32)), 'envelope' => base64_encode(random_bytes(64)),
+        ])['request']['requestId'];
+        self::assertCount(2, $this->relay->listPending($this->adminId, null, 10, 'inst-site-ai'));
+
+        // Their rights are taken away while the member's turn waits.
+        self::$pdo->prepare('UPDATE users SET is_admin = 0 WHERE id = ?')->execute([$this->adminId]);
+        self::assertSame([$own], array_column($this->relay->listPending($this->adminId, null, 10, 'inst-site-ai'), 'requestId'), 'the computer is not shown the member\'s turn');
+        self::assertSame([$own], array_column($this->relay->pollPending($this->adminId, null, 0, 10, 'inst-site-ai'), 'requestId'));
+        try {
+            $this->relay->claim($id, $this->adminId, ['instanceId' => 'inst-site-ai']);
+            self::fail('the computer took a member\'s turn after its owner was demoted');
+        } catch (\RuntimeException $e) {
+            self::assertSame('already_claimed', $e->getMessage());
+        }
+        self::assertSame('pending', $this->relay->getStatus($id, $this->adminId));
+        self::assertSame('claimed', $this->relay->claim($own, $this->adminId, ['instanceId' => 'inst-site-ai'])['status'], 'its owner\'s own turn is taken as ever');
+    }
+
     public function testAProviderStoredInOaiyIsAskedForTheModelChosenForIt(): void
     {
         $this->connection($this->adminId, 'inst-site-ai', self::$vectors['desktop']['publicKey']);

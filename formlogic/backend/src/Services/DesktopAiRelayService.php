@@ -68,6 +68,15 @@ class DesktopAiRelayService
      */
     public const SWEEP_INTERVAL_SECONDS = 5.0;
 
+    /**
+     * Whether a row may go to its owner's computer: always when the owner asked, and a member's turn
+     * (the site's AI and camera checks, SiteDesktopAi) only while the owner is an administrator.
+     * Asked as a turn is listed and claimed, so a turn queued before an administrator's rights were
+     * taken away is never handed to their computer after (SiteAiDesktopSettings::ownerIsAdmin).
+     * %s is the table's alias.
+     */
+    private const SERVED_SQL = '(%1$s.requesting_user_id = %1$s.owner_user_id OR EXISTS (SELECT 1 FROM users a WHERE a.id = %1$s.owner_user_id AND a.is_admin = 1))';
+
     /** Same shape DesktopCommandService enforces for desktop instance ids. */
     private const INSTANCE_ID_PATTERN = '/^[A-Za-z0-9._-]+$/';
     private const MAX_INSTANCE_ID = 128;
@@ -250,9 +259,10 @@ class DesktopAiRelayService
         if (($row['status'] ?? '') !== 'pending') {
             return 0;
         }
+        $served = sprintf(self::SERVED_SQL, 'desktop_ai_requests');
         $pos = $this->mysql->prepare("
             SELECT COUNT(*) FROM desktop_ai_requests
-            WHERE owner_user_id = :o AND status = 'pending' AND expires_at > NOW()
+            WHERE owner_user_id = :o AND status = 'pending' AND expires_at > NOW() AND {$served}
               AND target_instance_id <=> :t
               AND (created_at < :c OR (created_at = :c2 AND id < :id))
         ");
@@ -288,7 +298,7 @@ class DesktopAiRelayService
     {
         $limit = max(1, min(200, $limit));
 
-        $where = "owner_user_id = :o AND status = 'pending' AND expires_at > NOW()";
+        $where = "owner_user_id = :o AND status = 'pending' AND expires_at > NOW() AND " . sprintf(self::SERVED_SQL, 'desktop_ai_requests');
         $params = ['o' => $ownerUserId];
         if ($instanceId !== null && $instanceId !== '') {
             $where .= " AND (target_instance_id IS NULL OR target_instance_id = :inst)";
@@ -374,10 +384,12 @@ class DesktopAiRelayService
         if ($instanceId !== null) {
             $params['ti'] = $instanceId;
         }
+        $served = sprintf(self::SERVED_SQL, 'r');
         $stmt = $this->mysql->prepare("
             UPDATE desktop_ai_requests AS r
             SET r.status = 'claimed', r.claimed_by = :cb, r.claimed_at = NOW()
             WHERE r.id = :id AND r.owner_user_id = :o AND r.status = 'pending' AND r.expires_at > NOW(){$targetSql}
+              AND {$served}
               AND NOT EXISTS (
                   SELECT 1 FROM (
                       SELECT s.target_instance_id AS busy_target
@@ -393,13 +405,18 @@ class DesktopAiRelayService
             // Expiry is computed in SQL (expires_at > NOW()), never by comparing a MySQL
             // timestamp against PHP's clock — the two timezones need not agree.
             $check = $this->mysql->prepare("
-                SELECT status, target_instance_id, (expires_at > NOW()) AS still_valid
-                FROM desktop_ai_requests WHERE id = :id AND owner_user_id = :o
+                SELECT r.status, r.target_instance_id, (r.expires_at > NOW()) AS still_valid, {$served} AS served
+                FROM desktop_ai_requests r WHERE r.id = :id AND r.owner_user_id = :o
             ");
             $check->execute(['id' => $id, 'o' => $ownerUserId]);
             $existing = $check->fetch();
             if (!$existing) {
                 return null;
+            }
+            if ((int) ($existing['served'] ?? 1) === 0) {
+                // A member's turn for a computer whose owner is no longer an administrator: not this
+                // computer's to take, as if another had.
+                throw new \RuntimeException('already_claimed');
             }
             // Distinguish "someone else beat you" from "this was never yours": a
             // still-pending row we refused to claim can only mean a target mismatch
