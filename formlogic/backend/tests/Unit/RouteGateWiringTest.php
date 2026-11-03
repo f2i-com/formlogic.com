@@ -62,7 +62,10 @@ final class RouteGateWiringTest extends TestCase
 
     public function testWhatStaysOpenIsWhatAPageNeedsBeforeTheGate(): void
     {
-        self::assertSame(['/manifest.json', '/client-manifest', '/welcome', '/membership', '/join', '/entry'], AppAccessGateMiddleware::OPEN);
+        self::assertSame(['/manifest.json', '/client-manifest', '/welcome', '/membership', '/join', '/entry', '/aokie-discovery'], AppAccessGateMiddleware::OPEN);
+        // The Companion reads its discovery before anyone signs in: gated, no member could set it up.
+        // What it may do after is the member's permissions, which the pass gates.
+        self::assertTrue(AppAccessGateMiddleware::isOpen('/api/app/{slug}/aokie-discovery'));
         foreach (['/api/app/{slug}', '/api/app/{slug}/forms/{formId}/responses', '/api/app/{slug}/native', '/api/app/{slug}/native/request',
             '/api/app/{slug}/hosting', '/api/app/{slug}/actions/{action}', '/api/app/{slug}/flows', '/api/app/{slug}/my-permissions'] as $pattern) {
             self::assertFalse(AppAccessGateMiddleware::isOpen($pattern), $pattern);

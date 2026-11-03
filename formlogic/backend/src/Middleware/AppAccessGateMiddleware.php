@@ -25,11 +25,17 @@ use Slim\Routing\RouteContext;
  * Left open: what a page needs before the member can pass the gate — the app's manifests, what the
  * sign-in pages show of it, whether they are a member, joining, and the native entry metadata. Everything else that names a gated
  * app refuses a member without the pass.
+ *
+ * And Aokie Companion's discovery document, which the Companion reads before anyone signs in and
+ * so with no session at all: gated, it was refused to everyone, members who hold the pass too, and
+ * the Companion could never be set up for a gated app. It holds the deployment's addresses and the
+ * app's remote-control choices; what the Companion may then do is held to the member's permissions
+ * at each admission (AokieCompanionController, AppUserService::hasPermission), which the pass gates.
  */
 final class AppAccessGateMiddleware implements MiddlewareInterface
 {
     /** Route patterns, by their ending, that stay open on a gated app. */
-    public const OPEN = ['/manifest.json', '/client-manifest', '/welcome', '/membership', '/join', '/entry'];
+    public const OPEN = ['/manifest.json', '/client-manifest', '/welcome', '/membership', '/join', '/entry', '/aokie-discovery'];
 
     public function __construct(
         private AppService $apps,
