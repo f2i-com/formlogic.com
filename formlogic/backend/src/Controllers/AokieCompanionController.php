@@ -116,6 +116,12 @@ final class AokieCompanionController
                 'The Companion app relay is turned off for this app — an owner can re-enable it under App Settings › Included services',
             );
         }
+        // A member without the app's pass holds none of its role's grants (AppUserService), so the
+        // check below would say a scope is missing, which no consent can fix: say what is.
+        $gated = $this->appUsers?->gateRefusal($app, (string) $session['userId']);
+        if ($gated !== null) {
+            return $this->error($response, 403, 'insufficient_scope', $gated);
+        }
         // Re-evaluate both the member's CURRENT role and the app's CURRENT
         // remote-consent policy on every short-lived exchange. Revoking a role
         // grant or consent flag therefore takes effect within one admission TTL.

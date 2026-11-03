@@ -29,6 +29,21 @@ class AppUserService
         $this->gate = $gate;
     }
 
+    /**
+     * Why $userId holds no permission on $app because of its gate: the gate's own words (what the
+     * app asks, and how to meet it), or null when the gate lets them in. A caller that would
+     * otherwise say a role or scope is missing says this instead: no role change can fix it.
+     */
+    public function gateRefusal(array $app, string $userId): ?string
+    {
+        if ($this->gate === null || $this->gate->admitsMember((string) ($app['id'] ?? ''), $userId)) {
+            return null;
+        }
+        $refusal = $this->gate->decide($app, $userId);
+        $message = is_array($refusal) && is_string($refusal[1]['message'] ?? null) ? $refusal[1]['message'] : '';
+        return $message !== '' ? $message : 'This app asks for something this account has not shown yet.';
+    }
+
     // Ownership verification helpers
 
     public function roleBelongsToApp(string $roleId, string $appId): bool

@@ -44,6 +44,7 @@ final class AokieCompanionAuthTest extends TestCase
     private static McpTokenService $tokens;
     private static McpOAuthService $oauth;
     private static McpOAuthController $oauthController;
+    private static AppUserService $appUsers;
     private static AokieCompanionController $controller;
     private static AppService $apps;
     private static FormService $forms;
@@ -114,6 +115,7 @@ final class AokieCompanionAuthTest extends TestCase
         self::$tokens = new McpTokenService($connection);
         self::$oauth = new McpOAuthService($connection, self::$tokens);
         $appUsers = new AppUserService($connection);
+        self::$appUsers = $appUsers;
         self::$oauthController = new McpOAuthController(self::$oauth, self::$apps, null, null, null, null, $appUsers);
         self::$signing = new SigningService($connection);
         self::$push = new AokieCompanionPushService($connection);
@@ -1509,6 +1511,61 @@ final class AokieCompanionAuthTest extends TestCase
         self::$pdo->prepare("UPDATE app_users SET status = 'suspended' WHERE id = ?")->execute([$appUserId]);
         $suspended = $this->mobileAdmission($oauth['accessToken'], $deviceId);
         $this->assertSame(403, $suspended->getStatusCode());
+    }
+
+    public function testAMemberWithoutTheAppsPassIsToldWhatTheAppAsksNotThatAScopeIsMissing(): void
+    {
+        $memberId = 'm-' . bin2hex(random_bytes(8));
+        $this->extraUsers[] = $memberId;
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'Member')")
+            ->execute([$memberId, $memberId . '@aokie.test']);
+        $role = self::$pdo->prepare("SELECT id FROM app_roles WHERE app_id = ? AND name = 'Member'");
+        $role->execute([$this->appId]);
+        $roleId = (string) $role->fetchColumn();
+        self::$pdo->prepare('INSERT INTO app_role_permissions (id, role_id, form_id, permission) VALUES (?, ?, NULL, ?)')
+            ->execute(['p-' . bin2hex(random_bytes(8)), $roleId, AppPermissions::AOKIE_COMPANION_STATE]);
+        self::$pdo->prepare("INSERT INTO app_users (id, app_id, user_id, role_id, status, joined_at) VALUES (?, ?, ?, ?, 'active', NOW())")
+            ->execute(['au-' . bin2hex(random_bytes(8)), $this->appId, $memberId, $roleId]);
+        $deviceId = 'gated_device_' . bin2hex(random_bytes(4));
+        $oauth = $this->authorizeCompanion($deviceId, $memberId);
+        $this->assertSame(200, $this->mobileAdmission($oauth['accessToken'], $deviceId)->getStatusCode());
+
+        // The app now asks for a pass (its plugin is off on this site), and the gate is wired as on a site.
+        self::$pdo->prepare("UPDATE apps SET settings = JSON_SET(COALESCE(settings, '{}'), '$.requires', JSON_ARRAY(JSON_OBJECT('plugin', 'formlogic.age-gate', 'kind', 'age', 'min', 18))) WHERE id = ?")
+            ->execute([$this->appId]);
+        self::$appUsers->useAccessGate(new \FormLogic\Services\AccessGateService(self::$mysql));
+        try {
+            $refused = $this->mobileAdmission($oauth['accessToken'], $deviceId);
+            $body = self::decode($refused);
+            $this->assertSame(403, $refused->getStatusCode());
+            $this->assertSame('insufficient_scope', $body['code'], 'the code a Companion already knows');
+            $this->assertStringContainsString('This app needs a plugin that is not available on this site', $body['message']);
+            $this->assertStringNotContainsString('aokie:state', $body['message']);
+
+            $info = self::$oauthController->authorizeInfo(
+                $this->request('GET', '/api/oauth/authorize-info')->withQueryParams([
+                    'client_id' => McpOAuthService::AOKIE_COMPANION_CLIENT_ID,
+                    'redirect_uri' => 'com.aokie.companion:/oauth/callback',
+                    'scope' => implode(' ', McpOAuthService::AOKIE_COMPANION_SCOPES),
+                    'resource' => McpOAuthService::companionResourceFor($this->request('GET', '/probe')),
+                    'code_challenge' => $this->pkce()['challenge'],
+                    'code_challenge_method' => 'S256',
+                    'device' => $deviceId,
+                    'appId' => $this->appId,
+                ])->withAttribute('userId', $memberId),
+                (new ResponseFactory())->createResponse(),
+            );
+            $infoBody = self::decode($info);
+            $this->assertSame(403, $info->getStatusCode());
+            $this->assertSame('access_denied', $infoBody['error']);
+            $this->assertStringContainsString('This app needs a plugin that is not available on this site', $infoBody['error_description'], 'and not that their role does not permit it');
+
+            // The app's owner is never gated.
+            $owner = 'owner_device_' . bin2hex(random_bytes(4));
+            $this->assertSame(200, $this->mobileAdmission($this->authorizeCompanion($owner)['accessToken'], $owner)->getStatusCode());
+        } finally {
+            self::$appUsers->useAccessGate(null);
+        }
     }
 
     public function testEndCallerIsAnIndependentRoleAndPolicyGrant(): void

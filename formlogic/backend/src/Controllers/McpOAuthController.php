@@ -158,6 +158,9 @@ class McpOAuthController
                 if (!$app || ($app['status'] ?? null) !== 'published' || !$this->apps->isAppMember($appId, $userId)) {
                     return $this->oauthError($response, 'access_denied', 'Published app not found or access denied', 403);
                 }
+                if (($gated = $this->appUsers?->gateRefusal($app, $userId)) !== null) {
+                    return $this->oauthError($response, 'access_denied', $gated, 403);
+                }
                 $scopes = $this->allowedCompanionScopes($appId, $userId, $scopes);
                 if (!in_array('aokie:state', $scopes, true)) {
                     return $this->oauthError($response, 'access_denied', 'Your app role does not permit Aokie Companion access', 403);
@@ -219,6 +222,9 @@ class McpOAuthController
                 return $this->oauthError($response, 'invalid_request', 'Aokie Companion requires a published app', 400);
             }
             if ($isCompanion) {
+                if (($gated = $this->appUsers?->gateRefusal($app, $userId)) !== null) {
+                    return $this->oauthError($response, 'access_denied', $gated, 403);
+                }
                 $grantedScopes = $this->allowedCompanionScopes($appId, $userId, $grantedScopes);
                 if (!in_array('aokie:state', $grantedScopes, true)) {
                     return $this->oauthError($response, 'access_denied', 'Your app role does not permit Aokie Companion access', 403);
