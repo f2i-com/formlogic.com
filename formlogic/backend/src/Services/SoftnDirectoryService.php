@@ -36,6 +36,11 @@ final class SoftnDirectoryService
     public const PUBLISH_PER_HOUR = 10;
     /** Longer than any publish can take (the transport gives up after 120 s): a draft still `publishing` is unclear. */
     public const PUBLISHING_STALE_SECONDS = 300;
+    /**
+     * How long a read (the categories softn_get_started lists) may take: a slow directory leaves them
+     * out rather than holding an agent's first call, and its PHP worker, for the upload's 120 s.
+     */
+    public const READ_TIMEOUT_SECONDS = 5;
     private const UNCERTAIN = 'No clear answer from the directory: the app may have been published. Look for it there before trying again.';
 
     private PDO $pdo;
@@ -676,7 +681,8 @@ final class SoftnDirectoryService
         $ch = curl_init($url);
         $head = ['Accept: application/json'];
         foreach ($headers as $k => $v) $head[] = $k . ': ' . $v;
-        $options = [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 120, CURLOPT_CONNECTTIMEOUT => 10, CURLOPT_FOLLOWLOCATION => false,
+        $read = $method === 'GET';
+        $options = [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => $read ? self::READ_TIMEOUT_SECONDS : 120, CURLOPT_CONNECTTIMEOUT => $read ? self::READ_TIMEOUT_SECONDS : 10, CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP, CURLOPT_HTTPHEADER => $head, CURLOPT_CUSTOMREQUEST => $method];
         // The bundled roots, where PHP has none of its own (Windows and WAMP): as WebhookService and the others do.
         $caBundle = dirname(__DIR__, 2) . '/resources/cacert.pem';

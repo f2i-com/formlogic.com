@@ -422,6 +422,27 @@ final class SoftnDirectoryServiceTest extends TestCase
         self::assertSame('published', $service->approve($this->owner, $draft['draftId'], true)['status'], 'unless the person says to');
     }
 
+    public function testADirectoryThatNeverAnswersDoesNotHoldAnAgentsFirstCall(): void
+    {
+        // A directory that takes the connection and never answers: the real transport, not the one in memory.
+        $listener = stream_socket_server('tcp://127.0.0.1:0', $errno, $error);
+        self::assertNotFalse($listener, $error);
+        $address = (string) stream_socket_get_name($listener, false);
+        $settings = self::$tmp . '/settings-silent.json';
+        file_put_contents($settings, json_encode(['url' => 'http://' . $address]));
+        $service = new SoftnDirectoryService(self::$mysql, self::$apps, null, $settings, self::$tmp . '/staging');
+        try {
+            $started = microtime(true);
+            $answer = $service->getStarted();
+            $took = microtime(true) - $started;
+        } finally {
+            fclose($listener);
+        }
+        self::assertTrue($answer['enabled']);
+        self::assertSame([], $answer['categories'], 'the categories are left out');
+        self::assertLessThan(SoftnDirectoryService::READ_TIMEOUT_SECONDS + 3, $took, 'and the call is answered in seconds, not the upload\'s two minutes');
+    }
+
     public function testNoDraftIsLeftPublishing(): void
     {
         $service = $this->service('https://dir.test');
