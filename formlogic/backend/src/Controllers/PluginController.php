@@ -123,7 +123,7 @@ final class PluginController
     }
 
     /**
-     * POST /api/admin/plugins/inspect {project}: what an uploaded plugin asks, to read before
+     * POST /api/admin/plugin-uploads/inspect {project}: what an uploaded plugin asks, to read before
      * installing it. Nothing is installed or kept.
      */
     public function adminInspect(Request $request, Response $response): Response
@@ -137,7 +137,7 @@ final class PluginController
         return $this->jsonResponse($response, ['plugin' => ['id' => $plugin['id'], 'name' => $plugin['name'], 'description' => $plugin['description'], 'updates' => $plugin['updates']] + PluginService::review($plugin)]);
     }
 
-    /** POST /api/admin/plugins/upload {project}: install an uploaded plugin, or update it, granting what it asks. */
+    /** POST /api/admin/plugin-uploads {project}: install an uploaded plugin, or update it, granting what it asks. */
     public function adminUpload(Request $request, Response $response): Response
     {
         $body = (array) ($request->getParsedBody() ?? []);
