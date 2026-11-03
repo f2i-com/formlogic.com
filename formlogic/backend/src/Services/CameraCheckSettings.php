@@ -32,7 +32,8 @@ final class CameraCheckSettings
             }
         }
         $data['model'] = is_string($data['model'] ?? null) && $data['model'] !== '' ? $data['model'] : null;
-        return $data;
+        // A computer whose owner is no longer an administrator is sent no one's pictures (SiteAiDesktopSettings).
+        return $this->computers->ownerIsAdmin($data['ownerUserId']) ? $data : null;
     }
 
     public function online(array $target): bool

@@ -90,6 +90,8 @@ final class CameraCheckServiceTest extends TestCase
             $this->markTestSkipped('No SoftN runner here (set FORMLOGIC_NODE_BIN)');
         }
         $this->adminId = $this->makeUser();
+        // A computer serves the site only while the account it was chosen under is an administrator.
+        self::$pdo->prepare('UPDATE users SET is_admin = 1 WHERE id = ?')->execute([$this->adminId]);
         $this->memberId = $this->makeUser();
         $this->ownerId = $this->makeUser();
         self::$pdo->prepare("DELETE FROM plugins WHERE manifest_id = 'formlogic.age-gate'")->execute();
@@ -495,6 +497,40 @@ final class CameraCheckServiceTest extends TestCase
         } catch (\InvalidArgumentException $e) {
             self::assertStringContainsString('today', $e->getMessage());
         }
+    }
+
+    public function testChecksStartedSideBySideAreHeldToTheLimitsWhenSent(): void
+    {
+        // Two starts at the same moment both pass start()'s limits before either is written: as
+        // that leaves them, both started.
+        $first = $this->checks->start($this->memberId, 'formlogic.age-gate', $this->slug, 'age');
+        $second = $this->checks->start($this->memberId, 'formlogic.age-gate', $this->slug, 'age');
+        $turn = self::$pdo->query('SELECT turn FROM camera_checks WHERE id = ' . self::$pdo->quote($second['id']))->fetchColumn();
+        self::$pdo->prepare("UPDATE camera_checks SET status = 'started', outcome = NULL, finished_at = NULL, turn = ? WHERE id = ?")->execute([$turn, $first['id']]);
+        $frames = fn (array $started) => array_map(fn () => 'data:image/jpeg;base64,' . base64_encode("\xFF\xD8\xFF\xE0" . random_bytes(40000)), $started['steps']);
+        $refused = function (array $started, string $words) use ($frames): void {
+            try {
+                $this->checks->submit($this->memberId, $started['id'], $frames($started));
+                self::fail("sent past the limit: $words");
+            } catch (\InvalidArgumentException $e) {
+                self::assertStringContainsString($words, $e->getMessage());
+            }
+            self::assertSame('started', self::$pdo->query('SELECT status FROM camera_checks WHERE id = ' . self::$pdo->quote($started['id']))->fetchColumn(), 'and not claimed');
+        };
+
+        $this->checks->submit($this->memberId, $first['id'], $frames($first));
+        $refused($second, 'still being looked at');
+        // The first comes back "not_confirmed": the second waits the hour like any other.
+        self::$pdo->prepare("UPDATE camera_checks SET status = 'done', outcome = 'not_confirmed', finished_at = ? WHERE id = ?")->execute([gmdate('Y-m-d H:i:s'), $first['id']]);
+        $refused($second, 'an hour');
+        // And with today's tries used, it is not one more.
+        self::$pdo->prepare("UPDATE camera_checks SET outcome = 'turns' WHERE id = ?")->execute([$first['id']]);
+        foreach ([1, 2] as $n) {
+            self::$pdo->prepare("INSERT INTO camera_checks (id, user_id, mode, plugin_id, app_id, kind, min_value, steps, turn, status, outcome, created_at, expires_at, submitted_at, finished_at)
+                VALUES (?, ?, 'member', 'formlogic.age-gate', NULL, 'age', 18, '[]', NULL, 'done', 'turns', ?, ?, ?, ?)")
+                ->execute([bin2hex(random_bytes(16)), $this->memberId, $now = gmdate('Y-m-d H:i:s'), $now, $now, $now]);
+        }
+        $refused($second, 'today');
     }
 
     public function testOnlyWhatTheSiteCanRunIsOffered(): void

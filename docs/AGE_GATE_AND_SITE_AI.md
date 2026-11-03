@@ -21,7 +21,9 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
   (`/api/admin/oaiy/providers|models`, shared with the camera checks card). OAIY's own engine
   answers with the model chosen in OAIY. FormLogic pins the key and shows a fingerprint of it, to
   tell computers apart (OAIY shows none to compare it with yet). A computer whose key changes is
-  refused until it is chosen again.
+  refused until it is chosen again. A computer whose owner is no longer an administrator is sent
+  nothing: the Site AI and camera check choices read as unmade while that is so (asked at every
+  read), so members' chats and pictures do not go to it.
 - `AIService` gets a second upstream beside the `.env` one. When it is chosen, the **server** is
   the sealing client on the existing desktop AI lane: for each request it makes a fresh X25519
   key, seals the turn to the pinned desktop key, queues it for that desktop with the member as the
@@ -126,6 +128,8 @@ How to write one is `docs/PLUGINS.md`. In short:
   `not_installed`. The models come from OAIY's Models page (the catalog's Age check, pinned revisions).
 - A plugin's page cannot call `/api/site/` routes on its own backend (`NativeAppController`).
 - The site keeps the limits (three tries a day, one at a time, an hour after `not_confirmed`),
+  when a check starts and again, under a lock on the member's row, when its pictures are sent:
+  checks started side by side all passed the first, and could each be sent in turn. It
   refunds a check that did not run (`unavailable`), and records a pass only for a member's check,
   within the grant, while the app still asks it. It keeps the outcome and nothing else; the relay
   drops the sealed pictures once OAIY has answered (`DesktopAiRelayService::complete`, `abandon`,
@@ -141,7 +145,9 @@ How to write one is `docs/PLUGINS.md`. In short:
   strength}`, each naming the plugin whose pass it accepts. A pass from another plugin never counts.
 - One service decides access for a member of a gated app (`AccessGateService`), in three places:
   a middleware on the whole `/api/app/{slug}` group and on each such route outside it (left open:
-  the manifests, membership, joining and the native entry metadata, which a page needs first);
+  the manifests, membership, joining and the native entry metadata, which a page needs first, and
+  Aokie Companion's discovery, which the Companion reads before anyone signs in: gated, no member
+  could set the Companion up for a gated app);
   file downloads of the app's forms (`FileController`); and every permission a member holds
   (`AppUserService::hasPermission` and `getUserPermissions`), so paths that reach an app by id —
   the member's app list and detail, Aokie Companion, the MCP grants — give an unverified member

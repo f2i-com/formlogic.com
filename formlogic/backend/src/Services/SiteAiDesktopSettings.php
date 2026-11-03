@@ -40,7 +40,20 @@ final class SiteAiDesktopSettings
             }
         }
         $data['model'] = is_string($data['model'] ?? null) && $data['model'] !== '' && $data['providerId'] !== SiteDesktopAi::PROVIDER ? $data['model'] : null;
-        return $data;
+        return $this->ownerIsAdmin($data['ownerUserId']) ? $data : null;
+    }
+
+    /**
+     * Whether the account a computer was chosen under is an administrator still. One whose rights
+     * were taken away no longer serves the site, and its computer is no longer sent members' chats
+     * or camera pictures: the choice reads as unmade until an administrator makes it again. Asked
+     * at every read, so it holds however the rights went.
+     */
+    public function ownerIsAdmin(string $userId): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM users WHERE id = ? AND is_admin = 1');
+        $stmt->execute([$userId]);
+        return $stmt->fetchColumn() !== false;
     }
 
     /** Whether the chosen computer has checked in within the last 90 seconds, as a desktop counts as fresh. */

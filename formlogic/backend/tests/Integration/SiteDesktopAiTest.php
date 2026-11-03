@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Tests\Integration;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Services\CameraCheckSettings;
 use FormLogic\Services\DesktopAiRelayService;
 use FormLogic\Services\SiteAiBusyException;
 use FormLogic\Services\SiteAiTooLargeException;
@@ -65,6 +66,8 @@ final class SiteDesktopAiTest extends TestCase
             $this->markTestSkipped('No test database');
         }
         $this->adminId = $this->makeUser();
+        // A computer serves the site only while the account it was chosen under is an administrator.
+        self::$pdo->prepare('UPDATE users SET is_admin = 1 WHERE id = ?')->execute([$this->adminId]);
         $this->memberId = $this->makeUser();
         $this->settingsPath = sys_get_temp_dir() . '/site-ai-desktop-' . bin2hex(random_bytes(6)) . '.json';
         $this->relay = new DesktopAiRelayService(self::$mysql);
@@ -107,6 +110,34 @@ final class SiteDesktopAiTest extends TestCase
         self::assertSame([['role' => 'user', 'content' => 'Say hello.']], $seen['messages']);
         $row = self::$pdo->query('SELECT requesting_user_id, owner_user_id, target_instance_id FROM desktop_ai_requests WHERE owner_user_id = ' . self::$pdo->quote($this->adminId))->fetch(PDO::FETCH_ASSOC);
         self::assertSame([$this->memberId, $this->adminId, 'inst-site-ai'], [$row['requesting_user_id'], $row['owner_user_id'], $row['target_instance_id']]);
+    }
+
+    public function testAComputerWhoseOwnerIsNoLongerAnAdministratorIsSentNoChatAndNoPicture(): void
+    {
+        $this->chooseTheTestDesktop();
+        $id = (string) self::$pdo->query("SELECT id FROM desktop_connections WHERE desktop_instance_id = 'inst-site-ai' AND owner_user_id = " . self::$pdo->quote($this->adminId))->fetchColumn();
+        $camera = new CameraCheckSettings($this->settings, $this->settingsPath . '.camera.json');
+        $camera->choose($this->adminId, $id, SiteDesktopAi::PROVIDER, null);
+        self::assertNotNull($this->settings->current());
+        self::assertNotNull($camera->current());
+
+        // Another administrator takes this one's rights away, and nobody presses Stop.
+        self::$pdo->prepare('UPDATE users SET is_admin = 0 WHERE id = ?')->execute([$this->adminId]);
+        self::assertNull($this->settings->current(), 'the site\'s AI reads as not served from OAIY');
+        self::assertNull($camera->current(), 'camera checks read as not set up');
+        $desktop = $this->desktop(fn () => self::fail('a turn reached the computer'));
+        try {
+            $desktop->chat([['role' => 'user', 'content' => 'Say hello.']], $this->memberId, null, null, 5);
+            self::fail('a member\'s chat went to the computer');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('not served from OAIY', $e->getMessage());
+        }
+        self::assertSame(0, $this->rows(), 'nothing was queued for it');
+
+        // Made an administrator again, it serves as it was chosen.
+        self::$pdo->prepare('UPDATE users SET is_admin = 1 WHERE id = ?')->execute([$this->adminId]);
+        self::assertNotNull($this->settings->current());
+        @unlink($this->settingsPath . '.camera.json');
     }
 
     public function testAProviderStoredInOaiyIsAskedForTheModelChosenForIt(): void

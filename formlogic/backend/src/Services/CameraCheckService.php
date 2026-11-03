@@ -149,9 +149,35 @@ final class CameraCheckService
             throw new \InvalidArgumentException('This check took too long. Start again.');
         }
         $images = self::frames($frames, count(json_decode((string) $row['steps'], true)));
-        $this->claim($row);
+        if ($row['mode'] === 'member') {
+            $this->claimWithinLimits($row);
+        } else {
+            $this->claim($row);
+        }
         $this->sendTurn($row, $images);
         return $this->status($userId, $id);
+    }
+
+    /**
+     * A member's try begins here, so the limits are asked again here: checks started side by side
+     * all passed start()'s, before any of them was written, and each could then be sent in turn,
+     * past the day's tries and the hour after "not_confirmed", or two at once. One member's tries
+     * are claimed one at a time, under a lock on their account's row.
+     */
+    private function claimWithinLimits(array $row): void
+    {
+        $userId = (string) $row['user_id'];
+        $this->expireOld($userId);
+        $this->pdo->beginTransaction();
+        try {
+            $this->pdo->prepare('SELECT id FROM users WHERE id = ? FOR UPDATE')->execute([$userId]);
+            $this->refuseOverLimits($userId, (string) $row['id']);
+            $this->claim($row);
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
     }
 
     /**
@@ -589,8 +615,18 @@ final class CameraCheckService
     private function assertMayStart(string $userId): void
     {
         $this->expireOld($userId);
-        $open = $this->pdo->prepare("SELECT COUNT(*) FROM camera_checks WHERE user_id = ? AND status IN ('sending', 'assessing', 'deciding')");
-        $open->execute([$userId]);
+        $this->refuseOverLimits($userId);
+        $this->cancelOpen($userId);
+    }
+
+    /**
+     * A member's limits: one check with OAIY at a time ($except is the one being sent), today's
+     * tries, and the hour after "not_confirmed".
+     */
+    private function refuseOverLimits(string $userId, string $except = ''): void
+    {
+        $open = $this->pdo->prepare("SELECT COUNT(*) FROM camera_checks WHERE user_id = ? AND id <> ? AND status IN ('sending', 'assessing', 'deciding')");
+        $open->execute([$userId, $except]);
         if ((int) $open->fetchColumn() > 0) {
             throw new \InvalidArgumentException('Your last check is still being looked at. Wait for it to finish.');
         }
@@ -603,7 +639,6 @@ final class CameraCheckService
         if ($last->fetchColumn() !== false) {
             throw new \InvalidArgumentException('Your last check could not confirm this. You can try again in an hour.');
         }
-        $this->cancelOpen($userId);
     }
 
     /** One started check at a time: a new one ends any left. */
