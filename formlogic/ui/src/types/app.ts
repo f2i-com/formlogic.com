@@ -732,7 +732,8 @@ export interface SoftnDraft {
   appId: string;
   status: 'draft' | 'awaiting_approval' | 'publishing' | 'published' | 'failed' | 'uncertain' | 'expired';
   destination: string;
-  target: { slug: string } | null;
+  /** The app a new version updates: its slug there, and the name it is listed under (null if this site lost it). */
+  target: { slug: string; name?: string | null } | null;
   sha256: string;
   bytes: number;
   listing: { name?: string; description?: string; category?: string; tags?: string[]; author?: string; notes?: string };

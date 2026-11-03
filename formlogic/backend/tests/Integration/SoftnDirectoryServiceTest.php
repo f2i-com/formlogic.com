@@ -277,6 +277,96 @@ final class SoftnDirectoryServiceTest extends TestCase
         self::assertTrue($draft['permissions']['net']['enabled']);
     }
 
+    /**
+     * A listing without a description or author leaves the directory to take its manifest's (Apps::create): the
+     * approval page used to show neither, and the app was listed with both.
+     */
+    public function testANewAppIsShownWithTheDescriptionAndAuthorItsManifestWillListItUnder(): void
+    {
+        $this->project['files']['manifest.json'] = json_encode(['id' => 'local.booking', 'name' => 'Booking', 'version' => '1.0.0', 'main' => 'index.html',
+            'description' => 'Sign in with your bank password to keep the clock in sync.', 'author' => ['name' => 'Your Bank']]);
+        $service = $this->service('https://dir.test');
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools']);
+        self::assertSame(['name' => 'Clock', 'category' => 'tools', 'description' => 'Sign in with your bank password to keep the clock in sync.', 'author' => 'Your Bank'], $draft['listing']);
+        $service->requestPublish($this->owner, $draft['draftId']);
+        $service->approve($this->owner, $draft['draftId']);
+        self::assertSame(['Sign in with your bank password to keep the clock in sync.', 'Your Bank'], [$this->posts()[0]['fields']['description'], $this->posts()[0]['fields']['author']], 'and sent as shown');
+
+        // What the agent gives is what goes, and no more of an author than the directory keeps.
+        $mine = $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools', 'description' => 'A clock.', 'author' => str_repeat('a', 50)]);
+        self::assertSame(['A clock.', str_repeat('a', 40)], [$mine['listing']['description'], $mine['listing']['author']]);
+    }
+
+    /**
+     * The page shows the listing as the directory keeps it (Apps::create: a name of 64, notes of 400, tags as Text::tags
+     * writes them): it showed a longer name, whose cut-off end was its point, and tags the directory rewrote. A category
+     * the directory does not have, which it would file as "other", is refused while there is still an agent to fix it.
+     */
+    public function testThePageShowsTheListingAsTheDirectoryKeepsIt(): void
+    {
+        $service = $this->service('https://dir.test');
+        $name = 'Clock for the whole family: alarms, timers and a calendar - and no ads';
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => $name, 'category' => 'tools', 'notes' => str_repeat('n', 450),
+            'tags' => ['Family Fun!', 'no-ads-ever-for-anyone-at-all', 'family fun', '!!!']]);
+        self::assertSame(mb_substr($name, 0, 64), $draft['listing']['name']);
+        self::assertSame(400, mb_strlen($draft['listing']['notes']));
+        self::assertSame(['family-fun', 'no-ads-ever-for-anyone-a'], $draft['listing']['tags'], 'as the directory writes them, once each');
+        $this->assertRefused(fn () => $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'kids']), 'no category "kids": use one of tools');
+    }
+
+    /** A new version sends its notes alone: its page showed a name, description, author and tags that never went. */
+    public function testANewVersionShowsItsNotesAloneUnderTheNameItIsListedBy(): void
+    {
+        $service = $this->service('https://dir.test');
+        $first = $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools']);
+        $service->requestPublish($this->owner, $first['draftId']);
+        $slug = $service->approve($this->owner, $first['draftId'])['publication']['slug'];
+
+        $next = $service->createDraft($this->owner, $this->appId, ['name' => 'Family Photo Album', 'description' => 'Private, nothing leaves your device.',
+            'category' => 'kids', 'author' => 'Your bank', 'tags' => ['safe'], 'notes' => 'Bug fixes'], $slug);
+        self::assertSame(['notes' => 'Bug fixes'], $next['listing']);
+        self::assertSame(['slug' => $slug, 'name' => 'Clock'], $next['target']);
+        $service->requestPublish($this->owner, $next['draftId']);
+        $service->approve($this->owner, $next['draftId']);
+        self::assertSame(['notes' => 'Bug fixes'], $this->posts()[1]['fields']);
+    }
+
+    /**
+     * Without permission.json, what the app may use is the manifest's older block, read as SoftN reads it: `network`
+     * set to anything JavaScript calls true turns the network on. The page said "no network" for 1, "yes" and the rest.
+     */
+    public function testAnOlderManifestsPermissionsAreReadAsTheRuntimeReadsThem(): void
+    {
+        $net = ['net' => ['enabled' => true]];
+        foreach ([[1, $net], ['yes', $net], ['0', $net], [[], $net], [['enabled' => false], $net], [true, $net],
+            [0, []], [false, []], [null, []], ['', []]] as [$value, $expected]) {
+            self::assertSame($expected, SoftnDirectoryService::declaredPermissions([], ['permissions' => ['network' => $value]]), json_encode($value));
+        }
+        // `{}` in the manifest itself, as JSON decodes it here.
+        $decoded = json_decode('{"permissions":{"network":{},"filesystem":"no"}}', true);
+        self::assertSame(['net' => ['enabled' => true], 'files' => ['enabled' => true]], SoftnDirectoryService::declaredPermissions([], $decoded));
+        self::assertSame([], SoftnDirectoryService::declaredPermissions([], ['permissions' => true]), 'not a block: nothing');
+        // With permission.json, only it counts: one that cannot be read, or has no block, grants nothing.
+        $legacy = ['permissions' => ['network' => true]];
+        self::assertSame([], SoftnDirectoryService::declaredPermissions(['permission.json' => '{not json'], $legacy));
+        self::assertSame([], SoftnDirectoryService::declaredPermissions(['permission.json' => '{"other":1}'], $legacy));
+        self::assertSame($net, SoftnDirectoryService::declaredPermissions(['permission.json' => ''], $legacy), 'an empty file is no file');
+
+        unset($this->project['files']['permission.json']);
+        $this->project['files']['manifest.json'] = json_encode(['id' => 'local.booking', 'name' => 'Booking', 'version' => '1.0.0', 'main' => 'index.html', 'permissions' => ['network' => 1]]);
+        $service = $this->service('https://dir.test');
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        self::assertSame($net, $draft['permissions']);
+
+        // A draft made before this kept the older block as it stood: shown as SoftN reads it all the same.
+        self::$pdo->prepare('UPDATE softn_directory_drafts SET permissions = ? WHERE id = ?')->execute(['{"network":true,"filesystem":0}', $draft['draftId']]);
+        self::assertSame($net, $service->draft($this->owner, $draft['draftId'])['permissions']);
+        // Not a bundle with a permission.json: such keys there are that file's, and grant nothing.
+        $this->project['files']['permission.json'] = '{"permissions":{"network":{"enabled":true}}}';
+        $declared = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        self::assertSame(['network' => ['enabled' => true]], $declared['permissions']);
+    }
+
     public function testADraftOfADeletedAppIsNotPublished(): void
     {
         $service = $this->service('https://dir.test');

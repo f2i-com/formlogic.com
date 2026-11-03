@@ -77,12 +77,30 @@ describe('approving a draft for the SoftN directory', () => {
     expect(text).toContain('manifest.json');
   });
 
+  it('names a new version by the app it updates, and shows only its notes, which is all that is sent', async () => {
+    // A draft made before versions kept their notes alone still carries the rest: none of it is shown.
+    getDraft.mockResolvedValue({ data: { ...waiting, target: { slug: 'clock-0', name: 'Clock' },
+      listing: { name: 'Family Photo Album', description: 'Private, nothing leaves your device.', category: 'kids', author: 'Your bank', tags: ['safe'], notes: 'Bug fixes' } } });
+    await open();
+    const text = container.textContent ?? '';
+    expect(container.querySelector('h1')?.textContent).toBe('Clock');
+    expect(text).toContain('clock-0, an app this account published');
+    expect(text).toContain('Bug fixes');
+    for (const unsent of ['Family Photo Album', 'Private, nothing leaves', 'kids', 'Your bank', 'safe']) expect(text).not.toContain(unsent);
+  });
+
   it('says so when an app may reach any site, in words and not capability names', async () => {
     getDraft.mockResolvedValue({ data: { ...waiting, permissions: { net: { enabled: true }, camera: { enabled: true }, mic: { enabled: false } } } });
     await open();
     const text = container.textContent ?? '';
     expect(text).toContain('the network (any site), the camera');
     expect(text).not.toContain('microphone');
+  });
+
+  it('says nothing is on that SoftN would not grant: only enabled: true is', async () => {
+    getDraft.mockResolvedValue({ data: { ...waiting, permissions: { net: { allowed_hosts: ['x.example'] }, camera: {}, mic: true, files: { enabled: 'yes' } } } });
+    await open();
+    expect(container.textContent).toContain('Nothing beyond the page: no network, camera or server storage.');
   });
 
   it('offers no way to publish a draft the app has moved on from', async () => {

@@ -34,10 +34,14 @@ const PERMISSION_WORDS: Record<string, string> = {
   accel: 'fast number crunching',
 };
 
-/** What the app asks to use, in words, from its permission.json. No list of hosts means any site. */
+/**
+ * What the app asks to use, in words, from its permission.json. SoftN grants a capability only when its entry says
+ * `enabled: true` (an older manifest's block arrives here in that form), so nothing else is said to be on. No list of
+ * hosts means any site.
+ */
 function permissionWords(permissions: Record<string, unknown>): string[] {
   return Object.entries(permissions).flatMap(([name, value]) => {
-    const on = value === true || (typeof value === 'object' && value !== null && (value as { enabled?: unknown }).enabled !== false);
+    const on = typeof value === 'object' && value !== null && (value as { enabled?: unknown }).enabled === true;
     if (!on) return [];
     const words = PERMISSION_WORDS[name] ?? name;
     if (name !== 'net' && name !== 'network') return [words];
@@ -99,7 +103,7 @@ export function SoftnDirectoryApprove() {
     <div className="mx-auto max-w-2xl space-y-6 p-4 sm:p-6">
       <header>
         <p className="text-xs font-semibold uppercase tracking-wider text-primary-600 dark:text-primary-300">{draft.target ? 'A new version for the SoftN directory' : 'Publish to the SoftN directory'}</p>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900 dark:text-white">{draft.listing.name ?? draft.target?.slug ?? 'Untitled app'}</h1>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900 dark:text-white">{draft.target ? (draft.target.name ?? draft.target.slug) : (draft.listing.name ?? 'Untitled app')}</h1>
         <p className="mt-2 text-sm text-gray-600 dark:text-slate-300">{STATUS_WORDS[draft.status]}</p>
       </header>
 
@@ -110,10 +114,11 @@ export function SoftnDirectoryApprove() {
           <dt className="font-medium text-gray-500 dark:text-slate-400">Who can see it</dt>
           <dd className="text-gray-900 dark:text-white">Anyone. It is listed in the directory, anyone can play it, and its source can be read and remixed.</dd>
           {draft.target && <><dt className="font-medium text-gray-500 dark:text-slate-400">Updates</dt><dd className="text-gray-900 dark:text-white">{draft.target.slug}, an app this account published</dd></>}
-          {draft.listing.description && <><dt className="font-medium text-gray-500 dark:text-slate-400">Description</dt><dd className="text-gray-900 dark:text-white">{draft.listing.description}</dd></>}
-          {draft.listing.category && <><dt className="font-medium text-gray-500 dark:text-slate-400">Category</dt><dd className="text-gray-900 dark:text-white">{draft.listing.category}</dd></>}
-          {draft.listing.author && <><dt className="font-medium text-gray-500 dark:text-slate-400">Shown as made by</dt><dd className="text-gray-900 dark:text-white">{draft.listing.author}</dd></>}
-          {draft.listing.tags && draft.listing.tags.length > 0 && <><dt className="font-medium text-gray-500 dark:text-slate-400">Tags</dt><dd className="text-gray-900 dark:text-white">{draft.listing.tags.join(', ')}</dd></>}
+          {/* A new version sends its notes alone: the app keeps its listing there. */}
+          {!draft.target && draft.listing.description && <><dt className="font-medium text-gray-500 dark:text-slate-400">Description</dt><dd className="text-gray-900 dark:text-white">{draft.listing.description}</dd></>}
+          {!draft.target && draft.listing.category && <><dt className="font-medium text-gray-500 dark:text-slate-400">Category</dt><dd className="text-gray-900 dark:text-white">{draft.listing.category}</dd></>}
+          {!draft.target && draft.listing.author && <><dt className="font-medium text-gray-500 dark:text-slate-400">Shown as made by</dt><dd className="text-gray-900 dark:text-white">{draft.listing.author}</dd></>}
+          {!draft.target && draft.listing.tags && draft.listing.tags.length > 0 && <><dt className="font-medium text-gray-500 dark:text-slate-400">Tags</dt><dd className="text-gray-900 dark:text-white">{draft.listing.tags.join(', ')}</dd></>}
           {draft.listing.notes && <><dt className="font-medium text-gray-500 dark:text-slate-400">Notes</dt><dd className="text-gray-900 dark:text-white">{draft.listing.notes}</dd></>}
           <dt className="font-medium text-gray-500 dark:text-slate-400">What it may use</dt>
           <dd className="text-gray-900 dark:text-white">{asks.length ? asks.join(', ') : 'Nothing beyond the page: no network, camera or server storage.'}</dd>

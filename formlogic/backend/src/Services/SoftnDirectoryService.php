@@ -187,6 +187,14 @@ final class SoftnDirectoryService
             $this->ownPublication($ownerId, $directory, $targetSlug);
         }
         $clean = self::listing($listing, $targetSlug === null);
+        if ($targetSlug !== null) {
+            // A new version sends its notes alone (the directory keeps the app's name, description and the rest), so the
+            // approval page is given nothing else to show.
+            $clean = array_intersect_key($clean, ['notes' => true]);
+        } elseif (($known = array_column($this->categories($directory), 'id')) !== [] && !in_array($clean['category'], $known, true)) {
+            // The directory files a category it does not have as "other", which the page would not have said.
+            throw new \InvalidArgumentException('The directory has no category "' . $clean['category'] . '": use one of ' . implode(', ', $known) . '.');
+        }
         $project = ($this->projectOf)($appId);
         if (!is_array($project) || !is_array($project['files'] ?? null) || $project['files'] === []) {
             throw new \InvalidArgumentException('The app has no project yet: write its files first.');
@@ -194,7 +202,11 @@ final class SoftnDirectoryService
         $this->sweep($ownerId);
         $id = bin2hex(random_bytes(16));
         $path = $this->stagingPath($id);
-        [$warnings, $permissions] = $this->pack($project, $path);
+        [$warnings, $permissions, $fromManifest] = $this->pack($project, $path);
+        if ($targetSlug === null) {
+            // Left out of the listing, the directory takes these from the manifest: they are shown, and sent, as such.
+            $clean += self::listing(array_filter($fromManifest, fn ($value) => $value !== null), false);
+        }
         $bytes = (int) filesize($path);
         if ($bytes > self::MAX_BUNDLE_BYTES) {
             @unlink($path);
@@ -216,16 +228,25 @@ final class SoftnDirectoryService
         $row = $this->row($ownerId, $draftId);
         $publication = $row['publication_id'] ? $this->publicationRow((string) $row['publication_id']) : null;
         $expired = strtotime((string) $row['expires_at'] . ' UTC') < time() && $row['status'] !== 'published';
+        $target = null;
+        if ($row['target_slug'] !== null) {
+            // The app it updates, by the name it is listed under there.
+            $named = $this->pdo->prepare('SELECT name FROM softn_directory_publications WHERE owner_user_id = ? AND directory_url = ? AND slug = ?');
+            $named->execute([$ownerId, $row['directory_url'], $row['target_slug']]);
+            $name = $named->fetchColumn();
+            $target = ['slug' => $row['target_slug'], 'name' => is_string($name) && $name !== '' ? $name : null];
+        }
+        $files = $this->bundleFiles((string) $row['id']);
         return [
             'draftId' => $row['id'],
             'appId' => $row['app_id'],
             'status' => $expired ? 'expired' : $row['status'],
             'destination' => $row['directory_url'],
-            'target' => $row['target_slug'] !== null ? ['slug' => $row['target_slug']] : null,
+            'target' => $target,
             'sha256' => $row['sha256'],
             'bytes' => (int) $row['bytes'],
             'listing' => json_decode((string) $row['listing'], true),
-            'permissions' => json_decode((string) $row['permissions'], true),
+            'permissions' => self::shownPermissions(json_decode((string) $row['permissions'], true), in_array('permission.json', $files, true)),
             'warnings' => json_decode((string) $row['warnings'], true),
             'previewUrl' => '/apps/' . rawurlencode((string) $row['app_id']) . '/softn',
             'approvalUrl' => '/softn-directory/approve/' . $row['id'],
@@ -233,7 +254,7 @@ final class SoftnDirectoryService
             'error' => $row['error'],
             'publication' => $publication ? self::publicView($publication) : null,
             'appChanged' => !$expired && $this->appChanged($row),
-            'files' => $this->bundleFiles((string) $row['id']),
+            'files' => $files,
         ];
     }
 
@@ -463,7 +484,11 @@ final class SoftnDirectoryService
         return $id;
     }
 
-    /** The listing as the directory takes it. $create: a new app needs a name and a category. */
+    /**
+     * The listing as the directory takes it, held to what it keeps (Apps::create and addVersion in SoftN's softn-api:
+     * a name of 64 characters, notes of 400, an author of 40, tags as Text::tags writes them), so the approval page
+     * shows no more and nothing other than is listed. $create: a new app needs a name and a category.
+     */
     public static function listing(array $listing, bool $create): array
     {
         $text = static function (mixed $value, int $max): ?string {
@@ -472,13 +497,19 @@ final class SoftnDirectoryService
             return $value === '' ? null : mb_substr($value, 0, $max);
         };
         $out = array_filter([
-            'name' => $text($listing['name'] ?? null, 80),
+            'name' => $text($listing['name'] ?? null, 64),
             'description' => $text($listing['description'] ?? null, 500),
             'category' => is_string($listing['category'] ?? null) && preg_match('/^[a-z0-9][a-z0-9-]{0,40}$/', $listing['category']) ? $listing['category'] : null,
-            'author' => $text($listing['author'] ?? null, 60),
-            'notes' => $text($listing['notes'] ?? null, 500),
+            'author' => $text($listing['author'] ?? null, 40),
+            'notes' => $text($listing['notes'] ?? null, 400),
         ], fn ($v) => $v !== null);
-        $tags = array_values(array_filter(array_map(fn ($t) => $text($t, 32), is_array($listing['tags'] ?? null) ? array_slice($listing['tags'], 0, 8) : []), fn ($t) => $t !== null));
+        $tags = [];
+        foreach (is_array($listing['tags'] ?? null) ? $listing['tags'] : [] as $tag) {
+            // Lower case, each run of other characters one hyphen, 24 characters, no repeats, 8 at most: as listed.
+            $tag = trim((string) preg_replace('/[^a-z0-9][^a-z0-9-]*/', '-', strtolower((string) $text($tag, 24))), '-');
+            if ($tag !== '' && !in_array($tag, $tags, true)) $tags[] = $tag;
+            if (count($tags) >= 8) break;
+        }
         if ($tags !== []) $out['tags'] = $tags;
         if ($create && (!isset($out['name']) || !isset($out['category']))) {
             throw new \InvalidArgumentException('A new app needs listing.name and listing.category (softn_get_started lists the directory’s categories).');
@@ -488,9 +519,9 @@ final class SoftnDirectoryService
 
     /**
      * Write the project as a .softn bundle at $path: every file and asset but the app's server/ files, whose backend
-     * runs here. Returns [warnings, permissions].
+     * runs here. Returns [warnings, permissions, the manifest's description and author].
      *
-     * @return array{0: list<string>, 1: array<string,mixed>}
+     * @return array{0: list<string>, 1: array<string,mixed>, 2: array{description: ?string, author: ?string}}
      */
     private function pack(array $project, string $path): array
     {
@@ -502,8 +533,7 @@ final class SoftnDirectoryService
         $manifest = self::json($entries['manifest.json'] ?? '');
         if (!is_array($manifest)) throw new \InvalidArgumentException('The project has no manifest.json the directory can read.');
         if (!is_string($manifest['main'] ?? null) || !isset($entries[$manifest['main']])) $warnings[] = 'manifest.json’s main does not name a file in the bundle.';
-        $declared = self::json($entries['permission.json'] ?? '');
-        $permissions = is_array($declared['permissions'] ?? null) ? $declared['permissions'] : (is_array($manifest['permissions'] ?? null) ? $manifest['permissions'] : []);
+        $permissions = self::declaredPermissions($entries, $manifest);
         $zip = new \ZipArchive();
         @mkdir(dirname($path), 0775, true);
         if ($zip->open($path, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) throw new \RuntimeException('The draft could not be written.');
@@ -513,7 +543,63 @@ final class SoftnDirectoryService
             if (method_exists($zip, 'setMtimeName')) $zip->setMtimeName($name, 0);
         }
         $zip->close();
-        return [$warnings, $permissions];
+        // What the directory lists for a new app whose listing leaves them out: its manifest's description and author
+        // (Apps::create in SoftN's softn-api), so the approval page shows them before they are public.
+        $author = $manifest['author'] ?? null;
+        $fromManifest = [
+            'description' => is_string($manifest['description'] ?? null) ? $manifest['description'] : null,
+            'author' => is_string($author) ? $author : (is_array($author) && is_string($author['name'] ?? null) ? $author['name'] : null),
+        ];
+        return [$warnings, $permissions, $fromManifest];
+    }
+
+    /**
+     * A draft's permissions as SoftN reads them. A draft made before declaredPermissions kept an older manifest's block
+     * as it stood (`network`, `filesystem`), which the page, reading only `enabled: true`, would show as nothing. Not
+     * when the bundle has a permission.json ($declared): the block is that file's, read as it stands.
+     *
+     * @return array<string, mixed>
+     */
+    private static function shownPermissions(mixed $stored, bool $declared): array
+    {
+        if (!is_array($stored)) {
+            return [];
+        }
+        if ($declared) {
+            return $stored;
+        }
+        $older = array_key_exists('network', $stored) || array_key_exists('filesystem', $stored);
+        if ($older && !array_key_exists('net', $stored) && !array_key_exists('files', $stored)) {
+            return self::declaredPermissions([], ['permissions' => $stored]);
+        }
+        return $stored;
+    }
+
+    /**
+     * What the bundle may use, as SoftN reads it (extractPermissions in @softn/core's bundle/manifest.ts, and the
+     * directory's Bundle::inspect): permission.json's block when the bundle has the file (one it cannot read, or
+     * without a block, grants nothing); else the manifest's older `permissions` block, where `network` and
+     * `filesystem` turn on the network and files whenever JavaScript reads them as true ("0", [] and {} too: only
+     * null, false, 0 and "" are not), and nothing else in it counts.
+     *
+     * @return array<string, mixed>
+     */
+    public static function declaredPermissions(array $entries, array $manifest): array
+    {
+        $text = (string) ($entries['permission.json'] ?? '');
+        if ($text !== '') {
+            $declared = self::json($text);
+            return is_array($declared) && is_array($declared['permissions'] ?? null) ? $declared['permissions'] : [];
+        }
+        $legacy = $manifest['permissions'] ?? null;
+        if (!is_array($legacy)) {
+            return [];
+        }
+        $on = static fn (mixed $value): bool => $value !== null && $value !== false && $value !== 0 && $value !== 0.0 && $value !== '';
+        return array_filter([
+            'net' => $on($legacy['network'] ?? null) ? ['enabled' => true] : null,
+            'files' => $on($legacy['filesystem'] ?? null) ? ['enabled' => true] : null,
+        ], fn ($granted) => $granted !== null);
     }
 
     /** A JSON file as the runtime and the directory read it: a byte order mark does not stop it being read. */
