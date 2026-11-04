@@ -80,7 +80,7 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
           <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
             {plugins.map((p) => p.name).join(', ')} use{plugins.length === 1 ? 's' : ''} the camera. The pictures are read by an AI on one of your computers running OAIY:
             sealed to it, deleted once read, and never seen by the plugin. Choose a model that reads images.
-            Where that OAIY has its Age check installed (on its Models page: MiVOLO v2 and YuNet), it reads the ages
+            Where that OAIY has its Age check installed (from its Get models page: MiVOLO v2 and YuNet), it reads the ages
             itself, loading them for each check, with this AI as the backup; &quot;Does it read images?&quot; says whether it does.
             Some OAIY engines keep a model&apos;s working state on disk; turning on OAIY&apos;s privacy (incognito) setting stops that.
           </p>

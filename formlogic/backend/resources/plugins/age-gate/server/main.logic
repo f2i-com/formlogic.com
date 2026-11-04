@@ -154,7 +154,7 @@ function anglesKnown(read) {
 // The image test's words for OAIY's age model.
 function ageModelWords(verification) {
   if (!verification) return " This OAIY does not run an age model: the AI's own estimate is used.";
-  if (verification.error == "not_installed") return " OAIY has no age model yet: add the Age check on its Models page, and ages are read by it.";
+  if (verification.error == "not_installed") return " OAIY has no age model yet: add the Age check from its Get models page, and ages are read by it.";
   if (verification.error) return " OAIY's age model did not run: " + verification.message;
   return " OAIY's age model ran too, and reads the ages.";
 }

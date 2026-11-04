@@ -127,7 +127,7 @@ How to write one is `docs/PLUGINS.md`. In short:
   of the one face. Both are loaded for the check and gone when the worker ends. Its readings (each picture's face
   count, and for one face its age and which way it points, nothing else) come back in the turn's final frame as `verification`, which the plugin's
   decide route gets as `answer.verification`. An OAIY without it ignores the field; one without the models says
-  `not_installed`. The models come from OAIY's Models page (the catalog's Age check, pinned revisions).
+  `not_installed`. The models come from OAIY's Get models page (the catalog's Age check, pinned revisions).
 - A plugin's page cannot call `/api/site/` routes on its own backend (`NativeAppController`).
 - The site keeps the limits (three tries a day, one at a time, an hour after `not_confirmed`),
   when a check starts and again, under a lock on the member's row, when its pictures are sent:
