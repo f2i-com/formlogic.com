@@ -736,7 +736,8 @@ export interface SoftnDraft {
   target: { slug: string; name?: string | null } | null;
   sha256: string;
   bytes: number;
-  listing: { name?: string; description?: string; category?: string; tags?: string[]; author?: string; notes?: string };
+  /** `categoryName`: the name the directory lists `category` under, shown, not sent. */
+  listing: { name?: string; description?: string; category?: string; categoryName?: string; tags?: string[]; author?: string; notes?: string };
   permissions: Record<string, unknown>;
   warnings: string[];
   previewUrl: string;

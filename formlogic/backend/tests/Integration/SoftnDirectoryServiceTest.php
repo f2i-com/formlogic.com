@@ -123,7 +123,7 @@ final class SoftnDirectoryServiceTest extends TestCase
         $service = $this->service('https://dir.test');
         $draft = $service->createDraft($this->owner, $this->appId, ['name' => " Booking\u{202E}", 'description' => 'Book a table.', 'category' => 'tools', 'tags' => ['food', 'tables']]);
         self::assertSame('draft', $draft['status']);
-        self::assertSame(['name' => 'Booking', 'description' => 'Book a table.', 'category' => 'tools', 'tags' => ['food', 'tables']], $draft['listing']);
+        self::assertSame(['name' => 'Booking', 'description' => 'Book a table.', 'category' => 'tools', 'tags' => ['food', 'tables'], 'categoryName' => 'Tools'], $draft['listing']);
         self::assertSame(['net' => ['enabled' => true, 'allowed_hosts' => ['api.example.com']]], $draft['permissions']);
         self::assertStringContainsString('server/', $draft['warnings'][0]);
         self::assertSame('/softn-directory/approve/' . $draft['draftId'], $draft['approvalUrl']);
@@ -287,7 +287,7 @@ final class SoftnDirectoryServiceTest extends TestCase
             'description' => 'Sign in with your bank password to keep the clock in sync.', 'author' => ['name' => 'Your Bank']]);
         $service = $this->service('https://dir.test');
         $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools']);
-        self::assertSame(['name' => 'Clock', 'category' => 'tools', 'description' => 'Sign in with your bank password to keep the clock in sync.', 'author' => 'Your Bank'], $draft['listing']);
+        self::assertSame(['name' => 'Clock', 'category' => 'tools', 'categoryName' => 'Tools', 'description' => 'Sign in with your bank password to keep the clock in sync.', 'author' => 'Your Bank'], $draft['listing']);
         $service->requestPublish($this->owner, $draft['draftId']);
         $service->approve($this->owner, $draft['draftId']);
         self::assertSame(['Sign in with your bank password to keep the clock in sync.', 'Your Bank'], [$this->posts()[0]['fields']['description'], $this->posts()[0]['fields']['author']], 'and sent as shown');
@@ -311,7 +311,7 @@ final class SoftnDirectoryServiceTest extends TestCase
         self::assertSame(mb_substr($name, 0, 64), $draft['listing']['name']);
         self::assertSame(400, mb_strlen($draft['listing']['notes']));
         self::assertSame(['family-fun', 'no-ads-ever-for-anyone-a'], $draft['listing']['tags'], 'as the directory writes them, once each');
-        $this->assertRefused(fn () => $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'kids']), 'no category "kids": use one of tools');
+        $this->assertRefused(fn () => $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'kids']), 'no category "kids": use one of tools (Tools)');
     }
 
     /** A new version sends its notes alone: its page showed a name, description, author and tags that never went. */
@@ -361,10 +361,106 @@ final class SoftnDirectoryServiceTest extends TestCase
         // A draft made before this kept the older block as it stood: shown as SoftN reads it all the same.
         self::$pdo->prepare('UPDATE softn_directory_drafts SET permissions = ? WHERE id = ?')->execute(['{"network":true,"filesystem":0}', $draft['draftId']]);
         self::assertSame($net, $service->draft($this->owner, $draft['draftId'])['permissions']);
-        // Not a bundle with a permission.json: such keys there are that file's, and grant nothing.
+        // Not a bundle with a permission.json: such keys there are that file's, which the directory refuses.
         $this->project['files']['permission.json'] = '{"permissions":{"network":{"enabled":true}}}';
-        $declared = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
-        self::assertSame(['network' => ['enabled' => true]], $declared['permissions']);
+        $this->assertRefused(fn () => $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']), 'capabilities SoftN does not have: network');
+    }
+
+    /**
+     * A permission.json the directory would refuse (Bundle::readDeclaration) is refused at the draft, while the agent can
+     * fix it: refused only at publish, it came after the person approved a page that showed, say, `network` as the
+     * network, which SoftN never grants (it reads `net`). An empty file, which the directory keeps and cannot read, too.
+     */
+    public function testAPermissionFileTheDirectoryWouldRefuseIsRefusedAtTheDraft(): void
+    {
+        $service = $this->service('https://dir.test');
+        foreach ([
+            ['{"permissions":{"network":{"enabled":true}}}', 'capabilities SoftN does not have: network'],
+            ['{"permissions":{"net":{"enabled":"yes"}}}', 'boolean "enabled". Not so for: net'],
+            ['{"permissions":{"camera":true}}', 'boolean "enabled". Not so for: camera'],
+            ['{"permissions":["net"]}', '"permissions" must be an object'],
+            ['["net"]', 'not a JSON object'],
+            ['', 'not a JSON object'],
+            ['{not json', 'not a JSON object'],
+            // As readStoragePolicies and readRoomCollections there, and its size.
+            ['{"permissions":{"storage":{"enabled":true,"collections":{"Notes":"public"}}}}', 'a collection or a policy the directory does not accept: Notes=public'],
+            ['{"permissions":{"storage":{"enabled":true,"collections":{"notes":"everyone"}}}}', 'notes=everyone'],
+            ['{"permissions":{"storage":{"enabled":true,"collections":["notes"]}}}', 'storage.collections must be an object'],
+            [json_encode(['permissions' => ['storage' => ['enabled' => true, 'collections' => array_fill_keys(array_map(fn ($i) => 'c' . $i, range(1, 65)), 'public')]]]), 'more than 64 collections'],
+            ['{"permissions":{"sync":{"enabled":true,"roomCollections":"notes"}}}', 'sync.roomCollections must be a list'],
+            ['{"permissions":{"sync":{"enabled":true,"roomCollections":["_private"]}}}', 'sync.roomCollections must be a list'],
+            ['{"permissions":{"sync":{"enabled":true,"roomCollections":{}}}}', 'sync.roomCollections must be a list'],
+            ['{"permissions":{},"pad":"' . str_repeat('x', 65 * 1024) . '"}', 'larger than 64 KB'],
+        ] as [$file, $words]) {
+            $this->project['files']['permission.json'] = $file;
+            $this->assertRefused(fn () => $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools']), $words);
+        }
+        // What the directory takes goes through as it is: a block of known names, and a file with no block at all.
+        $this->project['files']['permission.json'] = "\xEF\xBB\xBF" . '{"permissions":{"net":{"enabled":true},"camera":{"enabled":false},"storage":{}}}';
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools']);
+        self::assertSame(['net' => ['enabled' => true], 'camera' => ['enabled' => false], 'storage' => []], $draft['permissions']);
+        $this->project['files']['permission.json'] = '{"permissions":{"storage":{"enabled":true,"collections":{"notes":"owner-write","*":"private"}},"sync":{"enabled":true,"roomCollections":["notes"]}}}';
+        self::assertTrue($service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools'])['permissions']['sync']['enabled']);
+        $this->project['files']['permission.json'] = '{}';
+        self::assertSame([], $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools'])['permissions']);
+    }
+
+    /**
+     * A category is found as the directory finds it (Categories::resolve): by its id written any way its slug reads, or
+     * by its name in any case, and sent as its id; the page shows its name. Without the directory's list, an id is taken
+     * as given and a name is not guessed at.
+     */
+    public function testACategoryIsFoundAsTheDirectoryFindsItAndShownByItsName(): void
+    {
+        $this->answer = fn (string $method, string $url) => ['status' => 200, 'body' => json_encode(['ok' => true, 'categories' => [
+            ['id' => 'tools', 'name' => 'Tools'], ['id' => 'education', 'name' => 'Learning'], ['id' => 'demos', 'name' => 'Examples'],
+        ]])];
+        $service = $this->service('https://dir.test');
+        foreach (['tools' => 'tools', 'Tools' => 'tools', ' games ' => null, 'TOOLS ' => 'tools', 'Learning' => 'education', 'learning' => 'education', 'education' => 'education', 'Examples' => 'demos'] as $given => $id) {
+            if ($id === null) {
+                $this->assertRefused(fn () => $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => $given]), 'education (Learning)');
+                continue;
+            }
+            $listing = $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => $given])['listing'];
+            self::assertSame($id, $listing['category'], $given);
+            self::assertSame(['tools' => 'Tools', 'education' => 'Learning', 'demos' => 'Examples'][$id], $listing['categoryName'], $given);
+        }
+        // A suggested category whose id grew past the 40 characters the directory reads as its name was spelt in ASCII
+        // ("ß" is "ss"): sent as its name, which the directory finds it by.
+        $long = str_repeat('ß', 32);
+        $this->answer = fn (string $method, string $url) => ['status' => 200, 'body' => json_encode(['ok' => true, 'categories' => [['id' => str_repeat('ss', 24), 'name' => $long]]])];
+        $listing = $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => $long])['listing'];
+        self::assertSame([$long, $long], [$listing['category'], $listing['categoryName']]);
+        // Given by that id, as softn_get_started lists it: found, and sent as its name too.
+        $byId = $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => str_repeat('ss', 24)])['listing'];
+        self::assertSame([$long, $long], [$byId['category'], $byId['categoryName']]);
+        // The directory's list could not be read: an id goes as it is, a name is refused with what to give instead.
+        $this->answer = fn (string $method, string $url) => ['status' => 503, 'body' => '{}'];
+        self::assertSame('tools', $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools'])['listing']['category']);
+        $this->assertRefused(fn () => $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'Learning']), 'give a category id');
+    }
+
+    /**
+     * A description and notes keep their line breaks, as the directory keeps them (Text::clean, multiline: a description
+     * of 600, notes of 400), and so does a description taken from the manifest: they were listed as one line, cut at 500.
+     */
+    public function testADescriptionAndNotesKeepTheirLinesAsTheDirectoryKeepsThem(): void
+    {
+        $service = $this->service('https://dir.test');
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools',
+            'description' => "Line one.\r\n\r\nLine two,\tthen a tab." . str_repeat('x', 700), 'notes' => "Fixed:\n- alarms\n- timers\u{0007}"]);
+        self::assertSame("Line one.\n\nLine two,\tthen a tab." . str_repeat('x', 600 - mb_strlen("Line one.\n\nLine two,\tthen a tab.")), $draft['listing']['description']);
+        self::assertSame(600, mb_strlen($draft['listing']['description']));
+        self::assertSame("Fixed:\n- alarms\n- timers", $draft['listing']['notes'], 'a control character dropped, the lines kept');
+
+        $this->project['files']['manifest.json'] = json_encode(['id' => 'local.booking', 'name' => 'Booking', 'version' => '1.0.0', 'main' => 'index.html',
+            'description' => "Book a room.\nPay at the desk."]);
+        $fromManifest = $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']);
+        self::assertSame("Book a room.\nPay at the desk.", $fromManifest['listing']['description']);
+        $service->requestPublish($this->owner, $fromManifest['draftId']);
+        $service->approve($this->owner, $fromManifest['draftId']);
+        self::assertSame("Book a room.\nPay at the desk.", $this->posts()[0]['fields']['description'], 'sent as shown');
+        self::assertArrayNotHasKey('categoryName', $this->posts()[0]['fields'], 'the name is shown, not sent');
     }
 
     public function testADraftOfADeletedAppIsNotPublished(): void

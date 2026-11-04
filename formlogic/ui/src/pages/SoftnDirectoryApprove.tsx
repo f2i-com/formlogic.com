@@ -21,11 +21,9 @@ function size(bytes: number): string {
 
 const PERMISSION_WORDS: Record<string, string> = {
   net: 'the network',
-  network: 'the network',
   camera: 'the camera',
   mic: 'the microphone',
   files: 'files the visitor picks',
-  filesystem: 'files the visitor picks',
   qr: 'QR codes',
   ai: 'AI models',
   gpu: 'the graphics processor',
@@ -36,15 +34,17 @@ const PERMISSION_WORDS: Record<string, string> = {
 
 /**
  * What the app asks to use, in words, from its permission.json. SoftN grants a capability only when its entry says
- * `enabled: true` (an older manifest's block arrives here in that form), so nothing else is said to be on. No list of
- * hosts means any site.
+ * `enabled: true` (an older manifest's block arrives here in that form), and only one it has: a name it does not know is
+ * not said to be on (the directory refuses such a bundle, and this page once showed `network` as the network). No list
+ * of hosts means any site.
  */
 function permissionWords(permissions: Record<string, unknown>): string[] {
   return Object.entries(permissions).flatMap(([name, value]) => {
     const on = typeof value === 'object' && value !== null && (value as { enabled?: unknown }).enabled === true;
     if (!on) return [];
-    const words = PERMISSION_WORDS[name] ?? name;
-    if (name !== 'net' && name !== 'network') return [words];
+    const words = PERMISSION_WORDS[name];
+    if (!words) return [];
+    if (name !== 'net') return [words];
     const listed = typeof value === 'object' && value !== null ? (value as { allowed_hosts?: unknown }).allowed_hosts : null;
     const hosts = Array.isArray(listed) ? listed.filter((host) => typeof host === 'string') : [];
     return [`${words} (${hosts.length ? hosts.join(', ') : 'any site'})`];
@@ -115,11 +115,11 @@ export function SoftnDirectoryApprove() {
           <dd className="text-gray-900 dark:text-white">Anyone. It is listed in the directory, anyone can play it, and its source can be read and remixed.</dd>
           {draft.target && <><dt className="font-medium text-gray-500 dark:text-slate-400">Updates</dt><dd className="text-gray-900 dark:text-white">{draft.target.slug}, an app this account published</dd></>}
           {/* A new version sends its notes alone: the app keeps its listing there. */}
-          {!draft.target && draft.listing.description && <><dt className="font-medium text-gray-500 dark:text-slate-400">Description</dt><dd className="text-gray-900 dark:text-white">{draft.listing.description}</dd></>}
-          {!draft.target && draft.listing.category && <><dt className="font-medium text-gray-500 dark:text-slate-400">Category</dt><dd className="text-gray-900 dark:text-white">{draft.listing.category}</dd></>}
+          {!draft.target && draft.listing.description && <><dt className="font-medium text-gray-500 dark:text-slate-400">Description</dt><dd className="whitespace-pre-line text-gray-900 dark:text-white">{draft.listing.description}</dd></>}
+          {!draft.target && draft.listing.category && <><dt className="font-medium text-gray-500 dark:text-slate-400">Category</dt><dd className="text-gray-900 dark:text-white">{draft.listing.categoryName ?? draft.listing.category}</dd></>}
           {!draft.target && draft.listing.author && <><dt className="font-medium text-gray-500 dark:text-slate-400">Shown as made by</dt><dd className="text-gray-900 dark:text-white">{draft.listing.author}</dd></>}
           {!draft.target && draft.listing.tags && draft.listing.tags.length > 0 && <><dt className="font-medium text-gray-500 dark:text-slate-400">Tags</dt><dd className="text-gray-900 dark:text-white">{draft.listing.tags.join(', ')}</dd></>}
-          {draft.listing.notes && <><dt className="font-medium text-gray-500 dark:text-slate-400">Notes</dt><dd className="text-gray-900 dark:text-white">{draft.listing.notes}</dd></>}
+          {draft.listing.notes && <><dt className="font-medium text-gray-500 dark:text-slate-400">Notes</dt><dd className="whitespace-pre-line text-gray-900 dark:text-white">{draft.listing.notes}</dd></>}
           <dt className="font-medium text-gray-500 dark:text-slate-400">What it may use</dt>
           <dd className="text-gray-900 dark:text-white">{asks.length ? asks.join(', ') : 'Nothing beyond the page: no network, camera or server storage.'}</dd>
           <dt className="font-medium text-gray-500 dark:text-slate-400">The bundle</dt>

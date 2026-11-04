@@ -103,6 +103,25 @@ describe('approving a draft for the SoftN directory', () => {
     expect(container.textContent).toContain('Nothing beyond the page: no network, camera or server storage.');
   });
 
+  it('says nothing is on for a name SoftN does not have: the network is `net`, never `network`', async () => {
+    // A draft kept from before such files were refused at the draft: the runtime grants neither.
+    getDraft.mockResolvedValue({ data: { ...waiting, permissions: { network: { enabled: true }, filesystem: { enabled: true }, telepathy: { enabled: true } } } });
+    await open();
+    expect(container.textContent).toContain('Nothing beyond the page: no network, camera or server storage.');
+    expect(container.textContent).not.toContain('telepathy');
+  });
+
+  it('shows a category by the name the directory lists it under, and a description and notes with their lines', async () => {
+    getDraft.mockResolvedValue({ data: { ...waiting, listing: { name: 'Tide Times', category: 'education', categoryName: 'Learning', description: 'High water.\nLow water.', notes: 'One.\nTwo.' } } });
+    await open();
+    const text = container.textContent ?? '';
+    expect(text).toContain('Learning');
+    expect(text).not.toContain('education');
+    const lines = [...container.querySelectorAll('dd')].filter((dd) => dd.textContent === 'High water.\nLow water.' || dd.textContent === 'One.\nTwo.');
+    expect(lines).toHaveLength(2);
+    for (const dd of lines) expect(dd.className).toContain('whitespace-pre-line');
+  });
+
   it('offers no way to publish a draft the app has moved on from', async () => {
     getDraft.mockResolvedValue({ data: { ...waiting, appChanged: true } });
     await open();

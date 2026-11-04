@@ -149,6 +149,49 @@ final class SoftnDirectoryService
         ];
     }
 
+    /**
+     * The category $given names, as the directory resolves it (Categories::resolve in SoftN's softn-api): by its id,
+     * which is a name as its slug writes it ("Games " is games), or by its name in any case ("Learning" is education).
+     * One it does not have it would file as "other", which the page would not have said: refused, while there is an agent
+     * to fix it. When the directory's list cannot be read, an id as the directory writes them is taken as given.
+     *
+     * @return array{id: string, name: ?string}
+     */
+    private function category(string $directory, string $given): array
+    {
+        $categories = $this->categories($directory);
+        $slug = self::slugOf($given);
+        $lower = mb_strtolower(trim($given));
+        foreach ($categories as $c) {
+            if (($slug !== '' && $c['id'] === $slug) || mb_strtolower($c['name']) === $lower) {
+                // The directory reads 40 characters of what it is given (Apps::create): an id longer than that (a
+                // suggested category's, made from a name that grew as it was spelt in ASCII) goes as its name.
+                if (strlen($c['id']) <= 40) return $c;
+                if (mb_strlen($c['name']) <= 40) return ['id' => $c['name'], 'name' => $c['name']];
+                throw new \InvalidArgumentException('The directory’s category "' . $c['name'] . '" cannot be named in 40 characters, which is all it reads: choose another.');
+            }
+        }
+        if ($categories === []) {
+            // (a name is not guessed at: "Learning" as an id, `learning`, is a category the directory may not have)
+            if ($slug !== '' && $slug === trim($given) && strlen($slug) <= 40) return ['id' => $slug, 'name' => null];
+            throw new \InvalidArgumentException('The directory’s categories could not be read just now, so "' . $given . '" could not be looked up: try again in a moment, or give a category id of up to 40 characters, as softn_get_started lists them.');
+        }
+        $known = array_map(fn (array $c) => $c['id'] . ' (' . $c['name'] . ')', $categories);
+        throw new \InvalidArgumentException('The directory has no category "' . $given . '": use one of ' . implode(', ', $known) . '.');
+    }
+
+    /** A name as the directory's slugs write it (Apps::slugOf in SoftN's softn-api), or '' when it spells none. */
+    private static function slugOf(string $name): string
+    {
+        $s = strtolower(trim($name));
+        if (function_exists('iconv')) {
+            $t = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s);
+            if (is_string($t) && $t !== '') $s = $t;
+        }
+        $s = preg_replace('/[^a-z0-9]+/', '-', $s) ?? '';
+        return substr(trim($s, '-'), 0, 48);
+    }
+
     /** The directory's categories, {id, name}, or [] when it does not answer. */
     private function categories(string $directory): array
     {
@@ -191,9 +234,11 @@ final class SoftnDirectoryService
             // A new version sends its notes alone (the directory keeps the app's name, description and the rest), so the
             // approval page is given nothing else to show.
             $clean = array_intersect_key($clean, ['notes' => true]);
-        } elseif (($known = array_column($this->categories($directory), 'id')) !== [] && !in_array($clean['category'], $known, true)) {
-            // The directory files a category it does not have as "other", which the page would not have said.
-            throw new \InvalidArgumentException('The directory has no category "' . $clean['category'] . '": use one of ' . implode(', ', $known) . '.');
+        } else {
+            // Sent as its id, and shown by the name the directory lists it under.
+            $category = $this->category($directory, $clean['category']);
+            $clean['category'] = $category['id'];
+            if ($category['name'] !== null) $clean['categoryName'] = $category['name'];
         }
         $project = ($this->projectOf)($appId);
         if (!is_array($project) || !is_array($project['files'] ?? null) || $project['files'] === []) {
@@ -486,8 +531,9 @@ final class SoftnDirectoryService
 
     /**
      * The listing as the directory takes it, held to what it keeps (Apps::create and addVersion in SoftN's softn-api:
-     * a name of 64 characters, notes of 400, an author of 40, tags as Text::tags writes them), so the approval page
-     * shows no more and nothing other than is listed. $create: a new app needs a name and a category.
+     * a name of 64 characters, a description of 600 and notes of 400 with their line breaks, an author of 40, tags as
+     * Text::tags writes them), so the approval page shows no more and nothing other than is listed. The category as it
+     * was given: createDraft finds it among the directory's. $create: a new app needs a name and a category.
      */
     public static function listing(array $listing, bool $create): array
     {
@@ -496,12 +542,19 @@ final class SoftnDirectoryService
             $value = trim((string) preg_replace('/\s+/u', ' ', (string) preg_replace('/\p{C}/u', ' ', $value)));
             return $value === '' ? null : mb_substr($value, 0, $max);
         };
+        // As Text::clean(…, multiline) keeps it: line breaks and tabs kept, other control characters dropped.
+        $lines = static function (mixed $value, int $max): ?string {
+            if (!is_string($value)) return null;
+            $value = trim((string) preg_replace('/[^\P{C}\n\t]/u', '', str_replace(["\r\n", "\r"], "\n", $value)));
+            return $value === '' ? null : mb_substr($value, 0, $max);
+        };
         $out = array_filter([
             'name' => $text($listing['name'] ?? null, 64),
-            'description' => $text($listing['description'] ?? null, 500),
-            'category' => is_string($listing['category'] ?? null) && preg_match('/^[a-z0-9][a-z0-9-]{0,40}$/', $listing['category']) ? $listing['category'] : null,
+            'description' => $lines($listing['description'] ?? null, 600),
+            // (48: a suggested category's id may be as long as the directory's slugs, though it reads 40 of what is sent)
+            'category' => $text($listing['category'] ?? null, 48),
             'author' => $text($listing['author'] ?? null, 40),
-            'notes' => $text($listing['notes'] ?? null, 400),
+            'notes' => $lines($listing['notes'] ?? null, 400),
         ], fn ($v) => $v !== null);
         $tags = [];
         foreach (is_array($listing['tags'] ?? null) ? $listing['tags'] : [] as $tag) {
@@ -533,6 +586,7 @@ final class SoftnDirectoryService
         $manifest = self::json($entries['manifest.json'] ?? '');
         if (!is_array($manifest)) throw new \InvalidArgumentException('The project has no manifest.json the directory can read.');
         if (!is_string($manifest['main'] ?? null) || !isset($entries[$manifest['main']])) $warnings[] = 'manifest.json’s main does not name a file in the bundle.';
+        if (array_key_exists('permission.json', $entries)) self::checkDeclaration((string) $entries['permission.json']);
         $permissions = self::declaredPermissions($entries, $manifest);
         $zip = new \ZipArchive();
         @mkdir(dirname($path), 0775, true);
@@ -600,6 +654,80 @@ final class SoftnDirectoryService
             'net' => $on($legacy['network'] ?? null) ? ['enabled' => true] : null,
             'files' => $on($legacy['filesystem'] ?? null) ? ['enabled' => true] : null,
         ], fn ($granted) => $granted !== null);
+    }
+
+    /**
+     * What SoftN's runtime can grant, as the directory lists them (Bundle::CAPABILITIES in SoftN's softn-api, its copy of
+     * @softn/core's runtime/capabilities.ts).
+     */
+    private const CAPABILITIES = ['net', 'camera', 'mic', 'files', 'qr', 'ai', 'gpu', 'sync', 'storage', 'accel'];
+
+    /** The storage policies a collection may have there (Storage::POLICIES in SoftN's softn-api). */
+    private const STORAGE_POLICIES = ['public', 'append-only', 'owner-write', 'private', 'publisher'];
+
+    /** The largest permission.json the directory reads (Bundle::MAX_PERMISSION_BYTES). */
+    private const MAX_PERMISSION_BYTES = 64 * 1024;
+
+    /**
+     * A bundle's permission.json held to what the directory takes (Bundle::readDeclaration in SoftN's softn-api): one it
+     * would refuse is refused now, while the agent can fix it. Taken, it was refused only at publish, after the person
+     * had approved a page that showed `network` as the network, which the runtime never grants (it reads `net`).
+     */
+    private static function checkDeclaration(string $text): void
+    {
+        if (strlen($text) > self::MAX_PERMISSION_BYTES) {
+            throw new \InvalidArgumentException('permission.json is larger than ' . intdiv(self::MAX_PERMISSION_BYTES, 1024) . ' KB, which the directory refuses.');
+        }
+        $text = str_starts_with($text, "\xEF\xBB\xBF") ? substr($text, 3) : $text;
+        $perm = json_decode($text, true, 16);
+        if (!is_array($perm) || (array_is_list($perm) && $perm !== [])) {
+            throw new \InvalidArgumentException('permission.json is not a JSON object, and the directory refuses a bundle with such a file: write it as {"permissions": {…}}, or leave it out.');
+        }
+        $declared = $perm['permissions'] ?? null;
+        if ($declared === null) return;
+        if (!is_array($declared) || (array_is_list($declared) && $declared !== [])) {
+            throw new \InvalidArgumentException('permission.json: "permissions" must be an object, as the directory reads it.');
+        }
+        $unknown = array_values(array_diff(array_map('strval', array_keys($declared)), self::CAPABILITIES));
+        if ($unknown !== []) {
+            throw new \InvalidArgumentException('permission.json names capabilities SoftN does not have: ' . implode(', ', $unknown) . '. They are ' . implode(', ', self::CAPABILITIES) . ' (the network is "net", files the visitor picks are "files").');
+        }
+        $malformed = array_keys(array_filter($declared, fn (mixed $entry) => !is_array($entry) || (array_is_list($entry) && $entry !== [])
+            || (array_key_exists('enabled', $entry) && !is_bool($entry['enabled']))));
+        if ($malformed !== []) {
+            throw new \InvalidArgumentException('permission.json: a capability is an object with a boolean "enabled". Not so for: ' . implode(', ', $malformed) . '.');
+        }
+        // sync.roomCollections, as readRoomCollections reads it (with objects kept as objects: `{}` is not a list).
+        $sync = json_decode($text, false, 16)->permissions->sync ?? null;
+        if ($sync instanceof \stdClass && property_exists($sync, 'roomCollections')) {
+            $list = $sync->roomCollections;
+            $ok = is_array($list) && array_is_list($list);
+            foreach ($ok ? $list : [] as $name) {
+                if (!is_string($name) || $name === '' || str_contains($name, ':') || str_starts_with($name, '_')) $ok = false;
+            }
+            if (!$ok) {
+                throw new \InvalidArgumentException('permission.json: sync.roomCollections must be a list of collection names, none empty, none with ":" and none starting with "_".');
+            }
+        }
+        // storage.collections, as readStoragePolicies reads it.
+        $storage = $declared['storage'] ?? null;
+        if (is_array($storage) && array_key_exists('collections', $storage)) {
+            $collections = $storage['collections'];
+            if (!is_array($collections) || (array_is_list($collections) && $collections !== [])) {
+                throw new \InvalidArgumentException('permission.json: storage.collections must be an object of collection name to policy.');
+            }
+            if (count($collections) > 64) throw new \InvalidArgumentException('permission.json: storage.collections names more than 64 collections.');
+            $bad = [];
+            foreach ($collections as $name => $policy) {
+                if (!preg_match('/^(?:\*|[a-z][a-z0-9_]{0,31})$/D', (string) $name) || !is_string($policy) || !in_array($policy, self::STORAGE_POLICIES, true)) {
+                    $bad[] = $name . '=' . (is_string($policy) ? $policy : gettype($policy));
+                }
+            }
+            if ($bad !== []) {
+                throw new \InvalidArgumentException('permission.json: storage.collections names a collection or a policy the directory does not accept: ' . implode(', ', $bad)
+                    . '. A collection is lowercase letters, digits and underscores (or * for the rest); the policies are ' . implode(', ', self::STORAGE_POLICIES) . '.');
+            }
+        }
     }
 
     /** A JSON file as the runtime and the directory read it: a byte order mark does not stop it being read. */
