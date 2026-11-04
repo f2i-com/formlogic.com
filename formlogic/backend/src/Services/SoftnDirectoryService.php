@@ -258,13 +258,63 @@ final class SoftnDirectoryService
             throw new \InvalidArgumentException('The bundle is ' . round($bytes / 1048576, 1) . ' MB; a directory takes 32 MB at most. Make the assets smaller.');
         }
         $now = gmdate('Y-m-d H:i:s');
-        $this->pdo->prepare('INSERT INTO softn_directory_drafts (id, owner_user_id, app_id, directory_url, target_slug, sha256, bytes, listing, permissions, warnings, status, created_at, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
-            $id, $ownerId, $appId, $directory, $targetSlug, hash_file('sha256', $path), $bytes,
-            json_encode($clean, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), json_encode($permissions), json_encode($warnings, JSON_UNESCAPED_UNICODE),
-            'draft', $now, gmdate('Y-m-d H:i:s', time() + self::DRAFT_HOURS * 3600),
-        ]);
+        try {
+            $kept = self::keptPermissions($permissions);
+            $this->pdo->prepare('INSERT INTO softn_directory_drafts (id, owner_user_id, app_id, directory_url, target_slug, sha256, bytes, listing, permissions, warnings, status, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
+                $id, $ownerId, $appId, $directory, $targetSlug, hash_file('sha256', $path), $bytes,
+                json_encode($clean, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), $kept, json_encode($warnings, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                'draft', $now, gmdate('Y-m-d H:i:s', time() + self::DRAFT_HOURS * 3600),
+            ]);
+        } catch (\Throwable $e) {
+            // (no row, so nothing would ever sweep the bundle written for it)
+            @unlink($path);
+            throw $e;
+        }
         return $this->draft($ownerId, $id);
+    }
+
+    /**
+     * What the approval page reads of the app's permissions, as it is kept with the draft: each capability's `enabled`
+     * (true or false) and its list of hosts. Kept whole, a value JSON cannot hold (`1e999` is INF in PHP) made the block
+     * unwritable, it was kept as nothing, and the page said the app uses nothing beyond the page while the directory
+     * listed, and SoftN granted, what the file asks for; and a block padded to the file's 64 KB could outgrow its column.
+     */
+    private static function keptPermissions(array $permissions): string
+    {
+        $kept = [];
+        foreach ($permissions as $name => $entry) {
+            if (!is_array($entry)) continue;
+            $one = [];
+            if (array_key_exists('enabled', $entry)) $one['enabled'] = $entry['enabled'] === true;
+            if (is_array($entry['allowed_hosts'] ?? null)) $one['allowed_hosts'] = array_values(array_filter($entry['allowed_hosts'], 'is_string'));
+            $kept[(string) $name] = $one;
+        }
+        try {
+            $text = json_encode($kept, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            throw new \InvalidArgumentException('permission.json holds a host the approval page cannot show (not valid text): correct it.');
+        }
+        if (strlen($text) > 60000) {
+            throw new \InvalidArgumentException('permission.json lists more hosts than the approval page can show: list fewer.');
+        }
+        return $text;
+    }
+
+    /**
+     * A draft's listing as the directory takes it now: one made before the listing was held to the directory's rules
+     * (a day at most) is shown, and sent, as it will be listed (a name of 64, tags as written there), in its own order.
+     */
+    private static function storedListing(mixed $stored): array
+    {
+        if (!is_array($stored)) return [];
+        $clean = self::listing($stored, false);
+        $out = [];
+        foreach ($stored as $key => $value) {
+            if (array_key_exists($key, $clean)) $out[$key] = $clean[$key];
+            elseif ($key === 'categoryName' && is_string($value)) $out[$key] = $value;
+        }
+        return $out;
     }
 
     /** A draft as its owner (and their agent) see it: never the edit key. */
@@ -290,7 +340,7 @@ final class SoftnDirectoryService
             'target' => $target,
             'sha256' => $row['sha256'],
             'bytes' => (int) $row['bytes'],
-            'listing' => json_decode((string) $row['listing'], true),
+            'listing' => self::storedListing(json_decode((string) $row['listing'], true)),
             'permissions' => self::shownPermissions(json_decode((string) $row['permissions'], true), in_array('permission.json', $files, true)),
             'warnings' => json_decode((string) $row['warnings'], true),
             'previewUrl' => '/apps/' . rawurlencode((string) $row['app_id']) . '/softn',
@@ -344,6 +394,10 @@ final class SoftnDirectoryService
         if ($this->appChanged($row)) {
             throw new \DomainException('The app has changed since this draft was made, so what you can try is not what this would publish. Ask for a new draft.');
         }
+        // What the person was shown it may use, read back as kept: a draft whose block cannot be read showed nothing.
+        if (!is_array(json_decode((string) $row['permissions'], true))) {
+            throw new \DomainException('What this draft may use could not be read back, so it was not shown to you as it is: ask for a new draft.');
+        }
         $from = $anyway ? ['awaiting_approval', 'failed', 'uncertain'] : ['awaiting_approval', 'failed'];
         $published = (int) $this->pdo->query("SELECT COUNT(*) FROM softn_directory_drafts WHERE owner_user_id = " . $this->pdo->quote($ownerId)
             . " AND status = 'published' AND updated_at > '" . gmdate('Y-m-d H:i:s', time() - 3600) . "'")->fetchColumn();
@@ -366,7 +420,7 @@ final class SoftnDirectoryService
         // gone to the directory, `uncertain` once the bundle may have (the app could be listed), never stuck.
         $sent = false;
         try {
-            $listing = json_decode((string) $row['listing'], true) ?: [];
+            $listing = self::storedListing(json_decode((string) $row['listing'], true));
             $file = $this->stagingPath($draftId);
             if (!is_file($file) || hash_file('sha256', $file) !== $row['sha256']) {
                 $this->fail($draftId, 'failed', 'The draft’s bundle is gone or changed. Make a new draft.');
@@ -540,13 +594,15 @@ final class SoftnDirectoryService
         $text = static function (mixed $value, int $max): ?string {
             if (!is_string($value)) return null;
             $value = trim((string) preg_replace('/\s+/u', ' ', (string) preg_replace('/\p{C}/u', ' ', $value)));
-            return $value === '' ? null : mb_substr($value, 0, $max);
+            // (cut, then trimmed again: what the directory lists, as it trims what it is sent)
+            return $value === '' ? null : rtrim(mb_substr($value, 0, $max));
         };
         // As Text::clean(…, multiline) keeps it: line breaks and tabs kept, other control characters dropped.
         $lines = static function (mixed $value, int $max): ?string {
             if (!is_string($value)) return null;
             $value = trim((string) preg_replace('/[^\P{C}\n\t]/u', '', str_replace(["\r\n", "\r"], "\n", $value)));
-            return $value === '' ? null : mb_substr($value, 0, $max);
+            // (cut, then trimmed again: what the directory lists, as it trims what it is sent)
+            return $value === '' ? null : rtrim(mb_substr($value, 0, $max));
         };
         $out = array_filter([
             'name' => $text($listing['name'] ?? null, 64),
@@ -583,9 +639,18 @@ final class SoftnDirectoryService
         if ($left > 0) {
             $warnings[] = 'The app’s backend (' . $left . ' file' . ($left === 1 ? '' : 's') . ' in server/, backend/, private/ or .sql) is left out: the directory’s copy runs in the browser alone, and what needs the backend will not work there.';
         }
-        $manifest = self::json($entries['manifest.json'] ?? '');
+        // The manifest held to what the directory takes (Bundle::inspect in SoftN's softn-api): refused at publish, after
+        // the person approved, it is refused here while the agent can fix it.
+        $manifestText = (string) ($entries['manifest.json'] ?? '');
+        if (strlen($manifestText) > 256 * 1024) throw new \InvalidArgumentException('manifest.json is larger than 256 KB, which the directory refuses.');
+        $manifest = json_decode(str_starts_with($manifestText, "\xEF\xBB\xBF") ? substr($manifestText, 3) : $manifestText, true, 32);
         if (!is_array($manifest)) throw new \InvalidArgumentException('The project has no manifest.json the directory can read.');
-        if (!is_string($manifest['main'] ?? null) || !isset($entries[$manifest['main']])) $warnings[] = 'manifest.json’s main does not name a file in the bundle.';
+        $plain = static fn (mixed $value): string => is_string($value) ? trim((string) preg_replace('/\p{C}/u', '', $value)) : '';
+        if ($plain($manifest['name'] ?? null) === '') throw new \InvalidArgumentException('manifest.json has no name, which the directory needs.');
+        if ($plain($manifest['version'] ?? null) === '') throw new \InvalidArgumentException('manifest.json has no version, which the directory needs.');
+        if (!is_string($manifest['main'] ?? null) || $manifest['main'] === '' || !isset($entries[$manifest['main']])) {
+            throw new \InvalidArgumentException('manifest.json’s main does not name a file in the bundle, which the directory refuses.');
+        }
         if (array_key_exists('permission.json', $entries)) self::checkDeclaration((string) $entries['permission.json']);
         $permissions = self::declaredPermissions($entries, $manifest);
         $zip = new \ZipArchive();

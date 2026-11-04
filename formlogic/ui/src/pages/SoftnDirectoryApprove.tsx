@@ -117,7 +117,8 @@ export function SoftnDirectoryApprove() {
           {/* A new version sends its notes alone: the app keeps its listing there. */}
           {!draft.target && draft.listing.description && <><dt className="font-medium text-gray-500 dark:text-slate-400">Description</dt><dd className="whitespace-pre-line text-gray-900 dark:text-white">{draft.listing.description}</dd></>}
           {!draft.target && draft.listing.category && <><dt className="font-medium text-gray-500 dark:text-slate-400">Category</dt><dd className="text-gray-900 dark:text-white">{draft.listing.categoryName ?? draft.listing.category}</dd></>}
-          {!draft.target && draft.listing.author && <><dt className="font-medium text-gray-500 dark:text-slate-400">Shown as made by</dt><dd className="text-gray-900 dark:text-white">{draft.listing.author}</dd></>}
+          {/* With no author given here or in the manifest, the directory lists the app as made by "Anonymous". */}
+          {!draft.target && <><dt className="font-medium text-gray-500 dark:text-slate-400">Shown as made by</dt><dd className="text-gray-900 dark:text-white">{draft.listing.author ?? 'Anonymous'}</dd></>}
           {!draft.target && draft.listing.tags && draft.listing.tags.length > 0 && <><dt className="font-medium text-gray-500 dark:text-slate-400">Tags</dt><dd className="text-gray-900 dark:text-white">{draft.listing.tags.join(', ')}</dd></>}
           {draft.listing.notes && <><dt className="font-medium text-gray-500 dark:text-slate-400">Notes</dt><dd className="whitespace-pre-line text-gray-900 dark:text-white">{draft.listing.notes}</dd></>}
           <dt className="font-medium text-gray-500 dark:text-slate-400">What it may use</dt>

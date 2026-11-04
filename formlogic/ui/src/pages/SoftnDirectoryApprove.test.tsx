@@ -111,6 +111,11 @@ describe('approving a draft for the SoftN directory', () => {
     expect(container.textContent).not.toContain('telepathy');
   });
 
+  it('says a new app with no author given is listed as made by Anonymous, as the directory lists it', async () => {
+    await open();
+    expect(container.textContent).toContain('Shown as made byAnonymous');
+  });
+
   it('shows a category by the name the directory lists it under, and a description and notes with their lines', async () => {
     getDraft.mockResolvedValue({ data: { ...waiting, listing: { name: 'Tide Times', category: 'education', categoryName: 'Learning', description: 'High water.\nLow water.', notes: 'One.\nTwo.' } } });
     await open();

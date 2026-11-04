@@ -308,7 +308,7 @@ final class SoftnDirectoryServiceTest extends TestCase
         $name = 'Clock for the whole family: alarms, timers and a calendar - and no ads';
         $draft = $service->createDraft($this->owner, $this->appId, ['name' => $name, 'category' => 'tools', 'notes' => str_repeat('n', 450),
             'tags' => ['Family Fun!', 'no-ads-ever-for-anyone-at-all', 'family fun', '!!!']]);
-        self::assertSame(mb_substr($name, 0, 64), $draft['listing']['name']);
+        self::assertSame(rtrim(mb_substr($name, 0, 64)), $draft['listing']['name'], 'cut, and no space left at its end, as the directory lists it');
         self::assertSame(400, mb_strlen($draft['listing']['notes']));
         self::assertSame(['family-fun', 'no-ads-ever-for-anyone-a'], $draft['listing']['tags'], 'as the directory writes them, once each');
         $this->assertRefused(fn () => $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'kids']), 'no category "kids": use one of tools (Tools)');
@@ -461,6 +461,63 @@ final class SoftnDirectoryServiceTest extends TestCase
         $service->approve($this->owner, $fromManifest['draftId']);
         self::assertSame("Book a room.\nPay at the desk.", $this->posts()[0]['fields']['description'], 'sent as shown');
         self::assertArrayNotHasKey('categoryName', $this->posts()[0]['fields'], 'the name is shown, not sent');
+    }
+
+    /**
+     * What the page shows the app may use is kept as the page reads it: a value JSON cannot hold (1e999, INF in PHP) left
+     * the whole block unwritable, kept as nothing, and the page said "nothing beyond the page" for an app SoftN grants the
+     * network, camera and microphone. A draft whose block cannot be read back is not published.
+     */
+    public function testWhatTheAppMayUseIsKeptAsThePageReadsIt(): void
+    {
+        $service = $this->service('https://dir.test');
+        $this->project['files']['permission.json'] = '{"permissions":{"net":{"enabled":true},"camera":{"enabled":true},"mic":{"enabled":true,"x":1e999}}}';
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools']);
+        self::assertSame(['net' => ['enabled' => true], 'camera' => ['enabled' => true], 'mic' => ['enabled' => true]], $draft['permissions']);
+        // One kept unreadable (made before this): not approved as shown.
+        self::$pdo->prepare('UPDATE softn_directory_drafts SET permissions = ? WHERE id = ?')->execute(['', $draft['draftId']]);
+        $service->requestPublish($this->owner, $draft['draftId']);
+        $this->assertRefused(fn () => $service->approve($this->owner, $draft['draftId']), 'could not be read back');
+        self::assertSame([], $this->posts(), 'nothing went to the directory');
+
+        // A list of hosts larger than the page can keep is refused, and its bundle is not left behind.
+        $staged = fn () => count(glob(self::$tmp . '/staging/*') ?: []);
+        $before = $staged();
+        $hosts = array_map(fn ($i) => str_repeat('h', 40) . $i . '.example.com', range(1, 1100));
+        $this->project['files']['permission.json'] = json_encode(['permissions' => ['net' => ['enabled' => true, 'allowed_hosts' => $hosts]]]);
+        self::assertLessThan(64 * 1024, strlen($this->project['files']['permission.json']));
+        $this->assertRefused(fn () => $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools']), 'more hosts than the approval page can show');
+        self::assertSame($before, $staged(), 'no bundle left without its draft');
+    }
+
+    /** A manifest the directory would refuse (no name, no version, a main that is not in the bundle) is refused here. */
+    public function testAManifestTheDirectoryWouldRefuseIsRefusedAtTheDraft(): void
+    {
+        $service = $this->service('https://dir.test');
+        foreach ([
+            [['id' => 'local.booking', 'version' => '1.0.0', 'main' => 'index.html'], 'has no name'],
+            [['id' => 'local.booking', 'name' => "\u{200B}", 'version' => '1.0.0', 'main' => 'index.html'], 'has no name'],
+            [['id' => 'local.booking', 'name' => 'Booking', 'main' => 'index.html'], 'has no version'],
+            [['id' => 'local.booking', 'name' => 'Booking', 'version' => '1.0.0', 'main' => 'missing.html'], 'does not name a file in the bundle'],
+        ] as [$manifest, $words]) {
+            $this->project['files']['manifest.json'] = json_encode($manifest);
+            $this->assertRefused(fn () => $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools']), $words);
+        }
+    }
+
+    /** A draft kept from before the listing was held to the directory's rules is shown, and sent, as it will be listed. */
+    public function testAnOlderDraftsListingIsShownAndSentAsItWillBeListed(): void
+    {
+        $service = $this->service('https://dir.test');
+        $draft = $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools']);
+        $old = ['name' => str_repeat('n', 80), 'category' => 'tools', 'author' => str_repeat('a', 60), 'tags' => ['Family Fun!', 'a,b']];
+        self::$pdo->prepare('UPDATE softn_directory_drafts SET listing = ? WHERE id = ?')->execute([json_encode($old), $draft['draftId']]);
+        $shown = $service->draft($this->owner, $draft['draftId'])['listing'];
+        self::assertSame([str_repeat('n', 64), 'tools', str_repeat('a', 40), ['family-fun', 'a-b']], [$shown['name'], $shown['category'], $shown['author'], $shown['tags']]);
+        $service->requestPublish($this->owner, $draft['draftId']);
+        $service->approve($this->owner, $draft['draftId']);
+        $sent = $this->posts()[0]['fields'];
+        self::assertSame([str_repeat('n', 64), str_repeat('a', 40), 'family-fun,a-b'], [$sent['name'], $sent['author'], $sent['tags']], 'sent as shown');
     }
 
     public function testADraftOfADeletedAppIsNotPublished(): void
@@ -755,7 +812,7 @@ final class SoftnDirectoryServiceTest extends TestCase
             return ['status' => 404, 'body' => '{}'];
         };
         return new SoftnDirectoryService(self::$mysql, self::$apps, null, $settings, self::$tmp . '/staging', \Closure::fromCallable($transport),
-            fn (string $appId) => $appId === $this->appId ? $this->project : ['version' => 1, 'files' => ['manifest.json' => '{"main":"index.html"}', 'index.html' => '<p>x</p>']], $encryption);
+            fn (string $appId) => $appId === $this->appId ? $this->project : ['version' => 1, 'files' => ['manifest.json' => '{"name":"Other","version":"1.0.0","main":"index.html"}', 'index.html' => '<p>x</p>']], $encryption);
     }
 
     /** @return list<array> */
