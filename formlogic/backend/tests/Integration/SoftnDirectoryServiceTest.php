@@ -518,6 +518,13 @@ final class SoftnDirectoryServiceTest extends TestCase
         $service->approve($this->owner, $draft['draftId']);
         $sent = $this->posts()[0]['fields'];
         self::assertSame([str_repeat('n', 64), str_repeat('a', 40), 'family-fun,a-b'], [$sent['name'], $sent['author'], $sent['tags']], 'sent as shown');
+
+        // One made before the manifest's author was kept with the listing: shown, and sent, with the author the directory
+        // would list it under, the manifest's in its bundle, not as Anonymous.
+        $this->project['files']['manifest.json'] = json_encode(['id' => 'local.booking', 'name' => 'Booking', 'version' => '1.0.0', 'main' => 'index.html', 'author' => ['name' => 'Tide Works']]);
+        $older = $service->createDraft($this->owner, $this->appId, ['name' => 'Clock', 'category' => 'tools']);
+        self::$pdo->prepare('UPDATE softn_directory_drafts SET listing = ? WHERE id = ?')->execute([json_encode(['name' => 'Clock', 'category' => 'tools']), $older['draftId']]);
+        self::assertSame('Tide Works', $service->draft($this->owner, $older['draftId'])['listing']['author']);
     }
 
     public function testADraftOfADeletedAppIsNotPublished(): void

@@ -340,7 +340,7 @@ final class SoftnDirectoryService
             'target' => $target,
             'sha256' => $row['sha256'],
             'bytes' => (int) $row['bytes'],
-            'listing' => self::storedListing(json_decode((string) $row['listing'], true)),
+            'listing' => $this->listingOf($row),
             'permissions' => self::shownPermissions(json_decode((string) $row['permissions'], true), in_array('permission.json', $files, true)),
             'warnings' => json_decode((string) $row['warnings'], true),
             'previewUrl' => '/apps/' . rawurlencode((string) $row['app_id']) . '/softn',
@@ -420,7 +420,7 @@ final class SoftnDirectoryService
         // gone to the directory, `uncertain` once the bundle may have (the app could be listed), never stuck.
         $sent = false;
         try {
-            $listing = self::storedListing(json_decode((string) $row['listing'], true));
+            $listing = $this->listingOf($row);
             $file = $this->stagingPath($draftId);
             if (!is_file($file) || hash_file('sha256', $file) !== $row['sha256']) {
                 $this->fail($draftId, 'failed', 'The draft’s bundle is gone or changed. Make a new draft.');
@@ -843,6 +843,34 @@ final class SoftnDirectoryService
     }
 
     /** @return list<string> The names in a draft's bundle, for its page, or [] once it is gone. */
+    /**
+     * A new app's listing as shown and sent, its author with it: one made before the manifest's author was kept with the
+     * listing (a day at most) has none, and the directory lists it under the manifest's, which its bundle holds.
+     */
+    private function listingOf(array $row): array
+    {
+        $listing = self::storedListing(json_decode((string) $row['listing'], true));
+        if ($row['target_slug'] === null && !isset($listing['author'])) {
+            $author = $this->bundleManifestAuthor((string) $row['id']);
+            if ($author !== null) $listing += self::listing(['author' => $author], false);
+        }
+        return $listing;
+    }
+
+    /** The manifest's author in a draft's bundle (a name, or `author.name`), or null. */
+    private function bundleManifestAuthor(string $draftId): ?string
+    {
+        $zip = new \ZipArchive();
+        $path = $this->stagingPath($draftId);
+        if (!is_file($path) || $zip->open($path, \ZipArchive::RDONLY) !== true) return null;
+        $text = $zip->getFromName('manifest.json');
+        $zip->close();
+        $manifest = is_string($text) ? json_decode(str_starts_with($text, "\xEF\xBB\xBF") ? substr($text, 3) : $text, true, 32) : null;
+        $author = is_array($manifest) ? ($manifest['author'] ?? null) : null;
+        $name = is_string($author) ? $author : (is_array($author) && is_string($author['name'] ?? null) ? $author['name'] : null);
+        return $name !== null && trim($name) !== '' ? $name : null;
+    }
+
     private function bundleFiles(string $draftId): array
     {
         $zip = new \ZipArchive();
