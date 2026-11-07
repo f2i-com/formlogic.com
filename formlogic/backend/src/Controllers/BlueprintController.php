@@ -22,7 +22,9 @@ class BlueprintController
 
     public function __construct(
         private BlueprintService $blueprints,
-        private ?BlueprintMaterializeService $materializer = null,
+        // Required: PHP-DI builds this controller itself and leaves an optional parameter at its
+        // default, so "create the app from the diagram" answered 503 on every site.
+        private BlueprintMaterializeService $materializer,
     ) {
     }
 
@@ -219,9 +221,6 @@ class BlueprintController
         $userId = $request->getAttribute('userId');
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
-        }
-        if ($this->materializer === null) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Materialisation unavailable'], 503);
         }
         try {
             $result = $this->materializer->materialize((string) $userId, (string) ($args['blueprintId'] ?? ''));

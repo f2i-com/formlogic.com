@@ -19,7 +19,8 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  */
 final class SoftnDirectoryController
 {
-    public function __construct(private SoftnDirectoryService $directory, private ?AuditService $audit = null) {}
+    // Both required: PHP-DI builds this controller itself, and it leaves an optional parameter at its default.
+    public function __construct(private SoftnDirectoryService $directory, private AuditService $audit) {}
 
     public function draft(Request $request, Response $response, array $args): Response
     {
@@ -32,7 +33,7 @@ final class SoftnDirectoryController
         return $this->run($response, function () use ($request, $args, $body) {
             $user = $this->user($request);
             $result = $this->directory->approve($user, (string) $args['id'], ($body['anyway'] ?? false) === true);
-            $this->audit?->log('softn_directory.approve', 'softn_draft', (string) $args['id'], $user, $this->ip($request), [
+            $this->audit->log('softn_directory.approve', 'softn_draft', (string) $args['id'], $user, $this->ip($request), [
                 'status' => $result['status'], 'destination' => $result['destination'], 'sha256' => $result['sha256'], 'slug' => $result['publication']['slug'] ?? null,
             ]);
             return $result;
@@ -54,7 +55,7 @@ final class SoftnDirectoryController
         $body = (array) ($request->getParsedBody() ?? []);
         return $this->run($response, function () use ($request, $body) {
             $saved = $this->directory->setDirectory(is_string($body['url'] ?? null) ? $body['url'] : null);
-            $this->audit?->log('admin.softn_directory', 'setting', 'softn-directory', $this->user($request), $this->ip($request), ['url' => $saved['url']]);
+            $this->audit->log('admin.softn_directory', 'setting', 'softn-directory', $this->user($request), $this->ip($request), ['url' => $saved['url']]);
             return $saved;
         });
     }

@@ -84,7 +84,7 @@ class McpTest extends TestCase
         $flows = new FlowService($conn);
         $blueprints = new \FormLogic\Services\BlueprintService($conn);
         self::$blueprints = $blueprints;
-        $materializer = new \FormLogic\Services\BlueprintMaterializeService($conn, $blueprints, $forms, self::$apps, $flows);
+        $materializer = new \FormLogic\Services\BlueprintMaterializeService($conn, $blueprints, $forms, self::$apps, $flows, new \FormLogic\Services\AppUserService($conn));
         self::$ctrl = new McpController(self::$tokens, $forms, self::$apps, $responses, null, null, self::$reportValidator, self::$desktopCommands, null, null, null, $flows, null, $blueprints, $materializer);
     }
 

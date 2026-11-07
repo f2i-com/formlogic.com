@@ -44,6 +44,59 @@ class RuntimeEngineWiringTest extends TestCase
     }
 
     /**
+     * The same trap over everything public/index.php has PHP-DI build (a `->get` of a class with no
+     * `->set` of its own), and what those need in turn: a service named as optional is never given,
+     * in production only. It was so for SoftnDirectoryController's audit (no publishing approval was
+     * logged), BlueprintController's materialiser ("create the app from the diagram" answered 503)
+     * and that materialiser's flows and roles (a diagram's were skipped, on the web, MCP and Chat).
+     */
+    public function testNothingPhpDiBuildsHasAnOptionalService(): void
+    {
+        preg_match_all('/^use ([A-Za-z\\\\]+);/m', self::$source, $uses);
+        $short = [];
+        foreach ($uses[1] as $fq) {
+            $short[substr($fq, (int) strrpos($fq, '\\') + 1)] = $fq;
+        }
+        preg_match_all('/->get\(\s*\\\\?((?:FormLogic\\\\[A-Za-z\\\\]+\\\\)?[A-Za-z]+)::class/', self::$source, $gets);
+        $queue = [];
+        foreach (array_unique($gets[1]) as $name) {
+            $fq = str_contains($name, '\\') ? $name : ($short[$name] ?? null);
+            if ($fq !== null) {
+                $queue[] = $fq;
+            }
+        }
+        $registered = fn (string $fq): bool => preg_match(
+            '/->set\(\s*(?:\\\\?' . preg_quote($fq, '/') . '|' . preg_quote(substr($fq, (int) strrpos($fq, '\\') + 1), '/') . ')::class/',
+            self::$source,
+        ) === 1;
+        $seen = [];
+        $skipped = [];
+        $built = 0;
+        while ($queue !== []) {
+            $fq = array_shift($queue);
+            if (isset($seen[$fq]) || !str_starts_with($fq, 'FormLogic\\') || !class_exists($fq) || $registered($fq)) {
+                $seen[$fq] = true;
+                continue;
+            }
+            $seen[$fq] = true;
+            $built++;
+            foreach ((new ReflectionClass($fq))->getConstructor()?->getParameters() ?? [] as $parameter) {
+                $type = $parameter->getType();
+                if (!$type instanceof ReflectionNamedType || $type->isBuiltin()) {
+                    continue;
+                }
+                if ($parameter->isOptional()) {
+                    $skipped[] = substr($fq, (int) strrpos($fq, '\\') + 1) . '::$' . $parameter->getName();
+                } else {
+                    $queue[] = $type->getName();
+                }
+            }
+        }
+        $this->assertGreaterThan(5, $built, 'the scan found what PHP-DI builds');
+        $this->assertSame([], $skipped, 'PHP-DI skips these optional parameters when it builds the class: make them required, or register the class in public/index.php');
+    }
+
+    /**
      * @param class-string $class
      * @dataProvider autowiredDependencies
      */

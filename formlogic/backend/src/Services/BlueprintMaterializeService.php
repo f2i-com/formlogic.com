@@ -32,8 +32,10 @@ class BlueprintMaterializeService
         private BlueprintService $blueprints,
         private FormService $forms,
         private AppService $apps,
-        private ?FlowService $flowService = null,
-        private ?AppUserService $appUsers = null,
+        // Required: PHP-DI builds this service itself and leaves an optional parameter at its default, so on every
+        // site a diagram's flows, triggers and roles were skipped without a word, through the web, MCP and Chat.
+        private FlowService $flowService,
+        private AppUserService $appUsers,
     ) {
         $this->mysql = $mysql->getConnection();
     }
