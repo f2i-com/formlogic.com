@@ -128,11 +128,16 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
     fail('.htaccess must send a CSP sandbox of allow-scripts and allow-downloads alone on the runtime documents');
   }
   // The shell's own security headers never replace the API's: where PHP runs as FastCGI its headers
-  // are in the table `Header always` writes, and `set` stripped an owner's SVG of its sandbox.
+  // are in the table `Header always` writes, and `set` stripped an owner's SVG of its sandbox. Kept
+  // off /api/ by an environment condition (Apache 2.2 on), never `setifempty` (2.4.7 on: a 500 on
+  // every request before it).
+  const headerLines = htaccess.split('\n').map((line) => line.trim());
+  if (!headerLines.includes('SetEnvIf Request_URI "^/api/" IS_API')) fail('.htaccess must mark the API\'s answers (SetEnvIf Request_URI "^/api/" IS_API)');
+  if (headerLines.some((line) => /^Header\s+(always\s+)?setifempty\b/i.test(line))) fail('.htaccess must not use Header setifempty: it needs Apache 2.4.7, and is a 500 on every request before it');
   for (const name of ['X-Content-Type-Options', 'Referrer-Policy', 'Permissions-Policy', 'X-Frame-Options', 'Content-Security-Policy']) {
-    const unconditional = htaccess.split('\n').map((line) => line.trim()).filter((line) => line.startsWith(`Header always set ${name} `) && !line.includes(' env='));
-    if (unconditional.length) fail(`.htaccess must send ${name} for every response with "Header always setifempty", or it replaces the API's own under PHP-FPM: ${unconditional[0]}`);
-    if (!htaccess.split('\n').some((line) => line.trim().startsWith(`Header always setifempty ${name} `))) fail(`.htaccess must still send ${name} with "Header always setifempty"`);
+    const unconditional = headerLines.filter((line) => line.startsWith(`Header always set ${name} `) && !line.includes(' env='));
+    if (unconditional.length) fail(`.htaccess must keep ${name} off the API's answers (env=!IS_API), or it replaces the API's own under PHP-FPM: ${unconditional[0]}`);
+    if (!headerLines.some((line) => line.startsWith(`Header always set ${name} `) && line.endsWith(' env=!IS_API'))) fail(`.htaccess must still send ${name} for every other answer (env=!IS_API)`);
   }
   // A CDN that rewrites HTML (Cloudflare's Web Analytics, which adds its script) leaves alone only
   // what says no-transform; the runtime documents must, after the no-cache section that also names
