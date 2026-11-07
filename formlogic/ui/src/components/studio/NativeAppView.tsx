@@ -15,6 +15,7 @@ import { HostedAppFrame } from './HostedAppFrame';
 import { AppSplash } from './AppSplash';
 import { applyAppHead, rememberedLook, rememberLook, type NativeLook } from '../../lib/appLook';
 import { passAction, unmetRequirement } from '../../lib/passes';
+import { engineIdentity, engineNeedsBytes, getEngineBytes } from '../../lib/formlogic/zipp-bytes';
 
 /** The codes an app refuses with when it requires a pass the member does not hold (AccessGateService). */
 const PASS_REFUSALS = ['pass_required', 'plugin_unavailable'];
@@ -57,13 +58,24 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   // Read once for each app (a plugin's page looks like the site's own).
   const remembered = useMemo(() => plugin ? null : rememberedLook(slug), [plugin, slug]);
   const look = seen?.slug === slug ? seen.look : remembered;
-  const [result, setResult] = useState<{ slug: string; userId?: string; generation: number; name?: string; project?: NativeRuntimeProject; engine?: { id: string; revision: string }; error?: string; pass?: { verifyPath: string | null; action: string } } | null>(null);
+  // The app's name as soon as the project has come, for the tab while its media download.
+  const [early, setEarly] = useState<{ slug: string; name?: string } | null>(null);
+  // Bumped by Try again, and by the connection coming back after a failed opening: asks again.
+  const [attempt, setAttempt] = useState(0);
+  const [result, setResult] = useState<{ slug: string; userId?: string; generation: number; name?: string; project?: NativeRuntimeProject; engine?: { id: string; revision: string }; error?: string; retry?: boolean; pass?: { verifyPath: string | null; action: string } } | null>(null);
   useEffect(() => {
     let cancelled = false;
     const stillCurrent = () => !cancelled && isSessionGenerationCurrent(generation);
     // The app's look as soon as the server says it, before its media have downloaded (a plugin's
-    // page looks like the site's own, and the server sends none for it).
-    const seeLook = (next: NativeLook | null) => { if (!stillCurrent()) return; setLook({ slug, look: next }); rememberLook(slug, next); };
+    // page looks like the site's own, and the server sends none for it). Its engine starts
+    // downloading now, beside the media: the frame asked for it only once they had all arrived.
+    const seeLook = (next: NativeLook | null, known?: { name?: string; engine?: { id: string } }) => {
+      if (!stillCurrent()) return;
+      setLook({ slug, look: next }); rememberLook(slug, next);
+      setEarly({ slug, name: known?.name });
+      const engineId = known?.engine?.id ?? 'zipp-web-python';
+      if (engineIdentity(engineId) && engineNeedsBytes(engineId)) void getEngineBytes(engineId).catch(() => { /* The frame asks again, and says why. */ });
+    };
     void api.getNativeRuntime(slug, seeLook).then(async response => {
       if (!stillCurrent()) return;
       const project = response.data?.project;
@@ -79,12 +91,15 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
         const unmet = unmetRequirement(membership?.data?.requirements);
         pass = { verifyPath: unmet && unmet.available ? unmet.verifyPath : null, action: unmet ? passAction(unmet) : 'Continue' };
       }
-      setResult({ slug, userId, generation, name: response.data?.name, project: error ? undefined : project, engine: response.data?.engine, error, pass });
+      // What asking again may cure: no answer, the app updated while it opened, a busy server.
+      const status = response.status ?? 0;
+      const retry = !!response.error && (!!response.transportFailure || status === 0 || status === 408 || status === 409 || status === 429 || status >= 500);
+      setResult({ slug, userId, generation, name: response.data?.name, project: error ? undefined : project, engine: response.data?.engine, error, retry, pass });
     }).catch(() => {
-      if (stillCurrent()) setResult({ slug, userId, generation, error: 'This app could not be opened. Please reload to try again.' });
+      if (stillCurrent()) setResult({ slug, userId, generation, error: 'This app could not be opened. Check your connection and try again.', retry: true });
     });
     return () => { cancelled = true; };
-  }, [slug, userId, generation]);
+  }, [slug, userId, generation, attempt]);
   const current = result?.slug === slug && result.userId === userId && result.generation === generation ? result : null;
   const project = current?.project;
   const error = current?.error;
@@ -110,13 +125,31 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     if (!fullScreen || !look || plugin) return;
     return applyAppHead(slug, look, { manifest: !onDomain && look.installable });
   }, [fullScreen, look, onDomain, plugin, slug]);
-  const title = fullScreen ? current?.name : undefined;
+  const name = current?.name ?? (early?.slug === slug ? early.name : undefined);
+  const title = fullScreen ? name : undefined;
   useEffect(() => {
     if (!title) return;
     const previous = document.title;
     document.title = title;
-    return () => { document.title = previous; };
+    // And the name an iPhone gives it on a home screen, which Safari takes from this before the manifest.
+    const apple = document.head.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
+    const before = apple?.getAttribute('content');
+    apple?.setAttribute('content', title);
+    return () => {
+      document.title = previous;
+      if (apple && before !== null && before !== undefined) apple.setAttribute('content', before);
+    };
   }, [title]);
+  // Asks again, on the splash rather than under the old error. A failed opening that asking again
+  // may cure is asked again by itself when the connection comes back.
+  const askAgain = () => { setResult(null); setAttempt(value => value + 1); };
+  const retryable = !!current?.error && !!current.retry;
+  useEffect(() => {
+    if (!retryable) return;
+    const again = () => { setResult(null); setAttempt(value => value + 1); };
+    window.addEventListener('online', again);
+    return () => window.removeEventListener('online', again);
+  }, [retryable]);
   const verify = current?.pass?.verifyPath ? `${current.pass.verifyPath}&return=` : null;
   const linkClass = 'mt-4 inline-flex min-h-11 items-center text-indigo-600 dark:text-indigo-300';
   if (project && filesAppId && answer === null) {
@@ -133,11 +166,21 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       </section>
     </div>;
   }
-  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} /></div> : !error ? <AppSplash look={look} label={current?.name ? `Opening ${current.name}` : 'Opening the app'} /> : <div className="mx-auto max-w-md p-6">{error ? <><p role="alert" className="text-sm text-slate-800 dark:text-slate-200">{error}</p>
-    {current?.pass
-      // On an app's own domain the pass is met on FormLogic, never on the domain.
-      ? (verify === null ? null : platform
-        ? <a className={linkClass} href={`${platform}${verify}${encodeURIComponent(window.location.href)}`}>{current.pass.action}</a>
-        : <Link className={linkClass} to={`${verify}${encodeURIComponent(window.location.pathname + window.location.search)}`}>{current.pass.action}</Link>)
-      : plugin ? null : <Link className={linkClass} to={signInTo ?? `/app/${encodeURIComponent(slug)}`}>Sign in or join this app</Link>}</> : null}</div>;
+  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} /></div> : !error ? <AppSplash look={look} label={name ? `Opening ${name}` : 'Opening the app'} /> : <div className="p-6">
+    {/* On a card of its own: the page around it may wear the app's loading colours, dark or light. */}
+    <div className="mx-auto max-w-md rounded-2xl bg-white/95 p-5 shadow-sm dark:bg-slate-900/95">
+      <p role="alert" className="text-sm text-slate-800 dark:text-slate-200">{error}</p>
+      {current?.pass
+        // On an app's own domain the pass is met on FormLogic, never on the domain.
+        ? (verify === null ? null : platform
+          ? <a className={linkClass} href={`${platform}${verify}${encodeURIComponent(window.location.href)}`}>{current.pass.action}</a>
+          : <Link className={linkClass} to={`${verify}${encodeURIComponent(window.location.pathname + window.location.search)}`}>{current.pass.action}</Link>)
+        // Signing in is no cure for no answer, and on an app's own domain this page is where it
+        // would lead: there, and for anything asking again may cure, the way on is to ask again.
+        : <div className="flex flex-wrap items-center gap-x-5">
+          <button type="button" className={linkClass} onClick={askAgain}>Try again</button>
+          {plugin || onDomain || current?.retry ? null : <Link className={linkClass} to={signInTo ?? `/app/${encodeURIComponent(slug)}`}>Sign in or join this app</Link>}
+        </div>}
+    </div>
+  </div>;
 }
