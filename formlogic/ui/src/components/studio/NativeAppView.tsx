@@ -91,7 +91,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       }
       // What asking again may cure: no answer, the app updated while it opened, a busy server.
       const status = response.status ?? 0;
-      const retry = !!response.error && (!!response.transportFailure || status === 0 || status === 408 || status === 409 || status === 429 || status >= 500);
+      const retry = !!response.error && (!!response.transportFailure || status === 408 || status === 409 || status === 429 || status >= 500);
       setResult({ slug, userId, generation, name: response.data?.name, project: error ? undefined : project, engine: response.data?.engine, error, retry, pass });
     }).catch(() => {
       if (stillCurrent()) setResult({ slug, userId, generation, error: 'This app could not be opened. Check your connection and try again.', retry: true });
