@@ -179,6 +179,8 @@ interface MapStore {
   atomic<T>(key: string, step: Step<T>, legacy?: string[], earlier?: (limits: NativeStorageLimits) => EarlierSite | null): Promise<T>;
   /** Removes every record whose key starts with `prefix`. */
   removePrefix(prefix: string): Promise<void>;
+  /** Whether the browser closed this store's connection under the page (IndexedDB's only). */
+  lost?(): boolean;
 }
 
 const localStore: MapStore = {
@@ -214,7 +216,13 @@ const localStore: MapStore = {
   },
 };
 
-function indexedStore(db: IDBDatabase): MapStore {
+function indexedStore(db: IDBDatabase, onLost: () => void): MapStore {
+  // The browser can close the connection under the page (iOS Safari does after a while in the
+  // background: "Connection to Indexed Database server lost"), and every save after it failed until
+  // the page was reloaded. Lost, the next access opens the database again (mapStore, withStore).
+  let lost = false;
+  const lose = () => { if (lost) return; lost = true; onLost(); };
+  db.onclose = lose;
   const done = (tx: IDBTransaction) => new Promise<void>((resolve, reject) => {
     tx.oncomplete = () => resolve();
     // A request's error, which is the transaction's only once it has aborted: a full disk is told as
@@ -222,9 +230,12 @@ function indexedStore(db: IDBDatabase): MapStore {
     tx.onerror = (event) => reject((event.target as { error?: DOMException | null } | null)?.error ?? tx.error);
     tx.onabort = () => reject(tx.error ?? new DOMException('The transaction was aborted', 'AbortError'));
   });
+  // What a closed connection is refused with, or aborts a transaction with.
+  const closing = (error: unknown) => error instanceof DOMException && (error.name === 'InvalidStateError' || error.name === 'UnknownError');
   return {
     kind: 'indexeddb',
     limits: LARGE_STORAGE_LIMITS,
+    lost: () => lost,
     async atomic(key, step, legacy = [], earlier) {
       // What localStorage holds for this map (a FormLogic before v0.1.24 kept it there), read
       // before the transaction: a transaction must not wait on anything but its own requests.
@@ -239,7 +250,10 @@ function indexedStore(db: IDBDatabase): MapStore {
       const site = !carried && earlier ? earlier(LARGE_STORAGE_LIMITS) : null;
       let tx: IDBTransaction;
       try { tx = db.transaction(STORE, 'readwrite'); }
-      catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
+      catch (error) {
+        if (closing(error)) lose();
+        throw new NativeStorageError('Browser storage is not available.', 'unavailable');
+      }
       const store = tx.objectStore(STORE);
       const finished = done(tx);
       let outcome: { result: unknown } | { error: unknown } | undefined;
@@ -264,6 +278,7 @@ function indexedStore(db: IDBDatabase): MapStore {
       try { await finished; }
       catch (error) {
         if (outcome && 'error' in outcome) throw outcome.error;
+        if (closing(error)) lose();
         const quota = error instanceof DOMException && error.name === 'QuotaExceededError';
         throw quota ? new NativeStorageError('This app has reached its browser storage limit.', 'limit') : new NativeStorageError('Browser storage is not available.', 'unavailable');
       }
@@ -287,7 +302,8 @@ function indexedStore(db: IDBDatabase): MapStore {
 let opening: Promise<MapStore> | null = null;
 /** The store maps are kept in: IndexedDB once it has opened, localStorage where it cannot. */
 function mapStore(): Promise<MapStore> {
-  opening ??= (async () => {
+  if (opening) return opening;
+  const attempt: Promise<MapStore> = (async () => {
     if (typeof indexedDB === 'undefined' || !indexedDB) return localStore;
     try {
       const open = indexedDB.open(DATABASE, 1);
@@ -298,15 +314,17 @@ function mapStore(): Promise<MapStore> {
         open.onblocked = () => reject(new DOMException('blocked', 'InvalidStateError'));
       });
       // Another tab's newer FormLogic asking for a version this one does not know: let it.
-      db.onversionchange = () => { db.close(); opening = null; };
+      db.onversionchange = () => { db.close(); if (opening === attempt) opening = null; };
       // A sign-out's purge that the page closed before it finished is finished now.
       for (const userId of purgeList()) if (!pendingMemberPurges.has(userId)) void clearNativeMemberStorage(userId);
-      return indexedStore(db);
+      // Closed under the page: the next access opens it again.
+      return indexedStore(db, () => { if (opening === attempt) opening = null; try { db.close(); } catch { /* Already closed. */ } });
     } catch {
       return localStore;
     }
   })();
-  return opening;
+  opening = attempt;
+  return attempt;
 }
 
 /** For tests: forget the opened store, so the next handle opens it again. */
@@ -468,12 +486,21 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
     return data.length <= limits.map ? { map: adopted, write: data } : { map: adopted };
   }
   async function withStore<T>(step: Step<T>, earlier?: (limits: NativeStorageLimits) => EarlierSite | null): Promise<T> {
-    // The store first: opening it resumes a purge a closed page left unfinished, which the scope
-    // check then waits for before anything of the member's is read.
-    const store = await mapStore();
-    await assertScope();
-    limits = store.limits;
-    return store.atomic(key, step, legacy, earlier);
+    for (let tries = 0; ; tries++) {
+      // The store first: opening it resumes a purge a closed page left unfinished, which the scope
+      // check then waits for before anything of the member's is read.
+      const store = await mapStore();
+      await assertScope();
+      limits = store.limits;
+      try {
+        return await store.atomic(key, step, legacy, earlier);
+      } catch (error) {
+        // A connection the browser closed under the page: opened again, once, and the same change
+        // made there. A transaction that did not commit changed nothing.
+        if (tries === 0 && store.lost?.()) continue;
+        throw error;
+      }
+    }
   }
   async function read(): Promise<Record<string, string>> {
     // The site's earlier saves come in only as the app opens, which reads first: never on a reset,
