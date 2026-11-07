@@ -35,7 +35,8 @@ use Slim\Routing\RouteContext;
 final class AppAccessGateMiddleware implements MiddlewareInterface
 {
     /** Route patterns, by their ending, that stay open on a gated app. */
-    public const OPEN = ['/manifest.json', '/client-manifest', '/welcome', '/membership', '/join', '/entry', '/aokie-discovery'];
+    // /look/{name}: an app's icon and share image, the branding its manifest and welcome name (AppLookController).
+    public const OPEN = ['/manifest.json', '/client-manifest', '/welcome', '/membership', '/join', '/entry', '/aokie-discovery', '/look/{name}'];
 
     public function __construct(
         private AppService $apps,

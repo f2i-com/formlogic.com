@@ -330,18 +330,19 @@ server {
     }
 
     # The two runtime documents sandbox themselves. nginx drops inherited add_header lines, so
-    # these repeat them, and exact matches win over the prefix above.
+    # these repeat them, and exact matches win over the prefix above. allow-downloads: the frame's own
+    # sandbox decides which app may save a file (only one its owner lets use files).
     location = /hosted-runtime/index.html {
         add_header Access-Control-Allow-Origin "*" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "SAMEORIGIN" always;
-        add_header Content-Security-Policy "sandbox allow-scripts; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
+        add_header Content-Security-Policy "sandbox allow-scripts allow-downloads; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
     }
     location = /hosted-runtime/host.html {
         add_header Access-Control-Allow-Origin "*" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "SAMEORIGIN" always;
-        add_header Content-Security-Policy "sandbox allow-scripts; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
+        add_header Content-Security-Policy "sandbox allow-scripts allow-downloads; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
     }
 
     # Backend API: everything under /api/ goes to its one front controller, and no file is served.
@@ -352,6 +353,35 @@ server {
         include fastcgi_params;
         fastcgi_read_timeout 660s;
         fastcgi_param SCRIPT_FILENAME /var/www/formlogic/backend/public/index.php;
+    }
+
+    # A link to a SoftN app (at /app/<slug>, or the root of its own domain), fetched by a service that
+    # shows a preview of it and runs no script: the backend writes the app's name, description and
+    # image into the page. rewrite keeps the address the backend reads (REQUEST_URI). Everyone else
+    # gets the SPA, as above.
+    set $formlogic_preview 0;
+    if ($http_user_agent ~* "(facebookexternalhit|Twitterbot|Slackbot|Discordbot|LinkedInBot|WhatsApp|TelegramBot|SkypeUriPreview|redditbot|Pinterestbot|Embedly|vkShare|Iframely|Mastodon|Bluesky)") { set $formlogic_preview 1; }
+    location = / {
+        if ($formlogic_preview) { rewrite ^ /api/ last; }
+        try_files /index.html =404;
+        # nginx drops inherited add_header lines: these are location /'s, every one.
+        add_header Cache-Control $formlogic_cache;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+    }
+    location ~ ^/app/[^/]+(/native)?/?$ {
+        if ($formlogic_preview) { rewrite ^ /api/ last; }
+        try_files /index.html =404;
+        # nginx drops inherited add_header lines: these are location /'s, every one.
+        add_header Cache-Control $formlogic_cache;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
     }
 
     # The backend also answers at the domain root, per Host: custom-domain launch, the OAuth discovery

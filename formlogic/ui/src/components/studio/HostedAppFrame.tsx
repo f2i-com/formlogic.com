@@ -1,4 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { AppSplash } from "./AppSplash";
+import { readLook, type NativeLook } from "../../lib/appLook";
 import { api } from "../../lib/api";
 import { workspaceBridge } from "../../lib/softn/workspaceBridge";
 import { NATIVE_PROTOCOL } from "../../lib/softn/protocol";
@@ -15,7 +17,7 @@ const navigate = (path: string) => window.location.assign(path);
 /** The server's decision for one mount: the engine to run, and the revision actions send back. */
 type FrameEngine = { id: string; revision: string };
 /** `files`: the app may open the files the person picks and save files they ask for, as its owner chose and, where asked, the person agreed (NativeAppView). Settled before the frame opens. */
-type NativeFrame = { assets: Record<string, string>; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope; files?: boolean };
+type NativeFrame = { assets: Record<string, string>; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope; files?: boolean; look?: NativeLook | null };
 const scopeAllowed = (native: NativeFrame) => isNativeStorageScope(native.storageScope) &&
   native.access === native.storageScope.access &&
   (native.storageScope.access === 'application' || native.storageScope.userId === currentSessionOwner());
@@ -89,6 +91,9 @@ export function HostedAppFrame({
   const admission = native || workspaceOnly ? (admitted.key === sourceKey ? admitted.generation : generation) : (hosted?.generation ?? -1);
 
   const [error, setError] = useState("");
+  // The frame whose app has drawn its first page (SoftN's `shown`): until then a native app's frame
+  // is covered by the same splash the page showed while it downloaded, so one wheel turns throughout.
+  const [shownKey, setShownKey] = useState<string | null>(null);
   // Audit FL-S07: damaged saved browser data stops the app before it starts,
   // with the owner's choices in front of them, rather than being filtered
   // into something that looks healthy. Reset boots a fresh frame.
@@ -188,6 +193,7 @@ export function HostedAppFrame({
         // The owner's choice as it is now: Off takes files away, Allowed without asking gives them. Where
         // the owner asks, the person's answer stands across a new engine: they were asked about the app.
         files: data.project.files === 'allow' || (data.project.files === 'ask' && !!mountNative?.files),
+        look: ("look" in data ? readLook(data.look) : null) ?? mountNative?.look,
       } : undefined;
       if (mountNative && (!nextNative || !scopeAllowed(nextNative))) {
         setError("This app could not verify its browser storage access. Please reload or sign in again.");
@@ -331,6 +337,10 @@ export function HostedAppFrame({
       channel.port1.onmessage = async (event) => {
         if (!isCurrentMount()) {
           retireGuest();
+          return;
+        }
+        if (event.data?.type === "shown") {
+          setShownKey(frameKey);
           return;
         }
         if (event.data?.type === "error") {
@@ -499,10 +509,16 @@ export function HostedAppFrame({
       );
       port.current = channel.port1;
       clearTimeout(timeout);
+      // A frame before SoftN v0.0.34 never says `shown`: it is uncovered at once, as before. One that
+      // does is uncovered by it, or after 45 seconds whatever happened, so nothing is hidden for good.
+      if (event.data.shown !== 1) setShownKey(frameKey);
+      else uncover = window.setTimeout(() => { if (isCurrentMount()) setShownKey(frameKey); }, 45_000);
     }
+    let uncover: number | undefined;
     window.addEventListener("message", receive);
     return () => {
       active = false;
+      window.clearTimeout(uncover);
       unsubscribe();
       invalidate();
       stopChanges();
@@ -579,6 +595,7 @@ export function HostedAppFrame({
           <p>This app tried to navigate away and was stopped</p>
         </div>
       ) : (
+        <div className={`relative flex min-h-0 w-full flex-1 flex-col ${bare ? "" : "min-h-[420px]"}`}>
         <iframe
           key={frameKey}
           ref={frame}
@@ -599,6 +616,8 @@ export function HostedAppFrame({
           className={`w-full flex-1 border-0 ${bare ? "" : "min-h-[420px]"}`}
           onLoad={countLoad}
         />
+        {mountNative && !error && shownKey !== frameKey && <AppSplash look={mountNative.look} className="absolute inset-0" />}
+        </div>
       )}
     </div>
   );

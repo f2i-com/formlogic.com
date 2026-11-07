@@ -72,6 +72,35 @@ choice is the grant (`settings.softnFiles`, `ask` or `allow`). Only a granted ap
 download (`sandbox="allow-scripts allow-downloads"`); it still never sees anything on the device but
 what the person picks. SoftN v0.0.33's frame reads the grant; an older one grants nothing.
 
+**Look and sharing** (Settings, the owner alone) is how the app looks before it opens and wherever it
+is shared (`settings.softnLook`, AppLookService):
+
+- **Icon**: in the tab, on a home screen and once installed. One of the app's own images; the
+  default is its manifest's `icon`. A PNG, JPEG, GIF or WebP is drawn at 32, 180, 192 and 512 pixels
+  (and a 512 maskable one on the loading background), so a square PNG of 512 or more suits it best.
+  An SVG is used as it is, in tabs and installed apps: not by Apple's home screen or link previews,
+  and served with a CSP sandbox so nothing in it runs at this site's address.
+- **Share image** and **description**: what a link to the app shows. The image is fitted into
+  1200 × 630 on the loading background; the description defaults to the manifest's.
+- **Loading background** and **wheel**: the loading screen, a wheel and no words, from the moment
+  the page opens until the app's first page is drawn (the frame says so from SoftN v0.0.34; an older
+  frame is uncovered as soon as it starts). A browser that has opened the app before starts on them
+  at once. An installed app's splash uses the background too.
+- **Browser bar colour**: `settings.pwaThemeColor`, as for other apps.
+
+The images are served at `/api/app/{slug}/look/{name}` (`icon-32.png`, `icon-180.png`,
+`icon-192.png`, `icon-512.png`, `icon-512-maskable.png`, `share.png`, `icon.svg`) to everyone the
+app's manifest is for, a draft's to its owner alone; each is drawn once, without GD sent as the
+original, and kept beside the media pack until the app changes. The app installs as itself from
+`/app/<slug>` and from its own domain: the page names the app's manifest, which lists its own icons
+and none of FormLogic's when the icon is raster. A link to `/app/<slug>` or to the domain's root,
+fetched by a link-preview service (Facebook and Messenger, X, Slack, Discord, LinkedIn, WhatsApp,
+Telegram, Skype, Reddit, Pinterest, Mastodon, Bluesky, Embedly, iframely), gets a page with the app's
+name, description and image (AppLookController::sharePage), for a published app only and never
+cached; people, and search engines, which run the page, get the app as always. The web server sends
+those services there: `ui/public/.htaccess` on Apache, `ci/router.php` for PHP's own server, and on
+nginx the same rule in the example in `formlogic/README.md`.
+
 Building with AI uses the person's default AI (Settings → AI). Where it cannot answer yet, the
 page says why and offers **Use FormLogic Site AI** in one click when the operator offers Site AI,
 beside connecting their own; the Visual Builder and uploads never need AI. The editor's own save

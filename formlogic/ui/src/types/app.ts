@@ -95,6 +95,21 @@ export interface AppSettings {
   /** A hosted SoftN app may open the files a person picks and save files they ask for: 'ask' asks
    *  each person first, 'allow' asks nobody (the owner knows the app). Absent: it may not. */
   softnFiles?: 'ask' | 'allow';
+  /** How a hosted SoftN app looks before it opens and where it is shared (AppLookService). */
+  softnLook?: SoftnLook;
+}
+
+/**
+ * A hosted SoftN app's look, as its owner chose: its icon and share image (each one of its own
+ * media files), a description, and its loading screen's colours. What is absent is the app's own
+ * (its manifest's icon and description) or FormLogic's.
+ */
+export interface SoftnLook {
+  icon?: string;
+  shareImage?: string;
+  description?: string;
+  background?: string;
+  spinner?: string;
 }
 
 /** How strongly a method establishes a pass's value, weakest first. */

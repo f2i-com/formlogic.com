@@ -12,6 +12,8 @@ import type { NativeRuntimeProject } from '../../lib/nativeHosting';
 import { isNativeStorageScope } from '../../lib/nativeAppStorage';
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from '../../lib/sessionGeneration';
 import { HostedAppFrame } from './HostedAppFrame';
+import { AppSplash } from './AppSplash';
+import { applyAppHead, rememberedLook, rememberLook, type NativeLook } from '../../lib/appLook';
 import { passAction, unmetRequirement } from '../../lib/passes';
 
 /** The codes an app refuses with when it requires a pass the member does not hold (AccessGateService). */
@@ -34,21 +36,32 @@ function rememberFilesAnswer(appId: string, answer: 'allow' | 'deny'): void {
 }
 
 /**
- * `fullScreen`: the app is the whole page, and names the tab. `signInTo`: where a refused visitor
- * goes. `plugin`: this is a plugin's own page, given its two bridge actions (HostedAppFrame).
+ * `fullScreen`: the app is the whole page, and names the tab, wears its icon and installs as itself.
+ * `onDomain`: that page is the app's own domain, whose manifest the domain's router already set.
+ * `onLook`: told the app's look (its loading background) for the page around it. `signInTo`: where a
+ * refused visitor goes. `plugin`: this is a plugin's own page, given its two bridge actions
+ * (HostedAppFrame).
  */
-export function NativeAppView({ slug, fullScreen = false, signInTo, plugin }: { slug: string; fullScreen?: boolean; signInTo?: string; plugin?: { context: Record<string, unknown>; onDone: () => void; onCamera?: () => void } }) {
+export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLook, signInTo, plugin }: { slug: string; fullScreen?: boolean; onDomain?: boolean; onLook?: (look: NativeLook | null) => void; signInTo?: string; plugin?: { context: Record<string, unknown>; onDone: () => void; onCamera?: () => void } }) {
   const userId = useAuthStore(state => state.user?.id);
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
   // `engine`: the server's engine decision for this mount (absent from a server before E0).
   const platform = useContext(DomainSignInContext);
   // `pass`: refused for a pass the app requires, met on the main site at `verifyPath` (none when
   // the plugin that issues it is off or gone).
+  // The loading colours: the server's, else what this browser saw last time, else the site's own.
+  const [seen, setLook] = useState<{ slug: string; look: NativeLook | null } | null>(null);
+  // Read once for each app (a plugin's page looks like the site's own).
+  const remembered = useMemo(() => plugin ? null : rememberedLook(slug), [plugin, slug]);
+  const look = seen?.slug === slug ? seen.look : remembered;
   const [result, setResult] = useState<{ slug: string; userId?: string; generation: number; name?: string; project?: NativeRuntimeProject; engine?: { id: string; revision: string }; error?: string; pass?: { verifyPath: string | null; action: string } } | null>(null);
   useEffect(() => {
     let cancelled = false;
     const stillCurrent = () => !cancelled && isSessionGenerationCurrent(generation);
-    void api.getNativeRuntime(slug).then(async response => {
+    // The app's look as soon as the server says it, before its media have downloaded (a plugin's
+    // page looks like the site's own, and the server sends none for it).
+    const seeLook = (next: NativeLook | null) => { if (!stillCurrent()) return; setLook({ slug, look: next }); rememberLook(slug, next); };
+    void api.getNativeRuntime(slug, seeLook).then(async response => {
       if (!stillCurrent()) return;
       const project = response.data?.project;
       const scope = project?.storageScope;
@@ -81,12 +94,18 @@ export function NativeAppView({ slug, fullScreen = false, signInTo, plugin }: { 
   const answer = filesAppId ? (answered?.appId === filesAppId ? answered.answer : filesAnswer(filesAppId)) : null;
   const filesGranted = project?.files === 'allow' || (project?.files === 'ask' && answer === 'allow');
   // Storage identity comes only from the admitted runtime GET, never app files or iframe input.
-  const native = useMemo(() => project ? { assets: project.assets, origins: project.origins, access: project.access, storageScope: project.storageScope, files: filesGranted } : undefined, [project, filesGranted]);
+  const native = useMemo(() => project ? { assets: project.assets, origins: project.origins, access: project.access, storageScope: project.storageScope, files: filesGranted, look: plugin ? undefined : (look ?? null) } : undefined, [project, filesGranted, look, plugin]);
   const answerFiles = (choice: 'allow' | 'deny') => {
     if (!filesAppId) return;
     rememberFilesAnswer(filesAppId, choice);
     setAnswered({ appId: filesAppId, answer: choice });
   };
+  useEffect(() => { onLook?.(look); }, [look, onLook]);
+  // The tab's icon, the theme colour and description, and (off a domain) the manifest that installs it.
+  useEffect(() => {
+    if (!fullScreen || !look || plugin) return;
+    return applyAppHead(slug, look, { manifest: !onDomain });
+  }, [fullScreen, look, onDomain, plugin, slug]);
   const title = fullScreen ? current?.name : undefined;
   useEffect(() => {
     if (!title) return;
@@ -110,11 +129,11 @@ export function NativeAppView({ slug, fullScreen = false, signInTo, plugin }: { 
       </section>
     </div>;
   }
-  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} plugin={plugin} /></div> : <div className="mx-auto max-w-md p-6">{error ? <><p role="alert" className="text-sm text-slate-800 dark:text-slate-200">{error}</p>
+  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} plugin={plugin} /></div> : !error ? <AppSplash look={look} label={current?.name ? `Opening ${current.name}` : 'Opening the app'} /> : <div className="mx-auto max-w-md p-6">{error ? <><p role="alert" className="text-sm text-slate-800 dark:text-slate-200">{error}</p>
     {current?.pass
       // On an app's own domain the pass is met on FormLogic, never on the domain.
       ? (verify === null ? null : platform
         ? <a className={linkClass} href={`${platform}${verify}${encodeURIComponent(window.location.href)}`}>{current.pass.action}</a>
         : <Link className={linkClass} to={`${verify}${encodeURIComponent(window.location.pathname + window.location.search)}`}>{current.pass.action}</Link>)
-      : plugin ? null : <Link className={linkClass} to={signInTo ?? `/app/${encodeURIComponent(slug)}`}>Sign in or join this app</Link>}</> : <p role="status">Opening your app…</p>}</div>;
+      : plugin ? null : <Link className={linkClass} to={signInTo ?? `/app/${encodeURIComponent(slug)}`}>Sign in or join this app</Link>}</> : null}</div>;
 }

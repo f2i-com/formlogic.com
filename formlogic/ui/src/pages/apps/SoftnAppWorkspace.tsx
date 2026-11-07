@@ -4,13 +4,14 @@
 // Screens step, a collapsed "Hosting & app tools" section and the native hosting dialog.
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, Lock, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wand2 } from 'lucide-react';
+import { Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, Lock, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wand2 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Textarea } from '../../components/ui/Textarea';
 import { Switch } from '../../components/ui/Switch';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
+import { SoftnLookPanel } from '../../components/apps/SoftnLookPanel';
 import { RequirementsSetting } from '../../components/apps/RequirementsSetting';
 import { AppEditorDialog, type AppEditorKind } from '../../components/studio/AppEditorDialog';
 import type { EditorBrief } from '../../components/studio/editorAgent';
@@ -30,7 +31,7 @@ import { useAppStore } from '../../stores/appStore';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { useUIStore, type SoftnOpen } from '../../stores/uiStore';
-import type { App, AppRequirement } from '../../types/app';
+import type { App, AppRequirement, SoftnLook } from '../../types/app';
 
 type Tab = 'app' | 'data' | 'settings';
 const TABS = [['app', 'App', Globe], ['data', 'Data', Database], ['settings', 'Settings', SettingsIcon]] as const;
@@ -168,6 +169,15 @@ function Workspace({ app }: { app: App }) {
         toast.success('Saved', next === 'ask' ? 'Each person is asked before the app opens.' : next === 'allow' ? 'The app may use files without asking.' : 'The app cannot open or save files.');
       }
     } finally { setFilesBusy(false); }
+  };
+
+  // The app's look and sharing (AppLookService), with the browser bar colour, merged as the rest is.
+  const changeLook = async (look: SoftnLook, themeColor: string | undefined) => {
+    await fetchApps();
+    const settings = { ...(useAppStore.getState().apps.find(candidate => candidate.id === app.id)?.settings ?? app.settings) };
+    if (Object.keys(look).length) settings.softnLook = look; else delete settings.softnLook;
+    if (themeColor) settings.pwaThemeColor = themeColor; else delete settings.pwaThemeColor;
+    if (await updateApp(app.id, { settings })) toast.success('Saved', 'The app’s look is updated where it is opened, installed and shared.');
   };
 
   const changeSetting = async (next: NativeProject, notice: string) => {
@@ -340,6 +350,9 @@ function Workspace({ app }: { app: App }) {
                   <span><span className="block text-sm font-medium text-slate-900 dark:text-white">{label}</span><span className="mt-0.5 block text-xs leading-5 text-slate-500 dark:text-slate-400">{hint}</span></span>
                 </label>)}
             </fieldset>
+          </Panel>}
+          {app.ownerId === userId && <Panel title="Look and sharing" icon={<Palette className="h-4 w-4" />}>
+            <SoftnLookPanel project={project} look={app.settings?.softnLook} themeColor={app.settings?.pwaThemeColor} disabled={readOnly} onSave={changeLook} />
           </Panel>}
           <Panel title="Address" icon={<Globe className="h-4 w-4" />}>
             <Switch label="Open this app at its address" description={`Visitors to /app/${app.slug} get this app. Off: it opens at /app/${app.slug}/native.`}

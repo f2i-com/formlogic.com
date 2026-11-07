@@ -892,8 +892,18 @@ $container->set(\FormLogic\Controllers\NativeAppController::class, function (Con
         $c->get(\FormLogic\Services\FlowService::class),
         $c->get(\FormLogic\Services\RuntimeEngineService::class),
         $c->get(\FormLogic\Services\PluginService::class),
-        $c->get(\FormLogic\Services\AccessGateService::class)
+        $c->get(\FormLogic\Services\AccessGateService::class),
+        $c->get(\FormLogic\Services\AppLookService::class)
     );
+});
+
+// A hosted SoftN app's icon, share image and loading colours (AppLookService), and the page a link
+// preview is given for it (AppLookController).
+$container->set(\FormLogic\Services\AppLookService::class, function (Container $c) {
+    return new \FormLogic\Services\AppLookService($c->get(\FormLogic\Services\NativeAppService::class));
+});
+$container->set(\FormLogic\Controllers\AppLookController::class, function (Container $c) {
+    return new \FormLogic\Controllers\AppLookController($c->get(AppService::class), $c->get(\FormLogic\Services\AppLookService::class), $c->get(\FormLogic\Services\AppDomainService::class));
 });
 
 $container->set(AppService::class, function (Container $c) {
@@ -1164,7 +1174,8 @@ $container->set(AppPublicController::class, function (Container $c) {
         $c->get(SQLiteConnection::class),
         $c->get(\FormLogic\Services\AppDomainService::class),
         $c->get(\FormLogic\Services\RateLimiter::class),
-        $c->get(\FormLogic\Services\AccessGateService::class)
+        $c->get(\FormLogic\Services\AccessGateService::class),
+        $c->get(\FormLogic\Services\AppLookService::class)
     );
 });
 
@@ -2271,6 +2282,9 @@ $app->get('/api/forms/{formId}/export/json', function ($request, $response) use 
 
 // Create rate limiter for public form viewing (60 requests per minute per IP)
 $publicFormRateLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'public_form');
+// A SoftN app's icons and share image (several to a page load) and the pages link previews fetch,
+// from a handful of addresses each: a bucket of their own, not the public forms'.
+$appLookRateLimiter = new RateLimitMiddleware($rateLimiter, 600, 60, 'app_look');
 
 // Public form view (for embedding/sharing) - rate limited to prevent enumeration
 $app->get('/api/public/forms/{id}', function ($request, $response) use ($container, $getArgs) {
@@ -2429,6 +2443,15 @@ $app->get('/.well-known/formlogic-app.json', function ($request, $response) use 
 $app->get('/manifest.json', function ($request, $response) use ($container) {
     return $container->get(AppPublicController::class)->manifestByHost($request, $response);
 })->add($publicFormRateLimiter);
+
+// A link-preview service fetching the site's root or /app/<slug> (ui/public/.htaccess and ci/router.php
+// send only those here): a published SoftN app's name, description and image; the site's page otherwise.
+$app->get('/', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AppLookController::class)->sharePage($request, $response, []);
+})->add($appLookRateLimiter);
+$app->get('/app/{slug}[/{rest:.*}]', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppLookController::class)->sharePage($request, $response, ['slug' => (string) ($getArgs($request)['slug'] ?? '')]);
+})->add($appLookRateLimiter);
 
 $app->get('/.well-known/assetlinks.json', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\AppDomainController::class)->assetLinks($request, $response);
@@ -3847,11 +3870,17 @@ $app->group('/api/flow-kv', function (RouteCollectorProxy $group) use ($containe
 })->add($cloudWriteGate)->add($authRequired);
 
 // App Runtime routes (public-facing, auth required for most)
-$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $authOptional, $publicFormRateLimiter, $appSubmissionRateLimiter, $flowRunRateLimiter, $connectorRelayRateLimiter, $serviceCapabilityRateLimiter, $cloudWriteGate, $reportRateLimiter) {
+$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $authOptional, $publicFormRateLimiter, $appLookRateLimiter, $appSubmissionRateLimiter, $flowRunRateLimiter, $connectorRelayRateLimiter, $serviceCapabilityRateLimiter, $cloudWriteGate, $reportRateLimiter) {
     // PWA manifest (public, no auth)
     $group->get('/manifest.json', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->manifest($request, $response, $getArgs($request));
     });
+
+    // A SoftN app's icon at a size, its share image, or its SVG icon (AppLookController::image):
+    // public, for the apps the manifest is served for, a draft's to its owner.
+    $group->get('/look/{name}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AppLookController::class)->image($request, $response, $getArgs($request));
+    })->add($appLookRateLimiter)->add($authOptional);
 
     // What the sign-in and sign-up pages show of the app (public, for the apps the manifest is served for).
     $group->get('/welcome', function ($request, $response) use ($container, $getArgs) {

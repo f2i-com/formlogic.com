@@ -57,7 +57,8 @@ class AppPublicController
         SQLiteConnection $sqlite,
         AppDomainService $appDomains,
         ?RateLimiter $rateLimiter = null,
-        private ?\FormLogic\Services\AccessGateService $gate = null
+        private ?\FormLogic\Services\AccessGateService $gate = null,
+        private ?\FormLogic\Services\AppLookService $look = null
     ) {
         $this->appService = $appService;
         $this->appUserService = $appUserService;
@@ -1421,7 +1422,12 @@ class AppPublicController
         if (!$app || !$this->appService->isRuntimeVisible($app, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
-        return $this->jsonResponse($response, AppService::welcome($app))->withHeader('Cache-Control', 'no-store');
+        $welcome = AppService::welcome($app);
+        // A SoftN app with no logo of the owner's shows its icon (AppLookService), as its tab and home screen do.
+        if ($welcome['app']['logo'] === null && ($look = $this->lookOf($app)) !== null && $look['iconKind'] !== null) {
+            $welcome['app']['logo'] = \FormLogic\Services\AppLookService::imagePath((string) $app['slug'], $look['iconKind'] === 'svg' ? 'icon.svg' : 'icon-192.png', $look['version']);
+        }
+        return $this->jsonResponse($response, $welcome)->withHeader('Cache-Control', 'no-store');
     }
 
     /**
@@ -1499,6 +1505,30 @@ class AppPublicController
             'icons' => [],
         ];
 
+        // A SoftN app's own look (AppLookService): its icon, drawn at the sizes an installed app needs,
+        // its description, and its loading background as the splash an installed app opens on.
+        $look = $this->lookOf($app);
+        if ($look !== null) {
+            if ($look['description'] !== '') $manifest['description'] = $look['description'];
+            if ($look['background'] !== null) $manifest['background_color'] = $look['background'];
+            if ($look['themeColor'] !== null) $manifest['theme_color'] = $look['themeColor'];
+            // Beside this manifest (/api/app/<slug>/manifest.json), wherever the API is; from a domain's root, its own /api.
+            $own = \FormLogic\Services\AppLookService::manifestIcons($look, $startPath === '/' ? '/api/app/' . rawurlencode((string) $app['slug']) . '/look/' : 'look/');
+            // A raster icon is all an installed app needs, so FormLogic's own are left out: an app
+            // installed from its address shows its own icon. An SVG one keeps them beside it, for a
+            // browser that wants a PNG.
+            if ($own !== [] && $look['iconKind'] === 'raster') {
+                $manifest['icons'] = $own;
+                return $manifest;
+            }
+            if ($own !== []) {
+                $own[] = ['src' => $base . '/pwa-192x192.png', 'sizes' => '192x192', 'type' => 'image/png', 'purpose' => 'any'];
+                $own[] = ['src' => $base . '/pwa-512x512.png', 'sizes' => '512x512', 'type' => 'image/png', 'purpose' => 'any'];
+                $manifest['icons'] = $own;
+                return $manifest;
+            }
+        }
+
         $icons = [];
         // The app's own logo first (branding), when set.
         if (!empty($app['logoUrl'])) {
@@ -1516,6 +1546,13 @@ class AppPublicController
         $manifest['icons'] = $icons;
 
         return $manifest;
+    }
+
+    /** A SoftN app's look (AppLookService), or null for any other app and where it cannot be read. */
+    private function lookOf(array $app): ?array
+    {
+        if ($this->look === null) return null;
+        try { return $this->look->resolve($app); } catch (\Throwable) { return null; }
     }
 
     /**

@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
-use FormLogic\Services\{AccessGateService, AppService, AppUserService, NativeAppService, PlanService, PluginService, FlowService, RuntimeEngineService};
+use FormLogic\Services\{AccessGateService, AppService, AppUserService, NativeAppService, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService};
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -19,7 +19,7 @@ class NativeAppController
     // $engines is required, not optional-with-a-default: this controller is autowired, and PHP-DI's
     // reflection autowiring SKIPS optional parameters (ReflectionBasedAutowiring), so an `= null`
     // here would silently hand production a controller that decides no app's engine.
-    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null) {}
+    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null, private ?AppLookService $look = null) {}
 
 
     public function manage(Request $request, Response $response, array $args): Response
@@ -155,6 +155,20 @@ class NativeAppController
             ->withBody(new \Slim\Psr7\Stream($stream));
     }
 
+    /**
+     * What the page shows before the app does, and where it is installed or shared (AppLookService):
+     * the loading colours, the theme colour, the description, and which icon there is with the
+     * version its address carries. Not for a plugin's page, which looks like the site's own. A look
+     * that cannot be read is left out: the page shows its own.
+     */
+    private function lookForRuntime(array $app, ?array $plugin): array
+    {
+        if ($this->look === null || $plugin !== null) return [];
+        try { $look = $this->look->resolve($app); } catch (\Throwable) { return []; }
+        if ($look === null) return [];
+        return ['look' => ['background' => $look['background'], 'spinner' => $look['spinner'], 'themeColor' => $look['themeColor'], 'description' => $look['description'], 'icon' => $look['iconKind'], 'version' => $look['version']]];
+    }
+
     public function runtime(Request $request, Response $response, array $args): Response
     {
         $app = $this->apps->getAppBySlug((string) $args['slug']);
@@ -239,7 +253,7 @@ class NativeAppController
                 $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
                 $files = $plugin === null && in_array($settings['softnFiles'] ?? null, ['ask', 'allow'], true) ? ['files' => $settings['softnFiles']] : [];
                 return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client] + $served + ['access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope] + $files]
-                    + $this->engineForRuntime($app['id'], $languages);
+                    + $this->lookForRuntime($app, $plugin) + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();
             if (!is_array($input) || !is_string($input['path'] ?? null) || !preg_match('~^/api/[a-zA-Z0-9/_-]+$~D', $input['path']) || !in_array($input['method'] ?? null, ['GET','POST','PUT','DELETE'], true)) throw new \InvalidArgumentException('Provide an app API path and method');

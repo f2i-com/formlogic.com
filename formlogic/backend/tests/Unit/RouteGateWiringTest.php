@@ -62,7 +62,11 @@ final class RouteGateWiringTest extends TestCase
 
     public function testWhatStaysOpenIsWhatAPageNeedsBeforeTheGate(): void
     {
-        self::assertSame(['/manifest.json', '/client-manifest', '/welcome', '/membership', '/join', '/entry', '/aokie-discovery'], AppAccessGateMiddleware::OPEN);
+        self::assertSame(['/manifest.json', '/client-manifest', '/welcome', '/membership', '/join', '/entry', '/aokie-discovery', '/look/{name}'], AppAccessGateMiddleware::OPEN);
+        // A SoftN app's icons and share image (AppLookController): what its manifest, its welcome and a
+        // link to it name, so they are as open as those. The app's media pack stays gated.
+        self::assertTrue(AppAccessGateMiddleware::isOpen('/api/app/{slug}/look/{name}'));
+        self::assertFalse(AppAccessGateMiddleware::isOpen('/api/app/{slug}/native/media'));
         // The Companion reads its discovery before anyone signs in: gated, no member could set it up.
         // What it may do after is the member's permissions, which the pass gates.
         self::assertTrue(AppAccessGateMiddleware::isOpen('/api/app/{slug}/aokie-discovery'));

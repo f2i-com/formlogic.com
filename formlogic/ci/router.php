@@ -34,6 +34,13 @@ if (preg_match('#^/\.well-known/(oauth-protected-resource(/.*)?|oauth-authorizat
     return true;
 }
 
+// A link-preview service fetching the root or /app/<slug> (mirrors the .htaccess rule): the app's name,
+// description and image (AppLookController::sharePage).
+if (preg_match('#^/(app/[^/]+(/native)?/?)?$#', $uri) && preg_match('~(facebookexternalhit|Twitterbot|Slackbot|Discordbot|LinkedInBot|WhatsApp|TelegramBot|SkypeUriPreview|redditbot|Pinterestbot|Embedly|vkShare|Iframely|Mastodon|Bluesky)~i', $_SERVER['HTTP_USER_AGENT'] ?? '')) {
+    require __DIR__ . '/../backend/public/index.php';
+    return true;
+}
+
 // The hosted runtime and the embedded editors, with the headers the .htaccess gives them in production.
 if (preg_match('#^/(hosted-runtime|app-editors)/#', $uri)) {
     $root = realpath($dist);

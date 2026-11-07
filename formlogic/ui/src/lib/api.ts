@@ -2122,12 +2122,15 @@ class ApiClient {
     if (table) params.set('table', table);
     return this.request(`/apps/${encodeURIComponent(id)}/native/records?${params}`);
   }
-  async getNativeRuntime(slug: string): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string } }>> {
+  async getNativeRuntime(slug: string, onLook?: (look: import('./appLook').NativeLook | null) => void): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown }>> {
     // The project without its media, and its media as one pack beside it (from FormLogic v0.1.24):
     // a game's pictures and sound came inside this JSON in base64, tens of megabytes on every
     // opening. The pack's address names its content, so the browser keeps it while the app is
     // unchanged. A server before the pack ignores the query and sends `assets` as it always did.
-    const result = await this.request<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string } }>(`/app/${encodeURIComponent(slug)}/native?media=pack`);
+    const result = await this.request<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown }>(`/app/${encodeURIComponent(slug)}/native?media=pack`);
+    // The app's look (AppLookService) before its media: the page shows the app's own loading colours
+    // while they download.
+    if (onLook && result.data) onLook((await import('./appLook')).readLook(result.data.look));
     const media = result.data?.project?.media;
     if (!result.data || !media || typeof media.url !== 'string' || !media.url.startsWith('/app/')) return result;
     const generation = currentSessionGeneration();

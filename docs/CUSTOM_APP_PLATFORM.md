@@ -1031,6 +1031,11 @@ The panel can only prove ownership. Traffic for the domain still has to reach th
   Keep the visitor's `Host` on the way through, as `reverse_proxy` does: a domain is recognised by it.
   Otherwise use your provider's equivalent, such as Cloudflare for SaaS, or add certificates by hand.
 - `APP_DOMAIN_REQUIRE_TLS_ACTIVE=1` holds a domain back until a real HTTPS handshake succeeds.
+- **Link previews of a SoftN app on its domain** (its name, description and share image) need the
+  site's root and `/app/<slug>` sent to the API for the services that fetch previews. The bundled
+  `.htaccess` does it on Apache; the nginx example in `formlogic/README.md` has the same rule. Without
+  it a link shows the site's own preview and nothing else changes. A cache in front (Cloudflare) does
+  not keep those pages: they are sent `private, no-store`.
 
 ### Backend
 

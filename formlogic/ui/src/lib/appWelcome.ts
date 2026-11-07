@@ -1,6 +1,7 @@
 // The app a visitor is signing in to use, as the site's sign-in and sign-up pages show it: its name, logo or icon,
 // its look and its owner's words (GET /api/app/{slug}/welcome). The site writes the headings and keeps its own mark;
 // the app's look comes as design tokens, never style sheets, as these are the pages where people type their password.
+import { API_BASE_URL } from './apiBase';
 import type { CSSProperties } from 'react';
 import type { SignInPageSettings } from '../types/app';
 import { contrastRatio, parseHex, readableForeground, type RGB } from './color';
@@ -52,8 +53,10 @@ export function readWelcome(value: unknown): AppWelcome | null {
   const text = (s: unknown) => (typeof s === 'string' && s.trim() !== '' ? s : null);
   const color = (s: unknown) => (typeof s === 'string' && HEX.test(s) ? s : null);
   const logo = typeof app.logo === 'string' && (/^\/(?![/\\])/.test(app.logo) || /^data:image\/(png|jpeg|gif|webp);base64,/.test(app.logo)) ? app.logo : null;
+  // A SoftN app's icon (/api/app/<slug>/look/...) is the API's, wherever the API is.
+  const shown = logo?.startsWith('/api/') ? `${API_BASE_URL.replace(/\/$/, '')}${logo.slice(4)}` : logo;
   return {
-    app: { name: app.name, slug: app.slug, icon: text(app.icon), logo },
+    app: { name: app.name, slug: app.slug, icon: text(app.icon), logo: shown },
     look: {
       accent: color(v.look?.accent),
       font: SIGN_IN_FONTS.includes(v.look?.font ?? '') ? (v.look?.font as string) : null,

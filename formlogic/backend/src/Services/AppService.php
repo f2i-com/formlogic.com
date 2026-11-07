@@ -162,6 +162,13 @@ class AppService
         if (array_key_exists('softnFiles', $settings) && !in_array($settings['softnFiles'], ['ask', 'allow'], true)) {
             unset($settings['softnFiles']);
         }
+        // settings.softnLook: how a hosted SoftN app looks before it opens and where it is shared
+        // (AppLookService): its icon and share image, each one of its own media files, a description,
+        // and the loading view's background and wheel colours. Only those, each held to its shape.
+        if (array_key_exists('softnLook', $settings)) {
+            $look = AppLookService::sanitize($settings['softnLook']);
+            if ($look === []) unset($settings['softnLook']); else $settings['softnLook'] = $look;
+        }
         // settings.signInPage: how the site's sign-in and sign-up pages greet the app's visitors (AppService::welcome).
         if (array_key_exists('signInPage', $settings)) {
             $page = self::signInPage($settings['signInPage']);

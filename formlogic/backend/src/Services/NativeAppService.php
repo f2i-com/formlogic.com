@@ -1370,6 +1370,12 @@ class NativeAppService
         return is_file($file) ? (hash_file('xxh128', $file) ?: null) : null;
     }
 
+    /** The installed project's key (runtimeKey), for a caller that asks derivedState() several things at once. */
+    public function projectKey(string $appId): ?string
+    {
+        return $this->runtimeKey($this->root($appId));
+    }
+
     /** @return array{project: array<string, mixed>, media: array{file: string, sha256: string, size: int, count: int}} */
     private function runtimeCache(string $root): array
     {
@@ -1436,10 +1442,125 @@ class NativeAppService
         $this->writeExact($dir . '/client-' . $key . '.json', json_encode(['project' => $summary, 'media' => $media], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES), 0600);
         // Another project's cache is of no use now: what this folder holds is for project.json as it is.
         foreach (scandir($dir) ?: [] as $name) {
-            if (preg_match('/^(?:client|media)-([a-f0-9]+)\.(?:json|pack)(?:\.pending-[a-f0-9]+)?$/D', $name, $match) && $match[1] !== $key) @unlink($dir . '/' . $name);
+            // What was drawn from it (derived(): look-<key>-...) goes with it.
+            if (preg_match('/^(?:(?:client|media)-([a-f0-9]+)\.(?:json|pack)|look-([a-f0-9]+)-[a-f0-9]+\.bin)(?:\.pending-[a-f0-9]+)?$/D', $name, $match) && (($match[1] ?? '') !== '' ? $match[1] : ($match[2] ?? '')) !== $key) @unlink($dir . '/' . $name);
         }
     }
 
+    /**
+     * The index of an open media pack ({path => [offset, size]}, offsets from the end of the
+     * index), read from its head, or null where it is not one.
+     *
+     * @param resource $stream at the start of the pack
+     * @return array{base: int, files: array<string, array{0: int, 1: int}>}|null
+     */
+    private static function packIndex($stream): ?array
+    {
+        $head = fread($stream, 12);
+        if (!is_string($head) || strlen($head) !== 12 || substr($head, 0, 8) !== self::MEDIA_PACK_MAGIC) return null;
+        $length = (int) unpack('N', substr($head, 8, 4))[1];
+        if ($length < 2 || $length > 8 * 1024 * 1024) return null;
+        $index = json_decode((string) stream_get_contents($stream, $length), true);
+        if (!is_array($index['files'] ?? null)) return null;
+        $files = [];
+        foreach ($index['files'] as $file) {
+            if (is_array($file) && is_string($file['path'] ?? null) && is_int($file['offset'] ?? null) && is_int($file['size'] ?? null)) {
+                $files[$file['path']] = [$file['offset'], $file['size']];
+            }
+        }
+        return ['base' => 12 + $length, 'files' => $files];
+    }
+
+    /** The paths of the app's media files, as its media pack lists them; [] when it has none. */
+    public function mediaPaths(string $appId): array
+    {
+        $stream = $this->runtimeProject($appId, true)['media']['stream'] ?? null;
+        if (!is_resource($stream)) return [];
+        try { return array_keys(self::packIndex($stream)['files'] ?? []); }
+        finally { fclose($stream); }
+    }
+
+    /**
+     * One of the app's media files, byte for byte as it was installed, read from its media pack
+     * under the app's lock; null when it has no such file. For what is drawn from it, such as the
+     * icon a page and a home screen show (AppLookService).
+     */
+    public function mediaFile(string $appId, string $path): ?string
+    {
+        $stream = $this->runtimeProject($appId, true)['media']['stream'] ?? null;
+        if (!is_resource($stream)) return null;
+        try {
+            $index = self::packIndex($stream);
+            [$offset, $size] = $index['files'][$path] ?? [-1, -1];
+            if ($offset < 0 || $size < 0 || $size > self::MAX_MEDIA_FILE_BYTES) return null;
+            if ($size === 0) return '';
+            if (fseek($stream, $index['base'] + $offset) !== 0) return null;
+            $bytes = stream_get_contents($stream, $size);
+            return is_string($bytes) && strlen($bytes) === $size ? $bytes : null;
+        } finally { fclose($stream); }
+    }
+
+    /**
+     * Something drawn from the project as installed (an icon at a size, a share image), kept beside
+     * its media pack and removed with it when the project changes: $make draws it the first time,
+     * and it is read from then on. $name says what it is, its inputs included. Null when nothing is
+     * installed or $make draws nothing.
+     *
+     * @param callable(): ?string $make
+     */
+    public function derived(string $appId, string $name, callable $make): ?string
+    {
+        $root = $this->root($appId);
+        $key = $this->runtimeKey($root);
+        if ($key === null) return null;
+        $dir = $root . self::RUNTIME_CACHE;
+        $file = $dir . '/look-' . $key . '-' . hash('xxh128', $name) . '.bin';
+        // What could not be drawn is kept too, as one byte that no image is: a broken image is not
+        // decoded again for every request that names it.
+        $kept = static function () use ($file): array {
+            if (!is_file($file)) return [false, null];
+            $bytes = @file_get_contents($file);
+            if (!is_string($bytes) || $bytes === '') return [false, null];
+            // A failure is tried again after a day: the server may have changed (memory, GD's formats).
+            if ($bytes === "\0") return @filemtime($file) > time() - 86400 ? [true, null] : [false, null];
+            return [true, $bytes];
+        };
+        [$found, $bytes] = $kept();
+        if ($found) return $bytes;
+        if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) { $made = $make(); return is_string($made) && $made !== '' ? $made : null; }
+        // One drawing at a time for each thing: the others wait, then read what it drew.
+        $lock = @fopen($dir . '/look.lock', 'c');
+        if ($lock !== false) flock($lock, LOCK_EX);
+        try {
+            [$found, $bytes] = $kept();
+            if ($found) return $bytes;
+            $made = $make();
+            $bytes = is_string($made) && $made !== '' ? $made : null;
+            // Filed under the project it was drawn from: one installed meanwhile gets its own.
+            if ($this->runtimeKey($root) === $key) {
+                try { $this->writeExact($file, $bytes ?? "\0", 0600); } catch (\Throwable) { /* Drawn again next time. */ }
+            }
+            return $bytes;
+        } finally {
+            if ($lock !== false) { flock($lock, LOCK_UN); fclose($lock); }
+        }
+    }
+    /**
+     * Whether derived() has $name for the project as installed: true where it was drawn, false where
+     * it could not be, null where nobody has asked yet. Read without the drawing itself.
+     */
+    public function derivedState(string $appId, string $name, ?string $key = null): ?bool
+    {
+        $root = $this->root($appId);
+        $key ??= $this->runtimeKey($root);
+        if ($key === null) return null;
+        $file = $root . self::RUNTIME_CACHE . '/look-' . $key . '-' . hash('xxh128', $name) . '.bin';
+        clearstatcache(true, $file);
+        $size = @filesize($file);
+        if ($size === false || $size === 0) return null;
+        if ($size > 1 || @file_get_contents($file) !== "\0") return true;
+        return @filemtime($file) > time() - 86400 ? false : null;
+    }
     /**
      * How many bytes a file's base64 decodes to: from its length where it is canonical (no line breaks,
      * its padding in place), otherwise by decoding it, as validateProject() accepts both (PHP's strict

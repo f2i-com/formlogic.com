@@ -12,6 +12,9 @@ use Psr\Http\Server\RequestHandlerInterface as RequestHandler;
 
 class SecurityHeadersMiddleware implements MiddlewareInterface
 {
+    /** The policy an image a person may open as a page is sent under: nothing in it runs, it has no origin, it may style itself. */
+    public const SANDBOXED_IMAGE = "sandbox; default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+
     private bool $isProduction;
 
     public function __construct(bool $isProduction = false)
@@ -71,6 +74,11 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
             "base-uri 'none'",
             "form-action 'none'",
         ]);
+        // An app owner's SVG (AppLookController::image) is sent under SANDBOXED_IMAGE, exactly: this
+        // policy and a sandbox, with styles. Any other policy a response carries is replaced, as ever.
+        if ($response->getHeaderLine('Content-Security-Policy') === self::SANDBOXED_IMAGE) {
+            $csp = self::SANDBOXED_IMAGE;
+        }
         $response = $response->withHeader('Content-Security-Policy', $csp);
 
         return $response;
