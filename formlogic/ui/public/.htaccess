@@ -24,15 +24,19 @@ Options -Indexes
 <IfModule mod_headers.c>
   # Security headers for the static SPA document (the API sets its own via
   # SecurityHeadersMiddleware; this covers the React document served by Apache).
-  Header always set X-Content-Type-Options "nosniff"
-  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  # setifempty, never set: where PHP runs as FastCGI (PHP-FPM, mod_proxy_fcgi) its headers are in
+  # the table `always` writes, and `set` replaced the API's own. An app owner's SVG icon lost the
+  # sandbox its policy gives it (AppLookController::image), and its script ran at this origin.
+  # Under mod_php the two tables are apart, and both policies are sent, as they always were.
+  Header always setifempty X-Content-Type-Options "nosniff"
+  Header always setifempty Referrer-Policy "strict-origin-when-cross-origin"
   # geolocation/camera stay SELF-only: the form runtime has a Location (GPS)
   # field and a Camera field; () would deny them even to our own pages.
-  Header always set Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()"
+  Header always setifempty Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()"
   # Deny framing of the app shell (clickjacking / UI-redress). No script-src/style-src
   # so the SPA + zipp WASM worker are unaffected — only framing is restricted.
-  Header always set X-Frame-Options "DENY"
-  Header always set Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
+  Header always setifempty X-Frame-Options "DENY"
+  Header always setifempty Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
   # The public form runtime (/form/...) is intentionally embeddable. SetEnvIf matches
   # the original request path before the SPA rewrite to /index.html.
   SetEnvIf Request_URI "^/form/" IS_FORM_RUNTIME

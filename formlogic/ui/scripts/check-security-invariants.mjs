@@ -127,6 +127,13 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
   if (!runtimePolicy.includes('sandbox allow-scripts allow-downloads;') || runtimePolicy.includes('allow-same-origin')) {
     fail('.htaccess must send a CSP sandbox of allow-scripts and allow-downloads alone on the runtime documents');
   }
+  // The shell's own security headers never replace the API's: where PHP runs as FastCGI its headers
+  // are in the table `Header always` writes, and `set` stripped an owner's SVG of its sandbox.
+  for (const name of ['X-Content-Type-Options', 'Referrer-Policy', 'Permissions-Policy', 'X-Frame-Options', 'Content-Security-Policy']) {
+    const unconditional = htaccess.split('\n').map((line) => line.trim()).filter((line) => line.startsWith(`Header always set ${name} `) && !line.includes(' env='));
+    if (unconditional.length) fail(`.htaccess must send ${name} for every response with "Header always setifempty", or it replaces the API's own under PHP-FPM: ${unconditional[0]}`);
+    if (!htaccess.split('\n').some((line) => line.trim().startsWith(`Header always setifempty ${name} `))) fail(`.htaccess must still send ${name} with "Header always setifempty"`);
+  }
   // A CDN that rewrites HTML (Cloudflare's Web Analytics, which adds its script) leaves alone only
   // what says no-transform; the runtime documents must, after the no-cache section that also names
   // index.html, or that one would replace it.
