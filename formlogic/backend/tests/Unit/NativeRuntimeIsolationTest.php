@@ -128,7 +128,8 @@ final class NativeRuntimeIsolationTest extends TestCase
         $response = $controller->runtime($this->request($method, $user), new Response(), ['slug' => 'same-slug']);
         $this->assertSame(200, $response->getStatusCode());
         $this->assertSame('no-store', $response->getHeaderLine('Cache-Control'));
-        $this->assertSame([['database-app-id']], $calls['project']);
+        // An API call reads the project without its media (runtimeProject, recorded with its default).
+        $this->assertSame($method === 'GET' ? [['database-app-id']] : [['database-app-id', false]], $calls['project']);
         $this->assertSame($access === 'members' && $user !== 'owner' ? [['database-app-id', $user]] : [], $calls['membership'] ?? []);
         $body = self::body($response);
         if ($method === 'GET') {
@@ -167,7 +168,7 @@ final class NativeRuntimeIsolationTest extends TestCase
         $this->assertSame(403, $response->getStatusCode());
         $body = self::body($response);
         foreach (['project', 'storageScope', 'engine', 'result', 'code'] as $key) $this->assertArrayNotHasKey($key, $body);
-        $this->assertSame([['database-app-id']], $calls['project'], 'settled project determines access mode');
+        $this->assertSame($method === 'GET' ? [['database-app-id']] : [['database-app-id', false]], $calls['project'], 'settled project determines access mode');
         $this->assertSame($user === null ? [] : [['database-app-id', $user]], $calls['membership'] ?? []);
         foreach (['engine', 'clientLanguages', 'installed', 'torch'] as $key) $this->assertSame([], $calls[$key] ?? []);
         $this->assertNoExecution($calls);

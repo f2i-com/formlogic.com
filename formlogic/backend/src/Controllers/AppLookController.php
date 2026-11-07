@@ -39,14 +39,18 @@ final class AppLookController
         try { $image = $this->look->image($app, $name); } catch (\Throwable) { $image = null; }
         if ($image === null) return $this->notFound($response);
         $etag = '"' . hash('xxh128', $image['bytes']) . '"';
-        // Addressed by the look's version (`?v=`), it never changes: an app or look that changes is
-        // served at a new address.
-        $versioned = ($request->getQueryParams()['v'] ?? '') !== '';
+        // Addressed by the look's version as it is (`?v=`), it never changes: an app or look that
+        // changes is served at a new address. One naming another version, from a page opened before a
+        // change, is sent the look as it is and checked each time: kept for a year under the old
+        // address, it came back wrong for a year if the look was ever changed back to that version.
+        $asked = (string) ($request->getQueryParams()['v'] ?? '');
+        try { $version = $this->look->resolve($app)['version'] ?? null; } catch (\Throwable) { $version = null; }
+        $versioned = $asked !== '' && is_string($version) && hash_equals($version, $asked);
         // A published app's look is its public face, as its name is. A draft's is its owner's alone.
         $published = ($app['status'] ?? '') === 'published';
         $response = $response
             ->withHeader('ETag', $etag)
-            ->withHeader('Cache-Control', !$published ? 'private, no-cache' : ($versioned ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'))
+            ->withHeader('Cache-Control', !$published ? 'private, no-cache' : ($versioned ? 'public, max-age=31536000, immutable' : ($asked !== '' ? 'public, no-cache' : 'public, max-age=3600')))
             ->withHeader('X-Content-Type-Options', 'nosniff');
         if ($image['type'] === 'image/svg+xml') {
             // The owner's SVG, from this site's own address: opened as a page, nothing in it runs and

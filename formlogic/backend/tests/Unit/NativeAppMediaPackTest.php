@@ -116,9 +116,16 @@ final class NativeAppMediaPackTest extends TestCase
         $this->assertSame('private, max-age=31536000, immutable', $response->getHeaderLine('Cache-Control'), 'never a shared cache: a members-only app\'s pictures');
         $this->assertSame('"' . $hash . '"', $response->getHeaderLine('ETag'));
         $this->assertSame((string) strlen($pack), $response->getHeaderLine('Content-Length'));
+        // Done with: a pack still open cannot be removed on Windows when the fixture goes.
+        $response->getBody()->close();
 
-        // An address naming another version is answered, but checked again each time.
-        $this->assertSame('private, no-cache', $this->get($controller, '/api/app/notes/native/media', ['h' => str_repeat('0', 64)])->getHeaderLine('Cache-Control'));
+        // An address naming another version is a page that read the project before an update: it is
+        // refused, and asks again, rather than run the old version's code on the new one's media.
+        $stale = $this->get($controller, '/api/app/notes/native/media', ['h' => str_repeat('0', 64)]);
+        $this->assertSame(409, $stale->getStatusCode());
+        $this->assertStringNotContainsString(self::PNG, (string) $stale->getBody());
+        // One naming none is answered, but checked again each time.
+        $this->assertSame('private, no-cache', $this->get($controller, '/api/app/notes/native/media')->getHeaderLine('Cache-Control'));
         // And the browser's copy is confirmed without sending it again.
         $again = $this->get($controller, '/api/app/notes/native/media', ['h' => $hash], ['If-None-Match' => '"' . $hash . '"']);
         $this->assertSame(304, $again->getStatusCode());
@@ -138,12 +145,14 @@ final class NativeAppMediaPackTest extends TestCase
         $root = $this->install('application', ['assets/a.png' => self::PNG]);
         $controller = $this->controller();
         $first = self::body($this->get($controller, '/api/app/notes/native', ['media' => 'pack']))['project']['media']['sha256'];
-        $cache = glob($root . '/runtime-cache/*');
+        // What the cache holds for the project (its build lock aside, which stays).
+        $cached = static fn(): array => array_values(array_filter(glob($root . '/runtime-cache/*') ?: [], static fn(string $file): bool => basename($file) !== 'build.lock'));
+        $cache = $cached();
         $this->assertCount(2, $cache, 'the project without its media, and the pack');
         $made = array_map('filemtime', $cache);
         clearstatcache();
         $this->assertSame($first, self::body($this->get($controller, '/api/app/notes/native', ['media' => 'pack']))['project']['media']['sha256']);
-        $this->assertSame($made, array_map('filemtime', glob($root . '/runtime-cache/*')), 'read, not made again');
+        $this->assertSame($made, array_map('filemtime', $cached()), 'read, not made again');
 
         // A new version of the app: a new pack, and the old one gone.
         $this->install('application', ['assets/a.png' => self::PNG, 'assets/c.png' => self::PNG . 'x'], 2);
@@ -151,7 +160,7 @@ final class NativeAppMediaPackTest extends TestCase
         $this->assertSame(2, $body['project']['version']);
         $this->assertSame(2, $body['project']['media']['count']);
         $this->assertNotSame($first, $body['project']['media']['sha256']);
-        $this->assertCount(2, glob($root . '/runtime-cache/*'), 'the old version\'s cache is removed');
+        $this->assertCount(2, $cached(), 'the old version\'s cache is removed');
         $this->assertSame([], glob($root . '/runtime-cache/*.pending-*'));
     }
 

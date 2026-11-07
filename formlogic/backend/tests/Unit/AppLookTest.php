@@ -18,6 +18,7 @@ final class AppLookTest extends TestCase
 {
     private ?string $storage = null;
     private array $saved = [];
+    private ?AppLookService $service = null;
 
     protected function setUp(): void
     {
@@ -161,7 +162,8 @@ final class AppLookTest extends TestCase
         $apps->method('isRuntimeVisible')->willReturnCallback(static fn(array $candidate, $user) => ($candidate['status'] ?? '') === 'published' || $user === 'owner');
         $domains = $this->createMock(AppDomainService::class);
         $domains->method('resolveAppSlugByHost')->willReturnCallback(static fn(string $host) => $host === 'outerstead.example' && $domainApp ? ['slug' => $domainApp['slug']] + $domainApp : null);
-        return new AppLookController($apps, new AppLookService($this->install(['icon' => 'assets/icon.svg', 'description' => 'First <Light>.'], ['assets/icon.svg' => self::SVG, 'assets/art/logo.png' => self::png()])), $domains);
+        $this->service = new AppLookService($this->install(['icon' => 'assets/icon.svg', 'description' => 'First <Light>.'], ['assets/icon.svg' => self::SVG, 'assets/art/logo.png' => self::png()]));
+        return new AppLookController($apps, $this->service, $domains);
     }
 
     private function get(string $uri, array $headers = [], ?string $user = null): \Psr\Http\Message\ServerRequestInterface
@@ -175,13 +177,18 @@ final class AppLookTest extends TestCase
     public function testAnSvgIconIsServedSoThatNothingInItEverRuns(): void
     {
         $controller = $this->controller(self::app());
-        $response = $controller->image($this->get('/api/app/outerstead/look/icon.svg?v=1'), new Response(), ['slug' => 'outerstead', 'name' => 'icon.svg']);
+        $version = $this->service->resolve(self::app())['version'];
+        $response = $controller->image($this->get('/api/app/outerstead/look/icon.svg?v=' . $version), new Response(), ['slug' => 'outerstead', 'name' => 'icon.svg']);
         $this->assertSame(200, $response->getStatusCode());
         $this->assertSame('image/svg+xml', $response->getHeaderLine('Content-Type'));
         $this->assertStringStartsWith('sandbox;', $response->getHeaderLine('Content-Security-Policy'));
         $this->assertStringContainsString("default-src 'none'", $response->getHeaderLine('Content-Security-Policy'));
         $this->assertSame('nosniff', $response->getHeaderLine('X-Content-Type-Options'));
         $this->assertSame('public, max-age=31536000, immutable', $response->getHeaderLine('Cache-Control'));
+        // Named by another version (a page opened before a change): the look as it is, checked each time,
+        // never kept for a year under an address a look changed back to would name again.
+        $stale = $controller->image($this->get('/api/app/outerstead/look/icon.svg?v=0'), new Response(), ['slug' => 'outerstead', 'name' => 'icon.svg']);
+        $this->assertSame('public, no-cache', $stale->getHeaderLine('Cache-Control'));
         $again = $controller->image($this->get('/api/app/outerstead/look/icon.svg', ['If-None-Match' => $response->getHeaderLine('ETag')]), new Response(), ['slug' => 'outerstead', 'name' => 'icon.svg']);
         $this->assertSame(304, $again->getStatusCode());
     }
@@ -265,6 +272,8 @@ final class AppLookTest extends TestCase
         $router = (string) file_get_contents(__DIR__ . '/../../../ci/router.php');
         $this->assertStringContainsString('RewriteCond %{HTTP_USER_AGENT} (' . AppLookController::PREVIEW_BOTS . ') [NC]', $htaccess);
         $this->assertStringContainsString("preg_match('~(" . AppLookController::PREVIEW_BOTS . ")~i'", $router);
+        // And the README's Apache example, whose backend the bundled .htaccess cannot see.
+        $this->assertStringContainsString('RewriteCond %{HTTP_USER_AGENT} (' . AppLookController::PREVIEW_BOTS . ') [NC]', (string) file_get_contents(__DIR__ . '/../../../README.md'));
         $this->assertTrue(AppLookController::isPreviewBot('WhatsApp/2.23.20.0'));
         $this->assertFalse(AppLookController::isPreviewBot('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'), 'search engines run the page');
         $this->assertFalse(AppLookController::isPreviewBot(''));

@@ -130,7 +130,9 @@ class NativeAppController
      * The media pack, streamed from disk. Its address carries its SHA-256 (`?h=`), so the browser
      * keeps what it fetched for as long as the app is unchanged, privately: a members-only or gated
      * app's pictures must never sit in a shared cache, Cloudflare's included. An address naming
-     * another version is answered with this one and told to check again each time.
+     * another version is a page that read the project before an update: sent this pack, the old
+     * version's code ran on the new one's media, files renamed or removed missing. It is refused
+     * (409), and the page asks again. One naming none is answered with this pack, checked each time.
      *
      * A members-only app's media, or one behind a pass, are checked with the server each time they are used (`no-cache`,
      * answered 304 while unchanged), so a browser's copy is only ever read by someone still admitted.
@@ -189,9 +191,12 @@ class NativeAppController
         $packed = $mediaRoute || ($request->getMethod() === 'GET' && ($request->getQueryParams()['media'] ?? '') === 'pack');
         return $this->respond($response, function () use ($request, $response, $app, $user, $owner, $plugin, $mediaRoute, $packed) {
             // Access is decided against the settled project (FL-S04), never an update's leftover project.json.
-            // Read without its media where nothing here sends them: a game's are tens of megabytes.
-            $runtime = $packed ? $this->native->runtimeProject($app['id']) : null;
-            $project = $packed ? ($runtime['project'] ?? null) : $this->native->project($app['id']);
+            // Read without its media where nothing here sends them: a game's are tens of megabytes. An
+            // app's API call needs only its version and access, and decoded every picture and sound
+            // for them on each call, a game with no backend to call included.
+            $light = $packed || $request->getMethod() !== 'GET';
+            $runtime = $light ? $this->native->runtimeProject($app['id']) : null;
+            $project = $light ? ($runtime['project'] ?? null) : $this->native->project($app['id']);
             if (!$project) throw new \RuntimeException('Native app not found', 404);
             if ($plugin !== null) {
                 if (!$plugin['enabled']) throw new \RuntimeException('This plugin is turned off on this site.', 403);
@@ -209,6 +214,10 @@ class NativeAppController
             if ($stale = $this->refuseStaleEngine($request, $response, $app['id'])) return $stale;
             $identity = $project['access'] === 'members' ? ['formlogic' => ['appId' => $app['id'], 'userId' => $user, 'roleId' => $owner ? 'owner' : ($membership['roleId'] ?? null)]] : [];
             if ($mediaRoute) {
+                // An address naming another version than the one read for this request: refused before it is
+                // opened (mediaPack).
+                $asked = (string) ($request->getQueryParams()['h'] ?? '');
+                if ($asked !== '' && !hash_equals((string) ($runtime['media']['sha256'] ?? ''), $asked)) throw new \RuntimeException('The app was updated while it was opening. Reload and try again.', 409);
                 // Opened only now, admitted, and under the app's lock: an update cannot replace the pack while it
                 // is sent, and one that came between the two reads is refused rather than sent unchecked.
                 $opened = $this->native->runtimeProject($app['id'], true);

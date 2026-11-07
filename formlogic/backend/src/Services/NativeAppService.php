@@ -1383,7 +1383,19 @@ class NativeAppService
         $dir = $root . self::RUNTIME_CACHE;
         $clientFile = $dir . '/client-' . $key . '.json';
         $packFile = $dir . '/media-' . $key . '.pack';
-        if (!is_file($clientFile) || !is_file($packFile)) $this->buildRuntimeCache($root, $dir, $key);
+        if (!is_file($clientFile) || !is_file($packFile)) {
+            // One build at a time: right after an update every visitor's request found no cache, and
+            // each decoded the whole project (raising PHP's memory for it) to write the same files.
+            // A request that waited finds them written.
+            if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) throw new RuntimeException('Could not prepare the app\'s media');
+            $building = @fopen($dir . '/build.lock', 'c');
+            if ($building !== false) flock($building, LOCK_EX);
+            try {
+                if (!is_file($clientFile) || !is_file($packFile)) $this->buildRuntimeCache($root, $dir, $key);
+            } finally {
+                if ($building !== false) { flock($building, LOCK_UN); fclose($building); }
+            }
+        }
         $client = json_decode((string) file_get_contents($clientFile), true, 64, JSON_THROW_ON_ERROR);
         if (!is_array($client['project'] ?? null) || !is_array($client['media'] ?? null)) throw new RuntimeException('The app\'s media could not be read');
         return ['project' => $client['project'], 'media' => $client['media'] + ['file' => $packFile]];
@@ -1910,9 +1922,15 @@ class NativeAppService
      */
     public function request(string $appId, array $request, array $identity = [], array $subscriptions = [], ?int $generation = null, bool $bodyAsWritten = false): array
     {
-        [$root, $lock, $project] = $this->openShared($appId, $generation);
+        // The project without its media (runtimeCache), read under the same lock: this call needs its
+        // version and its manifest's server block, and decoding every picture and sound for them on
+        // each call kept a PHP worker busy with a game's tens of megabytes, where it had no backend.
+        [$root, $lock] = $this->openShared($appId, null, false);
+        if ($lock === null) throw new RuntimeException('Native app not found', 404);
         try {
-            if (!self::hasBackend($project ?? [])) throw new RuntimeException('This app has no backend', 404);
+            $project = $this->runtimeCache($root)['project'];
+            if ($generation !== null && (int) ($project['version'] ?? 0) !== $generation) throw new RuntimeException('The app was updated while this request was in flight. Reload and try again.', 409);
+            if (!self::hasBackend($project)) throw new RuntimeException('This app has no backend', 404);
             return $this->invoke($root, $request, $identity, $subscriptions, $bodyAsWritten);
         }
         finally { flock($lock, LOCK_UN); fclose($lock); }
