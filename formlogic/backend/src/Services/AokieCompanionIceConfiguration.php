@@ -53,10 +53,20 @@ final class AokieCompanionIceConfiguration
     /** ...and one more than this far ahead. */
     public const TURN_MAX_REMAINING_SECONDS = 86400;
 
-    public const REST_DEFAULT_TTL_SECONDS = 600;
-    /** The same bounds Aokie's reference minter enforces (coturn's allocation lifetime tops out at 3600). */
+    /**
+     * The same default as Aokie's reference minter (deploy/companion-self-host), and a maximum five minutes short of
+     * its 24 hours (REST_MAX_TTL_SECONDS). coturn checks
+     * the username's expiry on every authenticated request, the refreshes that keep an allocation and its
+     * permissions alive among them, and the endpoints don't restart ICE with fresh credentials mid-call:
+     * a relayed call ends when its credential lapses. Ten minutes, this default until v0.1.23, cut such
+     * calls about ten minutes in. coturn's max-allocate-lifetime bounds only one refresh interval.
+     */
+    public const REST_DEFAULT_TTL_SECONDS = 43200;
     public const REST_MIN_TTL_SECONDS = 60;
-    public const REST_MAX_TTL_SECONDS = 3600;
+    /** Five minutes short of what the Companion takes: it measures by its own clock, which may be behind this one. */
+    public const REST_MAX_TTL_SECONDS = self::TURN_MAX_REMAINING_SECONDS - 300;
+    /** The public discovery document's shared credential (relay-only) is never good for longer than this. */
+    public const DISCOVERY_MAX_TTL_SECONDS = 600;
 
     private const OPAQUE_ID_LENGTH = 32;
 
@@ -228,13 +238,14 @@ final class AokieCompanionIceConfiguration
             $opaqueId = self::opaqueId($secret, $admittedSubject);
         } elseif ($relayOnly) {
             // Discovery cannot be authenticated, yet a relay-only Companion will not accept it
-            // without TURN. One credential per window, the same for every caller. A window is half
-            // the lifetime and the credential runs to the end of the NEXT one, so it is valid for
-            // more than half the lifetime and never for longer than the lifetime itself (an
-            // operator who chose 600 seconds never has an anonymous caller holding one for 1200),
-            // and, with a lifetime of at least 60, always for more than the 30 seconds the
-            // Companion insists on.
-            $window = intdiv($ttl, 2);
+            // without TURN. One credential per window, the same for every caller, and its lifetime
+            // is the configured one only up to ten minutes: anyone can fetch it, and calls use the
+            // admission's own. A window is half that lifetime and the credential runs to the end of
+            // the NEXT one, so it is valid for more than half the lifetime and never for longer than
+            // the lifetime itself (an operator who chose 600 seconds never has an anonymous caller
+            // holding one for 1200), and, with a lifetime of at least 60, always for more than the
+            // 30 seconds the Companion insists on.
+            $window = intdiv(min($ttl, self::DISCOVERY_MAX_TTL_SECONDS), 2);
             $expiresAt = (intdiv($now, $window) + 2) * $window;
             $opaqueId = self::opaqueId($secret, 'discovery');
         } else {

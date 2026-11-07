@@ -498,9 +498,9 @@ final class AokieCompanionIceConfigurationTest extends TestCase
 
     public function testAMobileAdmissionCarriesItsOwnMintedCredential(): void
     {
-        $result = self::minting()->forAdmission('mobile', 'app_test', 'device_test', self::NOW);
+        $result = self::minting(ttl: '600')->forAdmission('mobile', 'app_test', 'device_test', self::NOW);
 
-        // Known answer for now = 1784160000 and the default 600 second lifetime (Python hmac and openssl).
+        // Known answer for now = 1784160000 and a 600 second lifetime, the default until v0.1.23 (Python hmac and openssl).
         $this->assertSame(
             self::mintedServers(1_784_160_600, '1784160600:b76588edf0d149e1075b69631e94cc91', 'KHqzx1+wW92HnynGzGgLw5mZgwo='),
             $result['servers'],
@@ -512,7 +512,7 @@ final class AokieCompanionIceConfigurationTest extends TestCase
 
     public function testAPluginAdmissionGetsAnotherCredentialFromTheSameSecret(): void
     {
-        $result = self::minting()->forAdmission('plugin', 'app_test', 'aokie', self::NOW);
+        $result = self::minting(ttl: '600')->forAdmission('plugin', 'app_test', 'aokie', self::NOW);
 
         $this->assertSame(
             self::mintedServers(1_784_160_600, '1784160600:9ad5b440809a76e58520fa0d14e32626', 'Stdmtt53cR4OkoTsqwXpKqEeWas='),
@@ -533,9 +533,19 @@ final class AokieCompanionIceConfigurationTest extends TestCase
         $this->assertStringEndsWith(substr($a['servers'][1]['username'], strpos($a['servers'][1]['username'], ':')), $later['servers'][1]['username'], 'the same endpoint keeps the same id from one admission to the next');
     }
 
-    public function testTheLifetimeIsConfigurableWithinCoturnsAllocationLimit(): void
+    // A relayed call ends when its credential lapses (coturn checks it on every refresh, and a call keeps the
+    // credential it started with), so the default outlasts a long call, as Aokie's own issuer's 12 hours does.
+    public function testTheDefaultLifetimeOutlastsALongCall(): void
     {
-        foreach ([60, 1800, 3600] as $seconds) {
+        $result = self::minting()->forAdmission('mobile', 'app_test', 'device_test', self::NOW);
+        $this->assertSame(self::NOW + 43200, $result['expiresAt']);
+        $this->assertSame(43200, AokieCompanionIceConfiguration::REST_DEFAULT_TTL_SECONDS);
+    }
+
+    public function testTheLifetimeIsConfigurableUpToWhatTheCompanionTakesWithRoomForItsClock(): void
+    {
+        $this->assertSame(AokieCompanionIceConfiguration::TURN_MAX_REMAINING_SECONDS - 300, AokieCompanionIceConfiguration::REST_MAX_TTL_SECONDS);
+        foreach ([60, 1800, 3600, 43200, 86100] as $seconds) {
             $result = self::minting(ttl: (string) $seconds)->forAdmission('mobile', 'app_test', 'device_test', self::NOW);
             $this->assertSame(self::NOW + $seconds, $result['expiresAt'], "a lifetime of {$seconds}");
         }
@@ -546,7 +556,7 @@ final class AokieCompanionIceConfigurationTest extends TestCase
     {
         return [
             'too short' => ['59'],
-            'too long' => ['3601'],
+            'too long' => ['86101'],
             'zero' => ['0'],
             'negative' => ['-5'],
             'fractional' => ['600.5'],
@@ -567,7 +577,7 @@ final class AokieCompanionIceConfigurationTest extends TestCase
         $result = self::minting(relayOnly: 'true')->forAdmission('plugin', 'app_test', 'aokie', self::NOW);
 
         $this->assertTrue($result['relayOnly']);
-        $this->assertSame(self::NOW + 600, $result['expiresAt']);
+        $this->assertSame(self::NOW + AokieCompanionIceConfiguration::REST_DEFAULT_TTL_SECONDS, $result['expiresAt']);
     }
 
     public function testMintingWinsOverTheStaticListAndNeverLooksAtIt(): void
@@ -576,7 +586,7 @@ final class AokieCompanionIceConfigurationTest extends TestCase
         // A static list that would be refused outright (and one lapsed entry that would be logged) is simply not read.
         $result = self::minting(staticJson: '{not json', log: $log)->forAdmission('mobile', 'app_test', 'device_test', self::NOW);
 
-        $this->assertSame(1_784_160_600, $result['expiresAt']);
+        $this->assertSame(self::NOW + AokieCompanionIceConfiguration::REST_DEFAULT_TTL_SECONDS, $result['expiresAt']);
         $this->assertSame([], $log);
     }
 
@@ -639,14 +649,14 @@ final class AokieCompanionIceConfigurationTest extends TestCase
     /** @return array<string, array{int}> */
     public static function lifetimes(): array
     {
-        return ['the shortest' => [60], 'odd' => [61], 'a few minutes' => [299], 'the default' => [600], 'odd and long' => [3599], 'the longest' => [3600]];
+        return ['the shortest' => [60], 'odd' => [61], 'a few minutes' => [299], 'ten minutes' => [600], 'odd and long' => [3599], 'the default' => [43200], 'the longest' => [86100]];
     }
 
     #[DataProvider('lifetimes')]
     public function testThePublicCredentialNeverOutlivesTheConfiguredLifetimeNorGetsTooCloseToTheFloor(int $ttl): void
     {
-        // Aokie's README never lets a credential run past coturn's 3600 s: the one anyone can fetch from public
-        // discovery must not be valid for longer than the lifetime the operator chose, whenever it is fetched.
+        // The one anyone can fetch from public discovery is never valid for longer than the lifetime the operator
+        // chose, nor than ten minutes, however long an admission's lasts, whenever it is fetched.
         $config = self::minting(relayOnly: 'true', ttl: (string) $ttl);
         $step = max(1, intdiv($ttl, 120));
         $shortest = PHP_INT_MAX;
@@ -657,7 +667,7 @@ final class AokieCompanionIceConfigurationTest extends TestCase
             $longest = max($longest, $remaining);
         }
 
-        $this->assertLessThanOrEqual($ttl, $longest, 'never valid for longer than the lifetime');
+        $this->assertLessThanOrEqual(min($ttl, AokieCompanionIceConfiguration::DISCOVERY_MAX_TTL_SECONDS), $longest, 'never valid for longer than the lifetime, nor ten minutes');
         $this->assertGreaterThan(AokieCompanionIceConfiguration::TURN_MIN_REMAINING_SECONDS, $shortest, 'and never inside the Companion\'s 30 second floor');
     }
 

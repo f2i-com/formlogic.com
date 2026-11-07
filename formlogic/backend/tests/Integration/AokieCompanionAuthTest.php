@@ -2942,7 +2942,7 @@ final class AokieCompanionAuthTest extends TestCase
                 $this->assertCount(2, $body['iceServers'], $surface);
                 $this->assertSame([['urls' => ['stun:turn.example.test:3478'], 'username' => '', 'credential' => '']], [$body['iceServers'][0]], $surface);
                 $this->assertMintedTurnEntry($body['iceServers'][1], $surface);
-                $this->assertEqualsWithDelta(time() + 600, $body['iceServers'][1]['expiresAt'], 5, $surface . ': ten minutes by default');
+                $this->assertEqualsWithDelta(time() + 43200, $body['iceServers'][1]['expiresAt'], 5, $surface . ': twelve hours by default, as Aokie\'s issuer: a relayed call ends when its credential does');
                 $this->assertSame($body['iceServers'][1]['expiresAt'], $body['turnCredentialExpiresAt'], $surface . ': the Companion checks it equals the earliest TURN expiry');
                 $this->assertFalse($body['relayOnly'], $surface);
                 // The native Companion rejects unknown members and parses these documents strictly: the shape may not change.
@@ -2979,6 +2979,19 @@ final class AokieCompanionAuthTest extends TestCase
         });
     }
 
+    public function testADayLongLifetimeIsTakenForAdmissionsAndNeverForDiscovery(): void
+    {
+        $device = $this->iceDevice();
+        $this->withIceSettings(self::mintingSettings(['AOKIE_COMPANION_RELAY_ONLY' => 'true', 'AOKIE_COMPANION_TURN_REST_TTL_SECONDS' => '86100']), function () use ($device): void {
+            $surfaces = $this->iceSurfaces($device);
+            $this->assertSame(200, $surfaces['mobile']['status'], json_encode($surfaces['mobile']));
+            $this->assertEqualsWithDelta(time() + 86100, $surfaces['mobile']['iceServers'][1]['expiresAt'], 5, 'five minutes short of the most the Companion takes');
+            $this->assertSame(200, $surfaces['discovery']['status']);
+            $this->assertLessThanOrEqual(time() + 600, $surfaces['discovery']['turnCredentialExpiresAt'], 'anyone can read discovery');
+            $this->assertGreaterThan(time() + 30, $surfaces['discovery']['turnCredentialExpiresAt']);
+        });
+    }
+
     public function testARelayOnlyMintingDeploymentCarriesOneSharedCredentialInDiscoveryAndItsOwnInEachAdmission(): void
     {
         $device = $this->iceDevice();
@@ -2994,7 +3007,7 @@ final class AokieCompanionAuthTest extends TestCase
             $this->assertTrue($surfaces['discovery']['media']['relayOnly']);
 
             // Public discovery: every anonymous caller within a window sees one and the same credential,
-            // and it is never valid for longer than the ten minutes an admission's is.
+            // and it is never valid for longer than ten minutes, however long an admission's is.
             $again = $this->iceSurfaces($device)['discovery'];
             if ($again['turnCredentialExpiresAt'] === $surfaces['discovery']['turnCredentialExpiresAt']) {
                 $this->assertSame($surfaces['discovery']['iceServers'], $again['iceServers']);
