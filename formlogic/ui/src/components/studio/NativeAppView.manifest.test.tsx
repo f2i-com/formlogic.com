@@ -9,7 +9,6 @@ import type { NativeLook } from '../../lib/appLook';
 const mocks = vi.hoisted(() => ({ getNativeRuntime: vi.fn() }));
 vi.mock('../../lib/api', () => ({ api: { getNativeRuntime: mocks.getNativeRuntime, getAppMembership: vi.fn() } }));
 vi.mock('./HostedAppFrame', () => ({ HostedAppFrame: () => <div data-testid="frame" /> }));
-vi.mock('../../lib/formlogic/zipp-bytes', () => ({ engineIdentity: () => undefined, engineNeedsBytes: () => false, getEngineBytes: vi.fn() }));
 
 import { NativeAppView } from './NativeAppView';
 

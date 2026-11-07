@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Opening an app: a failure asking again may cure says so and asks again (by hand, or when the
-// connection comes back), signing in is offered only where it helps, the app's name reaches the tab
-// and an iPhone's home screen as soon as it is known, and its engine downloads beside its media.
+// connection comes back), signing in is offered only where it helps, and the app's name reaches the
+// tab and an iPhone's home screen as soon as it is known.
 // The site's offline queue listens for `online` too, and reads IndexedDB when it hears it.
 import 'fake-indexeddb/auto';
 import { act } from 'react';
@@ -10,14 +10,9 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { NativeLook } from '../../lib/appLook';
 
-const mocks = vi.hoisted(() => ({ getNativeRuntime: vi.fn(), getEngineBytes: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getNativeRuntime: vi.fn() }));
 vi.mock('../../lib/api', () => ({ api: { getNativeRuntime: mocks.getNativeRuntime, getAppMembership: vi.fn() } }));
 vi.mock('./HostedAppFrame', () => ({ HostedAppFrame: () => <div data-testid="frame">running</div> }));
-vi.mock('../../lib/formlogic/zipp-bytes', () => ({
-  engineIdentity: (id: string) => (id === 'host-js' ? { own: true } : { version: 'test', sha256: 'x' }),
-  engineNeedsBytes: (id: string) => id !== 'host-js',
-  getEngineBytes: mocks.getEngineBytes,
-}));
 
 import { NativeAppView } from './NativeAppView';
 
@@ -40,7 +35,6 @@ const signIn = () => [...(host?.querySelectorAll('a') ?? [])].find(node => node.
 
 beforeEach(() => {
   mocks.getNativeRuntime.mockReset();
-  mocks.getEngineBytes.mockReset().mockResolvedValue(new ArrayBuffer(8));
   document.title = 'FormLogic';
   const meta = document.createElement('meta');
   meta.name = 'apple-mobile-web-app-title';
@@ -90,10 +84,10 @@ it('never offers signing in on the app’s own domain, where the link led back t
   expect(button('Try again')).toBeDefined();
 });
 
-it('names the tab and an iPhone home screen as soon as the project comes, and starts the engine beside the media', async () => {
+it('names the tab and an iPhone home screen as soon as the project comes, while its media download', async () => {
   let finish!: (value: unknown) => void;
-  mocks.getNativeRuntime.mockImplementation((_slug: string, onLook?: (look: NativeLook | null, early?: { name?: string; engine?: { id: string; revision: string } }) => void) => {
-    onLook?.(look, { name: 'Outerstead', engine: { id: 'zipp-web-python', revision: 'r1' } });
+  mocks.getNativeRuntime.mockImplementation((_slug: string, onLook?: (look: NativeLook | null, early?: { name?: string }) => void) => {
+    onLook?.(look, { name: 'Outerstead' });
     return new Promise(resolve => { finish = resolve; });
   });
   await render();
@@ -101,7 +95,6 @@ it('names the tab and an iPhone home screen as soon as the project comes, and st
   expect(host?.querySelector('[data-testid="frame"]')).toBeNull();
   expect(document.title).toBe('Outerstead');
   expect(document.head.querySelector('meta[name="apple-mobile-web-app-title"]')?.getAttribute('content')).toBe('Outerstead');
-  expect(mocks.getEngineBytes).toHaveBeenCalledWith('zipp-web-python');
   await act(async () => { finish(opened); });
   await act(async () => root!.unmount());
   root = null;
@@ -109,11 +102,3 @@ it('names the tab and an iPhone home screen as soon as the project comes, and st
   expect(document.head.querySelector('meta[name="apple-mobile-web-app-title"]')?.getAttribute('content')).toBe('FormLogic');
 });
 
-it('fetches nothing for an engine that is its own document', async () => {
-  mocks.getNativeRuntime.mockImplementation((_slug: string, onLook?: (look: NativeLook | null, early?: { engine?: { id: string; revision: string } }) => void) => {
-    onLook?.(look, { engine: { id: 'host-js', revision: 'r1' } });
-    return Promise.resolve(opened);
-  });
-  await render();
-  expect(mocks.getEngineBytes).not.toHaveBeenCalled();
-});

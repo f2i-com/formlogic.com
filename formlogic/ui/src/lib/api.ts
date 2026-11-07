@@ -2123,11 +2123,10 @@ class ApiClient {
     return this.request(`/apps/${encodeURIComponent(id)}/native/records?${params}`);
   }
   /**
-   * `onLook` is told, once the project has come and before its media have, the app's look and what
-   * else is known by then (its name, its engine), so the page can show them and start the engine's
-   * download beside the media's rather than after it.
+   * `onLook` is told, once the project has come and before its media have, the app's look and its
+   * name, so the page shows them while the media download.
    */
-  async getNativeRuntime(slug: string, onLook?: (look: import('./appLook').NativeLook | null, early?: { name?: string; engine?: { id: ClientEngineId; revision: string } }) => void): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown }>> {
+  async getNativeRuntime(slug: string, onLook?: (look: import('./appLook').NativeLook | null, early?: { name?: string }) => void): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown }>> {
     // The project without its media, and its media as one pack beside it (from FormLogic v0.1.24):
     // a game's pictures and sound came inside this JSON in base64, tens of megabytes on every
     // opening. The pack's address names its content, so the browser keeps it while the app is
@@ -2135,7 +2134,7 @@ class ApiClient {
     const result = await this.request<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown }>(`/app/${encodeURIComponent(slug)}/native?media=pack`);
     // The app's look (AppLookService) before its media: the page shows the app's own loading colours
     // while they download.
-    if (onLook && result.data) onLook((await import('./appLook')).readLook(result.data.look), { name: typeof result.data.name === 'string' ? result.data.name : undefined, engine: result.data.engine });
+    if (onLook && result.data) onLook((await import('./appLook')).readLook(result.data.look), { name: typeof result.data.name === 'string' ? result.data.name : undefined });
     const media = result.data?.project?.media;
     if (!result.data || !media || typeof media.url !== 'string' || !media.url.startsWith('/app/')) return result;
     const generation = currentSessionGeneration();

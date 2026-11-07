@@ -15,7 +15,6 @@ import { HostedAppFrame } from './HostedAppFrame';
 import { AppSplash } from './AppSplash';
 import { applyAppHead, rememberedLook, rememberLook, type NativeLook } from '../../lib/appLook';
 import { passAction, unmetRequirement } from '../../lib/passes';
-import { engineIdentity, engineNeedsBytes, getEngineBytes } from '../../lib/formlogic/zipp-bytes';
 
 /** The codes an app refuses with when it requires a pass the member does not hold (AccessGateService). */
 const PASS_REFUSALS = ['pass_required', 'plugin_unavailable'];
@@ -66,15 +65,12 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   useEffect(() => {
     let cancelled = false;
     const stillCurrent = () => !cancelled && isSessionGenerationCurrent(generation);
-    // The app's look as soon as the server says it, before its media have downloaded (a plugin's
-    // page looks like the site's own, and the server sends none for it). Its engine starts
-    // downloading now, beside the media: the frame asked for it only once they had all arrived.
-    const seeLook = (next: NativeLook | null, known?: { name?: string; engine?: { id: string } }) => {
+    // The app's look and name as soon as the server says them, before its media have downloaded (a
+    // plugin's page looks like the site's own, and the server sends none for it).
+    const seeLook = (next: NativeLook | null, known?: { name?: string }) => {
       if (!stillCurrent()) return;
       setLook({ slug, look: next }); rememberLook(slug, next);
       setEarly({ slug, name: known?.name });
-      const engineId = known?.engine?.id ?? 'zipp-web-python';
-      if (engineIdentity(engineId) && engineNeedsBytes(engineId)) void getEngineBytes(engineId).catch(() => { /* The frame asks again, and says why. */ });
     };
     void api.getNativeRuntime(slug, seeLook).then(async response => {
       if (!stillCurrent()) return;
@@ -82,7 +78,9 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       const scope = project?.storageScope;
       const admitted = project && isNativeStorageScope(scope) && scope.access === project.access &&
         (scope.access === 'application' || (scope.userId === userId && scope.userId === currentSessionOwner()));
-      const error = response.error || (!admitted ? 'This app could not verify its browser storage access. Please reload or sign in again.' : undefined);
+      // No answer at all is said plainly: the browser's own words ("Failed to fetch") say nothing to a player.
+      const error = response.transportFailure ? 'This app could not be opened. Check your connection and try again.'
+        : response.error || (!admitted ? 'This app could not verify its browser storage access. Please reload or sign in again.' : undefined);
       let pass: { verifyPath: string | null; action: string } | undefined;
       if (response.error && PASS_REFUSALS.includes(response.code ?? '')) {
         // Which requirement, and where it is met: from the app's membership, which stays open.
