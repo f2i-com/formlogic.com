@@ -15,7 +15,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { bumpSessionGeneration, setSessionOwner } from '../../lib/sessionGeneration';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const look: NativeLook = { background: '#0b1020', spinner: '#e9c46a', themeColor: null, description: '', icon: null, version: 'abc' };
+const look: NativeLook = { background: '#0b1020', spinner: '#e9c46a', themeColor: null, description: '', icon: null, version: 'abc', installable: true };
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;

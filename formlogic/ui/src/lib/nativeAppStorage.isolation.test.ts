@@ -233,7 +233,7 @@ describe('trusted native member namespaces', () => {
   });
   it.each(['read', 'exportRaw', 'reset', 'mutate'] as const)('rejects stale member %s after a session boundary', async (operation) => {
     const a = open('cafe', member()); await save(a); bumpSessionGeneration();
-    await expect(Promise.resolve().then(() => operation === 'mutate' ? save(a, 'late') : a[operation]())).rejects.toThrow();
+    await expect(Promise.resolve().then((): Promise<unknown> => operation === 'mutate' ? save(a, 'late') : a[operation]())).rejects.toThrow();
     expect(await open('cafe', member()).read()).toEqual({ session: 'synthetic-a' });
   });
   it('captures scope identity instead of following a later mutable response object', async () => {
