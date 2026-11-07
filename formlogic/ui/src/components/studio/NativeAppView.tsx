@@ -104,10 +104,11 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     setAnswered({ appId: filesAppId, answer: choice });
   };
   useEffect(() => { onLook?.(look); }, [look, onLook]);
-  // The tab's icon, the theme colour and description, and (off a domain) the manifest that installs it.
+  // The tab's icon, the theme colour and description, and (off a domain, once published) the
+  // manifest that installs it.
   useEffect(() => {
     if (!fullScreen || !look || plugin) return;
-    return applyAppHead(slug, look, { manifest: !onDomain });
+    return applyAppHead(slug, look, { manifest: !onDomain && look.installable });
   }, [fullScreen, look, onDomain, plugin, slug]);
   const title = fullScreen ? current?.name : undefined;
   useEffect(() => {

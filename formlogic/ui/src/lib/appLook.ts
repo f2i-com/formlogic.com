@@ -12,6 +12,12 @@ export interface NativeLook {
   icon: 'raster' | 'svg' | null;
   /** Changes whenever the app or its look does: its images are addressed with it. */
   version: string;
+  /**
+   * Whether its manifest is served: a published app's. A draft's answers only its signed-in owner,
+   * and a browser asks for a manifest without the sign-in, so linking one logged a 404 on every
+   * opening. Absent (a server from before it said) is installable, as it always was.
+   */
+  installable: boolean;
 }
 
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
@@ -29,6 +35,7 @@ export function readLook(value: unknown): NativeLook | null {
     description: typeof look.description === 'string' ? look.description.slice(0, 300) : '',
     icon: look.icon === 'raster' || look.icon === 'svg' ? look.icon : null,
     version: look.version,
+    installable: look.installable !== false,
   };
 }
 

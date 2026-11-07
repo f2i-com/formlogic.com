@@ -166,7 +166,10 @@ class NativeAppController
         if ($this->look === null || $plugin !== null) return [];
         try { $look = $this->look->resolve($app); } catch (\Throwable) { return []; }
         if ($look === null) return [];
-        return ['look' => ['background' => $look['background'], 'spinner' => $look['spinner'], 'themeColor' => $look['themeColor'], 'description' => $look['description'], 'icon' => $look['iconKind'], 'version' => $look['version']]];
+        return ['look' => ['background' => $look['background'], 'spinner' => $look['spinner'], 'themeColor' => $look['themeColor'], 'description' => $look['description'], 'icon' => $look['iconKind'], 'version' => $look['version'],
+            // Whether its manifest is served (AppPublicController::manifest): only a published app's, and a
+            // browser asks for it without the owner's sign-in, so a draft's page links none.
+            'installable' => ($app['status'] ?? '') === 'published']];
     }
 
     public function runtime(Request $request, Response $response, array $args): Response

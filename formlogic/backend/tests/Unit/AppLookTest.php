@@ -270,6 +270,18 @@ final class AppLookTest extends TestCase
         $this->assertFalse(AppLookController::isPreviewBot(''));
     }
 
+    public function testTheRuntimeGetSaysAnAppIsInstallableOnlyOncePublished(): void
+    {
+        // A draft's manifest answers its signed-in owner alone, and a browser asks for one signed out:
+        // its page linked a manifest that was a 404 on every opening.
+        $native = $this->install(['icon' => 'assets/icon.svg'], ['assets/icon.svg' => self::SVG]);
+        $controller = new \FormLogic\Controllers\NativeAppController($this->createMock(AppService::class), $this->createMock(\FormLogic\Services\AppUserService::class), $native,
+            $this->createMock(\FormLogic\Services\PlanService::class), $this->createMock(\FormLogic\Services\FlowService::class), $this->createMock(\FormLogic\Services\RuntimeEngineService::class), null, null, new AppLookService($native));
+        $look = new \ReflectionMethod($controller, 'lookForRuntime');
+        $this->assertTrue($look->invoke($controller, self::app(), null)['look']['installable']);
+        $this->assertFalse($look->invoke($controller, self::app([], 'draft'), null)['look']['installable']);
+    }
+
     public function testAManifestListsTheAppsOwnIcons(): void
     {
         $raster = AppLookService::manifestIcons(['icon' => 'assets/a.png', 'iconKind' => 'raster', 'version' => 'abc'], 'look/');

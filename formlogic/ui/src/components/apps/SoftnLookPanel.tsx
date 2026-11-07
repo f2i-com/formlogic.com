@@ -108,7 +108,7 @@ export function SoftnLookPanel({ project, look, themeColor, disabled, onSave }: 
         <div>
           <span className={label}>Preview</span>
           <div className="mt-1.5 h-36 w-28 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
-            <AppSplash look={{ background: draft.background ?? null, spinner: draft.spinner ?? null, themeColor: null, description: '', icon: null, version: '0' }} label="Loading screen preview" />
+            <AppSplash look={{ background: draft.background ?? null, spinner: draft.spinner ?? null, themeColor: null, description: '', icon: null, version: '0', installable: false }} label="Loading screen preview" />
           </div>
         </div>
       </div>

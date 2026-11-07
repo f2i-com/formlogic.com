@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applyAppHead, lookImageUrl, readLook, rememberLook, rememberedLook, type NativeLook } from './appLook';
 
-const look = (overrides: Partial<NativeLook> = {}): NativeLook => ({ background: '#0b1020', spinner: '#e9c46a', themeColor: '#123456', description: 'A colony on Hollow-7.', icon: 'raster', version: 'abc123', ...overrides });
+const look = (overrides: Partial<NativeLook> = {}): NativeLook => ({ background: '#0b1020', spinner: '#e9c46a', themeColor: '#123456', description: 'A colony on Hollow-7.', icon: 'raster', version: 'abc123', installable: true, ...overrides });
 const siteHead = '<link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#6366f1"><meta name="description" content="FormLogic">';
 
 beforeEach(() => { document.head.innerHTML = siteHead; localStorage.clear(); });
@@ -15,6 +15,12 @@ describe('readLook', () => {
     expect(readLook(look())).toEqual(look());
     expect(readLook({ ...look(), background: 'red; background-image: url(x)', spinner: 'url(x)', icon: 'gif', extra: 1 })).toEqual(look({ background: null, spinner: null, icon: null }));
     expect(readLook({ ...look(), version: '../x' })).toBeNull();
+    // A draft's manifest is not served; a server from before the flag said nothing, which is installable.
+    expect(readLook({ ...look(), installable: false })).toEqual(look({ installable: false }));
+    const older: Record<string, unknown> = { ...look() };
+    delete older.installable;
+    expect(readLook(older)).toEqual(look({ installable: true }));
+    expect(readLook({ ...look(), installable: 'no' })).toEqual(look({ installable: true }));
     expect(readLook(null)).toBeNull();
     expect(readLook('look')).toBeNull();
   });
