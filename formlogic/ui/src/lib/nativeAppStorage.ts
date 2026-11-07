@@ -300,19 +300,38 @@ function indexedStore(db: IDBDatabase, onLost: () => void): MapStore {
 }
 
 let opening: Promise<MapStore> | null = null;
+/** Whether this page has had IndexedDB open: then its maps are there, and only there. */
+let hadIndexedDb = false;
+/** How long a database opened again after the browser closed it may take to answer. */
+let reopenTimeoutMs = 10_000;
 /** The store maps are kept in: IndexedDB once it has opened, localStorage where it cannot. */
 function mapStore(): Promise<MapStore> {
   if (opening) return opening;
-  const attempt: Promise<MapStore> = (async () => {
+  // Opened again after the browser closed it under the page (indexedStore), or another tab's
+  // upgrade: a page that has had IndexedDB keeps to it. Falling back to localStorage here opened
+  // the app on another, empty map for the rest of the visit, and what was saved there lost to
+  // IndexedDB's at the next opening. Not there now, a save is told so, and the next one asks again.
+  const reopening = hadIndexedDb;
+  // Declared first: a refusal can come before the first await, and the handlers below name it.
+  let attempt: Promise<MapStore> | undefined = undefined;
+  attempt = (async (): Promise<MapStore> => {
     if (typeof indexedDB === 'undefined' || !indexedDB) return localStore;
     try {
       const open = indexedDB.open(DATABASE, 1);
       open.onupgradeneeded = () => { if (!open.result.objectStoreNames.contains(STORE)) open.result.createObjectStore(STORE); };
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        open.onsuccess = () => resolve(open.result);
-        open.onerror = () => reject(open.error);
-        open.onblocked = () => reject(new DOMException('blocked', 'InvalidStateError'));
+        let settled = false;
+        open.onsuccess = () => {
+          // Answered after it was given up on: nothing will use this connection.
+          if (settled) { try { open.result.close(); } catch { /* Closed. */ } return; }
+          settled = true; resolve(open.result);
+        };
+        open.onerror = () => { settled = true; reject(open.error); };
+        open.onblocked = () => { settled = true; reject(new DOMException('blocked', 'InvalidStateError')); };
+        // A browser that does not answer a second time would hold every save after it.
+        if (reopening) setTimeout(() => { if (!settled) { settled = true; reject(new DOMException('No answer', 'TimeoutError')); } }, reopenTimeoutMs);
       });
+      hadIndexedDb = true;
       // Another tab's newer FormLogic asking for a version this one does not know: let it.
       db.onversionchange = () => { db.close(); if (opening === attempt) opening = null; };
       // A sign-out's purge that the page closed before it finished is finished now.
@@ -320,15 +339,23 @@ function mapStore(): Promise<MapStore> {
       // Closed under the page: the next access opens it again.
       return indexedStore(db, () => { if (opening === attempt) opening = null; try { db.close(); } catch { /* Already closed. */ } });
     } catch {
+      if (reopening) throw new NativeStorageError('Browser storage is not available.', 'unavailable');
       return localStore;
     }
   })();
-  opening = attempt;
-  return attempt;
+  const opened = attempt;
+  opening = opened;
+  // A reopening that failed is forgotten, so the next access asks again.
+  opened.catch(() => { if (opening === opened) opening = null; });
+  return opened;
 }
 
-/** For tests: forget the opened store, so the next handle opens it again. */
-export function resetNativeStorageForTests(): void { opening = null; }
+/** For tests: forget the opened store, so the next handle opens it again, as a new page would. */
+export function resetNativeStorageForTests(options: { reopenTimeoutMs?: number } = {}): void {
+  opening = null;
+  hadIndexedDb = false;
+  reopenTimeoutMs = options.reopenTimeoutMs ?? 10_000;
+}
 
 // Another tab's save, said in this one: localStorage's `storage` event says nothing of IndexedDB.
 // Each message names the handle that wrote, so a page does not take its own save for another's.

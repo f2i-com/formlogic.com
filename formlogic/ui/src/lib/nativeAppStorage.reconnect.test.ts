@@ -38,6 +38,31 @@ it('asks again once, and says what the browser said when the second connection f
   await expect(failed).rejects.toMatchObject({ code: 'unavailable' });
 });
 
+it('never moves to another store when the database will not open again: the save says so, and the next opens it', async () => {
+  const store = nativeAppStorage('outerstead', scope);
+  await store.mutate({ operation: 'set', key: 'slot', value: 'before' });
+  vi.spyOn(IDBDatabase.prototype, 'transaction').mockImplementationOnce(() => { throw new DOMException('The database connection is closing.', 'InvalidStateError'); });
+  vi.spyOn(indexedDB, 'open').mockImplementationOnce(() => { throw new DOMException('Connection to Indexed Database server lost', 'UnknownError'); });
+  // Told as storage that is not there, as before the store was opened again: not another tab's work.
+  await expect(store.mutate({ operation: 'set', key: 'slot', value: 'lost' })).rejects.toMatchObject({ code: 'unavailable' });
+  // The next save opens the database again, and the map is the one it always was.
+  expect(await store.mutate({ operation: 'set', key: 'slot', value: 'after' })).toEqual({ saved: true });
+  resetNativeStorageForTests();
+  expect(await nativeAppStorage('outerstead', scope).read()).toEqual({ slot: 'after' });
+  expect(localStorage.length).toBe(0);
+});
+
+it('gives up on a database that does not answer when opened again, rather than hold every save', async () => {
+  resetNativeStorageForTests({ reopenTimeoutMs: 50 });
+  const store = nativeAppStorage('outerstead', scope);
+  await store.read();
+  vi.spyOn(IDBDatabase.prototype, 'transaction').mockImplementationOnce(() => { throw new DOMException('closed', 'InvalidStateError'); });
+  // A request that never answers.
+  vi.spyOn(indexedDB, 'open').mockImplementationOnce(() => ({}) as IDBOpenDBRequest);
+  await expect(store.mutate({ operation: 'set', key: 'slot', value: 'x' })).rejects.toMatchObject({ code: 'unavailable' });
+  expect(await store.mutate({ operation: 'set', key: 'slot', value: 'y' })).toEqual({ saved: true });
+});
+
 it('does not ask again for what a new connection would not cure', async () => {
   const store = nativeAppStorage('outerstead', scope);
   await store.read();
