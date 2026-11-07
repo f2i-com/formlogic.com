@@ -76,6 +76,23 @@ when the site returns to v0.1.18 or newer. What someone adds in the meantime goe
 and a newer release doesn't read that, so it stays hidden after the site returns. The same happens to
 a tab from before v0.1.18 left open beside a newer one.
 
+### Rolling back below v0.1.23
+
+**An app that requires a pass, such as the Age gate's, lets every member in under an older release.**
+Releases before v0.1.23 have no access gate. The app's settings keep the requirement, so the gate
+holds again once the site is back on v0.1.23 or newer, but until then nothing says the app is open.
+Admin → Updates asks before such a rollback and says how many apps it opens. From a shell, the same
+refusal says so, and `php api/bin/upgrade.php --rollback=<id> --allow-downgrade` goes ahead. A site
+where no app requires a pass rolls back as it always did.
+
+On any site with a plugin installed, whether or not an app requires its pass, an older release also
+lists the plugins' own account (`plugins@formlogic.invalid`) in Admin like any other, with nothing to
+stop it being acted as or given a password. Leave it alone until the site is back on v0.1.23 or newer:
+a password set for it then would still sign in afterwards.
+
+Installing an older package does the same. It asks you to confirm the downgrade, but that dialog
+doesn't say this.
+
 ### Tabs left open across an update
 
 A tab left open goes on running the old code against the new server. API replies name the running

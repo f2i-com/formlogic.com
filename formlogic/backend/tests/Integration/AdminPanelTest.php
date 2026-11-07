@@ -1107,6 +1107,82 @@ class AdminPanelTest extends TestCase
         });
     }
 
+    // Restoring the plugins' account from a nightly backup would make copies of the plugins' projects under it;
+    // its projects change only by installing a plugin. MySQL finds the id in any spelling, so the refusal does too.
+    public function testTheBackupRestoreRouteRefusesThePluginsAccountInAnySpelling(): void
+    {
+        $system = \FormLogic\Services\PluginService::SYSTEM_USER_ID;
+        $made = self::$pdo->prepare("INSERT IGNORE INTO users (id, email, password_hash, name) VALUES (?, 'plugins-panel-test@formlogic.invalid', '!', 'Plugins')");
+        $made->execute([$system]);
+        try {
+            $maintenance = new MaintenanceService(self::$tmpRoot . '/maintenance-' . bin2hex(random_bytes(3)) . '.json');
+            $upgrade = new UpgradeService(self::$tmpRoot . '/nowhere', self::$mysql, $maintenance);
+            $backup = new AccountBackupService(
+                self::$mysql, self::$sqlite, self::$forms, self::$apps,
+                new AppUserService(self::$mysql), self::$flows, self::$responses,
+                [], self::$tmpRoot . '/sqlite', self::$tmpRoot . '/uploads'
+            );
+            $scheduled = new \FormLogic\Services\ScheduledBackupService(self::$mysql, $backup, $upgrade, ['scheduledDir' => self::$tmpRoot . '/scheduled-none', 'retentionDays' => 7]);
+            $ctrl = new AdminController(self::$admin, self::$auth, $maintenance, $upgrade, self::$forms, self::$apps, self::$flows, self::$responses, null, null, $backup, $scheduled);
+            foreach ([$system, strtoupper($system)] as $spelling) {
+                $refused = $ctrl->restoreScheduledBackup(
+                    $this->request('POST', '/api/admin/backups/restore', ['userId' => $spelling, 'date' => '2026-11-07'])->withAttribute('userId', $this->adminId),
+                    (new ResponseFactory())->createResponse()
+                );
+                $this->assertSame(403, $refused->getStatusCode(), $spelling);
+                $this->assertSame('system_account', $this->json($refused)['code'] ?? null, $spelling);
+            }
+        } finally {
+            if ($made->rowCount() === 1) {
+                self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$system]);
+            }
+        }
+    }
+
+    /** Gives the app the requirement an Age gate writes, or $requires as written. */
+    private function requirePass(string $appId, mixed $requires = [['plugin' => 'age-gate', 'kind' => 'age', 'min' => 18, 'strength' => 'estimated']]): void
+    {
+        self::$pdo->prepare('UPDATE apps SET settings = ? WHERE id = ?')->execute([json_encode(['requires' => $requires]), $appId]);
+    }
+
+    // v0.1.22 has no access gate: an app that requires the Age gate's pass lets every member in.
+    public function testARollbackBelowAccessGatesSaysGatedAppsOpenAndNeedsConfirming(): void
+    {
+        [$svc, $maintenance, $backupId] = $this->upgradedFrom('0.1.22');
+        $this->requirePass((string) self::$apps->createApp(['name' => 'Members 18+'], $this->userId)['id']);
+        $this->withDataKey(null, function () use ($svc, $maintenance, $backupId): void {
+            $warning = (string) $svc->listBackups()[0]['rollbackWarning'];
+            $this->assertStringStartsWith('One app requires a pass, such as the Age gate\'s, and FormLogic before v0.1.23 has no gate', $warning);
+            try {
+                $svc->rollback($backupId, $this->adminId);
+                $this->fail('it went ahead');
+            } catch (\FormLogic\Services\DowngradeNotConfirmedException $e) {
+                $this->assertStringContainsString('every member reaches it without one', $e->getMessage());
+            }
+            $this->assertFalse($maintenance->enabled(), 'refused before the site closed');
+            $this->assertSame('0.1.22', $svc->rollback($backupId, $this->adminId, true)['restoredVersion']);
+        });
+    }
+
+    public function testARollbackBelowAccessGatesAsksNothingWhereNoAppRequiresAPass(): void
+    {
+        [$svc, , $backupId] = $this->upgradedFrom('0.1.22');
+        $this->requirePass((string) self::$apps->createApp(['name' => 'Malformed'], $this->userId)['id'], [['plugin' => 'age-gate', 'kind' => 'age', 'min' => '18']]);
+        $this->withDataKey(null, function () use ($svc, $backupId): void {
+            $this->assertNull($svc->listBackups()[0]['rollbackWarning'], 'a requirement the gate would drop is none');
+            $this->assertSame('0.1.22', $svc->rollback($backupId, $this->adminId)['restoredVersion']);
+        });
+    }
+
+    public function testARollbackToAReleaseWithGatesNeedsNothingForThem(): void
+    {
+        [$svc, , $backupId] = $this->upgradedFrom('0.1.23');
+        $this->requirePass((string) self::$apps->createApp(['name' => 'Members 18+'], $this->userId)['id']);
+        $this->withDataKey(null, function () use ($svc, $backupId): void {
+            $this->assertNull($svc->listBackups()[0]['rollbackWarning']);
+        });
+    }
+
     // Mistyped, it unseals nothing and seals nothing, but what the right key sealed is still sealed.
     public function testAKeyThatCannotBeUsedStillCounts(): void
     {

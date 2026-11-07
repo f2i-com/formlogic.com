@@ -89,7 +89,9 @@ How to write one is `docs/PLUGINS.md`. In short:
 - **Where its project lives.** In an app of the system Plugins account, which nobody can sign in
   as (no password matches), act as or manage (`PluginAccountGuardMiddleware`, `AdminActAsMiddleware`),
   and which has no members (`AccessGateService::admitsMember`). So its files change only by
-  installing it, and it is in nobody's apps, backups, quota or erasure. A setting naming a plugin
+  installing it, and it is in nobody's apps, quota or erasure, nor in the admin overview's counts.
+  The nightly backup keeps it like any account, so a site restored from that backup gets its plugins'
+  projects back; restoring that one account from Admin is refused. A setting naming a plugin
   counts only on an app of that account (`PluginService::forApp`).
 - **Its page.** `/plugins/{id}/verify?app=&kind=&return=` on the main site runs the plugin's app
   for the signed-in person. The frame offers it `pluginContext` (the app, what it asks, whether the
@@ -121,7 +123,7 @@ How to write one is `docs/PLUGINS.md`. In short:
   (the last whole object that parses; `CameraCheckAnswerParseTest`).
 - **OAIY's own age model.** A plugin's turn may also ask OAIY for a check it runs on the pictures itself
   (`turn.verify: {task, images: "frames" | "all"}`; the site sends the pictures' places, so the camera's alone
-  never includes the plugin's control picture). OAIY (branch `age-model`, not released) runs `face-age` in its
+  never includes the plugin's control picture). OAIY (v0.1.13 and later) runs `face-age` in its
   media worker before the language model answers: YuNet (OpenCV Zoo, MIT) finds the faces, and MiVOLO v2
   (`iitolstykh/mivolo_v2`, Apache-2.0, ported to Candle and matched against the authors' own code) reads the age
   of the one face. Both are loaded for the check and gone when the worker ends. Its readings (each picture's face

@@ -213,6 +213,28 @@ class ScheduledBackupTest extends TestCase
         $this->assertContains($this->userId, array_column($runs[0]['accounts'], 'id'));
     }
 
+    // The plugins' own account is in the nightly backup like any other: a site restored from it (the database dump,
+    // then restore-app-storage.php from the accounts' zips) gets its plugins' projects back with their rows. Only the
+    // admin's one-account restore refuses it (AdminController::restoreScheduledBackup).
+    public function testRunKeepsThePluginsOwnAccountForTheSitesRestore(): void
+    {
+        $system = \FormLogic\Services\PluginService::SYSTEM_USER_ID;
+        $made = self::$pdo->prepare("INSERT IGNORE INTO users (id, email, password_hash, name) VALUES (?, 'plugins-test@formlogic.invalid', '!', 'Plugins')");
+        $made->execute([$system]);
+        try {
+            $summary = $this->service()->run();
+            $dayDir = $this->scheduledDir . '/' . (string) $summary['date'];
+            $this->assertSame(0, $summary['failed']);
+            $this->assertFileExists("{$dayDir}/accounts/{$system}.zip");
+            $manifest = json_decode((string) file_get_contents("{$dayDir}/site-manifest.json"), true);
+            $this->assertContains($system, array_column($manifest['usersDetail'], 'id'));
+        } finally {
+            if ($made->rowCount() === 1) {
+                self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$system]);
+            }
+        }
+    }
+
     public function testNightlyZipRestoresThroughTheNormalImportPipeline(): void
     {
         $svc = $this->service();

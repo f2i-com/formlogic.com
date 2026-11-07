@@ -677,6 +677,10 @@ class AdminController
         if (strtolower($target->email) === $demoEmail) {
             return $this->jsonResponse($response, ['error' => true, 'code' => 'demo_readonly', 'message' => 'The shared demo account is provisioning-managed.'], 403);
         }
+        // (the account as stored: ids compare without case in MySQL, so another spelling of the id finds it too)
+        if (strcasecmp((string) $target->id, \FormLogic\Services\PluginService::SYSTEM_USER_ID) === 0) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'system_account', 'message' => 'The plugins\' account changes only by installing a plugin.'], 403);
+        }
         @set_time_limit(600);
         try {
             $summary = $this->scheduledBackup->restoreAccount($date, $userId);

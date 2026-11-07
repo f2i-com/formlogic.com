@@ -67,16 +67,18 @@ class AdminService
     public function overview(): array
     {
         $one = fn (string $sql): int => (int) $this->mysql->query($sql)->fetchColumn();
+        // The plugins' own account is nobody's, as in listUsers: a fixed id, quoted here as it is.
+        $people = "id <> '" . PluginService::SYSTEM_USER_ID . "'";
         return [
-            'users' => $one('SELECT COUNT(*) FROM users'),
+            'users' => $one("SELECT COUNT(*) FROM users WHERE {$people}"),
             'admins' => $one('SELECT COUNT(*) FROM users WHERE is_admin = 1'),
             'onlineUsers' => $this->onlineUserCount(),
-            'apps' => $one('SELECT COUNT(*) FROM apps'),
+            'apps' => $one("SELECT COUNT(*) FROM apps WHERE owner_id <> '" . PluginService::SYSTEM_USER_ID . "'"),
             'forms' => $one('SELECT COUNT(*) FROM forms'),
             'flows' => $one('SELECT COUNT(*) FROM flow_definitions'),
             // Denormalized counter (synced on every write path) — no SQLite scan.
             'responses' => $one('SELECT COALESCE(SUM(response_count), 0) FROM forms'),
-            'signups7d' => $one('SELECT COUNT(*) FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)'),
+            'signups7d' => $one("SELECT COUNT(*) FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) AND {$people}"),
         ];
     }
 

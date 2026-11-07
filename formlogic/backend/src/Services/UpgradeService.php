@@ -49,6 +49,12 @@ class UpgradeService
     /** The first release that can read what DATA_ENCRYPTION_KEY sealed. */
     private const READS_SEALED_DATA_SINCE = '0.1.18';
 
+    /** The first release that holds an app to the passes its settings require (settings.requires). */
+    private const GATES_APPS_SINCE = '0.1.23';
+
+    /** gatedApps(), counted once for a listing of the snapshots. */
+    private ?int $gatedApps = null;
+
     /** The end of that refusal, for a page. bin/upgrade.php swaps it for its flag. */
     public const CONFIRM_ROLLBACK = 'Confirm the rollback to go ahead. If nothing asks you to, reload this page.';
 
@@ -774,6 +780,12 @@ class UpgradeService
      */
     private function rollbackWarning(string $version): ?string
     {
+        $warnings = array_filter([$this->sealedDataWarning($version), $this->gatedAppsWarning($version)]);
+        return $warnings === [] ? null : implode(' ', $warnings);
+    }
+
+    private function sealedDataWarning(string $version): ?string
+    {
         $encryption = DataEncryption::fromEnvironment();
         if (($encryption->usable() && !$encryption->enabled())
             || version_compare($this->normalizeVersion($version), self::READS_SEALED_DATA_SINCE, '>=')) {
@@ -784,6 +796,47 @@ class UpgradeService
             . ' DATA_ENCRYPTION_KEY encrypted. Until the site is back on a newer release: authenticator codes fail (recovery codes still'
             . ' sign in), webhook receivers reject every delivery, hosted apps read their records as empty, and one that saves a record'
             . ' replaces what was there, and encrypted items in the recycle bin can\'t be restored.';
+    }
+
+    /**
+     * Code from before v0.1.23 has no access gate: an app whose settings require a pass (the Age
+     * gate's) lets every member in, and the site says nothing. Its settings keep the requirement,
+     * so the gate is back with a newer release. Asked only where an app requires one.
+     */
+    private function gatedAppsWarning(string $version): ?string
+    {
+        if (version_compare($this->normalizeVersion($version), self::GATES_APPS_SINCE, '>=')) {
+            return null;
+        }
+        $gated = $this->gatedApps();
+        if ($gated === 0) {
+            return null;
+        }
+        return ($gated === 1 ? 'One app requires' : "{$gated} apps require") . ' a pass, such as the Age gate\'s, and FormLogic before v'
+            . self::GATES_APPS_SINCE . ' has no gate: until the site is back on a newer release, every member reaches '
+            . ($gated === 1 ? 'it' : 'them') . ' without one, and the plugins\' own account is listed in Admin like any other.';
+    }
+
+    /** How many apps require a pass (settings.requires, read as AccessGateService reads it). */
+    private function gatedApps(): int
+    {
+        if ($this->gatedApps !== null) {
+            return $this->gatedApps;
+        }
+        $count = 0;
+        try {
+            $rows = $this->pdo->query("SELECT settings FROM apps WHERE settings LIKE '%\"requires\"%'");
+            foreach ($rows === false ? [] : $rows->fetchAll(PDO::FETCH_COLUMN) as $json) {
+                $settings = json_decode((string) $json, true);
+                if (is_array($settings) && AccessGateService::normalizeRequirements($settings['requires'] ?? null) !== []) {
+                    $count++;
+                }
+            }
+        } catch (\PDOException) {
+            // A database that can't be read is not what a rollback is asked about.
+            $count = 0;
+        }
+        return $this->gatedApps = $count;
     }
 
     /**
