@@ -122,14 +122,21 @@ final class AppLookService
     /**
      * One image of an app's look, by the name it is served at: `icon-<32|180|192|512>.png`,
      * `icon-512-maskable.png`, `share.png`, or `icon.svg` where the icon is SVG. Null where the app
-     * has no such image.
+     * has no such image. With the look's version as it is, which its address names (`?v=`).
      *
-     * @return array{bytes: string, type: string}|null
+     * @return array{bytes: string, type: string, version: string}|null
      */
     public function image(array $app, string $name): ?array
     {
         $look = $this->resolve($app);
         if ($look === null) return null;
+        $image = $this->imageOf($app, $look, $name);
+        return $image === null ? null : $image + ['version' => (string) $look['version']];
+    }
+
+    /** @return array{bytes: string, type: string}|null */
+    private function imageOf(array $app, array $look, string $name): ?array
+    {
         $appId = (string) $app['id'];
         if ($name === 'icon.svg') {
             if ($look['iconKind'] !== 'svg') return null;

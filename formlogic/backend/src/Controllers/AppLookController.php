@@ -44,8 +44,8 @@ final class AppLookController
         // change, is sent the look as it is and checked each time: kept for a year under the old
         // address, it came back wrong for a year if the look was ever changed back to that version.
         $asked = (string) ($request->getQueryParams()['v'] ?? '');
-        try { $version = $this->look->resolve($app)['version'] ?? null; } catch (\Throwable) { $version = null; }
-        $versioned = $asked !== '' && is_string($version) && hash_equals($version, $asked);
+        $version = (string) ($image['version'] ?? '');
+        $versioned = $asked !== '' && $version !== '' && hash_equals($version, $asked);
         // A published app's look is its public face, as its name is. A draft's is its owner's alone.
         $published = ($app['status'] ?? '') === 'published';
         $response = $response
