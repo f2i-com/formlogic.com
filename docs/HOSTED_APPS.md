@@ -442,6 +442,9 @@ deadline, so a write that was made is never reported to the app as failed.
 Native browser storage is scoped to the selected app (32 MB and 1,000 keys in IndexedDB; 256 KB and 200 keys where only localStorage is), including
 session persistence across reloads. A failed persistence acknowledgement is shown in the
 app. The opaque iframe still has no direct access to FormLogic's cookies or browser storage.
+On an app's own domain, a copy of what a SoftN page that served the app there before kept in
+that domain's storage goes into the app's map the first time it opens in a browser
+([CUSTOM_APP_PLATFORM.md](CUSTOM_APP_PLATFORM.md), "A domain that served the app on its own first").
 The parent supplies the same verified ZIPP bytes used by the hosted client; the server's
 separate VM process does not cause another browser WASM download.
 

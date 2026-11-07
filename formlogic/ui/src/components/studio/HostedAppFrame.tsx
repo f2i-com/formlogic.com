@@ -48,10 +48,16 @@ export function HostedAppFrame({
   hostedAdmission,
   workspaceOnly = false,
   bare = false,
+  domain = false,
   plugin,
 }: {
   /** The app IS the page: no card around it, and no minimum height to overflow a short screen. */
   bare?: boolean;
+  /**
+   * The page is the app's own domain (NativeAppView's `onDomain`): its storage takes the saves the
+   * site's earlier SoftN page left, the first time it opens in a browser (nativeAppStorage).
+   */
+  domain?: boolean;
   slug: string;
   client: Record<string, string>;
   version: number;
@@ -140,6 +146,11 @@ export function HostedAppFrame({
     retireGuest: () => void; invalidate: () => void;
   } | null>(null);
   const booting = useRef(0);
+  // Read as a mount opens, not a reason to remount: it decides only what the opening read may take.
+  // As a dependency it re-ran the mount on the same document when it changed, which disposed the
+  // frame and then waited for a `ready` the frame sends once, so the app never opened.
+  const domainRef = useRef(domain);
+  useLayoutEffect(() => { domainRef.current = domain; }, [domain]);
   // Layout cleanup fences the previous document synchronously at a source/app/
   // engine replacement, before an old port callback can mutate parent storage.
   useLayoutEffect(() => {
@@ -158,7 +169,7 @@ export function HostedAppFrame({
     let expired = false;
     let inFlight = 0;
     let remounting = false;
-    const storage = mountNative ? nativeAppStorage(slug, mountNative.storageScope) : undefined;
+    const storage = mountNative ? nativeAppStorage(slug, mountNative.storageScope, { domain: domainRef.current }) : undefined;
     if (storage) recovery.current = {
       key: frameKey, storage, isCurrent: () => sameSession() && recoveryValid,
       retireGuest, invalidate,

@@ -998,6 +998,32 @@ Browser storage belongs to an origin, so what an app keeps in the browser on its
 from what it keeps at `/app/<slug>` on the platform. Moving an app to a domain does not bring that
 data along; records in its server database are the same everywhere.
 
+**A domain that served the app on its own first.** A SoftN app hosted by one of SoftN's own pages
+(its single-app hosts, `softn-serve`'s `index.php` among them) kept what it saved in that domain's
+browser storage: what its scripts keep in `localStorage` as `softn:<its app id>:<key>`, and its
+database's records as `xdb:<its app id>:<collection>`. When the same domain is connected to the app
+here, the first time a visitor's browser opens it, a copy of that data goes into the app's storage on
+this server's page, so they carry on where they were. The rules:
+
+- Only on the app's own domain, never on FormLogic's address or a local test address, where other
+  pages' keys are mixed in.
+- Only for an app whose browser data is shared by everyone in the browser. A members-only app keeps
+  each member's data apart, and nothing says whose the earlier data was.
+- Only into an app with nothing saved in that browser yet, and only when the domain held one earlier
+  app's data. With two, which one this app was is not known, and neither is taken.
+- All of it or none: if anything would be over this app's browser storage limits, the app opens empty.
+- Only where the browser keeps the app's data in IndexedDB. Without it the limits are far smaller,
+  and the next opening that has it takes the data.
+- Each app looks once per browser, so resetting its saved data does not bring the earlier data back.
+  The exception is saved data that was damaged: the app could not open it, so it had not looked
+  yet, and after a reset it takes the earlier data.
+- It is copied, not moved. Nothing says the app connected to the domain is the one that served it
+  before, so a different app connected first does not take the only copy; the one connected later
+  still finds it.
+
+It needs no setting. A domain owner could always serve their own page at their domain and read what
+it holds, so copying it into their app gives them nothing they could not reach before.
+
 ### What the server's operator sets up
 
 The panel can only prove ownership. Traffic for the domain still has to reach this server:

@@ -10,6 +10,7 @@ const PORT = new URL(E2E_FRONTEND_BASE_URL).port || '80';
 const RUN = Date.now().toString(36);
 const MEMBERS_DOMAIN = `members-${RUN}.e2e-apps.com`;
 const PUBLIC_DOMAIN = `public-${RUN}.e2e-apps.com`;
+const EARLIER_DOMAIN = `earlier-${RUN}.e2e-apps.com`;
 const site = (domain: string) => `http://${domain}:${PORT}`;
 // Only the browser resolves these names, so a call outside a page names the host in its header.
 const asDomain = (domain: string) => ({ Host: `${domain}:${PORT}`, Origin: site(domain) });
@@ -18,7 +19,7 @@ test.use({
   launchOptions: {
     args: [
       '--host-resolver-rules=MAP *.e2e-apps.com 127.0.0.1',
-      `--unsafely-treat-insecure-origin-as-secure=${site(MEMBERS_DOMAIN)},${site(PUBLIC_DOMAIN)}`,
+      `--unsafely-treat-insecure-origin-as-secure=${site(MEMBERS_DOMAIN)},${site(PUBLIC_DOMAIN)},${site(EARLIER_DOMAIN)}`,
     ],
   },
 });
@@ -46,18 +47,29 @@ function save() {
   } };
 }
 
+/** An app with no backend that shows what its browser storage holds under `note`. */
+function notesProject() {
+  return { home: false, access: 'application' as const, assets: {}, files: {
+    'manifest.json': JSON.stringify({ id: 'com.formlogic.e2e.domain.earlier', name: 'Earlier saves', version: '1.0.0', main: 'ui/main.ui' }),
+    'ui/main.ui': `<logic>
+var note = localStorage.getItem('note') || 'nothing';
+</logic>
+<Stack padding="24"><Text>Saved: {note}</Text></Stack>`,
+  } };
+}
+
 async function signInOnPlatform(request: APIRequestContext, email: string) {
   const registered = await request.post('/api/auth/register', { headers: sessionHeaders(), data: { email, password: PASSWORD, name: 'Domain owner' } });
   expect(registered.ok(), await registered.text()).toBe(true);
 }
 
-async function publishApp(context: BrowserContext, request: APIRequestContext, name: string, access: 'members' | 'application') {
+async function publishApp(context: BrowserContext, request: APIRequestContext, name: string, access: 'members' | 'application', made: object = project(access)) {
   const csrf = (await context.cookies()).find(cookie => cookie.name === 'formlogic_csrf')!.value;
   const headers = { 'X-CSRF-Token': csrf };
   const created = await request.post('/api/apps', { headers, data: { name, slug: name, settings: { softnApp: true, allowSelfRegistration: true } } });
   expect(created.status(), await created.text()).toBe(201);
   const { app } = await created.json();
-  const saved = await request.put(`/api/apps/${app.id}/native`, { headers, data: { project: project(access), expectedVersion: 0 } });
+  const saved = await request.put(`/api/apps/${app.id}/native`, { headers, data: { project: made, expectedVersion: 0 } });
   expect(saved.status(), await saved.text()).toBe(200);
   const published = await request.post(`/api/apps/${app.id}/publish`, { headers });
   expect(published.ok(), await published.text()).toBe(true);
@@ -253,4 +265,38 @@ test('a public SoftN app opens on its domain for anyone, and removing the domain
   expect(signIn.status()).toBe(403);
   await after.close();
   await visitor.close();
+});
+
+test('a SoftN app moved onto FormLogic at its own domain opens on the saves its earlier page left there', async ({ page, context, browser }) => {
+  test.setTimeout(180_000);
+  await signInOnPlatform(context.request, `domain-earlier-${RUN}@e2e-apps.com`);
+  const { app } = await publishApp(context, context.request, `domain-earlier-${RUN}`, 'application', notesProject());
+  await connectDomain(page, app.id, EARLIER_DOMAIN);
+
+  const visitor = await browser.newContext();
+  const home = await visitor.newPage();
+  // What SoftN's private single-app page left in this browser when the domain served the app itself:
+  // it names an app served at /index.php with the id `outerstead` `served:/index.php:outerstead`,
+  // and its runtime keeps the app's keys in the page's own storage as `softn:<that id, made safe>:<key>`.
+  await home.goto(`${site(EARLIER_DOMAIN)}/privacy`);
+  await home.evaluate(() => localStorage.setItem('softn:served__index_php_outerstead:note', 'Lantern Reach, Sol 3'));
+  await home.goto(`${site(EARLIER_DOMAIN)}/`);
+  const frame = home.frameLocator(FRAME);
+  await expect(frame.getByText('Saved: Lantern Reach, Sol 3')).toBeVisible({ timeout: 60_000 });
+  // Copied: nothing says this app is the one the page served, so the page's copy stays for whichever is.
+  expect(await home.evaluate(() => localStorage.getItem('softn:served__index_php_outerstead:note'))).toBe('Lantern Reach, Sol 3');
+  // Looked at once, in this browser, by this app: a reset of its data does not bring the copy back.
+  expect(await home.evaluate(id => localStorage.getItem(`formlogic:native-earlier-site:v1:${id}`), app.id)).toBe('1');
+  // Kept in the app's own storage now.
+  await home.evaluate(() => localStorage.removeItem('softn:served__index_php_outerstead:note'));
+  await home.reload();
+  await expect(frame.getByText('Saved: Lantern Reach, Sol 3')).toBeVisible({ timeout: 60_000 });
+  await visitor.close();
+  // On FormLogic's own address (where the page asks a visitor to sign in: the owner, here) the same
+  // app never takes a page's earlier keys: every app's and every editor's are mixed there.
+  await page.goto('/privacy');
+  await page.evaluate(() => localStorage.setItem('softn:served__index_php_outerstead:note', 'not this app'));
+  await page.goto(`/app/domain-earlier-${RUN}/native`);
+  await expect(page.frameLocator(FRAME).getByText('Saved: nothing')).toBeVisible({ timeout: 60_000 });
+  expect(await page.evaluate(() => localStorage.getItem('softn:served__index_php_outerstead:note'))).toBe('not this app');
 });

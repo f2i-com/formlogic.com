@@ -4,7 +4,7 @@
 // page instead, and a FormLogic page may not be framed (the web root sends frame-ancestors 'none'
 // for every page of the app shell), so on a real server the preview was refused by the browser.
 import { useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { DomainSignInContext } from '../../lib/domainSignIn';
+import { DomainSignInContext, isAnotherAddress } from '../../lib/domainSignIn';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
@@ -47,6 +47,9 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
   // `engine`: the server's engine decision for this mount (absent from a server before E0).
   const platform = useContext(DomainSignInContext);
+  // A domain of its own, at an address that is neither FormLogic's nor a local test one, whose
+  // storage may hold other SoftN pages' keys. Only there does the app take the site's earlier saves.
+  const ownDomain = onDomain && isAnotherAddress(platform);
   // `pass`: refused for a pass the app requires, met on the main site at `verifyPath` (none when
   // the plugin that issues it is off or gone).
   // The loading colours: the server's, else what this browser saw last time, else the site's own.
@@ -129,7 +132,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       </section>
     </div>;
   }
-  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} plugin={plugin} /></div> : !error ? <AppSplash look={look} label={current?.name ? `Opening ${current.name}` : 'Opening the app'} /> : <div className="mx-auto max-w-md p-6">{error ? <><p role="alert" className="text-sm text-slate-800 dark:text-slate-200">{error}</p>
+  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} /></div> : !error ? <AppSplash look={look} label={current?.name ? `Opening ${current.name}` : 'Opening the app'} /> : <div className="mx-auto max-w-md p-6">{error ? <><p role="alert" className="text-sm text-slate-800 dark:text-slate-200">{error}</p>
     {current?.pass
       // On an app's own domain the pass is met on FormLogic, never on the domain.
       ? (verify === null ? null : platform

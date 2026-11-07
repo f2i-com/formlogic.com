@@ -49,8 +49,23 @@ afterEach(async () => { await act(async () => root.unmount()); container.remove(
 
 it('selects storage only with admitted access and server principal/app scope', async () => {
   const frame = await mount(); await ready(frame.iframe);
-  expect(mocks.storage).toHaveBeenCalledWith('notes', scope);
+  expect(mocks.storage).toHaveBeenCalledWith('notes', scope, { domain: false });
   expect(frame.post).toHaveBeenCalledWith(expect.objectContaining({ storage: { token: 'alice-synthetic' } }), '*', expect.anything());
+});
+it('tells the storage when the page is the app’s own domain, where the site’s earlier saves may be', async () => {
+  await act(async () => root.render(<HostedAppFrame slug="notes" client={client} version={1} native={native} engine={engine} domain />));
+  await ready(container.querySelector('iframe'));
+  expect(mocks.storage).toHaveBeenLastCalledWith('notes', scope, { domain: true });
+});
+it('does not restart the app when the page learns later that it is the app’s own domain', async () => {
+  const frame = await mount(); await ready(frame.iframe);
+  const opened = mocks.storage.mock.calls.length;
+  await act(async () => root.render(<HostedAppFrame slug="notes" client={client} version={1} native={native} engine={engine} domain />));
+  // The same document, still connected: the frame says ready once, so a restart on it never opened again.
+  expect(mocks.storage.mock.calls.length).toBe(opened);
+  expect(container.querySelector('iframe')).toBe(frame.iframe);
+  expect(channels[0].port1.close).not.toHaveBeenCalled();
+  expect(channels[0].port1.postMessage).not.toHaveBeenCalledWith({ type: 'formlogic:dispose' });
 });
 it.each([undefined, null, {}, { access: 'members', appId: 'app-123', userId: 'bob' }, { access: 'application', appId: 'app-123' }])('denies invalid or mismatched scope %j before any storage access or init', async bad => {
   const invalid = { ...native, storageScope: bad } as typeof native;
@@ -114,7 +129,7 @@ it('passes a matching fresh scope through an engine remount', async () => {
   mocks.native.mockResolvedValue({ status: 409, code: 'engine_changed' });
   mocks.getNative.mockResolvedValue({ data: { engine: { ...engine, revision: 'r2' }, project: { version: 2, client, ...native } } });
   const frame = await mount(); await ready(frame.iframe); mocks.storage.mockClear(); await call();
-  expect(mocks.storage).toHaveBeenLastCalledWith('notes', scope); expect(container.querySelector('iframe')).not.toBe(frame.iframe);
+  expect(mocks.storage).toHaveBeenLastCalledWith('notes', scope, { domain: false }); expect(container.querySelector('iframe')).not.toBe(frame.iframe);
 });
 it('fences workspace navigation callbacks after teardown', async () => {
   const late = deferred<unknown>(); let navigate: ((path: string) => void) | undefined;
@@ -131,7 +146,7 @@ it('does not carry an engine override across newer native props with the same pa
   const original = await mount(); await ready(original.iframe); await call();
   const newer = { ...native, storageScope: { ...scope, appId: 'new-app' } };
   mocks.storage.mockClear(); const next = await mount({ native: newer, engine }); await ready(next.iframe);
-  expect(mocks.storage).toHaveBeenLastCalledWith('notes', newer.storageScope);
+  expect(mocks.storage).toHaveBeenLastCalledWith('notes', newer.storageScope, { domain: false });
   expect(next.post).toHaveBeenCalledWith(expect.objectContaining({ client }), '*', expect.anything());
 });
 it('replaces a member namespace on admitted app-id change with no stale-port mutation', async () => {
@@ -139,5 +154,5 @@ it('replaces a member namespace on admitted app-id change with no stale-port mut
   const newer = { ...native, storageScope: { ...scope, appId: 'new-app' } };
   const next = await mount({ native: newer, engine }); await ready(next.iframe); mocks.mutate.mockClear();
   await call('nativeStorage', { operation: 'set', key: 'token', value: 'late' }, old);
-  expect(mocks.mutate).not.toHaveBeenCalled(); expect(mocks.storage).toHaveBeenLastCalledWith('notes', newer.storageScope); expect(next.iframe).not.toBe(original.iframe);
+  expect(mocks.mutate).not.toHaveBeenCalled(); expect(mocks.storage).toHaveBeenLastCalledWith('notes', newer.storageScope, { domain: false }); expect(next.iframe).not.toBe(original.iframe);
 });

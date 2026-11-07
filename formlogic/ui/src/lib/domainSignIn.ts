@@ -11,6 +11,25 @@ const KEY = 'formlogic:domain-sign-in';
 /** On an app's own domain: FormLogic's address, where the sign-in forms are. Elsewhere null. */
 export const DomainSignInContext = createContext<string | null>(null);
 
+/** A local test address: a `?__flhost=` preview or a development install, never a customer's domain. */
+const LOCAL_HOST = /(^|\.)(localhost|local)$|^127\.0\.0\.1$|^\[::1\]$/;
+
+/**
+ * Whether this page, on an app's own domain, is at an address that is not FormLogic's (`platformUrl`,
+ * the context's value) and not a local test address. Compared as origins: FormLogic's address can
+ * carry a path (a site in a folder) or capitals, and its own host can still have an app connected
+ * from an older version. Whatever cannot be read is FormLogic's.
+ */
+export function isAnotherAddress(platformUrl: string | null, page: Pick<Location, 'origin' | 'hostname'> = window.location): boolean {
+  if (!platformUrl) return false;
+  try {
+    if (new URL(platformUrl).origin === page.origin) return false;
+  } catch {
+    return false;
+  }
+  return !LOCAL_HOST.test(page.hostname);
+}
+
 /** `page` is FormLogic's page for someone with no session there yet. */
 export function startDomainSignIn(platformUrl: string, page: 'login' | 'signup', returnTo: string): void {
   const state = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');

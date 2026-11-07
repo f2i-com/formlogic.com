@@ -85,15 +85,98 @@ function adoptKeyNames(saved: Record<string, string>, slug: string, appId: strin
   return Object.fromEntries(adopted);
 }
 
+/**
+ * SoftN's names for an app's keys in a page's own localStorage, when the app IS the page: its
+ * runtime's `softn:<id>:<key>`, the id with anything but letters, digits, `_` and `-` made `_`
+ * (core's storage bridges), and its XDB store's `xdb:<id>:<collection>` and `xdb:<id>::<name>`, the
+ * id as it is (core's xdb-registry and xdb-service). What an app hosted on its own, as SoftN's
+ * single-app pages host one, left in its visitors' browsers.
+ */
+const SCRIPT_KEY = /^softn:([a-zA-Z0-9_-]+):/;
+const safeId = (id: string) => id.replace(/[^a-zA-Z0-9_-]/g, '_');
+/** The frame's own ids, and SoftN's for a preview's throwaway store: never an earlier site's app. */
+const NOT_A_SITE_APP = /^(native-|__softn_preview__)/;
+/** Each app's mark that it has looked at what an earlier page left, once per browser (earlierSiteMap). */
+const EARLIER_SITE_PREFIX = 'formlogic:native-earlier-site:v1:';
+
+/** An XDB key's app id and what follows it (`:<collection>` or `::<name>`), or null for one no app owns. */
+function xdbKey(name: string): { id: string; rest: string } | null {
+  if (!name.startsWith('xdb:')) return null;
+  const body = name.slice(4);
+  // A collection's name never has a colon in it; an app id may (`served:/index.php:outerstead`).
+  const meta = body.indexOf('::');
+  const cut = meta > 0 ? meta : body.lastIndexOf(':');
+  // A bare `xdb:<collection>` is from before XDB kept apps apart: it names no app.
+  return cut > 0 ? { id: body.slice(0, cut), rest: body.slice(cut) } : null;
+}
+
+/**
+ * What the site's earlier SoftN page left in this browser for its app, under the names the frame
+ * gives the app (`softn:native-<app id>:`, `xdb:native-<app id>:`), so a game hosted on its own
+ * domain, then moved to FormLogic on the same domain, opens on its players' saves. Null where there
+ * is nothing of an earlier app's here at all; otherwise `site` is the map to take, or null where it
+ * cannot be taken: two earlier apps (which one this was is not ours to guess), or a key over a limit
+ * here (whole or not at all, rather than an app opening on half a save).
+ *
+ * Only where the page IS the app's own domain (one app per origin) and its map is shared by everyone
+ * in this browser (application scope): on the platform's origin every app's keys are mixed, and no
+ * earlier save says which member it was. Copied, never moved: nothing says this app is the one the
+ * page served, so a different app connected first must not take the only copy. Each app looks once
+ * per browser (EARLIER_SITE_PREFIX), so a reset of its data does not bring them back.
+ */
+function earlierSiteMap(appId: string, limits: NativeStorageLimits): { site: EarlierSite | null } | null {
+  const frame = nativeFrameAppId(appId);
+  const groups = new Map<string, { keys: [string, string][]; xdbIds: Set<string> }>();
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const name = localStorage.key(i);
+      if (!name) continue;
+      let id: string | null = null;
+      let renamed = '';
+      let xdbId: string | null = null;
+      const script = SCRIPT_KEY.exec(name);
+      const xdb = script ? null : xdbKey(name);
+      if (script) { id = script[1]; renamed = `softn:${safeId(frame)}:${name.slice(script[0].length)}`; }
+      else if (xdb) { id = safeId(xdb.id); xdbId = xdb.id; renamed = `xdb:${frame}${xdb.rest}`; }
+      if (id === null || NOT_A_SITE_APP.test(id)) continue;
+      let group = groups.get(id);
+      if (!group) groups.set(id, group = { keys: [], xdbIds: new Set() });
+      group.keys.push([name, renamed]);
+      if (xdbId !== null) group.xdbIds.add(xdbId);
+    }
+    if (groups.size === 0) return null;
+    const [group] = groups.values();
+    // Two apps, or two whose ids are the same only once made safe.
+    if (groups.size !== 1 || group.xdbIds.size > 1 || group.keys.length > limits.entries) return { site: null };
+    const map: Record<string, string> = {};
+    for (const [name, renamed] of group.keys) {
+      const value = localStorage.getItem(name);
+      if (value === null || renamed.length > limits.key || value.length > limits.value) return { site: null };
+      map[renamed] = value;
+    }
+    const raw = JSON.stringify(map);
+    return { site: raw.length <= limits.map ? { raw } : null };
+  } catch {
+    return null; // No localStorage to read: nothing was left.
+  }
+}
+
 // ---- where maps are kept ---------------------------------------------------------------------
 
 /** A change to one record, worked out from what it holds, inside one transaction. */
 type Step<T> = (raw: string | null) => { write?: string | null; result: T };
+/** What a site's earlier SoftN page left in its own localStorage, as one map under the frame's names. */
+interface EarlierSite { raw: string }
 interface MapStore {
   readonly kind: 'indexeddb' | 'localStorage';
   readonly limits: NativeStorageLimits;
-  /** Runs `step` on the record as it is, and writes what it says, as one: no other tab's write lands between. */
-  atomic<T>(key: string, step: Step<T>, legacy?: string[]): Promise<T>;
+  /**
+   * Runs `step` on the record as it is, and writes what it says, as one: no other tab's write lands
+   * between. An empty record first takes what an older FormLogic left (`legacy`), which moves, or
+   * else, where `earlier` is given, a copy of what the site's earlier SoftN page left (earlierSiteMap):
+   * the IndexedDB store only, which calls `earlier` whenever it opens a record it carries nothing into.
+   */
+  atomic<T>(key: string, step: Step<T>, legacy?: string[], earlier?: (limits: NativeStorageLimits) => EarlierSite | null): Promise<T>;
   /** Removes every record whose key starts with `prefix`. */
   removePrefix(prefix: string): Promise<void>;
 }
@@ -112,6 +195,10 @@ const localStore: MapStore = {
         if (saved !== null) { localStorage.setItem(key, saved); localStorage.removeItem(name); raw = saved; }
       }
     } catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
+    // `earlier` is not looked at here. This store's limits are a fraction of IndexedDB's and share the
+    // site's five megabytes with the earlier copy itself, so a game's saves would be refused, and a
+    // look counts once: one opening without IndexedDB would leave the app empty for good. The next
+    // opening that has IndexedDB looks.
     const { write, result } = step(raw);
     // The browser's own refusal (a full store) goes to the app as the browser said it, as always.
     if (write !== undefined) { if (write === null) localStorage.removeItem(key); else localStorage.setItem(key, write); }
@@ -138,7 +225,7 @@ function indexedStore(db: IDBDatabase): MapStore {
   return {
     kind: 'indexeddb',
     limits: LARGE_STORAGE_LIMITS,
-    async atomic(key, step, legacy = []) {
+    async atomic(key, step, legacy = [], earlier) {
       // What localStorage holds for this map (a FormLogic before v0.1.24 kept it there), read
       // before the transaction: a transaction must not wait on anything but its own requests.
       let carried: { name: string; raw: string } | null = null;
@@ -148,6 +235,8 @@ function indexedStore(db: IDBDatabase): MapStore {
           if (raw !== null) { carried = { name, raw }; break; }
         }
       } catch { /* No localStorage: nothing older to carry. */ }
+      // What the site's earlier SoftN page left, read before the transaction for the same reason.
+      const site = !carried && earlier ? earlier(LARGE_STORAGE_LIMITS) : null;
       let tx: IDBTransaction;
       try { tx = db.transaction(STORE, 'readwrite'); }
       catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
@@ -160,6 +249,7 @@ function indexedStore(db: IDBDatabase): MapStore {
         let raw = typeof got.result === 'string' ? got.result : null;
         // Only into an empty record: what IndexedDB already holds is newer than what was left behind.
         if (raw === null && carried) { raw = carried.raw; store.put(raw, key); moved = true; }
+        else if (raw === null && site) { raw = site.raw; store.put(raw, key); }
         try {
           const { write, result } = step(raw);
           if (write === null) store.delete(key);
@@ -307,7 +397,11 @@ export type NativeStorageStatus =
 
 export const CORRUPT_STORAGE_MESSAGE = 'This app’s saved browser data is damaged. Export or reset it before the app can use browser storage again.';
 
-export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | null | undefined) {
+/**
+ * `domain`: the page is the app's own domain, where the site's earlier SoftN page may have left its
+ * saves (earlierSiteMap). Never set it on the platform's origin.
+ */
+export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | null | undefined, options: { domain?: boolean } = {}) {
   // Copy scalar identities: a response object mutated later cannot retarget this handle.
   const scope: NativeStorageScope | null = isNativeStorageScope(inputScope)
     ? inputScope.access === 'members'
@@ -324,6 +418,9 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
    * nothing says whose an unbound slug map was.
    */
   const legacy = scope?.access === 'application' ? [`formlogic:native-storage:${encodeURIComponent(slug)}`] : [];
+  // A member's map never takes the site's earlier saves either: nothing says whose they were.
+  const earlierFor = options.domain === true && scope?.access === 'application' ? scope.appId : null;
+  const earlierMark = earlierFor === null ? '' : `${EARLIER_SITE_PREFIX}${encodeURIComponent(earlierFor)}`;
   // Each key as this handle last read or saved it: a frame holds a snapshot and writes a whole
   // collection from it, so a key that moved since is another tab's work about to be replaced.
   let seen: Map<string, string> | null = null;
@@ -370,16 +467,28 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
     const data = JSON.stringify(adopted);
     return data.length <= limits.map ? { map: adopted, write: data } : { map: adopted };
   }
-  async function withStore<T>(step: Step<T>): Promise<T> {
+  async function withStore<T>(step: Step<T>, earlier?: (limits: NativeStorageLimits) => EarlierSite | null): Promise<T> {
     // The store first: opening it resumes a purge a closed page left unfinished, which the scope
     // check then waits for before anything of the member's is read.
     const store = await mapStore();
     await assertScope();
     limits = store.limits;
-    return store.atomic(key, step, legacy);
+    return store.atomic(key, step, legacy, earlier);
   }
   async function read(): Promise<Record<string, string>> {
-    const saved = await withStore((raw) => { const { map, write } = current(raw); return { write, result: map }; });
+    // The site's earlier saves come in only as the app opens, which reads first: never on a reset,
+    // an export or a status check. Once looked at, never again in this browser (earlierSiteMap).
+    let looked = false;
+    let marked = true;
+    try { marked = earlierFor === null || localStorage.getItem(earlierMark) !== null; } catch { /* No localStorage: nothing was left. */ }
+    const earlier = marked ? undefined : (limits: NativeStorageLimits) => {
+      const found = earlierSiteMap(earlierFor!, limits);
+      looked = found !== null;
+      return found?.site ?? null;
+    };
+    const saved = await withStore((raw) => { const { map, write } = current(raw); return { write, result: map }; }, earlier);
+    // Only once the record is written: an opening that failed looks again next time.
+    if (looked) { try { localStorage.setItem(earlierMark, '1'); } catch { /* Looked at again next time, and taken only into an empty record. */ } }
     seen = new Map(Object.entries(saved));
     return saved;
   }
