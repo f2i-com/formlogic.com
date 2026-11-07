@@ -93,6 +93,22 @@ a password set for it then would still sign in afterwards.
 Installing an older package does the same. It asks you to confirm the downgrade, but that dialog
 doesn't say this.
 
+### Rolling back below v0.1.24
+
+**What visitors saved in a SoftN app's browser storage is not seen by an older release.** From
+v0.1.24 an app's saves are kept in the browser's IndexedDB, and each browser moves what it held in
+localStorage there the first time it opens the app. An older release reads localStorage only, so its
+apps open in that browser as if new. Nothing is erased: back on v0.1.24 or newer, the saves are there
+again. What a visitor saves while the site runs the older release stays in localStorage, and is not
+brought forward over the newer copy afterwards.
+
+**An app bigger than an older release keeps may not open there and cannot be updated there.**
+Releases before v0.1.24 keep up to 100 media files and 16 MB per app, send every picture and sound
+inside the project, and do not raise PHP's memory for it. An app over those limits (a game with
+hundreds of pictures, say) stays installed, but its page may fail to load on the older release.
+
+**An app granted files loses them.** The setting stays, so the grant holds again once the site is
+back on v0.1.24 or newer.
 ### Tabs left open across an update
 
 A tab left open goes on running the old code against the new server. API replies name the running
@@ -103,6 +119,10 @@ A server on v0.1.20 or older sends no such header, nor does a proxy that strips 
 rollback to one, or behind such a proxy, other open tabs are not told: they reload at their next route
 once the files they need have gone. An older page gets the server's refusals instead, which
 tell it to reload.
+
+A SoftN app left open from before v0.1.24 goes on saving to localStorage. Reload it: once another tab
+has opened the app on v0.1.24, that tab reads IndexedDB, and what the old tab saves after that is not
+seen there.
 
 The manual paths below remain fully supported and are what the wizard automates.
 

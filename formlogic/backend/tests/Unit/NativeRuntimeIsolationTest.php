@@ -46,6 +46,8 @@ final class NativeRuntimeIsolationTest extends TestCase
         foreach (['get', 'project'] as $method) {
             $native->method($method)->willReturnCallback(static function (...$args) use ($record, $method, $project) { $record($method, $args); return $project; });
         }
+        // The project an app request and a page that fetches the media pack read, without its media.
+        $native->method('runtimeProject')->willReturnCallback(static function (...$args) use ($record, $project) { $record('project', $args); return ['project' => $project, 'media' => ['file' => '', 'sha256' => '', 'size' => 0, 'count' => 0]]; });
         $native->method('clientLanguages')->willReturnCallback(static function (...$args) use ($record) { $record('clientLanguages', $args); return ['javascript']; });
         $native->method('request')->willReturnCallback(static function (...$args) use ($record) { $record('request', $args); return ['status' => 200, 'body' => ['ok' => true]]; });
         $native->method('dispatchRecordEvents')->willReturnCallback(static function (...$args) use ($record) { $record('events', $args); return 0; });

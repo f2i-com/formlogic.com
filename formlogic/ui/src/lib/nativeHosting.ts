@@ -3,7 +3,58 @@ import { strFromU8, strToU8, zipSync } from 'fflate';
 import type { NativeStorageScope } from './nativeAppStorage';
 
 export interface NativeProject { home?: boolean; version: number; updatedAt?: string; files: Record<string,string>; assets: Record<string,string>; access: 'application' | 'members' }
-export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: Record<string,string>; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[] }
+/**
+ * What a member's page runs. `media`, from FormLogic v0.1.24, names the app's media pack, fetched
+ * whole and unpacked into `assets` before the frame is given them (readMediaPack); a server before
+ * it sends `assets` in the JSON itself.
+ */
+export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: Record<string,string>; media?: { url: string; sha256: string; size: number; count: number }; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[]; files?: 'ask' | 'allow' }
+
+/**
+ * What a project may hold, which the server holds an install to as well (NativeAppService's
+ * MAX_* constants; nativeHosting.limits.test.ts keeps the two equal). A game's art and sound run
+ * to hundreds of files and tens of megabytes.
+ */
+export const NATIVE_LIMITS = Object.freeze({
+  sourceFiles: 200,
+  sourceFileBytes: 1_000_000,
+  mediaFiles: 1000,
+  mediaFileBytes: 8 * 1024 * 1024,
+  projectBytes: 64 * 1024 * 1024,
+});
+
+/** The pack's first eight bytes (NativeAppService::MEDIA_PACK_MAGIC). */
+const MEDIA_PACK_MAGIC = 'FLMEDIA1';
+
+/**
+ * An app's media pack as the frame takes its media: each file's path to its bytes in base64.
+ * Refused whole when it is not a pack, when a file runs past its end, or when a path is not one
+ * the frame serves; the server wrote it from a project it had checked, so either is a damaged copy.
+ */
+export function readMediaPack(buffer: ArrayBuffer): Record<string, string> {
+  const bytes = new Uint8Array(buffer);
+  const bad = (why: string) => new Error(`The app's media could not be read (${why}).`);
+  if (bytes.length < 12 || strFromU8(bytes.subarray(0, 8)) !== MEDIA_PACK_MAGIC) throw bad('not a media pack');
+  const headerLength = new DataView(buffer, bytes.byteOffset + 8, 4).getUint32(0, false);
+  if (12 + headerLength > bytes.length) throw bad('its index runs past its end');
+  let header: unknown;
+  try { header = JSON.parse(strFromU8(bytes.subarray(12, 12 + headerLength))); } catch { throw bad('its index is not JSON'); }
+  const files = (record(header)?.files);
+  if (!Array.isArray(files)) throw bad('it has no index of files');
+  const body = 12 + headerLength;
+  const assets: Record<string, string> = {};
+  for (const entry of files) {
+    const file = record(entry);
+    const path = file?.path, offset = file?.offset, size = file?.size;
+    if (typeof path !== 'string' || !HOSTED_MEDIA.test(path) || path.includes('..') || !Number.isSafeInteger(offset) || !Number.isSafeInteger(size) || (offset as number) < 0 || (size as number) < 0) throw bad('a file in it is not one an app may have');
+    const start = body + (offset as number), end = start + (size as number);
+    if (end > bytes.length) throw bad(`${path} runs past its end`);
+    let binary = '';
+    for (let at = start; at < end; at += 8192) binary += String.fromCharCode(...bytes.subarray(at, Math.min(at + 8192, end)));
+    assets[path] = btoa(binary);
+  }
+  return assets;
+}
 export interface NativeRecordField { name: string; type: string; primary: boolean; required: boolean; defaultValue: string | null; auto: boolean; readOnly: boolean }
 export interface NativeRecordDetail { values: Record<string, string | null>; revision: string; fields: NativeRecordField[] }
 /**
@@ -73,12 +124,12 @@ export async function importNativeProject(file: File): Promise<NativeProject> {
     // .xdb is the app's seed data: JSON text kept with it.
     if (/\.(ui|logic|py|json|sql|xdb)$/.test(path)) {
       if (!SOURCE_PATH.test(path) || path.includes('..')) throw new Error(`${path}: this host keeps file names made of letters, digits, '-', '_' and '.' (never two dots together). Rename it and try again.`);
-      if (bytes.length > 1_000_000) throw new Error(`${path} is larger than this host keeps (1 MB per source file).`);
+      if (bytes.length > NATIVE_LIMITS.sourceFileBytes) throw new Error(`${path} is larger than this host keeps (1 MB per source file).`);
       source[path] = strFromU8(bytes);
     } else if (path.startsWith('assets/')) {
       if (path.includes('..')) throw new Error(`${path}: this host keeps file names without two dots together. Rename it and try again.`);
       if (!HOSTED_MEDIA.test(path)) throw new Error(`${path} cannot be hosted with this app: its media can be pictures (PNG, JPEG, GIF, WebP, AVIF, ICO, BMP, SVG, HDR, EXR), sound (MP3, WAV, Ogg, Opus, AAC, FLAC, M4A), video (MP4, WebM), fonts (WOFF, WOFF2, TTF, OTF), 3D models (glTF, GLB, BIN, OBJ, STL, FBX), and WGSL, text and Markdown files.`);
-      if (bytes.length > 8 * 1024 * 1024) throw new Error(`${path} is larger than this host keeps (8 MB per media file).`);
+      if (bytes.length > NATIVE_LIMITS.mediaFileBytes) throw new Error(`${path} is larger than this host keeps (8 MB per media file).`);
       let binary = '';
       for (let offset=0;offset<bytes.length;offset+=8192) binary += String.fromCharCode(...bytes.subarray(offset,offset+8192));
       assets[path] = btoa(binary);
@@ -87,9 +138,9 @@ export async function importNativeProject(file: File): Promise<NativeProject> {
     total += bytes.length;
   }
   const sources = Object.keys(source).length, media = Object.keys(assets).length;
-  if (sources > 200) throw new Error(`This app has ${sources} source files; this host keeps up to 200.`);
-  if (media > 100) throw new Error(`This app has ${media} media files; this host keeps up to 100.`);
-  if (total > 16 * 1024 * 1024) throw new Error(`This app is ${(total / 1024 / 1024).toFixed(1)} MB; this host keeps apps up to 16 MB.`);
+  if (sources > NATIVE_LIMITS.sourceFiles) throw new Error(`This app has ${sources} source files; this host keeps up to ${NATIVE_LIMITS.sourceFiles}.`);
+  if (media > NATIVE_LIMITS.mediaFiles) throw new Error(`This app has ${media} media files; this host keeps up to ${NATIVE_LIMITS.mediaFiles}.`);
+  if (total > NATIVE_LIMITS.projectBytes) throw new Error(`This app is ${(total / 1024 / 1024).toFixed(1)} MB; this host keeps apps up to ${NATIVE_LIMITS.projectBytes / 1024 / 1024} MB.`);
   let manifest: Record<string, unknown> = {};
   try { manifest = record(JSON.parse(source['manifest.json'] ?? '{}')) ?? {}; } catch { /* the review above read it */ }
   if (manifest.id != null && (typeof manifest.id !== 'string' || !/^[a-zA-Z0-9._-]{1,120}$/.test(manifest.id))) throw new Error('manifest.json\'s id can only be letters, digits, \'.\', \'_\' and \'-\' (up to 120 of them).');

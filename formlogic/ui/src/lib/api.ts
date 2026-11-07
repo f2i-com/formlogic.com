@@ -2123,7 +2123,28 @@ class ApiClient {
     return this.request(`/apps/${encodeURIComponent(id)}/native/records?${params}`);
   }
   async getNativeRuntime(slug: string): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string } }>> {
-    return this.request(`/app/${encodeURIComponent(slug)}/native`);
+    // The project without its media, and its media as one pack beside it (from FormLogic v0.1.24):
+    // a game's pictures and sound came inside this JSON in base64, tens of megabytes on every
+    // opening. The pack's address names its content, so the browser keeps it while the app is
+    // unchanged. A server before the pack ignores the query and sends `assets` as it always did.
+    const result = await this.request<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string } }>(`/app/${encodeURIComponent(slug)}/native?media=pack`);
+    const media = result.data?.project?.media;
+    if (!result.data || !media || typeof media.url !== 'string' || !media.url.startsWith('/app/')) return result;
+    const generation = currentSessionGeneration();
+    const routed = this.routeForAdminActing(media.url);
+    if (routed.blocked) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
+    try {
+      const response = await fetch(`${this.baseUrl}${routed.endpoint}`, { credentials: 'include' });
+      if (!response.ok) {
+        if (response.status === 401) this.handleUnauthorized(generation);
+        return { error: 'The app’s pictures and sounds could not be loaded. Reload to try again.', status: response.status };
+      }
+      const { readMediaPack } = await import('./nativeHosting');
+      const assets = readMediaPack(await response.arrayBuffer());
+      return { ...result, data: { ...result.data, project: { ...result.data.project, assets } } };
+    } catch (reason) {
+      return { error: reason instanceof Error ? reason.message : 'The app’s pictures and sounds could not be loaded. Reload to try again.', transportFailure: true };
+    }
   }
   async runNativeRequest(slug: string, input: Record<string, unknown>, signal?: AbortSignal, clientEngine?: string): Promise<ApiResponse<{ result: { status: number; body: unknown } }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/native/request`, { method: 'POST', body: JSON.stringify(input), signal, ...clientEngineHeader(clientEngine) });

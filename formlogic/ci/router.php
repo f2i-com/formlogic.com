@@ -56,7 +56,7 @@ if (preg_match('#^/(hosted-runtime|app-editors)/#', $uri)) {
         if (preg_match('#^/(hosted-runtime/(index\.html|host\.html)?|app-editors/(builder|studio)/(index\.html)?)$#', $uri)) {
             header('X-Frame-Options: SAMEORIGIN');
             // And .htaccess IS_APP_RUNTIME: the runtime documents sandbox themselves.
-            $sandbox = str_starts_with($uri, '/hosted-runtime/') ? 'sandbox allow-scripts; ' : '';
+            $sandbox = str_starts_with($uri, '/hosted-runtime/') ? 'sandbox allow-scripts allow-downloads; ' : '';
             header("Content-Security-Policy: {$sandbox}frame-ancestors 'self'; base-uri 'self'; object-src 'none'");
         }
         header('Content-Length: ' . filesize($file));

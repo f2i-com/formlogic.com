@@ -554,7 +554,14 @@ final class AccountBackupService
                 }
                 $name = 'native/' . $appId . '/project.json';
                 $entries[$name] = hash('sha256', $projectJson);
-                $zip->addFromString($name, $projectJson);
+                // From a file: the archive holds a string it is given until it is closed, and an account's
+                // apps together can be several times the largest one (tens of megabytes of media each).
+                $projectStaged = $stagingDir . '/native-' . $appId . '.project.json';
+                if (file_put_contents($projectStaged, $projectJson) !== strlen($projectJson)) {
+                    throw new \RuntimeException("Could not stage the native project for app {$appId}");
+                }
+                unset($projectJson, $capture['project']);
+                $zip->addFile($projectStaged, $name);
                 $structure['apps'][$i]['native']['version'] = $capture['version'];
                 $structure['apps'][$i]['native']['manifestId'] = $capture['manifestId'];
 
@@ -1276,7 +1283,7 @@ final class AccountBackupService
             $nativeMode = (($options['nativeApps'] ?? 'restore') === 'skip') ? 'skip' : 'restore';
             // Only an app with a backend needs the runtime; one that runs in the browser alone
             // restores on any server.
-            $withBackends = array_filter($nativePayloads, fn(array $payload) => NativeAppService::hasBackend($payload['project']));
+            $withBackends = array_filter($nativePayloads, fn(array $payload) => $payload['backend']);
             if ($withBackends !== [] && $nativeMode === 'restore' && !$this->native->available()) {
                 throw new \RuntimeException('This backup contains hosted native apps with backends of their own, and the native app runtime is not prepared on this server. Prepare it first, or import with native apps skipped.');
             }
@@ -1456,7 +1463,7 @@ final class AccountBackupService
                 } elseif ($this->native->describe($appId) !== null) {
                     $result['kept'][] = $appId;
                 } else {
-                    $this->native->restore($appId, $payload['project'], $payload['database'], $payload['hostConfig']);
+                    $this->native->restore($appId, self::stagedProject($payload), $payload['database'], $payload['hostConfig']);
                     $result['restored'][] = $appId;
                 }
             }
@@ -1484,13 +1491,18 @@ final class AccountBackupService
      * @param array<string,string> $entries
      * @param bool $keysRequired an archive this server kept: new keys there would silently cost
      *        every value the app sealed, so a key that won't open is a refusal, not a warning
-     * @return array<string,array{name:string, project:array, database:?string, hostConfig:?array}>
+     * @return array<string,array{name:string, projectFile:string, backend:bool, database:?string, hostConfig:?array}>
+     *         each project checked and kept on disk, read back for its turn (stagedProject)
      */
     private function stageNativePayloads(\ZipArchive $zip, array $structure, array $entries, string $stagingDir, bool $keysRequired): array
     {
         $payloads = [];
         foreach ($this->nativeAppsIn($structure) as $oldAppId => $nativeBlock) {
-            $project = json_decode($this->readEntryBounded($zip, 'native/' . $oldAppId . '/project.json', 32 * 1024 * 1024), true);
+            // A project's JSON carries its media in base64 (a third larger than the media) and its source escaped:
+            // twice the largest project NativeAppService admits is room for both.
+            NativeAppService::raiseMemoryFor(2 * NativeAppService::MAX_PROJECT_BYTES);
+            $raw = $this->readEntryBounded($zip, 'native/' . $oldAppId . '/project.json', 2 * NativeAppService::MAX_PROJECT_BYTES);
+            $project = json_decode($raw, true);
             if (!is_array($project)) {
                 throw new \RuntimeException("Native project payload for app {$oldAppId} is not valid JSON");
             }
@@ -1499,6 +1511,13 @@ final class AccountBackupService
             } catch (\InvalidArgumentException $e) {
                 throw new \RuntimeException("Native project payload for app {$oldAppId} is invalid: " . $e->getMessage(), 0, $e);
             }
+            // Kept on disk, not here: an account's apps together can be several times the largest one.
+            $projectFile = $stagingDir . '/native-' . $oldAppId . '.project.json';
+            if (file_put_contents($projectFile, $raw) !== strlen($raw)) {
+                throw new \RuntimeException("Could not stage the native project for app {$oldAppId}");
+            }
+            $backend = NativeAppService::hasBackend($project);
+            unset($project, $raw);
             $dbPath = null;
             if (isset($entries['native/' . $oldAppId . '/application.sqlite'])) {
                 $dbPath = $stagingDir . '/native-' . $oldAppId . '.sqlite';
@@ -1526,9 +1545,18 @@ final class AccountBackupService
                     $hostConfig = null;
                 }
             }
-            $payloads[$oldAppId] = ['name' => $nativeBlock['name'], 'project' => $project, 'database' => $dbPath, 'hostConfig' => $hostConfig];
+            $payloads[$oldAppId] = ['name' => $nativeBlock['name'], 'projectFile' => $projectFile, 'backend' => $backend, 'database' => $dbPath, 'hostConfig' => $hostConfig];
         }
         return $payloads;
+    }
+
+    /** A project stageNativePayloads checked and kept on disk, read back for its turn. */
+    private static function stagedProject(array $payload): array
+    {
+        NativeAppService::raiseMemoryFor((int) @filesize($payload['projectFile']));
+        $project = json_decode((string) @file_get_contents($payload['projectFile']), true);
+        if (!is_array($project)) throw new \RuntimeException('A staged native project could not be read back');
+        return $project;
     }
 
     private static function hostConfigContext(string $appId): string
@@ -1588,7 +1616,7 @@ final class AccountBackupService
      * with its restored database. Key material is restored when the archive carried it
      * (privileged recovery) and reissued — with a loud warning — when it did not.
      *
-     * @param array<string,array{name:string, project:array, database:?string, hostConfig:?array}> $payloads
+     * @param array<string,array{name:string, projectFile:string, backend:bool, database:?string, hostConfig:?array}> $payloads as stageNativePayloads staged them
      * @param array<string,string> $appIdMap
      * @return list<array{appId:string, name:string, version:int, database:string, cryptoMaterial:string}>
      */
@@ -1613,10 +1641,10 @@ final class AccountBackupService
                 $restored[] = ['appId' => $newAppId, 'name' => $name, 'version' => $kept['version'], 'database' => $kept['hasDatabase'] ? 'restored' : 'none', 'cryptoMaterial' => NativeAppService::CRYPTO_RESTORED];
                 continue;
             }
-            $result = $this->native->restore($newAppId, $payload['project'], $payload['database'], $payload['hostConfig']);
+            $result = $this->native->restore($newAppId, self::stagedProject($payload), $payload['database'], $payload['hostConfig']);
             // An app with no backend has no records here and seals nothing: what it saves stays in
             // its visitors' browsers, so neither warning is about anything it lost.
-            $backend = NativeAppService::hasBackend($payload['project']);
+            $backend = $payload['backend'];
             if ($backend && $result['cryptoMaterial'] === NativeAppService::CRYPTO_REISSUED) {
                 $warnings[] = "Hosted native app '{$name}' was restored with NEW host keys: this backup did not carry its key material, so values the app sealed or signed before cannot be read or verified. Key-preserving recovery uses the scheduled site backup.";
             }

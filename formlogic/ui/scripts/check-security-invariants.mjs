@@ -85,12 +85,15 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
 // a reviewer to notice. See docs/HOSTED_APPS.md.
 {
   const frame = readFileSync(resolve(root, 'src/components/studio/HostedAppFrame.tsx'), 'utf8');
-  // Exactly allow-scripts. allow-same-origin would give the frame this origin's cookies, storage
-  // and DOM and undo every other boundary at once; allow-popups / allow-top-navigation /
-  // allow-forms / allow-downloads each re-open an egress or phishing path the opaque origin closes.
-  const sandbox = frame.match(/sandbox="([^"]*)"/g) || [];
+  // Exactly allow-scripts, and allow-downloads beside it only for an app granted files (a saved
+  // file is a download; NativeAppView asks the person first unless the owner chose otherwise).
+  // allow-same-origin would give the frame this origin's cookies, storage and DOM and undo every
+  // other boundary at once; allow-popups / allow-top-navigation / allow-forms each re-open an
+  // egress or phishing path the opaque origin closes.
+  const sandbox = frame.match(/sandbox=(?:"[^"]*"|\{[^}]*\})/g) || [];
   if (sandbox.length !== 1) fail(`HostedAppFrame.tsx must set the iframe sandbox exactly once (found ${sandbox.length})`);
-  if (sandbox[0] !== 'sandbox="allow-scripts"') fail(`HostedAppFrame.tsx iframe sandbox must be exactly "allow-scripts" (found ${sandbox[0]})`);
+  const allowedSandbox = ['sandbox="allow-scripts"', 'sandbox={mountNative?.files ? "allow-scripts allow-downloads" : "allow-scripts"}'];
+  if (!allowedSandbox.includes(sandbox[0])) fail(`HostedAppFrame.tsx iframe sandbox must be "allow-scripts", with allow-downloads only where the app is granted files (found ${sandbox[0]})`);
   if (/allow-same-origin/.test(frame)) fail('HostedAppFrame.tsx must never name allow-same-origin: the frame\'s opaque origin is the boundary');
   if (!/referrerPolicy="no-referrer"/.test(frame)) fail('HostedAppFrame.tsx must set referrerPolicy="no-referrer" on the app frame');
   // The editors are same-origin and UNSANDBOXED, so they must never be handed an engine choice
@@ -119,8 +122,10 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
     if (!runtime.includes(document)) fail(`.htaccess IS_APP_RUNTIME must cover ${document}`);
   }
   const runtimePolicy = htaccess.split('\n').find((line) => line.includes('env=IS_APP_RUNTIME')) || '';
-  if (!runtimePolicy.includes('sandbox allow-scripts;') || runtimePolicy.includes('allow-same-origin')) {
-    fail('.htaccess must send a CSP sandbox of allow-scripts alone on the runtime documents');
+  // allow-downloads too: a document's sandbox and its frame's both apply, so the frame's own
+  // (HostedAppFrame, above) decides per app; this one only must not refuse what that allows.
+  if (!runtimePolicy.includes('sandbox allow-scripts allow-downloads;') || runtimePolicy.includes('allow-same-origin')) {
+    fail('.htaccess must send a CSP sandbox of allow-scripts and allow-downloads alone on the runtime documents');
   }
   // A redirect under either frame tree defeats the shell's connect-src pin: CSP path matching
   // stops at the redirect, so a redirect to /api carries the request (and, in some browsers, the

@@ -156,6 +156,12 @@ class AppService
             }
         }
         unset($settings['ageGate']);
+        // settings.softnFiles: whether a hosted SoftN app may open the files a person picks and save
+        // files they ask for (SoftN's `files`). 'ask': each person is asked first, by the app's page;
+        // 'allow': the owner knows the app, and nobody is asked. Off unless one of the two.
+        if (array_key_exists('softnFiles', $settings) && !in_array($settings['softnFiles'], ['ask', 'allow'], true)) {
+            unset($settings['softnFiles']);
+        }
         // settings.signInPage: how the site's sign-in and sign-up pages greet the app's visitors (AppService::welcome).
         if (array_key_exists('signInPage', $settings)) {
             $page = self::signInPage($settings['signInPage']);

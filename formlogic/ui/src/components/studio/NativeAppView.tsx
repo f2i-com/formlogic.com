@@ -18,6 +18,22 @@ import { passAction, unmetRequirement } from '../../lib/passes';
 const PASS_REFUSALS = ['pass_required', 'plugin_unavailable'];
 
 /**
+ * A person's answer to an app that asks to use files on this device (its owner's choice is 'ask'):
+ * Allow is kept on this device; Not now for this browser session only, so they are asked again
+ * another day rather than never. Keyed by the app's id, which a renamed app keeps, and for a members'
+ * app by the member too: another account on this browser is asked for itself.
+ */
+const filesKey = (appId: string) => `formlogic:native-files:v1:${appId}`;
+function filesAnswer(appId: string): 'allow' | 'deny' | null {
+  try { if (localStorage.getItem(filesKey(appId)) === 'allow') return 'allow'; } catch { /* Asked again. */ }
+  try { if (sessionStorage.getItem(filesKey(appId)) === 'deny') return 'deny'; } catch { /* Asked again. */ }
+  return null;
+}
+function rememberFilesAnswer(appId: string, answer: 'allow' | 'deny'): void {
+  try { if (answer === 'allow') localStorage.setItem(filesKey(appId), 'allow'); else sessionStorage.setItem(filesKey(appId), 'deny'); } catch { /* This visit only. */ }
+}
+
+/**
  * `fullScreen`: the app is the whole page, and names the tab. `signInTo`: where a refused visitor
  * goes. `plugin`: this is a plugin's own page, given its two bridge actions (HostedAppFrame).
  */
@@ -56,8 +72,21 @@ export function NativeAppView({ slug, fullScreen = false, signInTo, plugin }: { 
   const current = result?.slug === slug && result.userId === userId && result.generation === generation ? result : null;
   const project = current?.project;
   const error = current?.error;
+  // Whether the app may use files on this device: the owner's choice from the admitted runtime GET,
+  // and where the owner chose to ask, this person's answer, given before the app opens (a grant
+  // changed under a running app restarts it). Asked in this page, which the app cannot draw over.
+  const filesAppId = project?.files !== 'ask' ? null : project.storageScope.access === 'members'
+    ? `${project.storageScope.appId}:${project.storageScope.userId}` : project.storageScope.appId;
+  const [answered, setAnswered] = useState<{ appId: string; answer: 'allow' | 'deny' } | null>(null);
+  const answer = filesAppId ? (answered?.appId === filesAppId ? answered.answer : filesAnswer(filesAppId)) : null;
+  const filesGranted = project?.files === 'allow' || (project?.files === 'ask' && answer === 'allow');
   // Storage identity comes only from the admitted runtime GET, never app files or iframe input.
-  const native = useMemo(() => project ? { assets: project.assets, origins: project.origins, access: project.access, storageScope: project.storageScope } : undefined, [project]);
+  const native = useMemo(() => project ? { assets: project.assets, origins: project.origins, access: project.access, storageScope: project.storageScope, files: filesGranted } : undefined, [project, filesGranted]);
+  const answerFiles = (choice: 'allow' | 'deny') => {
+    if (!filesAppId) return;
+    rememberFilesAnswer(filesAppId, choice);
+    setAnswered({ appId: filesAppId, answer: choice });
+  };
   const title = fullScreen ? current?.name : undefined;
   useEffect(() => {
     if (!title) return;
@@ -67,6 +96,20 @@ export function NativeAppView({ slug, fullScreen = false, signInTo, plugin }: { 
   }, [title]);
   const verify = current?.pass?.verifyPath ? `${current.pass.verifyPath}&return=` : null;
   const linkClass = 'mt-4 inline-flex min-h-11 items-center text-indigo-600 dark:text-indigo-300';
+  if (project && filesAppId && answer === null) {
+    const appName = current?.name || 'This app';
+    return <div className="flex h-full items-center justify-center p-6">
+      <section role="dialog" aria-modal="false" aria-labelledby="native-files-title" className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <h2 id="native-files-title" className="text-lg font-semibold text-slate-900 dark:text-white">{appName} would like to use files on this device</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">It can open the files you choose for it and save files you ask it to, such as a saved game. It cannot look at anything else on this device.</p>
+        <div className="mt-5 flex flex-wrap gap-2">
+          <button type="button" className="min-h-11 rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700" onClick={() => answerFiles('allow')}>Allow</button>
+          <button type="button" className="min-h-11 rounded-lg border border-slate-300 px-4 text-sm font-medium text-slate-800 dark:border-slate-600 dark:text-slate-200" onClick={() => answerFiles('deny')}>Not now</button>
+        </div>
+        <p className="mt-4 text-xs leading-5 text-slate-500 dark:text-slate-400">Not now opens the app without them; you will be asked again on another visit.</p>
+      </section>
+    </div>;
+  }
   return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} plugin={plugin} /></div> : <div className="mx-auto max-w-md p-6">{error ? <><p role="alert" className="text-sm text-slate-800 dark:text-slate-200">{error}</p>
     {current?.pass
       // On an app's own domain the pass is met on FormLogic, never on the domain.

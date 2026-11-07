@@ -10,7 +10,9 @@ vi.mock('../../lib/nativeAppStorage', () => ({
   nativeFrameAppId: (appId: string) => `native-${appId}`,
   NativeStorageError: class extends Error { code = 'corrupt'; },
   isNativeStorageScope: (scope: unknown) => { const value = scope as { access?: string; appId?: string; userId?: string } | null; return !!value && typeof value.appId === 'string' && value.appId.length > 0 && (value.access === 'application' || value.access === 'members' && typeof value.userId === 'string' && value.userId.length > 0); },
-  nativeAppStorage: (...args: unknown[]) => { mocks.storage(...args); return { read: mocks.read, mutate: mocks.mutate, exportRaw: mocks.raw, reset: mocks.reset }; },
+  SMALL_STORAGE_LIMITS: { map: 262144, key: 256, value: 30000, entries: 200, input: 32768, queued: 262144 },
+  onNativeStorageChange: () => () => {},
+  nativeAppStorage: (...args: unknown[]) => { mocks.storage(...args); return { key: 'mocked-map', id: 'mocked-handle', read: mocks.read, mutate: mocks.mutate, exportRaw: mocks.raw, reset: mocks.reset, storageLimits: async () => ({ map: 262144, key: 256, value: 30000, entries: 200, input: 32768, queued: 262144 }) }; },
 }));
 import { HostedAppFrame } from './HostedAppFrame';
 import { bumpSessionGeneration, setSessionOwner } from '../../lib/sessionGeneration';

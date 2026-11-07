@@ -139,38 +139,38 @@ it('a remote A-to-B transition clears this tab memory without erasing B shared s
 
 it.each(['network-result', 'network-rejection'])('unconfirmed startup %s fences access but preserves same-member saved data', async failure => {
   const open = () => nativeAppStorage('cafe', { access: 'members', appId: 'app-one', userId: 'a' });
-  const old = open(); old.mutate({ operation: 'set', key: 'session', value: 'offline-synthetic-a' });
+  const old = open(); await old.mutate({ operation: 'set', key: 'session', value: 'offline-synthetic-a' });
   useAuthStore.setState({ isInitialized: false });
   if (failure === 'network-result') calls.getMe.mockResolvedValue({ error: 'offline' });
   else calls.getMe.mockRejectedValue(new Error('offline'));
   await useAuthStore.getState().initialize();
   expect(useAuthStore.getState().user).toBeNull();
-  expect(() => old.read()).toThrow();
+  await expect(old.read()).rejects.toThrow();
   calls.login.mockResolvedValue({ data: { user: user('a') } });
   await useAuthStore.getState().login('a@example.test', 'synthetic');
-  expect(open().read()).toEqual({ session: 'offline-synthetic-a' });
+  expect(await open().read()).toEqual({ session: 'offline-synthetic-a' });
 });
 
 it('a later logout removes the member cached during an unconfirmed startup', async () => {
   const open = () => nativeAppStorage('cafe', { access: 'members', appId: 'app-one', userId: 'a' });
-  open().mutate({ operation: 'set', key: 'session', value: 'offline-synthetic-a' });
+  await open().mutate({ operation: 'set', key: 'session', value: 'offline-synthetic-a' });
   useAuthStore.setState({ isInitialized: false }); calls.getMe.mockResolvedValue({ error: 'offline' });
   await useAuthStore.getState().initialize();
   await useAuthStore.getState().logout();
   useAuthStore.setState({ user: user('a') });
-  expect(open().read()).toEqual({});
+  expect(await open().read()).toEqual({});
 });
 
 it('someone else signing in after an unconfirmed startup leaves that member their data', async () => {
   const open = () => nativeAppStorage('cafe', { access: 'members', appId: 'app-one', userId: 'a' });
-  open().mutate({ operation: 'set', key: 'session', value: 'offline-synthetic-a' });
+  await open().mutate({ operation: 'set', key: 'session', value: 'offline-synthetic-a' });
   useAuthStore.setState({ isInitialized: false }); calls.getMe.mockResolvedValue({ error: 'offline' });
   await useAuthStore.getState().initialize();
   calls.login.mockResolvedValue({ data: { user: user('b') } });
   await useAuthStore.getState().login('b@example.test', 'synthetic');
-  expect(nativeAppStorage('cafe', { access: 'members', appId: 'app-one', userId: 'b' }).read()).toEqual({});
+  expect(await nativeAppStorage('cafe', { access: 'members', appId: 'app-one', userId: 'b' }).read()).toEqual({});
   useAuthStore.setState({ user: user('a') });
-  expect(open().read()).toEqual({ session: 'offline-synthetic-a' });
+  expect(await open().read()).toEqual({ session: 'offline-synthetic-a' });
 });
 
 it('remote cleanup locks this tab vault without broadcasting a second lock to the new account', async () => {

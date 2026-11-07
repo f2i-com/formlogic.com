@@ -70,6 +70,24 @@ class NativeAppService
      * apps/formlogic-host/src/media.ts; the UI's HOSTED_MEDIA is the same list).
      */
     public const MEDIA_PATH = '~^assets/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx|bin|wgsl|txt|md)$~Di';
+    /**
+     * What a project may hold, which the app page's import (nativeHosting.ts) reads first and a
+     * test holds equal: a game's art and sound run to hundreds of files and tens of megabytes.
+     */
+    public const MAX_SOURCE_FILES = 200;
+    public const MAX_SOURCE_FILE_BYTES = 1000000;
+    public const MAX_MEDIA_FILES = 1000;
+    public const MAX_MEDIA_FILE_BYTES = 8 * 1024 * 1024;
+    public const MAX_PROJECT_BYTES = 64 * 1024 * 1024;
+    /**
+     * An app's media as one file its page fetches whole (runtimeProject, NativeAppController's
+     * media route): these eight bytes, the header's length in four bytes big-endian, the header
+     * as JSON ({"files":[{"path","offset","size"}]}, offsets from the end of the header), then
+     * each file's bytes in that order. One request and one cached download for the lot, where the
+     * page was sent every picture and sound in base64 inside the project's JSON on each opening.
+     */
+    public const MEDIA_PACK_MAGIC = 'FLMEDIA1';
+    private const RUNTIME_CACHE = '/runtime-cache';
 
     private const PREFLIGHT_TTL = 60;
 
@@ -1242,7 +1260,7 @@ class NativeAppService
      */
     public function clientLanguages(string $appId): array
     {
-        try { $project = $this->get($appId); }
+        try { $project = $this->summary($appId); }
         catch (\Throwable) { $project = null; }
         return RuntimeEngineService::languagesOf(self::clientFiles($project ?? []));
     }
@@ -1251,7 +1269,10 @@ class NativeAppService
     public function get(string $appId): ?array
     {
         $file = $this->root($appId) . '/project.json';
-        return is_file($file) ? json_decode(file_get_contents($file), true, 64, JSON_THROW_ON_ERROR) : null;
+        if (!is_file($file)) return null;
+        // The whole project, media and all, and usually sent on or copied after: room for it first.
+        self::raiseMemoryFor((int) @filesize($file));
+        return json_decode(file_get_contents($file), true, 64, JSON_THROW_ON_ERROR);
     }
 
     /**
@@ -1266,6 +1287,172 @@ class NativeAppService
         catch (RuntimeException $missing) { if ($missing->getCode() === 404) return null; throw $missing; }
         flock($lock, LOCK_UN); fclose($lock);
         return $project;
+    }
+
+    /**
+     * What a page needs to run the installed app, read as project() reads (FL-S04), without its
+     * media: the project's source, version, access and home, and its media pack (the file, its
+     * SHA-256, size and file count). Both are made from project.json the first time it is opened
+     * and read from then on, so an opening does not decode every picture and sound in the project:
+     * a game's runs to tens of megabytes, and PHP held several copies of it per request.
+     *
+     * With `$openMedia`, the media pack is also opened for reading (`media.stream`), for the caller to send and close.
+     *
+     * @return array{project: array<string, mixed>, media: array{file: string, sha256: string, size: int, count: int, stream?: resource}}|null
+     */
+    public function runtimeProject(string $appId, bool $openMedia = false): ?array
+    {
+        try { [$root, $lock] = $this->openShared($appId, null, false); }
+        catch (RuntimeException $missing) { if ($missing->getCode() === 404) return null; throw $missing; }
+        if ($lock === null) return null;
+        try {
+            $runtime = $this->runtimeCache($root);
+            // Opened while the lock is held: an update cannot replace or remove this pack before it is
+            // being read, and what is read is the pack the project it was admitted for names.
+            if ($openMedia) {
+                $stream = @fopen($runtime['media']['file'], 'rb');
+                if ($stream === false) throw new RuntimeException('The app\'s media could not be read');
+                $runtime['media']['stream'] = $stream;
+            }
+            return $runtime;
+        }
+        finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /**
+     * The installed project without its media, for what reads only its source or settings on the
+     * way to a page (entry, the engine's choice): the runtime cache when there is one for the
+     * project as it is, otherwise project.json itself. Unlocked, like get().
+     */
+    public function summary(string $appId): ?array
+    {
+        $root = $this->root($appId);
+        $key = $this->runtimeKey($root);
+        if ($key === null) return null;
+        $file = $root . self::RUNTIME_CACHE . '/client-' . $key . '.json';
+        if (is_file($file)) {
+            $cached = json_decode((string) @file_get_contents($file), true);
+            if (is_array($cached['project'] ?? null)) return $cached['project'];
+        }
+        return $this->get($appId);
+    }
+
+    /**
+     * Asks PHP for room to handle a project whose JSON is `$bytes` long, where the host allows it:
+     * the request, its decoded copy and the project as written each hold about that much. True when
+     * there is room (or no limit), false when the host would not give it.
+     */
+    public static function raiseMemoryFor(int $bytes): bool
+    {
+        $need = 96 * 1024 * 1024 + 4 * max(0, $bytes);
+        $limit = self::memoryBytes((string) ini_get('memory_limit'));
+        if ($limit < 0 || $limit >= $need) return true;
+        // Up to 1.5 GB, and never below what the host already gives.
+        $target = min($need, 1536 * 1024 * 1024);
+        if ($target > $limit) @ini_set('memory_limit', (string) $target);
+        $now = self::memoryBytes((string) ini_get('memory_limit'));
+        return $now < 0 || $now >= $need;
+    }
+
+    /** php.ini's shorthand (128M, 1G, -1) in bytes; -1 for no limit. */
+    public static function memoryBytes(string $value): int
+    {
+        $value = trim($value);
+        if ($value === '' || $value === '-1') return -1;
+        $number = (int) $value;
+        return match (strtolower(substr($value, -1))) { 'g' => $number * 1024 ** 3, 'm' => $number * 1024 ** 2, 'k' => $number * 1024, default => $number };
+    }
+
+    /** The runtime cache's name for the project as installed: a hash of project.json, quick enough for every opening. */
+    private function runtimeKey(string $root): ?string
+    {
+        $file = $root . '/project.json';
+        return is_file($file) ? (hash_file('xxh128', $file) ?: null) : null;
+    }
+
+    /** @return array{project: array<string, mixed>, media: array{file: string, sha256: string, size: int, count: int}} */
+    private function runtimeCache(string $root): array
+    {
+        $key = $this->runtimeKey($root) ?? throw new RuntimeException('Native app not found', 404);
+        $dir = $root . self::RUNTIME_CACHE;
+        $clientFile = $dir . '/client-' . $key . '.json';
+        $packFile = $dir . '/media-' . $key . '.pack';
+        if (!is_file($clientFile) || !is_file($packFile)) $this->buildRuntimeCache($root, $dir, $key);
+        $client = json_decode((string) file_get_contents($clientFile), true, 64, JSON_THROW_ON_ERROR);
+        if (!is_array($client['project'] ?? null) || !is_array($client['media'] ?? null)) throw new RuntimeException('The app\'s media could not be read');
+        return ['project' => $client['project'], 'media' => $client['media'] + ['file' => $packFile]];
+    }
+
+    /**
+     * Writes the runtime cache for project.json as it is: the client summary and the media pack
+     * (MEDIA_PACK_MAGIC), each by way of a pending file renamed into place, so a reader sees a whole
+     * file or none. Any other project's cache in the folder goes. Sizes come from the base64's length
+     * (validateProject admits strict base64 only), so the header is written before a byte is decoded,
+     * and one file at a time is held decoded.
+     */
+    private function buildRuntimeCache(string $root, string $dir, string $key): void
+    {
+        $source = $root . '/project.json';
+        self::raiseMemoryFor((int) @filesize($source));
+        $project = json_decode((string) file_get_contents($source), true, 64, JSON_THROW_ON_ERROR);
+        if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) throw new RuntimeException('Could not prepare the app\'s media');
+        $assets = is_array($project['assets'] ?? null) ? $project['assets'] : [];
+        $index = [];
+        $offset = 0;
+        foreach ($assets as $path => $encoded) {
+            if (!is_string($path) || !is_string($encoded)) continue;
+            $size = self::decodedLength($encoded);
+            if ($size === null) throw new RuntimeException('The app\'s media could not be read: ' . $path);
+            $index[] = ['path' => $path, 'offset' => $offset, 'size' => $size];
+            $offset += $size;
+        }
+        $header = json_encode(['files' => $index], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        $packFile = $dir . '/media-' . $key . '.pack';
+        $pending = $packFile . '.pending-' . bin2hex(random_bytes(6));
+        try {
+            $stream = @fopen($pending, 'xb');
+            if ($stream === false) throw new RuntimeException('Could not write the app\'s media');
+            try {
+                $write = function (string $bytes) use ($stream, $pending): void {
+                    if ($this->writeStream($pending, $stream, $bytes) !== strlen($bytes)) throw new RuntimeException('Short write to the app\'s media');
+                };
+                $write(self::MEDIA_PACK_MAGIC . pack('N', strlen($header)) . $header);
+                foreach ($index as $file) {
+                    $bytes = base64_decode($assets[$file['path']], true);
+                    if ($bytes === false || strlen($bytes) !== $file['size']) throw new RuntimeException('The app\'s media could not be read: ' . $file['path']);
+                    $write($bytes);
+                }
+                if (!fflush($stream)) throw new RuntimeException('Could not flush the app\'s media');
+            } finally { fclose($stream); }
+            @chmod($pending, 0600);
+            // Two first openings can build at once (each under the shared lock) and make the same bytes;
+            // where the other's is in place and cannot be replaced (Windows, while it is being sent), it stands.
+            if (!@rename($pending, $packFile) && !(is_file($packFile) && filesize($packFile) === filesize($pending))) throw new RuntimeException('Could not place the app\'s media');
+        } finally { if (is_file($pending)) @unlink($pending); }
+        unset($assets);
+        $summary = ['files' => is_array($project['files'] ?? null) ? $project['files'] : []];
+        foreach (['version', 'home', 'access', 'updatedAt'] as $field) if (array_key_exists($field, $project)) $summary[$field] = $project[$field];
+        $media = ['sha256' => (string) hash_file('sha256', $packFile), 'size' => (int) filesize($packFile), 'count' => count($index)];
+        $this->writeExact($dir . '/client-' . $key . '.json', json_encode(['project' => $summary, 'media' => $media], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES), 0600);
+        // Another project's cache is of no use now: what this folder holds is for project.json as it is.
+        foreach (scandir($dir) ?: [] as $name) {
+            if (preg_match('/^(?:client|media)-([a-f0-9]+)\.(?:json|pack)(?:\.pending-[a-f0-9]+)?$/D', $name, $match) && $match[1] !== $key) @unlink($dir . '/' . $name);
+        }
+    }
+
+    /**
+     * How many bytes a file's base64 decodes to: from its length where it is canonical (no line breaks,
+     * its padding in place), otherwise by decoding it, as validateProject() accepts both (PHP's strict
+     * base64 skips whitespace and needs no padding). Null where it is not base64 at all.
+     */
+    private static function decodedLength(string $encoded): ?int
+    {
+        $length = strlen($encoded);
+        $body = strspn($encoded, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/');
+        $tail = substr($encoded, $body);
+        if ($length % 4 === 0 && ($tail === '' || $tail === '=' || $tail === '==')) return intdiv($length, 4) * 3 - strlen($tail);
+        $bytes = base64_decode($encoded, true);
+        return $bytes === false ? null : strlen($bytes);
     }
 
     /**
@@ -1308,11 +1495,11 @@ class NativeAppService
     public static function validateProject(array $project): array
     {
         $files = $project['files'] ?? null;
-        if (!is_array($files) || count($files) > 200 || !is_string($files['manifest.json'] ?? null)) throw new InvalidArgumentException('Include the app manifest and at most 200 source files');
+        if (!is_array($files) || count($files) > self::MAX_SOURCE_FILES || !is_string($files['manifest.json'] ?? null)) throw new InvalidArgumentException('Include the app manifest and at most ' . self::MAX_SOURCE_FILES . ' source files');
         $bytes = 0;
         foreach ($files as $path => $source) {
             // `.xdb` is an app's seed data (its local collections), JSON text the app is shipped with.
-            if (!is_string($path) || !preg_match('~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|py|json|sql|xdb)$~D', $path) || str_contains($path, '..') || !is_string($source) || strlen($source) > 1000000) throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./-]{1,200}$~', $path) ? "Invalid app source file: {$path}" : 'Invalid app source file');
+            if (!is_string($path) || !preg_match('~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|py|json|sql|xdb)$~D', $path) || str_contains($path, '..') || !is_string($source) || strlen($source) > self::MAX_SOURCE_FILE_BYTES) throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./-]{1,200}$~', $path) ? "Invalid app source file: {$path}" : 'Invalid app source file');
             // `.py` is CLIENT logic written in Python, which runs in the member's frame on the ZIPP
             // web-python engine. The private tree is the native backend: it is executed by the Node
             // runner as JavaScript, which would read a Python file as a syntax error at best, and
@@ -1322,18 +1509,18 @@ class NativeAppService
             $bytes += strlen($source);
         }
         $assets = $project['assets'] ?? [];
-        if (!is_array($assets) || count($assets) > 100) throw new InvalidArgumentException('Include at most 100 media files');
+        if (!is_array($assets) || count($assets) > self::MAX_MEDIA_FILES) throw new InvalidArgumentException('Include at most ' . self::MAX_MEDIA_FILES . ' media files');
         $decoded = [];
         foreach ($assets as $path => $encoded) {
             // The media the SoftN frame serves an app's page (from Softn v0.0.28): pictures, sound,
             // video, fonts, 3D models, and WGSL, text and Markdown files. Nothing that runs.
             if (!is_string($path) || !preg_match(self::MEDIA_PATH, $path) || str_contains($path, '..') || !is_string($encoded)) throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./-]{1,200}$~', $path) ? "Invalid media file: {$path}" : 'Invalid media file');
             $value = base64_decode($encoded, true);
-            if ($value === false || strlen($value) > 8 * 1024 * 1024) throw new InvalidArgumentException('Invalid media data');
+            if ($value === false || strlen($value) > self::MAX_MEDIA_FILE_BYTES) throw new InvalidArgumentException('Invalid media data');
             $bytes += strlen($value);
             $decoded[$path] = $value;
         }
-        if ($bytes > 16 * 1024 * 1024) throw new InvalidArgumentException('Native project exceeds 16 MB');
+        if ($bytes > self::MAX_PROJECT_BYTES) throw new InvalidArgumentException('Native project exceeds ' . intdiv(self::MAX_PROJECT_BYTES, 1024 * 1024) . ' MB');
         $manifest = json_decode($files['manifest.json'], true, 64, JSON_THROW_ON_ERROR);
         if (!is_array($manifest) || (isset($manifest['id']) && (!is_string($manifest['id']) || !preg_match('/^[a-zA-Z0-9._-]{1,120}$/D', $manifest['id']))) || !is_string($manifest['main'] ?? null) || !isset($files[$manifest['main']]) || !str_ends_with($manifest['main'], '.ui')) throw new InvalidArgumentException('Invalid native app manifest');
         if (!array_key_exists('server', $manifest)) {

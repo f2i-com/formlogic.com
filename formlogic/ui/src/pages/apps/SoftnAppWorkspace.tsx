@@ -4,7 +4,7 @@
 // Screens step, a collapsed "Hosting & app tools" section and the native hosting dialog.
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { Check, Code2, Copy, Database, Download, ExternalLink, Globe, Lock, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wand2 } from 'lucide-react';
+import { Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, Lock, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wand2 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Textarea } from '../../components/ui/Textarea';
@@ -154,6 +154,20 @@ function Workspace({ app }: { app: App }) {
         toast.success(next ? 'Saved' : 'Nothing is asked before it opens', next ? 'Members are asked before it opens.' : undefined);
       }
     } finally { setGateBusy(false); }
+  };
+
+  // Whether the app may use files on the person's device, the owner's choice like what it requires.
+  const [filesBusy, setFilesBusy] = useState(false);
+  const changeFiles = async (next: 'ask' | 'allow' | undefined) => {
+    setFilesBusy(true);
+    try {
+      await fetchApps();
+      const settings = { ...(useAppStore.getState().apps.find(candidate => candidate.id === app.id)?.settings ?? app.settings) };
+      if (next) settings.softnFiles = next; else delete settings.softnFiles;
+      if (await updateApp(app.id, { settings })) {
+        toast.success('Saved', next === 'ask' ? 'Each person is asked before the app opens.' : next === 'allow' ? 'The app may use files without asking.' : 'The app cannot open or save files.');
+      }
+    } finally { setFilesBusy(false); }
   };
 
   const changeSetting = async (next: NativeProject, notice: string) => {
@@ -316,6 +330,16 @@ function Workspace({ app }: { app: App }) {
           {app.ownerId === userId && <Panel title="Before it opens" icon={<Lock className="h-4 w-4" />}>
             <RequirementsSetting value={app.settings?.requires} disabled={gateBusy || readOnly} anonymousAccess={project.access === 'application'}
               onChange={next => void changeRequirements(next)} />
+          </Panel>}
+          {app.ownerId === userId && <Panel title="Files on this device" icon={<FolderOpen className="h-4 w-4" />}>
+            <fieldset disabled={filesBusy || readOnly} className="space-y-2">
+              <legend className="mb-2 text-xs leading-5 text-slate-500 dark:text-slate-400">Whether the app may open the files a person chooses for it and save files they ask for, such as a saved game. It never sees anything else on their device.</legend>
+              {([[undefined, 'Off', 'The app cannot open or save files.'], ['ask', 'Ask each person', 'FormLogic asks each person before the app opens; they can say not now.'], ['allow', 'Allowed without asking', 'For an app you know: nobody is asked.']] as const).map(([value, label, hint]) =>
+                <label key={label} className={cn('flex cursor-pointer gap-3 rounded-xl border p-3', app.settings?.softnFiles === value ? 'border-indigo-400 bg-indigo-50/60 dark:border-indigo-500/60 dark:bg-indigo-500/10' : 'border-slate-200 dark:border-slate-700')}>
+                  <input type="radio" name="softn-files" className="mt-1" checked={app.settings?.softnFiles === value} onChange={() => void changeFiles(value)} />
+                  <span><span className="block text-sm font-medium text-slate-900 dark:text-white">{label}</span><span className="mt-0.5 block text-xs leading-5 text-slate-500 dark:text-slate-400">{hint}</span></span>
+                </label>)}
+            </fieldset>
           </Panel>}
           <Panel title="Address" icon={<Globe className="h-4 w-4" />}>
             <Switch label="Open this app at its address" description={`Visitors to /app/${app.slug} get this app. Off: it opens at /app/${app.slug}/native.`}

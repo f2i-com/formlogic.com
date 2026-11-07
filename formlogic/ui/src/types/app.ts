@@ -92,6 +92,9 @@ export interface AppSettings {
    *  without a live one is kept out until they get it on the main site; the owner never is.
    *  Absent: none. */
   requires?: AppRequirement[];
+  /** A hosted SoftN app may open the files a person picks and save files they ask for: 'ask' asks
+   *  each person first, 'allow' asks nobody (the owner knows the app). Absent: it may not. */
+  softnFiles?: 'ask' | 'allow';
 }
 
 /** How strongly a method establishes a pass's value, weakest first. */

@@ -41,107 +41,113 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); useAuthStore.setState({ user: null }); });
 
+// A refusal, whether the handle refuses at once or its read or write rejects.
+const refused = (run: () => unknown) => expect((async () => run())()).rejects.toThrow();
+
 describe('native member state at actual auth-store boundaries', () => {
   it('keeps a member\'s data through a session ending, for them alone', async () => {
-    save(member()); save(app(), 'independent');
+    await save(member()); await save(app(), 'independent');
     const old = member();
     const pending = teardownUserSession('a', 'session-expired', false);
-    expect(() => old.read()).toThrow();
+    await refused(() => old.read());
     await pending;
     useAuthStore.setState({ user: user('b') });
-    expect(member('b').read()).toEqual({});
+    expect(await member('b').read()).toEqual({});
     useAuthStore.setState({ user: user('a') });
-    expect(member().read()).toEqual({ session: 'synthetic-session' });
+    expect(await member().read()).toEqual({ session: 'synthetic-session' });
   });
   it('keeps it when the server says the session is over at startup', async () => {
-    save(member());
+    await save(member());
     useAuthStore.setState({ isInitialized: false });
     calls.getMe.mockResolvedValue({ error: 'Invalid or expired token', status: 401 });
     await useAuthStore.getState().initialize();
     expect(useAuthStore.getState().user).toBeNull();
     useAuthStore.setState({ user: user('a') });
-    expect(member().read()).toEqual({ session: 'synthetic-session' });
+    expect(await member().read()).toEqual({ session: 'synthetic-session' });
   });
   it('keeps it when another tab finds the session over', async () => {
-    save(member());
+    await save(member());
     useAuthStore.setState({ user: null });
     await handleSessionBroadcast({ type: 'fl-teardown', reason: 'session-expired', userId: 'a' });
     useAuthStore.setState({ user: user('a') });
-    expect(member().read()).toEqual({ session: 'synthetic-session' });
+    expect(await member().read()).toEqual({ session: 'synthetic-session' });
   });
   it.each(['logout', 'account-deleted', 'remote-teardown'] as const)('purges the leaving member synchronously on %s while preserving application mode', async reason => {
-    save(member()); save(app(), 'independent');
+    await save(member()); await save(app(), 'independent');
     const old = member(); const generation = currentSessionGeneration();
     const pending = teardownUserSession('a', reason, false);
+    // Before anything awaits: the old handle is fenced and the member's copy already gone.
     expect(isSessionGenerationCurrent(generation)).toBe(false);
-    expect(() => old.read()).toThrow();
-    expect(app().read()).toEqual({ session: 'independent' });
-    expect(member().read()).toEqual({});
+    expect(Object.keys(localStorage).filter(key => key.startsWith('formlogic:native-member-storage:v1:'))).toEqual([]);
+    await refused(() => old.read());
+    expect(await app().read()).toEqual({ session: 'independent' });
+    expect(await member().read()).toEqual({});
     await pending;
   });
   it('logout fences callbacks and removes the private map before awaiting the API', async () => {
     const endpoint = deferred<Record<string, never>>(); calls.logout.mockReturnValue(endpoint.promise);
-    save(member()); const old = member(); const generation = currentSessionGeneration();
+    await save(member()); const old = member(); const generation = currentSessionGeneration();
     const pending = useAuthStore.getState().logout();
     expect(useAuthStore.getState().user).toBeNull();
     expect(isSessionGenerationCurrent(generation)).toBe(false);
-    expect(() => save(old, 'late')).toThrow();
-    useAuthStore.setState({ user: user('b') }); save(member('b'), 'b');
+    await refused(() => save(old, 'late'));
+    useAuthStore.setState({ user: user('b') }); await save(member('b'), 'b');
     endpoint.resolve({}); await pending;
     expect(useAuthStore.getState().user?.id).toBe('b');
-    expect(member('b').read()).toEqual({ session: 'b' });
+    expect(await member('b').read()).toEqual({ session: 'b' });
   });
   it('delayed A teardown cannot clear B or invalidate B callbacks', async () => {
-    save(member()); useAuthStore.setState({ user: user('b') }); save(member('b'), 'b');
+    await save(member()); useAuthStore.setState({ user: user('b') }); await save(member('b'), 'b');
     const generation = currentSessionGeneration(); vi.clearAllMocks();
     await teardownUserSession('a', 'logout', false);
     expect(useAuthStore.getState().user?.id).toBe('b');
     expect(isSessionGenerationCurrent(generation)).toBe(true);
     expect(calls.forms).not.toHaveBeenCalled(); expect(calls.apps).not.toHaveBeenCalled();
-    expect(member('b').read()).toEqual({ session: 'b' });
+    expect(await member('b').read()).toEqual({ session: 'b' });
   });
   it('A teardown already in flight cannot clear B after its first asynchronous boundary', async () => {
-    save(member()); const pending = teardownUserSession('a', 'logout', false);
-    useAuthStore.setState({ user: user('b') }); save(member('b'), 'b'); vi.clearAllMocks();
-    await pending;
+    await save(member()); const pending = teardownUserSession('a', 'logout', false);
+    useAuthStore.setState({ user: user('b') }); const saved = save(member('b'), 'b'); vi.clearAllMocks();
+    await pending; await saved;
     expect(useAuthStore.getState().user?.id).toBe('b');
     expect(calls.forms).not.toHaveBeenCalled(); expect(calls.apps).not.toHaveBeenCalled();
     expect(JSON.parse(localStorage.getItem('formlogic-auth')!).state.user.id).toBe('b');
+    expect(await member('b').read()).toEqual({ session: 'b' });
   });
   it('a stale A broadcast leaves active B and B generation unchanged', async () => {
-    useAuthStore.setState({ user: user('b') }); save(member('b'), 'b');
+    useAuthStore.setState({ user: user('b') }); await save(member('b'), 'b');
     const generation = currentSessionGeneration();
     await handleSessionBroadcast({ type: 'fl-teardown', reason: 'logout', userId: 'a' });
     expect(useAuthStore.getState().user?.id).toBe('b'); expect(isSessionGenerationCurrent(generation)).toBe(true);
-    expect(member('b').read()).toEqual({ session: 'b' });
+    expect(await member('b').read()).toEqual({ session: 'b' });
   });
   it('a same-member expiry broadcast keeps private data out of reach until they return', async () => {
-    save(member());
+    await save(member());
     await handleSessionBroadcast({ type: 'fl-teardown', reason: 'session-expired', userId: 'a' });
     expect(useAuthStore.getState().user).toBeNull();
-    expect(() => member().read()).toThrow();
-    useAuthStore.setState({ user: user('a') }); expect(member().read()).toEqual({ session: 'synthetic-session' });
+    await refused(() => member().read());
+    useAuthStore.setState({ user: user('a') }); expect(await member().read()).toEqual({ session: 'synthetic-session' });
   });
   it.each(['logout', 'account-deleted'])('a same-member %s broadcast removes private data but preserves application data', async reason => {
-    save(member()); save(app(), 'independent');
+    await save(member()); await save(app(), 'independent');
     await handleSessionBroadcast({ type: 'fl-teardown', reason, userId: 'a' });
-    expect(useAuthStore.getState().user).toBeNull(); expect(app().read()).toEqual({ session: 'independent' });
-    useAuthStore.setState({ user: user('a') }); expect(member().read()).toEqual({});
+    expect(useAuthStore.getState().user).toBeNull(); expect(await app().read()).toEqual({ session: 'independent' });
+    useAuthStore.setState({ user: user('a') }); expect(await member().read()).toEqual({});
   });
   it('a storage removal error cannot let A callbacks recreate data for B', async () => {
-    const old = member(); save(old);
+    const old = member(); await save(old);
     vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('blocked'); });
     await useAuthStore.getState().logout();
     useAuthStore.setState({ user: user('b') });
-    expect(() => save(old, 'late')).toThrow(); expect(member('b').read()).toEqual({});
+    await refused(() => save(old, 'late')); expect(await member('b').read()).toEqual({});
   });
-  it('a direct account transition fences A, whose data waits for them, and keeps same-user refresh state', () => {
-    save(member()); const old = member();
+  it('a direct account transition fences A, whose data waits for them, and keeps same-user refresh state', async () => {
+    await save(member()); const old = member();
     useAuthStore.setState({ user: { ...user('a'), name: 'Updated name' } });
-    expect(member().read()).toEqual({ session: 'synthetic-session' });
-    useAuthStore.setState({ user: user('b') }); expect(() => old.read()).toThrow();
-    expect(member('b').read()).toEqual({});
-    useAuthStore.setState({ user: user('a') }); expect(member().read()).toEqual({ session: 'synthetic-session' });
+    expect(await member().read()).toEqual({ session: 'synthetic-session' });
+    useAuthStore.setState({ user: user('b') }); await refused(() => old.read());
+    expect(await member('b').read()).toEqual({});
+    useAuthStore.setState({ user: user('a') }); expect(await member().read()).toEqual({ session: 'synthetic-session' });
   });
   it('an old startup reply cannot replace the newer current account', async () => {
     const request = deferred<unknown>(); calls.getMe.mockReturnValue(request.promise);

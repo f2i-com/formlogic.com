@@ -22,8 +22,21 @@ async function csrf(context: BrowserContext) {
 
 const signIn = (context: BrowserContext, email: string) => context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email, password: PASSWORD } });
 
-/** The app's map as it sits in this browser. */
-const storedKeys = (page: Page, userId: string, appId: string) => page.evaluate(key => Object.keys(JSON.parse(localStorage.getItem(key) ?? '{}')), `formlogic:native-member-storage:v1:${userId}:${appId}`);
+/** The app's map as it sits in this browser: in IndexedDB, as FormLogic keeps it from v0.1.24. */
+const mapKey = (userId: string, appId: string) => `formlogic:native-member-storage:v1:${userId}:${appId}`;
+const readMap = (page: Page, key: string) => page.evaluate(async name => {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => { const open = indexedDB.open('formlogic-native-storage', 1); open.onsuccess = () => resolve(open.result); open.onerror = () => reject(open.error); });
+  try {
+    return await new Promise<string | null>((resolve, reject) => { const got = db.transaction('maps').objectStore('maps').get(name); got.onsuccess = () => resolve(typeof got.result === 'string' ? got.result : null); got.onerror = () => reject(got.error); });
+  } finally { db.close(); }
+}, key);
+const writeMap = (page: Page, key: string, raw: string) => page.evaluate(async ([name, value]) => {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => { const open = indexedDB.open('formlogic-native-storage', 1); open.onsuccess = () => resolve(open.result); open.onerror = () => reject(open.error); });
+  try {
+    await new Promise<void>((resolve, reject) => { const tx = db.transaction('maps', 'readwrite'); tx.objectStore('maps').put(value, name); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); });
+  } finally { db.close(); }
+}, [key, raw] as const);
+const storedKeys = async (page: Page, userId: string, appId: string) => Object.keys(JSON.parse((await readMap(page, mapKey(userId, appId))) ?? '{}'));
 
 test('what a member saves in the browser survives a session ending, a rename and a second tab', async ({ page, context }) => {
   test.setTimeout(240_000);
@@ -63,11 +76,8 @@ test('what a member saves in the browser survives a session ending, a rename and
   await count(page, 1);
 
   // Records saved before keys were named after the app, under the slug it had then.
-  await page.evaluate(([key, id, oldSlug]) => {
-    const map = JSON.parse(localStorage.getItem(key)!);
-    const old = Object.fromEntries(Object.entries(map).map(([name, value]) => [name.replace(`native-${id}`, `native-${oldSlug}`), value]));
-    localStorage.setItem(key, JSON.stringify(old));
-  }, [`formlogic:native-member-storage:v1:${userId}:${created.id}`, created.id, slug]);
+  const saved = JSON.parse((await readMap(page, mapKey(userId, created.id)))!) as Record<string, string>;
+  await writeMap(page, mapKey(userId, created.id), JSON.stringify(Object.fromEntries(Object.entries(saved).map(([name, value]) => [name.replace(`native-${created.id}`, `native-${slug}`), value]))));
   await page.reload();
   await count(page, 1);
   expect((await storedKeys(page, userId, created.id)).filter(key => key.includes(slug))).toEqual([]);

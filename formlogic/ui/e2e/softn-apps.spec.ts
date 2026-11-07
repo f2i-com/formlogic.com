@@ -280,9 +280,10 @@ test.describe('hosted SoftN apps', () => {
     await expect(preview(page).getByText('Notes: 41', { exact: true })).toBeVisible({ timeout: 60000 });
   });
 
-  test('uploaded with a seed larger than browser storage holds: that seed is skipped and the app opens with the rest', async ({ page }) => {
+  test('uploaded with a seed larger than localStorage held: the browser keeps all of it, and the rest', async ({ page }) => {
     test.setTimeout(180000);
-    // About 44,000 characters in one collection: past the 30,000 a stored value may have.
+    // About 44,000 characters in one collection: past the 30,000 a value could hold in localStorage,
+    // where an app's data was kept before v0.1.24; IndexedDB keeps up to 4 MB a collection.
     const big = Array.from({ length: 40 }, (_, i) => ({ id: `long-${i}`, body: 'x'.repeat(1100) }));
     const files: Record<string, string> = {
       'manifest.json': JSON.stringify({ name: `Big seed ${Date.now()}`, version: '1.0.0', main: 'ui/main.ui', files: { xdb: ['xdb/long.xdb', 'xdb/tags.xdb'] } }),
@@ -297,7 +298,7 @@ test.describe('hosted SoftN apps', () => {
     await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
     await workspaceAppId(page);
     await expect(preview(page).getByText('Tags: 2', { exact: true })).toBeVisible({ timeout: 60000 });
-    await expect(preview(page).getByText('Long: 0', { exact: true })).toBeVisible();
+    await expect(preview(page).getByText('Long: 40', { exact: true })).toBeVisible();
     // The app's own saves still work, and nothing says the app could not load or save.
     await preview(page).getByRole('button', { name: 'Add a tag', exact: true }).click();
     await expect(preview(page).getByText('Tags: 3', { exact: true })).toBeVisible();

@@ -57,7 +57,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
     lock.current = true; setBusy(true); setError('');
     try {
       const result = await request('export');
-      if (!(result instanceof Uint8Array) || result.byteLength > 24 * 1024 * 1024) throw new Error('The editor returned an invalid project.');
+      if (!(result instanceof Uint8Array) || result.byteLength > 80 * 1024 * 1024) throw new Error('The editor returned an invalid project.');
       await onApply(result);
       acknowledgeSave(saveId, true);
       onClose();

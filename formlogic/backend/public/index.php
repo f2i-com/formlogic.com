@@ -1333,8 +1333,9 @@ $multipart = ['multipart/form-data'];
 $app->add(new BodySizeLimitMiddleware(
     2 * 1024 * 1024,
     [
-        // Native projects include base64 media; the service separately caps decoded content at 16 MB.
-        ['path' => '#^/api/apps/[a-zA-Z0-9_-]+/native$#', 'method' => 'PUT', 'maxBytes' => 24 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
+        // Native projects include base64 media; the service separately caps decoded content at
+        // NativeAppService::MAX_PROJECT_BYTES (64 MB), which base64 makes about 86 MB of JSON.
+        ['path' => '#^/api/apps/[a-zA-Z0-9_-]+/native$#', 'method' => 'PUT', 'maxBytes' => 96 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
         ['path' => '#^/api/account/backup/import$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/v1/data-node/restores$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => ['application/zip'], 'auth' => false],
         ['path' => '#^/api/admin/upgrade/upload$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
@@ -1356,6 +1357,25 @@ $app->add(new BodySizeLimitMiddleware(
     $cookieName
 ));
 
+// A native project's upload holds several copies of itself while it is read, checked and written
+// (a game's art and sound run to tens of megabytes). PHP is asked for room before the body is read
+// (NativeAppService::raiseMemoryFor), and an upload the host will not make room for is refused here,
+// saying what to change, rather than dying half-way through. Added after the size limit, so it runs first.
+$app->add(function ($request, $handler) {
+    if (strtoupper($request->getMethod()) === 'PUT' && preg_match('#^/api/apps/[a-zA-Z0-9_-]+/native$#', $request->getUri()->getPath())) {
+        $length = (int) $request->getHeaderLine('Content-Length');
+        // A body over the route's limit is the size limit's to refuse, with its own message. One sent
+        // in chunks says no length: room is asked for the largest the route takes, and the size limit counts it.
+        if ($length <= 0 && $request->getHeaderLine('Transfer-Encoding') !== '') \FormLogic\Services\NativeAppService::raiseMemoryFor(96 * 1024 * 1024);
+        if ($length > 8 * 1024 * 1024 && $length <= 96 * 1024 * 1024 && !\FormLogic\Services\NativeAppService::raiseMemoryFor($length)) {
+            $needed = (int) ceil((96 * 1024 * 1024 + 4 * $length) / 1048576);
+            $response = new \Slim\Psr7\Response(413);
+            $response->getBody()->write(json_encode(['error' => true, 'code' => 'memory_limit', 'message' => sprintf('This server lets PHP use %s of memory, and an app this size needs about %d MB. Raise memory_limit in PHP\'s settings, or make the app smaller.', ini_get('memory_limit'), $needed)]));
+            return $response->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
+        }
+    }
+    return $handler->handle($request);
+});
 // Public MCP-OAuth endpoints (RFC 9728/8414 discovery + token + register) must be readable from ANY
 // origin (Access-Control-Allow-Origin: *) — browser-based MCP clients fetch them cross-origin and
 // they carry no cookie auth (bearer/PKCE only, so a wildcard is safe). Added AFTER the global
@@ -3355,6 +3375,10 @@ $app->get('/api/app/{slug}/entry', function ($request, $response) use ($containe
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->entry($request, $response, $getArgs($request));
 })->add($appAccessGate)->add($nativeLimiter)->add($authOptional);
 $app->get('/api/app/{slug}/native', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->runtime($request, $response, $getArgs($request));
+})->add($appAccessGate)->add($nativeLimiter)->add($authOptional);
+// The app's media as one pack, admitted as the project it belongs to is (NativeAppController::mediaPack).
+$app->get('/api/app/{slug}/native/media', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->runtime($request, $response, $getArgs($request));
 })->add($appAccessGate)->add($nativeLimiter)->add($authOptional);
 $app->post('/api/app/{slug}/native/request', function ($request, $response) use ($container, $getArgs) {

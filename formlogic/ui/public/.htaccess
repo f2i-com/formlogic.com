@@ -61,8 +61,10 @@ Options -Indexes
   # stay opaque however they are reached, not only inside FormLogic's own frame. Framed by some
   # other page on a server missing the rules above, they would otherwise run at this origin.
   # After the policy above, which this replaces. The editors are same-origin and stay out of it.
+  # allow-downloads: a document's sandbox and its frame's both apply, so FormLogic's frame decides
+  # which app may save a file (only one its owner, and if asked its visitor, let open files).
   SetEnvIf Request_URI "^/hosted-runtime/(index\.html|host\.html)?$" IS_APP_RUNTIME
-  Header always set Content-Security-Policy "sandbox allow-scripts; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" env=IS_APP_RUNTIME
+  Header always set Content-Security-Policy "sandbox allow-scripts allow-downloads; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" env=IS_APP_RUNTIME
 </IfModule>
 
 # ---- Never serve secrets or server files over HTTP -------------------------

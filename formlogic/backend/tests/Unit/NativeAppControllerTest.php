@@ -52,6 +52,7 @@ final class NativeAppControllerTest extends TestCase
             ]];
             $native->method('get')->willReturn($project);
             $native->method('project')->willReturn($project);
+            $native->method('runtimeProject')->willReturn(['project' => $project, 'media' => ['file' => '', 'sha256' => '', 'size' => 0, 'count' => 0]]);
         }
         return [new NativeAppController($apps, $users, $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class), $engines ?? $this->engines()), $users, $native];
     }
@@ -160,6 +161,7 @@ final class NativeAppControllerTest extends TestCase
         $project = ['access' => $access, 'version' => 1, 'assets' => [], 'files' => $files + ['manifest.json' => '{"id":"notes","server":{"entry":"server/main.logic"}}']];
         $native->method('get')->willReturn($project);
         $native->method('project')->willReturn($project);
+        $native->method('runtimeProject')->willReturn(['project' => $project, 'media' => ['file' => '', 'sha256' => '', 'size' => 0, 'count' => 0]]);
         $native->method('request')->willReturn(['status' => 200, 'body' => []]);
         // The REAL rule over this fixture's files, not a canned answer: the mock stands in for the
         // store, never for the derivation. NativeAppServiceTest pins the same two helpers against
@@ -323,6 +325,7 @@ final class NativeAppControllerTest extends TestCase
     {
         [$controller, , $native] = $this->fixture('application');
         $native->expects($this->never())->method('project');
+        $native->expects($this->never())->method('runtimeProject');
         $native->expects($this->never())->method('request');
         foreach (['GET', 'POST'] as $method) {
             $request = $this->request($method, true)->withParsedBody(['method' => 'GET', 'path' => '/api/notes']);
@@ -371,6 +374,7 @@ final class NativeAppControllerTest extends TestCase
         $apps->method('isRuntimeVisible')->willReturn(true);
         $native = $this->createMock(NativeAppService::class);
         $native->method('project')->willThrowException(new \RuntimeException($recovery));
+        $native->method('runtimeProject')->willThrowException(new \RuntimeException($recovery));
         $native->method('install')->willThrowException(new \RuntimeException('Restore the app database before installing another update'));
         $controller = new NativeAppController($apps, $this->createMock(AppUserService::class), $native, $this->createMock(PlanService::class), $this->createMock(FlowService::class), $this->engines());
 
@@ -529,6 +533,7 @@ final class NativeAppControllerTest extends TestCase
         $apps->method('isRuntimeVisible')->willReturn(true);
         $native = $this->createMock(NativeAppService::class);
         $native->method('project')->willReturn(['access' => 'application']);
+        $native->method('runtimeProject')->willReturn(['project' => ['access' => 'application'], 'media' => ['file' => '', 'sha256' => '', 'size' => 0, 'count' => 0]]);
         $native->method('clientLanguages')->willReturn(['javascript']);
         $engines = $this->createMock(RuntimeEngineService::class);
         $engines->method('effective')->willThrowException(new \PDOException('SQLSTATE[HY000] [2002] Connection refused'));

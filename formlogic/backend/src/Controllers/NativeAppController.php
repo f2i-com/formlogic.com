@@ -121,9 +121,38 @@ class NativeAppController
         $app = $this->apps->getAppBySlug((string) $args['slug']);
         if (!$app || !$this->apps->isRuntimeVisible($app, $request->getAttribute('userId'))) return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), ['home' => false]);
         return $this->respond($response, function () use ($app) {
-            $project = $this->native->get($app['id']);
+            $project = $this->native->summary($app['id']);
             return ['home' => (bool) ($project['home'] ?? false), 'access' => $project['access'] ?? 'members', 'native' => $project !== null];
         });
+    }
+
+    /**
+     * The media pack, streamed from disk. Its address carries its SHA-256 (`?h=`), so the browser
+     * keeps what it fetched for as long as the app is unchanged, privately: a members-only or gated
+     * app's pictures must never sit in a shared cache, Cloudflare's included. An address naming
+     * another version is answered with this one and told to check again each time.
+     *
+     * A members-only app's media, or one behind a pass, are checked with the server each time they are used (`no-cache`,
+     * answered 304 while unchanged), so a browser's copy is only ever read by someone still admitted.
+     *
+     * @param array{file?: string, sha256?: string, size?: int, stream?: resource} $media opened under the app's lock (NativeAppService::runtimeProject)
+     */
+    private function mediaPack(Request $request, Response $response, array $media, bool $revalidate): Response
+    {
+        $stream = $media['stream'] ?? false;
+        $hash = (string) ($media['sha256'] ?? '');
+        if (!is_resource($stream) || $hash === '') { if (is_resource($stream)) fclose($stream); throw new \RuntimeException('The app\'s media could not be read', 503); }
+        $etag = '"' . $hash . '"';
+        $current = hash_equals($hash, (string) ($request->getQueryParams()['h'] ?? ''));
+        $response = $response
+            ->withHeader('ETag', $etag)
+            ->withHeader('Cache-Control', $current && !$revalidate ? 'private, max-age=31536000, immutable' : 'private, no-cache')
+            ->withHeader('X-Content-Type-Options', 'nosniff');
+        if (trim($request->getHeaderLine('If-None-Match')) === $etag) { fclose($stream); return $response->withStatus(304); }
+        return $response
+            ->withHeader('Content-Type', 'application/octet-stream')
+            ->withHeader('Content-Length', (string) (fstat($stream)['size'] ?? 0))
+            ->withBody(new \Slim\Psr7\Stream($stream));
     }
 
     public function runtime(Request $request, Response $response, array $args): Response
@@ -136,9 +165,16 @@ class NativeAppController
         // A plugin's own app (PluginService): any signed-in person on this site runs its pages, as
         // a member with no membership row, while the plugin is enabled. Nobody owns it.
         $plugin = $this->plugins?->forApp($app);
-        return $this->respond($response, function () use ($request, $response, $app, $user, $owner, $plugin) {
+        // The app's media, as one pack (NativeAppService::MEDIA_PACK_MAGIC), admitted exactly as the
+        // project it belongs to is; and the project without its media, for a page that fetches the
+        // pack (`?media=pack`). A page from before the pack is sent the media in the project, as always.
+        $mediaRoute = $request->getMethod() === 'GET' && str_ends_with($request->getUri()->getPath(), '/native/media');
+        $packed = $mediaRoute || ($request->getMethod() === 'GET' && ($request->getQueryParams()['media'] ?? '') === 'pack');
+        return $this->respond($response, function () use ($request, $response, $app, $user, $owner, $plugin, $mediaRoute, $packed) {
             // Access is decided against the settled project (FL-S04), never an update's leftover project.json.
-            $project = $this->native->project($app['id']);
+            // Read without its media where nothing here sends them: a game's are tens of megabytes.
+            $runtime = $packed ? $this->native->runtimeProject($app['id']) : null;
+            $project = $packed ? ($runtime['project'] ?? null) : $this->native->project($app['id']);
             if (!$project) throw new \RuntimeException('Native app not found', 404);
             if ($plugin !== null) {
                 if (!$plugin['enabled']) throw new \RuntimeException('This plugin is turned off on this site.', 403);
@@ -155,6 +191,19 @@ class NativeAppController
             // respond() passes through, so it keeps the engine_changed code the parent remounts on.
             if ($stale = $this->refuseStaleEngine($request, $response, $app['id'])) return $stale;
             $identity = $project['access'] === 'members' ? ['formlogic' => ['appId' => $app['id'], 'userId' => $user, 'roleId' => $owner ? 'owner' : ($membership['roleId'] ?? null)]] : [];
+            if ($mediaRoute) {
+                // Opened only now, admitted, and under the app's lock: an update cannot replace the pack while it
+                // is sent, and one that came between the two reads is refused rather than sent unchecked.
+                $opened = $this->native->runtimeProject($app['id'], true);
+                $stream = $opened['media']['stream'] ?? null;
+                if (($opened['media']['sha256'] ?? null) !== ($runtime['media']['sha256'] ?? null) || ($opened['project']['access'] ?? null) !== ($runtime['project']['access'] ?? null)) {
+                    if (is_resource($stream)) fclose($stream);
+                    throw new \RuntimeException('The app was updated while it was opening. Reload and try again.', 409);
+                }
+                // Members-only, or behind a pass: checked with the server each time, never read from the browser's copy unasked.
+                $requires = is_array($app['settings'] ?? null) && !empty($app['settings']['requires']);
+                return $this->mediaPack($request, $response, $opened['media'], $project['access'] === 'members' || $requires || $plugin !== null);
+            }
             if ($request->getMethod() === 'GET') {
                 $client = NativeAppService::clientFiles($project);
                 // What this app's logic is written in, from these file names — the ones about to be
@@ -179,7 +228,17 @@ class NativeAppController
                 // roles and slugs can change without changing the app/account's saved state.
                 $storageScope = ['access' => $project['access'], 'appId' => $app['id']];
                 if ($project['access'] === 'members') $storageScope['userId'] = $user;
-                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client, 'assets' => $project['assets'], 'access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope]]
+                $media = $runtime['media'] ?? null;
+                $served = $media !== null
+                    // The pack's address names its content, so the browser keeps it until the app changes.
+                    // `url` is under the API's own base, as every route the page calls is named.
+                    ? ['assets' => (object) [], 'media' => ['url' => '/app/' . rawurlencode((string) $app['slug']) . '/native/media?h=' . $media['sha256'], 'sha256' => $media['sha256'], 'size' => $media['size'], 'count' => $media['count']]]
+                    : ['assets' => $project['assets']];
+                // Whether the app may open and save the person's files, as its owner chose (AppService's
+                // settings.softnFiles): 'ask' has the page ask each person first. A plugin's page never may.
+                $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+                $files = $plugin === null && in_array($settings['softnFiles'] ?? null, ['ask', 'allow'], true) ? ['files' => $settings['softnFiles']] : [];
+                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client] + $served + ['access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope] + $files]
                     + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();

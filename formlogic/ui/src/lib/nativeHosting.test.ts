@@ -68,8 +68,11 @@ describe('importNativeProject', () => {
     await expect(importNativeProject(softn({ ...client, 'server/main.logic': 'function list() {}' }))).rejects.toThrow('server/main.logic is backend code, but manifest.json has no server block');
     // Sizes and counts.
     await expect(importNativeProject(softn({ ...client, 'logic/big.logic': 'x'.repeat(1_000_001) }))).rejects.toThrow('logic/big.logic is larger than this host keeps (1 MB per source file)');
-    const pictures = Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`assets/p${i}.png`, png]));
-    await expect(importNativeProject(softn({ ...client, ...pictures }))).rejects.toThrow('This app has 101 media files; this host keeps up to 100.');
+    const pictures = Object.fromEntries(Array.from({ length: 1001 }, (_, i) => [`assets/p${i}.png`, png]));
+    await expect(importNativeProject(softn({ ...client, ...pictures }))).rejects.toThrow('This app has 1001 media files; this host keeps up to 1000.');
+    // A game's hundreds of pictures and sounds are kept.
+    const art = Object.fromEntries(Array.from({ length: 334 }, (_, i) => [`assets/art/p${i}.png`, png]));
+    await expect(importNativeProject(softn({ ...client, ...art }))).resolves.toMatchObject({ files: expect.any(Object) });
     // Names and the id.
     await expect(importNativeProject(softn({ ...client, 'ui/my page.ui': '<Text>Hi</Text>' }))).rejects.toThrow('ui/my page.ui: this host keeps file names made of letters');
     await expect(importNativeProject(softn({ ...client, 'manifest.json': JSON.stringify({ id: 'my app!', main: 'ui/main.ui' }) }))).rejects.toThrow('manifest.json\'s id can only be');

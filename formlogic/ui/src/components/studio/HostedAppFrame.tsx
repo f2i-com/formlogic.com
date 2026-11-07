@@ -5,7 +5,7 @@ import { NATIVE_PROTOCOL } from "../../lib/softn/protocol";
 import { engineIdentity, engineNeedsBytes, getEngineBytes } from "../../lib/formlogic/zipp-bytes";
 import { announcedIdentity, chooseFrameEngine, frameSource, sameIdentity } from "../../lib/formlogic/frameEngine";
 
-import { nativeAppStorage, nativeFrameAppId, NativeStorageError, isNativeStorageScope, type NativeStorageScope } from "../../lib/nativeAppStorage";
+import { nativeAppStorage, nativeFrameAppId, NativeStorageError, isNativeStorageScope, onNativeStorageChange, SMALL_STORAGE_LIMITS, type NativeStorageLimits, type NativeStorageScope } from "../../lib/nativeAppStorage";
 import { toast } from "../../stores/toastStore";
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from "../../lib/sessionGeneration";
 import { copyHostedActor, HOSTED_ACTOR_ERROR, isHostedAdmissionCurrent, sameHostedActor, type HostedAdmission } from '../../lib/hostedActor';
@@ -14,7 +14,8 @@ const navigate = (path: string) => window.location.assign(path);
 
 /** The server's decision for one mount: the engine to run, and the revision actions send back. */
 type FrameEngine = { id: string; revision: string };
-type NativeFrame = { assets: Record<string, string>; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope };
+/** `files`: the app may open the files the person picks and save files they ask for, as its owner chose and, where asked, the person agreed (NativeAppView). Settled before the frame opens. */
+type NativeFrame = { assets: Record<string, string>; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope; files?: boolean };
 const scopeAllowed = (native: NativeFrame) => isNativeStorageScope(native.storageScope) &&
   native.access === native.storageScope.access &&
   (native.storageScope.access === 'application' || native.storageScope.userId === currentSessionOwner());
@@ -29,6 +30,11 @@ function clientIdentity(client: object): number {
     clientIdentities.set(client, identity);
   }
   return identity;
+}
+
+/** A map's stored bytes for an export, or null when there are none or they cannot be read. */
+async function readRaw(storage: { exportRaw: () => Promise<string | null> } | undefined): Promise<string | null> {
+  try { return (await storage?.exportRaw()) ?? null; } catch { return null; }
 }
 
 export function HostedAppFrame({
@@ -77,7 +83,7 @@ export function HostedAppFrame({
   // even if it belongs to the same user; NativeAppPage must fetch a fresh project first.
   const sourceKey = JSON.stringify([slug, version, clientIdentity(client), native ? clientIdentity(native) : 0,
     native?.access, native?.storageScope?.access, native?.storageScope?.appId,
-    native?.storageScope?.access === 'members' ? native.storageScope.userId : null, engine?.id, engine?.revision, hosted, hostedAdmissionId, workspaceOnly, plugin ? clientIdentity(plugin) : 0]);
+    native?.storageScope?.access === 'members' ? native.storageScope.userId : null, native?.files === true, engine?.id, engine?.revision, hosted, hostedAdmissionId, workspaceOnly, plugin ? clientIdentity(plugin) : 0]);
   const [admitted, setAdmitted] = useState(() => ({ key: sourceKey, generation }));
   if (admitted.key !== sourceKey) setAdmitted({ key: sourceKey, generation });
   const admission = native || workspaceOnly ? (admitted.key === sourceKey ? admitted.generation : generation) : (hosted?.generation ?? -1);
@@ -179,6 +185,9 @@ export function HostedAppFrame({
       if (result.error) { setError(result.error); return; }
       const nextNative = data && "project" in data && data.project ? {
         assets: data.project.assets, origins: data.project.origins, access: data.project.access, storageScope: data.project.storageScope,
+        // The owner's choice as it is now: Off takes files away, Allowed without asking gives them. Where
+        // the owner asks, the person's answer stands across a new engine: they were asked about the app.
+        files: data.project.files === 'allow' || (data.project.files === 'ask' && !!mountNative?.files),
       } : undefined;
       if (mountNative && (!nextNative || !scopeAllowed(nextNative))) {
         setError("This app could not verify its browser storage access. Please reload or sign in again.");
@@ -245,6 +254,9 @@ export function HostedAppFrame({
     const noteOtherTab = (event: StorageEvent) => {
       if (storage && (event.key === storage.key || event.key === null)) snapshotOld = true;
     };
+    // A map kept in IndexedDB is announced on a channel instead (nativeAppStorage), by the handle
+    // that wrote it: this mount's own saves are not another tab's.
+    const stopChanges = storage ? onNativeStorageChange((key, from) => { if (key === storage.key && from !== storage.id) snapshotOld = true; }) : () => {};
     const reopenIfOld = () => {
       if (!snapshotOld || document.hidden || !isCurrentMount()) return;
       snapshotOld = false;
@@ -295,15 +307,24 @@ export function HostedAppFrame({
       if (!isCurrentMount() || expired) return;
       const acknowledgedStorage = !!storage && event.data.storageProtocol === 1;
       let savedStorage: Record<string, string> | undefined;
-      try { savedStorage = storage?.read(); } catch (reason) {
+      // What the store this map is kept in holds (nativeAppStorage): IndexedDB's are the frame's to
+      // be told, localStorage's are the ones it already keeps.
+      let limits: NativeStorageLimits | undefined;
+      try {
+        if (storage) { savedStorage = await storage.read(); limits = await storage.storageLimits(); }
+      } catch (reason) {
+        if (!isCurrentMount() || expired) return;
         clearTimeout(timeout);
         initializing = false;
         const failure = reason instanceof NativeStorageError ? reason : null;
-        const exportable = (() => { try { return failure?.code !== "unavailable" && !!storage?.exportRaw(); } catch { return false; } })();
+        const exportable = failure?.code !== "unavailable" && !!(await readRaw(storage));
+        if (!isCurrentMount()) return;
         setStorageIssue({ key: frameKey, message: failure?.message ?? "This app's saved browser session could not be read.", exportable });
         setError(failure?.code === "unavailable" ? "Browser storage is not available, so this app cannot keep a session here. Check browser privacy settings and reload." : "This app’s saved browser session could not be read, so the app was not started.");
         return;
       }
+      if (!isCurrentMount() || expired) return;
+      const largeStorage = !!limits && limits.value > SMALL_STORAGE_LIMITS.value;
       setStorageIssue(null);
       setError("");
       channel = new MessageChannel();
@@ -335,11 +356,14 @@ export function HostedAppFrame({
         // A structured clone can carry what JSON cannot (a BigInt, an object that contains
         // itself): that input is refused like an oversized one rather than left unanswered.
         const measure = (value: object) => { try { return JSON.stringify(value).length; } catch { return Infinity; } };
+        // A save may be as large as the store keeps (a game's saved state); every other call is
+        // held to the 32 KB it always was.
+        const inputLimit = storage && action === "nativeStorage" && limits ? Math.max(32768, limits.input) : 32768;
         if (
           !input ||
           typeof input !== "object" ||
           Array.isArray(input) ||
-          measure(input) > 32768
+          measure(input) > inputLimit
         ) {
           reply({ error: "Invalid action input." });
           return;
@@ -361,7 +385,7 @@ export function HostedAppFrame({
             // The trusted auth generation and mount are checked BEFORE the
             // mutation, rather than only when replying to the app afterward.
             if (!isCurrentMount()) { retireGuest(); return; }
-            reply({ result: storage.mutate(input) });
+            reply({ result: await storage.mutate(input) });
             return;
           }
           if (mountNative && action === "nativeRequest") {
@@ -428,12 +452,15 @@ export function HostedAppFrame({
             toast.warning("This app changed in another tab", "It has reopened with the latest saved data. Your last change was not saved.");
             setStorageEpoch((epoch) => epoch + 1);
           }
-          if (action === "nativeStorage" && reason instanceof NativeStorageError && ["corrupt", "too-large", "unavailable"].includes(reason.code) && isCurrentMount()) {
-            const exportable = (() => { try { return reason.code !== "unavailable" && !!storage?.exportRaw(); } catch { return false; } })();
-            setStorageIssue({ key: frameKey, message: reason.message, exportable });
-            setError("This app's browser data could not be saved. Export or reset it before continuing.");
-          }
+          // Answered first: what follows reads the store, and the app's save must not wait on it.
           reply({ error: reason instanceof Error ? reason.message : "The request could not be completed." });
+          if (action === "nativeStorage" && reason instanceof NativeStorageError && ["corrupt", "too-large", "unavailable"].includes(reason.code) && isCurrentMount()) {
+            const exportable = reason.code !== "unavailable" && !!(await readRaw(storage));
+            if (isCurrentMount()) {
+              setStorageIssue({ key: frameKey, message: reason.message, exportable });
+              setError("This app's browser data could not be saved. Export or reset it before continuing.");
+            }
+          }
         } finally {
           if (counted) inFlight--;
         }
@@ -450,6 +477,13 @@ export function HostedAppFrame({
           // Saves are not counted against the four calls above, so the frame (SoftN v0.0.28 on)
           // may send them in a lane of their own; an older frame ignores the key.
           ...(storage ? { storageLane: true } : {}),
+          // What the app may do beyond its own frame: files, where granted (a SoftN v0.0.33 frame reads it;
+          // an older one grants nothing, as it always did).
+          ...(mountNative?.files ? { permissions: { files: true } } : {}),
+          // How much the map may hold where it is kept in IndexedDB: a frame from SoftN v0.0.33
+          // raises its own limits to these, an older one keeps the small ones it always had,
+          // which this side still takes.
+          ...(largeStorage && limits ? { storageLimits: { value: limits.value, entries: limits.entries, map: limits.map, input: limits.input, queued: limits.queued } } : {}),
           dark: document.documentElement.classList.contains("dark"),
           // The id alone: the shell serves engines by name and refuses one it does not, so an
           // object here would arrive as "[object Object]" and be refused. A shell from before the
@@ -471,6 +505,7 @@ export function HostedAppFrame({
       active = false;
       unsubscribe();
       invalidate();
+      stopChanges();
       window.removeEventListener("storage", noteOtherTab);
       window.removeEventListener("focus", reopenIfOld);
       document.removeEventListener("visibilitychange", reopenIfOld);
@@ -490,11 +525,11 @@ export function HostedAppFrame({
     clearTimeout(booting.current);
     setTripped(frameKey);
   };
-  const exportSavedData = () => {
+  const exportSavedData = async () => {
     const current = recovery.current;
     if (blocked || current?.key !== frameKey || !current.isCurrent()) return;
-    const raw = (() => { try { return current.storage.exportRaw(); } catch { return null; } })();
-    if (raw === null) return;
+    const raw = await readRaw(current.storage);
+    if (raw === null || !current.isCurrent()) return;
     const url = URL.createObjectURL(new Blob([raw], { type: "application/json" }));
     const link = document.createElement("a");
     link.href = url;
@@ -502,13 +537,13 @@ export function HostedAppFrame({
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  const resetSavedData = () => {
+  const resetSavedData = async () => {
     const current = recovery.current;
     if (blocked || current?.key !== frameKey || !current.isCurrent()) return;
     if (!window.confirm("Reset this app’s saved browser data on this device? Export it first if you may need it.")) return;
     if (!current.isCurrent()) return;
     current.retireGuest();
-    try { current.storage.reset(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Browser storage is not available."); return; }
+    try { await current.storage.reset(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Browser storage is not available."); return; }
     current.invalidate();
     setStorageIssue(null);
     setError("");
@@ -557,7 +592,9 @@ export function HostedAppFrame({
           // storage or DOM, and no popups, top-level navigation, forms or downloads. Host
           // JavaScript relaxes the shell's own policy by one token; it does not touch this.
           // check-security-invariants.mjs pins this literal, and the token it must never contain.
-          sandbox="allow-scripts"
+          // A file the app saves is a download, which the sandbox blocks unless it allows them: only for
+          // an app granted files, and that frame keeps everything else above.
+          sandbox={mountNative?.files ? "allow-scripts allow-downloads" : "allow-scripts"}
           referrerPolicy="no-referrer"
           className={`w-full flex-1 border-0 ${bare ? "" : "min-h-[420px]"}`}
           onLoad={countLoad}

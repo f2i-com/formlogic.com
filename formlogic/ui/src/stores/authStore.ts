@@ -139,14 +139,14 @@ export async function teardownUserSession(
   // An old caller may finish after another identity has already signed in. Only
   // its private namespace belongs to it; B's stores and callbacks must survive.
   if (currentSessionOwner() !== null && currentSessionOwner() !== userId) {
-    if (userId && leaving) clearNativeMemberStorage(userId);
+    if (userId && leaving) void clearNativeMemberStorage(userId);
     return;
   }
   // The generation bump comes FIRST (audit FL-11): an authenticated request still in
   // flight compares its captured generation on resolve and DISCARDS its result rather
   // than repopulating the stores this teardown is about to clear.
   const generation = bumpSessionGeneration();
-  if (userId && leaving) clearNativeMemberStorage(userId);
+  if (userId && leaving) void clearNativeMemberStorage(userId);
   // Publish before awaiting cleanup, so a delayed A teardown cannot announce a
   // newer boundary after B has signed in and published its transition.
   if (broadcast) publishSessionTransition('fl-teardown', userId, reason);
@@ -783,7 +783,7 @@ export async function handleSessionBroadcast(data: SessionMessage | null): Promi
     // ended cookie still invalidates that pending continuation.
     bumpSessionGeneration();
     const leaving = typeof data.userId === 'string' ? data.userId : unconfirmedMemberOwner;
-    if (leaving && data.reason !== 'session-expired') clearNativeMemberStorage(leaving);
+    if (leaving && data.reason !== 'session-expired') void clearNativeMemberStorage(leaving);
     if (leaving === unconfirmedMemberOwner) unconfirmedMemberOwner = null;
     withMemoryOnlyPersistence(() => useAuthStore.setState({ isLoading: false, error: null }));
     return;

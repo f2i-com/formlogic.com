@@ -7,15 +7,32 @@
 // refuse to touch it, and the original bytes stay where they are until the
 // owner exports or resets them. Filtering the bad entries out and writing the
 // rest back would have destroyed the only copy of whatever went wrong.
+//
+// Where it is kept: IndexedDB, one record per app (and per member), so an app
+// may keep what a game's saved state needs — megabytes, where WebStorage gives
+// the whole site about five. A browser without IndexedDB (or that refuses to
+// open it) keeps the map in localStorage under the limits it always had, and
+// the frame is told those. A map kept in localStorage by a FormLogic before
+// v0.1.24 moves to IndexedDB the first time its app opens: written there
+// first, and removed from localStorage only once that write has committed.
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent } from './sessionGeneration';
 
-const LIMIT = 256 * 1024;
-const KEY_LIMIT = 256;
-const VALUE_LIMIT = 30000;
-const ENTRY_LIMIT = 200;
-// This is the action INPUT limit used by the private hosted-runtime port,
-// measured in UTF-16 code units after JSON escaping, like the existing map.
-const INPUT_LIMIT = 32768;
+/** What a map may hold, in UTF-16 units as `JSON.stringify` counts them. */
+export interface NativeStorageLimits {
+  /** The whole map's JSON. */
+  map: number;
+  key: number;
+  value: number;
+  entries: number;
+  /** One save as the frame sends it (its JSON), which also bounds the port message. */
+  input: number;
+  /** Saves the frame may hold waiting at once. */
+  queued: number;
+}
+/** localStorage's, as they always were. */
+export const SMALL_STORAGE_LIMITS: NativeStorageLimits = Object.freeze({ map: 256 * 1024, key: 256, value: 30000, entries: 200, input: 32768, queued: 256 * 1024 });
+/** IndexedDB's: a save of a few megabytes, and room for a game's slots. Within SoftN's frame maxima. */
+export const LARGE_STORAGE_LIMITS: NativeStorageLimits = Object.freeze({ map: 32 * 1024 * 1024, key: 256, value: 4 * 1024 * 1024, entries: 1000, input: 8 * 1024 * 1024 + 4096, queued: 32 * 1024 * 1024 });
 // SoftN names an app's keys after the id the frame gives it.
 const APP_KEY = /^(xdb|softn):native-([a-zA-Z0-9_-]*):/;
 const MEMBER_PREFIX = 'formlogic:native-member-storage:v1:';
@@ -23,7 +40,9 @@ const MEMBER_PREFIX = 'formlogic:native-member-storage:v1:';
 // old slug, and it was then handed what a visitor had saved in the first. A prefix
 // of its own, so no slug can name a key here (see adoptSlugMap).
 const APPLICATION_PREFIX = 'formlogic:native-app-storage:v1:';
-const pendingMemberPurges = new Set<string>();
+const DATABASE = 'formlogic-native-storage';
+const STORE = 'maps';
+const pendingMemberPurges = new Map<string, Promise<boolean>>();
 
 /** Returned only after the server has admitted the request to this installation. */
 export type NativeStorageScope =
@@ -52,37 +71,222 @@ export const nativeFrameAppId = (appId: string) => `native-${appId}`;
  * Moves keys named after a slug to the id, the current slug's first, so an older name never
  * replaces what is already there. Anything that cannot move stays as it is, unread but not lost.
  */
-function adoptKeyNames(saved: Record<string, string>, slug: string, appId: string): Record<string, string> | null {
+function adoptKeyNames(saved: Record<string, string>, slug: string, appId: string, keyLimit: number): Record<string, string> | null {
   const entries = Object.entries(saved).filter(([name]) => { const match = APP_KEY.exec(name); return match && match[2] !== appId; });
   if (entries.length === 0) return null;
   const adopted = new Map(Object.entries(saved));
   const ofThisSlug = ([name]: [string, string]) => APP_KEY.exec(name)?.[2] === slug ? 0 : 1;
   for (const [name, value] of entries.sort((a, b) => ofThisSlug(a) - ofThisSlug(b))) {
     const moved = name.replace(APP_KEY, (_all, store) => `${store}:${nativeFrameAppId(appId)}:`);
-    if (adopted.has(moved) || moved.length > KEY_LIMIT) continue;
+    if (adopted.has(moved) || moved.length > keyLimit) continue;
     adopted.delete(name);
     adopted.set(moved, value);
   }
   return Object.fromEntries(adopted);
 }
 
-/** No legacy slug maps are attributed to a member, including during cleanup. */
-export function clearNativeMemberStorage(userId: string): void {
-  if (!validIdentity(userId)) return;
-  pendingMemberPurges.add(userId);
-  const prefix = `${MEMBER_PREFIX}${encodeURIComponent(userId)}:`;
-  try {
+// ---- where maps are kept ---------------------------------------------------------------------
+
+/** A change to one record, worked out from what it holds, inside one transaction. */
+type Step<T> = (raw: string | null) => { write?: string | null; result: T };
+interface MapStore {
+  readonly kind: 'indexeddb' | 'localStorage';
+  readonly limits: NativeStorageLimits;
+  /** Runs `step` on the record as it is, and writes what it says, as one: no other tab's write lands between. */
+  atomic<T>(key: string, step: Step<T>, legacy?: string[]): Promise<T>;
+  /** Removes every record whose key starts with `prefix`. */
+  removePrefix(prefix: string): Promise<void>;
+}
+
+const localStore: MapStore = {
+  kind: 'localStorage',
+  limits: SMALL_STORAGE_LIMITS,
+  async atomic(key, step, legacy = []) {
+    let raw: string | null;
+    try {
+      raw = localStorage.getItem(key);
+      // What a FormLogic before maps were kept by id saved under the slug moves here, once.
+      for (const name of legacy) {
+        if (raw !== null) break;
+        const saved = localStorage.getItem(name);
+        if (saved !== null) { localStorage.setItem(key, saved); localStorage.removeItem(name); raw = saved; }
+      }
+    } catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
+    const { write, result } = step(raw);
+    // The browser's own refusal (a full store) goes to the app as the browser said it, as always.
+    if (write !== undefined) { if (write === null) localStorage.removeItem(key); else localStorage.setItem(key, write); }
+    return result;
+  },
+  async removePrefix(prefix) {
     const keys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith(prefix)) keys.push(key);
+      const name = localStorage.key(i);
+      if (name?.startsWith(prefix)) keys.push(name);
     }
-    for (const key of keys) localStorage.removeItem(key);
-    pendingMemberPurges.delete(userId);
-  } catch {
-    // A later access by this member retries the purge before reading any private bytes.
-    // Other principals have different keys even if the browser refuses removal.
-  }
+    for (const name of keys) localStorage.removeItem(name);
+  },
+};
+
+function indexedStore(db: IDBDatabase): MapStore {
+  const done = (tx: IDBTransaction) => new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    // A request's error, which is the transaction's only once it has aborted: a full disk is told as
+    // a full disk (QuotaExceededError), not as storage that is not there.
+    tx.onerror = (event) => reject((event.target as { error?: DOMException | null } | null)?.error ?? tx.error);
+    tx.onabort = () => reject(tx.error ?? new DOMException('The transaction was aborted', 'AbortError'));
+  });
+  return {
+    kind: 'indexeddb',
+    limits: LARGE_STORAGE_LIMITS,
+    async atomic(key, step, legacy = []) {
+      // What localStorage holds for this map (a FormLogic before v0.1.24 kept it there), read
+      // before the transaction: a transaction must not wait on anything but its own requests.
+      let carried: { name: string; raw: string } | null = null;
+      try {
+        for (const name of [key, ...legacy]) {
+          const raw = localStorage.getItem(name);
+          if (raw !== null) { carried = { name, raw }; break; }
+        }
+      } catch { /* No localStorage: nothing older to carry. */ }
+      let tx: IDBTransaction;
+      try { tx = db.transaction(STORE, 'readwrite'); }
+      catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
+      const store = tx.objectStore(STORE);
+      const finished = done(tx);
+      let outcome: { result: unknown } | { error: unknown } | undefined;
+      let moved = false;
+      const got = store.get(key);
+      got.onsuccess = () => {
+        let raw = typeof got.result === 'string' ? got.result : null;
+        // Only into an empty record: what IndexedDB already holds is newer than what was left behind.
+        if (raw === null && carried) { raw = carried.raw; store.put(raw, key); moved = true; }
+        try {
+          const { write, result } = step(raw);
+          if (write === null) store.delete(key);
+          else if (write !== undefined) store.put(write, key);
+          outcome = { result };
+        } catch (error) {
+          outcome = { error };
+          // Nothing of a refused change is written, the move included: it is tried again next time.
+          tx.abort();
+        }
+      };
+      try { await finished; }
+      catch (error) {
+        if (outcome && 'error' in outcome) throw outcome.error;
+        const quota = error instanceof DOMException && error.name === 'QuotaExceededError';
+        throw quota ? new NativeStorageError('This app has reached its browser storage limit.', 'limit') : new NativeStorageError('Browser storage is not available.', 'unavailable');
+      }
+      // Committed: the older copy may go now, and only now.
+      if (moved && carried) { try { localStorage.removeItem(carried.name); } catch { /* It is read again next time and found already moved. */ } }
+      if (!outcome) throw new NativeStorageError('Browser storage is not available.', 'unavailable');
+      if ('error' in outcome) throw outcome.error;
+      return outcome.result as never;
+    },
+    async removePrefix(prefix) {
+      const tx = db.transaction(STORE, 'readwrite');
+      const finished = done(tx);
+      // Every key with the prefix: from it up to the prefix with its last character's successor.
+      const upper = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+      tx.objectStore(STORE).delete(IDBKeyRange.bound(prefix, upper, false, true));
+      await finished;
+    },
+  };
+}
+
+let opening: Promise<MapStore> | null = null;
+/** The store maps are kept in: IndexedDB once it has opened, localStorage where it cannot. */
+function mapStore(): Promise<MapStore> {
+  opening ??= (async () => {
+    if (typeof indexedDB === 'undefined' || !indexedDB) return localStore;
+    try {
+      const open = indexedDB.open(DATABASE, 1);
+      open.onupgradeneeded = () => { if (!open.result.objectStoreNames.contains(STORE)) open.result.createObjectStore(STORE); };
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        open.onsuccess = () => resolve(open.result);
+        open.onerror = () => reject(open.error);
+        open.onblocked = () => reject(new DOMException('blocked', 'InvalidStateError'));
+      });
+      // Another tab's newer FormLogic asking for a version this one does not know: let it.
+      db.onversionchange = () => { db.close(); opening = null; };
+      // A sign-out's purge that the page closed before it finished is finished now.
+      for (const userId of purgeList()) if (!pendingMemberPurges.has(userId)) void clearNativeMemberStorage(userId);
+      return indexedStore(db);
+    } catch {
+      return localStore;
+    }
+  })();
+  return opening;
+}
+
+/** For tests: forget the opened store, so the next handle opens it again. */
+export function resetNativeStorageForTests(): void { opening = null; }
+
+// Another tab's save, said in this one: localStorage's `storage` event says nothing of IndexedDB.
+// Each message names the handle that wrote, so a page does not take its own save for another's.
+const CHANNEL = 'formlogic-native-storage';
+let announcer: BroadcastChannel | null | undefined;
+let handles = 0;
+function announce(key: string, from: string): void {
+  try {
+    announcer ??= typeof BroadcastChannel === 'function' ? new BroadcastChannel(CHANNEL) : null;
+    announcer?.postMessage({ key, from });
+  } catch { /* A browser without it has the storage event, for localStorage. */ }
+}
+/** Calls `listener` with the key of each map another handle saved or reset, in any tab. */
+export function onNativeStorageChange(listener: (key: string, from: string) => void): () => void {
+  if (typeof BroadcastChannel !== 'function') return () => {};
+  let channel: BroadcastChannel;
+  try { channel = new BroadcastChannel(CHANNEL); } catch { return () => {}; }
+  channel.onmessage = (event: MessageEvent) => {
+    const data = event.data as { key?: unknown; from?: unknown } | null;
+    if (data && typeof data.key === 'string' && typeof data.from === 'string') listener(data.key, data.from);
+  };
+  return () => channel.close();
+}
+
+/**
+ * The members whose data a sign-out is still erasing, kept in localStorage at once: IndexedDB's
+ * removal finishes later, and a page closed before then would leave it undone. The next opening
+ * of the store finishes it.
+ */
+const PURGE_LIST = 'formlogic:native-member-purges:v1';
+function purgeList(): string[] {
+  try {
+    const listed: unknown = JSON.parse(localStorage.getItem(PURGE_LIST) ?? '[]');
+    return Array.isArray(listed) ? listed.filter((id): id is string => typeof id === 'string' && validIdentity(id)) : [];
+  } catch { return []; }
+}
+function setPurgeList(ids: string[]): void {
+  try { if (ids.length) localStorage.setItem(PURGE_LIST, JSON.stringify(ids)); else localStorage.removeItem(PURGE_LIST); }
+  catch { /* The purge still runs; only a page closed first would leave it for a later sign-out. */ }
+}
+
+/** No legacy slug maps are attributed to a member, including during cleanup. Resolves once done. */
+export function clearNativeMemberStorage(userId: string): Promise<boolean> {
+  if (!validIdentity(userId)) return Promise.resolve(true);
+  setPurgeList([...new Set([...purgeList(), userId])]);
+  const prefix = `${MEMBER_PREFIX}${encodeURIComponent(userId)}:`;
+  const run = async (): Promise<boolean> => {
+    try {
+      // Both: a map left in localStorage by an older FormLogic is this member's too.
+      await localStore.removePrefix(prefix);
+      const store = await mapStore();
+      if (store.kind === 'indexeddb') await store.removePrefix(prefix);
+      if (pendingMemberPurges.get(userId) === purge) pendingMemberPurges.delete(userId);
+      // Done only where IndexedDB was reached, or the browser has none: a page that could not open it
+      // leaves the member listed for the next page that can.
+      if (store.kind === 'indexeddb' || typeof indexedDB === 'undefined' || !indexedDB) setPurgeList(purgeList().filter(id => id !== userId));
+      return true;
+    } catch {
+      // A later access by this member retries the purge before reading any private bytes.
+      // Other principals have different keys even if the browser refuses removal.
+      return false;
+    }
+  };
+  const purge = run();
+  pendingMemberPurges.set(userId, purge);
+  return purge;
 }
 
 export type NativeStorageFailure = 'unavailable' | 'too-large' | 'corrupt' | 'invalid' | 'limit' | 'stale';
@@ -114,80 +318,83 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
   const key = scope?.access === 'members'
     ? `${MEMBER_PREFIX}${encodeURIComponent(scope.userId)}:${encodeURIComponent(scope.appId)}`
     : `${APPLICATION_PREFIX}${encodeURIComponent(scope?.appId ?? slug)}`;
-  const slugKey = scope?.access === 'application' ? `formlogic:native-storage:${encodeURIComponent(slug)}` : null;
+  /**
+   * What was saved under the slug, before maps were kept by id, moves to the id's record the
+   * first time its app asks, so nothing a person saved is lost. A member's map never does:
+   * nothing says whose an unbound slug map was.
+   */
+  const legacy = scope?.access === 'application' ? [`formlogic:native-storage:${encodeURIComponent(slug)}`] : [];
   // Each key as this handle last read or saved it: a frame holds a snapshot and writes a whole
   // collection from it, so a key that moved since is another tab's work about to be replaced.
   let seen: Map<string, string> | null = null;
-  /**
-   * What was saved under the slug, before maps were kept by id, moves here the
-   * first time its app asks, so nothing a person saved is lost. A member's map
-   * never does: nothing says whose an unbound slug map was.
-   */
-  function adoptSlugMap(): string | null {
-    const saved = slugKey ? localStorage.getItem(slugKey) : null;
-    if (slugKey && saved !== null) {
-      localStorage.setItem(key, saved);
-      localStorage.removeItem(slugKey);
-    }
-    return saved;
-  }
-  function assertScope(): void {
+  let limits: NativeStorageLimits = SMALL_STORAGE_LIMITS;
+  /** This handle, as its saves are announced to the others. */
+  const id = `${Date.now().toString(36)}-${++handles}-${Math.random().toString(36).slice(2)}`;
+  async function assertScope(): Promise<void> {
     if (!scope) throw new NativeStorageError('A valid app storage scope is required.', 'invalid');
     if (scope.access !== 'members') return; // Independent native login persists across platform logout.
-    if (!isSessionGenerationCurrent(generation) || currentSessionOwner() !== scope.userId) {
-      throw new NativeStorageError('This member session is no longer available.', 'unavailable');
-    }
-    if (pendingMemberPurges.has(scope.userId)) clearNativeMemberStorage(scope.userId);
-    if (pendingMemberPurges.has(scope.userId)) {
+    const owned = () => isSessionGenerationCurrent(generation) && currentSessionOwner() === scope.userId;
+    if (!owned()) throw new NativeStorageError('This member session is no longer available.', 'unavailable');
+    // A purge of this member's data that has not finished (or failed) goes first: it is retried
+    // here, and nothing of theirs is read until it has been.
+    const pending = pendingMemberPurges.get(scope.userId);
+    if (pending && !(await pending) && !(await clearNativeMemberStorage(scope.userId))) {
       throw new NativeStorageError('Private browser storage could not be cleared.', 'unavailable');
     }
-  }
-  function rawValue(): string | null {
-    assertScope();
-    try { return localStorage.getItem(key) ?? adoptSlugMap(); }
-    catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
+    if (!owned()) throw new NativeStorageError('This member session is no longer available.', 'unavailable');
   }
   /** The whole stored map, or the reason it cannot be trusted. Never partial. */
   function parse(raw: string | null): Record<string, string> {
     if (!raw) return {};
-    if (raw.length > LIMIT) throw new NativeStorageError('This app’s saved browser data is too large.', 'too-large');
+    if (raw.length > limits.map) throw new NativeStorageError('This app’s saved browser data is too large.', 'too-large');
     let value: unknown;
     try { value = JSON.parse(raw); }
     catch { throw new NativeStorageError('This app’s saved browser data could not be read.', 'corrupt'); }
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new NativeStorageError('This app’s saved browser data could not be read.', 'corrupt');
     const entries = Object.entries(value as Record<string, unknown>);
-    if (entries.length > ENTRY_LIMIT) throw new NativeStorageError(CORRUPT_STORAGE_MESSAGE, 'corrupt');
+    if (entries.length > limits.entries) throw new NativeStorageError(CORRUPT_STORAGE_MESSAGE, 'corrupt');
     for (const [name, stored] of entries) {
-      if (name.length > KEY_LIMIT || typeof stored !== 'string' || stored.length > VALUE_LIMIT) throw new NativeStorageError(CORRUPT_STORAGE_MESSAGE, 'corrupt');
+      if (name.length > limits.key || typeof stored !== 'string' || stored.length > limits.value) throw new NativeStorageError(CORRUPT_STORAGE_MESSAGE, 'corrupt');
     }
     return Object.fromEntries(entries as [string, string][]);
   }
-  function current(): Record<string, string> {
-    const saved = parse(rawValue());
-    const adopted = scope ? adoptKeyNames(saved, slug, scope.appId) : null;
-    if (!adopted) return saved;
-    // Ids are longer than slugs, so a map at its limit can't take them yet. It keeps the old names
-    // and opens under the new ones until a save brings it back under: this runs at every opening.
+  /**
+   * The map as it is now, with keys named after a slug moved to the id. Ids are longer than slugs,
+   * so a map at its limit can't take them yet: it keeps the old names and opens under the new ones
+   * until a save brings it back under, which is why this runs at every opening.
+   */
+  function current(raw: string | null): { map: Record<string, string>; write?: string } {
+    const saved = parse(raw);
+    const adopted = scope ? adoptKeyNames(saved, slug, scope.appId, limits.key) : null;
+    if (!adopted) return { map: saved };
     const data = JSON.stringify(adopted);
-    if (data.length <= LIMIT) try { localStorage.setItem(key, data); } catch { /* As above. */ }
-    return adopted;
+    return data.length <= limits.map ? { map: adopted, write: data } : { map: adopted };
   }
-  function read(): Record<string, string> {
-    const saved = current();
+  async function withStore<T>(step: Step<T>): Promise<T> {
+    // The store first: opening it resumes a purge a closed page left unfinished, which the scope
+    // check then waits for before anything of the member's is read.
+    const store = await mapStore();
+    await assertScope();
+    limits = store.limits;
+    return store.atomic(key, step, legacy);
+  }
+  async function read(): Promise<Record<string, string>> {
+    const saved = await withStore((raw) => { const { map, write } = current(raw); return { write, result: map }; });
     seen = new Map(Object.entries(saved));
     return saved;
   }
-  function mutate(input: Record<string, unknown>) {
-    assertScope();
+  async function mutate(input: Record<string, unknown>) {
+    limits = (await mapStore()).limits;
+    await assertScope();
     let serialized: string | undefined;
     try { serialized = JSON.stringify(input); } catch { /* Invalid structured-clone input. */ }
-    if (!input || typeof input !== 'object' || Array.isArray(input) || serialized === undefined || serialized.length > INPUT_LIMIT) {
+    if (!input || typeof input !== 'object' || Array.isArray(input) || serialized === undefined || serialized.length > limits.input) {
       throw new NativeStorageError('Invalid storage input.', 'invalid');
     }
     const replacement = (value: unknown): { key: string; value: string } => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new NativeStorageError('Invalid storage replacement.', 'invalid');
       const item = value as Record<string, unknown>;
-      if (typeof item.key !== 'string' || item.key.length > KEY_LIMIT || typeof item.value !== 'string' || item.value.length > VALUE_LIMIT) {
+      if (typeof item.key !== 'string' || item.key.length > limits.key || typeof item.value !== 'string' || item.value.length > limits.value) {
         throw new NativeStorageError('Invalid storage replacement.', 'invalid');
       }
       return { key: item.key, value: item.value };
@@ -196,45 +403,49 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
     // prefix can be saved when a later replacement is invalid or over quota.
     let replacements: { key: string; value: string }[] | undefined;
     if (input.operation === 'batch') {
-      if (!Array.isArray(input.replacements) || input.replacements.length > ENTRY_LIMIT) throw new NativeStorageError('Invalid storage replacements.', 'invalid');
+      if (!Array.isArray(input.replacements) || input.replacements.length > limits.entries) throw new NativeStorageError('Invalid storage replacements.', 'invalid');
       replacements = input.replacements.map(replacement);
       if (new Set(replacements.map(item => item.key)).size !== replacements.length) throw new NativeStorageError('Duplicate storage replacement.', 'invalid');
+    } else if (input.operation !== 'clear') {
+      if (typeof input.key !== 'string' || input.key.length > limits.key) throw new NativeStorageError('Invalid storage key.', 'invalid');
+      if (!(input.operation === 'remove' || (input.operation === 'set' && typeof input.value === 'string' && input.value.length <= limits.value))) {
+        throw new NativeStorageError('Invalid storage operation.', 'invalid');
+      }
     }
-    // Refused before any change when the stored map is not whole: the
-    // original bytes are the owner's to export or reset, not ours to rewrite.
-    const before = new Map(Object.entries(current()));
-    const entries = new Map(before);
-    const known = seen ?? new Map(before);
-    if (input.operation === 'clear') entries.clear();
-    else if (replacements) {
-      for (const item of replacements) entries.set(item.key, item.value);
-    }
-    else {
-      if (typeof input.key !== 'string' || input.key.length > KEY_LIMIT) throw new NativeStorageError('Invalid storage key.', 'invalid');
-      if (input.operation === 'remove') entries.delete(input.key);
-      else if (input.operation === 'set' && typeof input.value === 'string' && input.value.length <= VALUE_LIMIT) entries.set(input.key, input.value);
-      else throw new NativeStorageError('Invalid storage operation.', 'invalid');
-    }
-    const data = JSON.stringify(Object.fromEntries(entries));
-    if (entries.size > ENTRY_LIMIT || data.length > LIMIT) throw new NativeStorageError('This app has reached its browser storage limit.', 'limit');
-    const touched = input.operation === 'clear' ? [...new Set([...before.keys(), ...known.keys()])]
+    const known = seen;
+    const touchedKeys = (before: Map<string, string>, held: Map<string, string>) => input.operation === 'clear' ? [...new Set([...before.keys(), ...held.keys()])]
       : replacements ? replacements.map(item => item.key) : [input.key as string];
-    if (touched.some(name => before.get(name) !== known.get(name))) {
-      throw new NativeStorageError('This app’s saved data changed in another tab.', 'stale');
+    const result = await withStore((raw) => {
+      // Refused before any change when the stored map is not whole: the
+      // original bytes are the owner's to export or reset, not ours to rewrite.
+      const before = new Map(Object.entries(current(raw).map));
+      const entries = new Map(before);
+      const held = known ?? new Map(before);
+      if (input.operation === 'clear') entries.clear();
+      else if (replacements) { for (const item of replacements) entries.set(item.key, item.value); }
+      else if (input.operation === 'remove') entries.delete(input.key as string);
+      else entries.set(input.key as string, input.value as string);
+      const data = JSON.stringify(Object.fromEntries(entries));
+      if (entries.size > limits.entries || data.length > limits.map) throw new NativeStorageError('This app has reached its browser storage limit.', 'limit');
+      const touched = touchedKeys(before, held);
+      if (touched.some(name => before.get(name) !== held.get(name))) {
+        throw new NativeStorageError('This app’s saved data changed in another tab.', 'stale');
+      }
+      return { write: data, result: { touched, entries, held } };
+    });
+    for (const name of result.touched) {
+      const value = result.entries.get(name);
+      if (value === undefined) result.held.delete(name);
+      else result.held.set(name, value);
     }
-    localStorage.setItem(key, data);
-    for (const name of touched) {
-      const value = entries.get(name);
-      if (value === undefined) known.delete(name);
-      else known.set(name, value);
-    }
-    seen = known;
-    return { saved: true };
+    seen = result.held;
+    announce(key, id);
+    return { saved: true as const };
   }
   /** What the owner can be told before the app starts: healthy, empty, or how it failed. */
-  function status(): NativeStorageStatus {
+  async function status(): Promise<NativeStorageStatus> {
     let raw: string | null;
-    try { raw = rawValue(); } catch (reason) { return { state: 'unavailable', message: (reason as Error).message }; }
+    try { raw = await withStore((value) => ({ result: value })); } catch (reason) { return { state: 'unavailable', message: (reason as Error).message }; }
     if (!raw) return { state: 'empty' };
     try { return { state: 'healthy', entries: Object.keys(parse(raw)).length }; }
     catch (reason) {
@@ -243,17 +454,29 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
     }
   }
   /** The stored bytes as they are, damaged or not, so nothing is lost before a reset. */
-  function exportRaw(): string | null {
-    return rawValue();
+  async function exportRaw(): Promise<string | null> {
+    return withStore((value) => ({ result: value }));
   }
   /** Deliberate recovery for this app only; other apps' data is untouched. */
-  function reset(): void {
-    assertScope();
+  async function reset(): Promise<void> {
+    await assertScope();
     try {
-      localStorage.removeItem(key);
-      if (slugKey && localStorage.getItem(slugKey) !== null) localStorage.removeItem(slugKey);
-      seen = null;
-    } catch { throw new NativeStorageError('Browser storage is not available.', 'unavailable'); }
+      await withStore(() => ({ write: null, result: undefined }));
+      // The older copies, if any were never moved (an older FormLogic's, the slug's, or one saved while
+      // IndexedDB would not open): each would otherwise move back in next time.
+      try { for (const name of [key, ...legacy]) if (localStorage.getItem(name) !== null) localStorage.removeItem(name); }
+      catch { /* No localStorage: nothing older there. */ }
+    } catch (reason) {
+      if (reason instanceof NativeStorageError && reason.code !== 'unavailable') throw reason;
+      throw new NativeStorageError('Browser storage is not available.', 'unavailable');
+    }
+    seen = null;
+    announce(key, id);
   }
-  return { key, read, mutate, status, exportRaw, reset };
+  /** The limits this map is held to, which the frame is told: known once the store has opened. */
+  async function storageLimits(): Promise<NativeStorageLimits> {
+    limits = (await mapStore()).limits;
+    return limits;
+  }
+  return { key, id, read, mutate, status, exportRaw, reset, storageLimits };
 }

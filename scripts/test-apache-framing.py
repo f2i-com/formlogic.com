@@ -65,7 +65,7 @@ DirectoryIndex index.html
         with urllib.request.urlopen(base + path) as response:
             expected = f"frame-ancestors '{ancestor}'" if ancestor != '*' else 'frame-ancestors *'
             if path.startswith('/hosted-runtime/'):
-                expected = 'sandbox allow-scripts; ' + expected
+                expected = 'sandbox allow-scripts allow-downloads; ' + expected
             assert response.headers.get_all('Content-Security-Policy') == [expected + "; base-uri 'self'; object-src 'none'"], (path, str(response.headers))
             assert response.headers.get('X-Frame-Options') == frame, (path, str(response.headers))
             if path.startswith('/hosted-runtime/'):

@@ -24,13 +24,16 @@ const privatePath = /^(server|backend|private)\//i;
 
 /** Inspect only; never execute app source, strip a private backend, or mutate a draft. */
 export function reviewAppArchive(bytes: Uint8Array): { review: AppImportReview; files: Record<string, Uint8Array> } {
-  if (bytes.byteLength > 32 * 1024 * 1024) throw new Error('Choose an archive under 32 MB for import review.');
+  // Room for the largest project the app host keeps (NATIVE_LIMITS: 64 MB, a thousand media files
+  // and two hundred source files) and its folders: a game's pictures and sound barely compress, so
+  // its archive is near its expanded size.
+  if (bytes.byteLength > 80 * 1024 * 1024) throw new Error('Choose an archive under 80 MB for import review.');
   let size = 0;
   let count = 0;
   const paths = new Set<string>();
   const archive = unzipSync(bytes, { filter(entry) {
     size += entry.originalSize;
-    if (++count > 500 || size > 64 * 1024 * 1024) throw new Error('This archive exceeds the review limit (64 MB expanded / 500 entries).');
+    if (++count > 1500 || size > 72 * 1024 * 1024) throw new Error('This archive exceeds the review limit (72 MB expanded / 1,500 entries).');
     const path = entry.name;
     if (path.startsWith('/') || path.includes('\\') || path.includes(':') || path.includes('\0') || path.split('/').some(part => part === '..' || part === '.')) throw new Error('The archive contains an invalid file path.');
     if (paths.has(path)) throw new Error('The archive contains duplicate file paths.');

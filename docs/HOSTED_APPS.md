@@ -28,8 +28,10 @@ Any SoftN app can be uploaded, with a backend of its own or none:
   What a member saves stays through a session ending, in every tab and across renames of the app;
   signing out or deleting the account is what erases it, so a shared computer needs a sign-out.
   Another account never reads it. Changing who can use the app starts everyone from empty.
-  Browser storage holds about 30,000 characters per collection (256 KB and 200 keys per app), so a
-  larger seed is skipped with a console warning naming it, and the app opens with the rest. It
+  Browser storage is the browser's IndexedDB (FormLogic v0.1.24 on, SoftN v0.0.33's frame): up to
+  4 MB per collection, 32 MB and 1,000 keys per app, so a game's saves fit. Where a browser has no
+  IndexedDB it is localStorage, at about 30,000 characters per collection (256 KB and 200 keys per
+  app). A larger seed is skipped with a console warning naming it, and the app opens with the rest. It
   needs no runtime on the server: a server without the native runtime installs, publishes and
   restores it. A later version may add a backend; once a backend's migrations have run, a version
   without its `server` block is refused.
@@ -58,6 +60,17 @@ browses and edits the tables in its database; **Settings** chooses who can use i
 opens at the app's address. While the app is unpublished, a change returned from an editor is
 installed at once; once it is published, changes wait as a draft (kept in this browser) until
 **Publish changes**. App Studio's checklist counts a form-less app's database tables as its data, so it does not ask for a form first.
+
+**Files on this device** (Settings, the owner alone) decides whether the app may open the files a
+person picks for it and save files they ask for, such as a saved game (SoftN's `files`
+permission). **Off**, the default, grants nothing, as before. **Ask each person** shows a FormLogic
+prompt before the app opens: **Allow** is remembered on that device (for a members' app, for that
+member); **Not now** opens the app
+without files and asks again on another visit. **Allowed without asking** is for an app the owner
+knows: nobody is asked. The app's own `permission.json` asking for files is not enough: the owner's
+choice is the grant (`settings.softnFiles`, `ask` or `allow`). Only a granted app's frame may
+download (`sandbox="allow-scripts allow-downloads"`); it still never sees anything on the device but
+what the person picks. SoftN v0.0.33's frame reads the grant; an older one grants nothing.
 
 Building with AI uses the person's default AI (Settings → AI). Where it cannot answer yet, the
 page says why and offers **Use FormLogic Site AI** in one click when the operator offers Site AI,
@@ -397,7 +410,7 @@ retry from a second write. The method is sent upper-cased, and bodies keep `{}` 
 both ways. The frame waits 35 seconds for an answer, longer than the server's 25-second
 deadline, so a write that was made is never reported to the app as failed.
 
-Native browser storage is scoped to the selected app (256 KB total, 200 keys), including
+Native browser storage is scoped to the selected app (32 MB and 1,000 keys in IndexedDB; 256 KB and 200 keys where only localStorage is), including
 session persistence across reloads. A failed persistence acknowledgement is shown in the
 app. The opaque iframe still has no direct access to FormLogic's cookies or browser storage.
 The parent supplies the same verified ZIPP bytes used by the hosted client; the server's
@@ -408,8 +421,22 @@ Owner APIs are `GET/PUT /api/apps/{id}/native` and
 `expectedVersion`. Runtime APIs are `GET /api/app/{slug}/entry`,
 `GET /api/app/{slug}/native`, and `POST /api/app/{slug}/native/request`.
 The last accepts `{method,path,query,headers,body}` and returns `{result:{status,body}}`.
-The service limits decoded project content to 16 MB; source files to 1 MB each; source/media
-counts to 200/100. The browser action bridge currently limits an individual message to 32 KB.
+The service limits decoded project content to 64 MB; source files to 1 MB each and 200 of them;
+media files to 8 MB each and 1,000 of them. A page asks for the project without its media
+(`?media=pack`), then fetches the media as one pack (`GET /api/app/{slug}/native/media?h=<sha256>`),
+admitted exactly as the project is. The browser keeps it privately (never a shared cache) until the
+app changes; a members-only app's is checked with the server each time it is used (answered 304 while
+unchanged), so only someone still admitted reads the browser's copy. The server makes the pack and a
+copy of the project without its media from `project.json` the first time the app is opened after an
+install (`runtime-cache/` beside it), and reads them from then on; app requests read that copy too.
+A page from before v0.1.24 gets the media inside the project, as it did. PHP holds a project several
+times over while it is installed or first opened, so FormLogic raises `memory_limit` to 96 MB plus
+four times the project's size (at most 1.5 GB) where the host allows it, and refuses an upload it
+cannot make room for with `413` (`memory_limit`) before reading it. A host that forbids raising it
+needs `memory_limit` of at least 352M for the largest app (`php_value memory_limit 384M` in
+Apache, or php.ini). The largest app is sent as about 86 MB of JSON, and FormLogic takes a body of up
+to 96 MB there: a proxy in front of PHP must allow as much (nginx: `client_max_body_size 96m;`;
+Apache's own default allows it). The browser action bridge currently limits an individual message to 32 KB.
 At most four native workers run concurrently across apps in one storage root, with a 25-second
 worker deadline; a request waits up to three seconds for one before it is answered busy (`429`).
 This is an initial capacity limit, not a production concurrency benchmark. Saves to the app's
