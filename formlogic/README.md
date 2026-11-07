@@ -331,14 +331,17 @@ server {
 
     # The two runtime documents sandbox themselves. nginx drops inherited add_header lines, so
     # these repeat them, and exact matches win over the prefix above. allow-downloads: the frame's own
-    # sandbox decides which app may save a file (only one its owner lets use files).
+    # sandbox decides which app may save a file (only one its owner lets use files). no-transform:
+    # a CDN leaves them as sent (Cloudflare's Web Analytics adds its script to pages otherwise).
     location = /hosted-runtime/index.html {
+        add_header Cache-Control "no-cache, no-transform";
         add_header Access-Control-Allow-Origin "*" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "SAMEORIGIN" always;
         add_header Content-Security-Policy "sandbox allow-scripts allow-downloads; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
     }
     location = /hosted-runtime/host.html {
+        add_header Cache-Control "no-cache, no-transform";
         add_header Access-Control-Allow-Origin "*" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "SAMEORIGIN" always;

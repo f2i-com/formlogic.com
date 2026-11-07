@@ -127,6 +127,15 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
   if (!runtimePolicy.includes('sandbox allow-scripts allow-downloads;') || runtimePolicy.includes('allow-same-origin')) {
     fail('.htaccess must send a CSP sandbox of allow-scripts and allow-downloads alone on the runtime documents');
   }
+  // A CDN that rewrites HTML (Cloudflare's Web Analytics, which adds its script) leaves alone only
+  // what says no-transform; the runtime documents must, after the no-cache section that also names
+  // index.html, or that one would replace it.
+  const normalized = htaccess.replace(/\r\n/g, '\n');
+  const noCache = normalized.indexOf('<FilesMatch "^(sw\\.js|registerSW\\.js|index\\.html)$">');
+  const noTransform = normalized.search(/<FilesMatch "\^\(index\|host\)\\\.html\$">\s+Header set Cache-Control "no-cache, no-transform" env=IS_APP_RUNTIME\s+<\/FilesMatch>/);
+  if (noTransform < 0 || noTransform < noCache) {
+    fail('.htaccess must send the runtime documents Cache-Control: no-cache, no-transform, after the no-cache section');
+  }
   // A redirect under either frame tree defeats the shell's connect-src pin: CSP path matching
   // stops at the redirect, so a redirect to /api carries the request (and, in some browsers, the
   // viewer's cookies) out of the frame. Neither tree may contain one. The one rule that may name
@@ -158,6 +167,11 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
     if (!new RegExp(`^\\s*${name.replace('.', '\\.')}\\s+"no-cache";`, 'm').test(nginx)) fail(`the nginx example must send ${name} with no-cache, as .htaccess does`);
   }
   if (!nginxBlock('/').includes('add_header Cache-Control $formlogic_cache')) fail('the nginx example must use $formlogic_cache in location /');
+  for (const document of ['index.html', 'host.html']) {
+    if (!nginxBlock(`= /hosted-runtime/${document}`).includes('add_header Cache-Control "no-cache, no-transform";')) {
+      fail(`the nginx example must send /hosted-runtime/${document} with no-cache, no-transform, as .htaccess does`);
+    }
+  }
   if (!/try_files \$uri =404;/.test(nginxBlock('^~ /assets/'))) fail('the nginx example must answer 404 for a missing build file, as .htaccess does');
   const formBlock = nginxBlock('/form/');
   if (formBlock.includes('try_files') || !formBlock.includes('rewrite ^ /index.html break;')) {

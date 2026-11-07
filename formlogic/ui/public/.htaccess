@@ -183,6 +183,13 @@ Options -Indexes
   <FilesMatch "^(sw\.js|registerSW\.js|index\.html)$">
     Header set Cache-Control "no-cache"
   </FilesMatch>
+  # The app runtime's two documents, no-transform as well: a CDN leaves them as they were sent.
+  # Cloudflare's Web Analytics adds its script to every page it proxies, the app's frame included,
+  # where it ran beside the app and its report was refused by the frame's own policy. After the
+  # section above, which this replaces for them.
+  <FilesMatch "^(index|host)\.html$">
+    Header set Cache-Control "no-cache, no-transform" env=IS_APP_RUNTIME
+  </FilesMatch>
 </IfModule>
 
 # ============================================================================

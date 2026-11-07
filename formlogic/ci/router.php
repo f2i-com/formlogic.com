@@ -65,6 +65,8 @@ if (preg_match('#^/(hosted-runtime|app-editors)/#', $uri)) {
             // And .htaccess IS_APP_RUNTIME: the runtime documents sandbox themselves.
             $sandbox = str_starts_with($uri, '/hosted-runtime/') ? 'sandbox allow-scripts allow-downloads; ' : '';
             header("Content-Security-Policy: {$sandbox}frame-ancestors 'self'; base-uri 'self'; object-src 'none'");
+            // And its no-transform: a CDN leaves the app's documents as they were sent.
+            if ($sandbox !== '') header('Cache-Control: no-cache, no-transform');
         }
         header('Content-Length: ' . filesize($file));
         readfile($file);
