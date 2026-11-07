@@ -445,7 +445,11 @@ final class NativeAppLifecycleTest extends TestCase
         $counting->records('notes', 'notes');
         $this->assertSame(1, $counting->reads, 'the records view decodes project.json once');
         $counting->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Two'], 'client_ip' => '127.0.0.1'], [], [], 1);
-        $this->assertSame(2, $counting->reads, 'a request bound to a generation decodes it once');
+        // A request reads the project without its media (its runtime cache, NativeAppService::request):
+        // decoding every picture and sound for each call kept a worker busy with a game's tens of megabytes.
+        $this->assertSame(1, $counting->reads, 'a request bound to a generation decodes no project.json');
+        $counting->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Three'], 'client_ip' => '127.0.0.1'], [], [], 1);
+        $this->assertSame(1, $counting->reads, 'nor does the next one');
     }
 
     public function testARequestDecidedAgainstAnOlderGenerationIsRefused(): void
