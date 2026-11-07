@@ -179,7 +179,7 @@ npm run build     # output: ui/dist/
 - Serve `ui/dist/` as the document root (SPA fallback to `index.html`)
 - Route `/api/*` to `backend/public/index.php`
 - Serve `/hosted-runtime/*` as real static files, with `Access-Control-Allow-Origin: *` and `X-Content-Type-Options: nosniff` for the sandboxed app frame. Missing assets must return 404, not the SPA HTML. Apply these headers only to this static directory, not authenticated API routes.
-- Send `Content-Security-Policy: sandbox allow-scripts; frame-ancestors 'self'; base-uri 'self'; object-src 'none'` and `X-Frame-Options: SAMEORIGIN` on the two runtime documents, `/hosted-runtime/index.html` and `/hosted-runtime/host.html`. They run other people's code: without this, a page elsewhere could frame them and run that code at your origin. The examples below do it, and the bundled `.htaccess` does it for you.
+- Send `Content-Security-Policy: sandbox allow-scripts allow-downloads; frame-ancestors 'self'; base-uri 'self'; object-src 'none'`, `X-Frame-Options: SAMEORIGIN` and `Cache-Control: no-cache, no-transform` on the two runtime documents, `/hosted-runtime/index.html` and `/hosted-runtime/host.html`. They run other people's code: without this, a page elsewhere could frame them and run that code at your origin. The examples below do it, and the bundled `.htaccess` does it for you.
 
 > **Production must be HTTPS.** Auth uses `Secure` cookies in production, so login fails over plain HTTP. Terminate TLS directly or at a reverse proxy (which must send `X-Forwarded-Proto: https`), and redirect port 80 → 443. See [DEPLOYMENT.md](../DEPLOYMENT.md) for the full launch checklist.
 >
@@ -218,7 +218,10 @@ npm run build     # output: ui/dist/
         Header always set X-Content-Type-Options "nosniff"
         <FilesMatch "^(index|host)\.html$">
             Header always set X-Frame-Options "SAMEORIGIN"
-            Header always set Content-Security-Policy "sandbox allow-scripts; frame-ancestors 'self'; base-uri 'self'; object-src 'none'"
+            # allow-downloads: the frame's own sandbox decides which app may save a file.
+            Header always set Content-Security-Policy "sandbox allow-scripts allow-downloads; frame-ancestors 'self'; base-uri 'self'; object-src 'none'"
+            # no-transform: a CDN leaves them as sent (Cloudflare's Web Analytics adds its script otherwise).
+            Header set Cache-Control "no-cache, no-transform"
         </FilesMatch>
     </Directory>
 
@@ -234,6 +237,10 @@ npm run build     # output: ui/dist/
     RewriteRule ^/api/(.*)$ /api/index.php [QSA,PT,L]
     # The backend also answers at the domain root, per Host, as in the nginx example below.
     RewriteRule ^/(manifest\.json|\.well-known/((formlogic-app|assetlinks)\.json|aokie-companion(\.json)?|oauth-authorization-server|oauth-protected-resource(/.*)?))$ /api/index.php [QSA,PT,L]
+    # A link-preview service fetching the site or an app gets its name, description and image, as the
+    # bundled .htaccess does where the backend sits beside it (it cannot see it from here).
+    RewriteCond %{HTTP_USER_AGENT} (facebookexternalhit|Twitterbot|Slackbot|Discordbot|LinkedInBot|WhatsApp|TelegramBot|SkypeUriPreview|redditbot|Pinterestbot|Embedly|vkShare|Iframely|Mastodon|Bluesky) [NC]
+    RewriteRule ^/(app/[^/]+(/native)?/?)?$ /api/index.php [QSA,PT,L]
 </VirtualHost>
 ```
 

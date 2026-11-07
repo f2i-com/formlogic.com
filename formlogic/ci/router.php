@@ -34,6 +34,14 @@ if (preg_match('#^/\.well-known/(oauth-protected-resource(/.*)?|oauth-authorizat
     return true;
 }
 
+// Custom-domain launch endpoints the backend answers per Host at the domain root (mirrors the .htaccess
+// rules): the signed client manifest, Android App Links, the same-origin PWA manifest, and the Aokie
+// Companion's discovery. Served as the SPA here, a domain's manifest was its index.html.
+if (preg_match('#^/(manifest\.json|\.well-known/(formlogic-app|assetlinks)\.json|\.well-known/aokie-companion(\.json)?)$#', $uri)) {
+    require __DIR__ . '/../backend/public/index.php';
+    return true;
+}
+
 // A link-preview service fetching the root or /app/<slug> (mirrors the .htaccess rule): the app's name,
 // description and image (AppLookController::sharePage).
 if (preg_match('#^/(app/[^/]+(/native)?/?)?$#', $uri) && preg_match('~(facebookexternalhit|Twitterbot|Slackbot|Discordbot|LinkedInBot|WhatsApp|TelegramBot|SkypeUriPreview|redditbot|Pinterestbot|Embedly|vkShare|Iframely|Mastodon|Bluesky)~i', $_SERVER['HTTP_USER_AGENT'] ?? '')) {
