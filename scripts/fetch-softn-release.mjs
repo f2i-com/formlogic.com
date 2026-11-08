@@ -256,12 +256,23 @@ export async function resolveRelease({ tag, token, fetchImpl = fetch, repository
 }
 
 async function download(asset, target, token, fetchImpl) {
-  // With a token the API asset URL is used (it serves private releases too);
-  // without one the public download URL costs no API rate limit.
+  // The API asset URL first, signed in where there is a token (it serves private releases too),
+  // and the public download URL where the API cannot answer: on 2026-11-08 GitHub answered 504 to
+  // every anonymous public download of an f2i-com release while its API served the same files.
+  // The bytes are held to the release's digests either way.
   const headers = apiHeaders(token);
   headers.Accept = 'application/octet-stream';
-  const response = await fetchImpl(token && asset.url ? asset.url : asset.browser_download_url, { headers, redirect: 'follow' });
-  if (!response.ok) throw new ReleaseError(`Downloading ${asset.name} failed: HTTP ${response.status}.`);
+  let response = null;
+  if (asset.url) {
+    try { response = await fetchImpl(asset.url, { headers, redirect: 'follow' }); }
+    catch { response = null; }
+  }
+  if (!response?.ok && asset.browser_download_url) {
+    const viaApi = response ? ` (GitHub's API answered ${response.status})` : '';
+    response = await fetchImpl(asset.browser_download_url, { headers, redirect: 'follow' });
+    if (!response.ok) throw new ReleaseError(`Downloading ${asset.name} failed: HTTP ${response.status}${viaApi}.`);
+  }
+  if (!response?.ok) throw new ReleaseError(`Downloading ${asset.name} failed: HTTP ${response?.status ?? '(no answer)'}.`);
   const bytes = Buffer.from(await response.arrayBuffer());
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, bytes);

@@ -551,11 +551,24 @@ test('a release fetched through the API is downloaded once, verified by its side
   assert.equal(record.source, 'https://example.test/v0.0.13');
   assert.equal(record.tagCommit, COMMIT);
   assert.ok(existsSync(resolve(root, '.runtime-source/softn-release/v0.0.13/softn-formlogic-runtime-v0.0.13.zip')));
-  assert.deepEqual(api.downloads, ['https://example.test/v0.0.13/sha', 'https://example.test/v0.0.13/zip']);
+  assert.deepEqual(api.downloads, ['https://api.example.test/v0.0.13/sha', 'https://api.example.test/v0.0.13/zip']);
   await fetchSoftnRelease({ root, fetchImpl: api.fetchImpl, token: null, ...quiet });
-  assert.deepEqual(api.downloads, ['https://example.test/v0.0.13/sha', 'https://example.test/v0.0.13/zip', 'https://example.test/v0.0.13/sha'], 'the archive is reused when its digest still matches');
+  assert.deepEqual(api.downloads, ['https://api.example.test/v0.0.13/sha', 'https://api.example.test/v0.0.13/zip', 'https://api.example.test/v0.0.13/sha'], 'the archive is reused when its digest still matches');
 });
 
+test("the archive comes through GitHub's API asset address, and through the public download address when the API cannot answer", async (t) => {
+  const root = await formlogicRoot(t);
+  const a = await served(resolve(root, 'served'));
+  const api = githubApi({ latest: 'v0.0.13', releases: { 'v0.0.13': a }, tagCommits: { 'v0.0.13': COMMIT } });
+  // The API's asset addresses answer 504, as GitHub's public addresses did for f2i-com on 2026-11-08 the other way round.
+  const fetchImpl = async (url, init) => (url.startsWith('https://api.example.test/') ? (api.downloads.push(url), new Response('', { status: 504 })) : api.fetchImpl(url, init));
+  await fetchSoftnRelease({ root, fetchImpl, token: null, ...quiet });
+  assert.deepEqual(api.downloads, ['https://api.example.test/v0.0.13/sha', 'https://example.test/v0.0.13/sha', 'https://api.example.test/v0.0.13/zip', 'https://example.test/v0.0.13/zip']);
+  // Neither answering is a failure that names both.
+  const none = async (url, init) => (/example\.test\/v0\.0\.13\/(zip|sha)$/.test(url) ? new Response('', { status: 504 }) : api.fetchImpl(url, init));
+  await rm(resolve(root, '.runtime-source/softn-release/v0.0.13'), { recursive: true, force: true });
+  await assert.rejects(fetchSoftnRelease({ root, fetchImpl: none, token: null, ...quiet }), /failed: HTTP 504 \(GitHub's API answered 504\)/);
+});
 // ── FL-S01: one release per run ─────────────────────────────────────────────
 
 test('the tag commit comes from the annotated tag, not the release page\'s target_commitish', async (t) => {
@@ -587,7 +600,7 @@ test('--resolve-only freezes the release from the release page and its sidecar, 
   assert.equal(frozen.assetId, 4242);
   assert.equal(frozen.assetName, 'softn-formlogic-runtime-v0.0.13.zip');
   assert.equal(frozen.archiveSha256, a.sha256);
-  assert.deepEqual(api.downloads, ['https://example.test/v0.0.13/sha']);
+  assert.deepEqual(api.downloads, ['https://api.example.test/v0.0.13/sha']);
   const onDisk = await loadFrozen('frozen/softn.json', root);
   assert.deepEqual(onDisk, frozen);
   await assert.rejects(loadFrozen('frozen/missing.json', root), /does not exist; run .*--resolve-only/);
@@ -614,7 +627,7 @@ test('with a frozen record the run installs the frozen release even after latest
   const downloadsBefore = after.downloads.length;
   const again = await fetchSoftnRelease({ root, fetchImpl: after.fetchImpl, token: null, frozen: 'frozen.json', ...quiet });
   assert.equal(again.tag, 'v0.0.13');
-  assert.deepEqual(after.downloads.slice(downloadsBefore), ['https://example.test/v0.0.13/sha'], 'only the sidecar is re-read; the archive is reused');
+  assert.deepEqual(after.downloads.slice(downloadsBefore), ['https://api.example.test/v0.0.13/sha'], 'only the sidecar is re-read; the archive is reused');
   await checkInstalled({ root, frozen: 'frozen.json', ...quiet });
 });
 
