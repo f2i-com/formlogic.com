@@ -267,6 +267,24 @@ test('a release carrying the CLI asset installs it, records what it installed, a
   assert.equal(api.requests.filter((url) => url.endsWith(release.asset.name)).length, before, 'the asset is reused while its digest still matches');
 });
 
+test("the release's files come through GitHub's API asset addresses, and through the public addresses when the API cannot answer", async (t) => {
+  const release = publishedRelease();
+  const api = serving(release);
+  const fromApi = await fetchOaiyCli({ root: await formlogicRoot(t), fetchImpl: api.fetchImpl, token: null, ...quiet });
+  assert.equal(fromApi.assetSha256, release.asset.sha256);
+  const files = api.requests.filter((url) => /example\.test\/v[^/]+\/./.test(url));
+  assert.ok(files.length > 0 && files.every((url) => url.startsWith('https://api.example.test/')), 'every file through the API');
+  // The API's asset addresses answer 504 (GitHub's public ones did on 2026-11-08, the other way round).
+  const requests = [];
+  const apiDown = async (url, init) => (requests.push(url), url.startsWith('https://api.example.test/') ? new Response('', { status: 504 }) : api.fetchImpl(url, init));
+  const fallback = await fetchOaiyCli({ root: await formlogicRoot(t), fetchImpl: apiDown, token: null, ...quiet });
+  assert.equal(fallback.assetSha256, release.asset.sha256);
+  assert.ok(requests.some((url) => url.startsWith('https://example.test/')), 'the public addresses served it');
+  // Neither answering is a failure naming both.
+  const down = async (url, init) => (/example\.test\/v[^/]+\/./.test(url) ? new Response('', { status: 504 }) : api.fetchImpl(url, init));
+  await assert.rejects(fetchOaiyCli({ root: await formlogicRoot(t), fetchImpl: down, token: null, ...quiet }), /failed: HTTP 504 \(GitHub's API answered 504\)/);
+});
+
 test('a release whose engine runs Python installs although run.languages is JavaScript alone', async (t) => {
   // The regression this test exists for: `run.languages` is the typed literal
   // ["javascript"] of the `oaiy run` lane in every release ever built, so a
