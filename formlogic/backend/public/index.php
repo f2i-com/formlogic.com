@@ -893,8 +893,14 @@ $container->set(\FormLogic\Controllers\NativeAppController::class, function (Con
         $c->get(\FormLogic\Services\RuntimeEngineService::class),
         $c->get(\FormLogic\Services\PluginService::class),
         $c->get(\FormLogic\Services\AccessGateService::class),
-        $c->get(\FormLogic\Services\AppLookService::class)
+        $c->get(\FormLogic\Services\AppLookService::class),
+        $c->get(\FormLogic\Services\NativePhoneVerification::class)
     );
+});
+$container->set(\FormLogic\Services\NativePhoneVerification::class, function (Container $c) {
+    return new \FormLogic\Services\NativePhoneVerification($c->get(\FormLogic\Services\NativeAppService::class));
+
+
 });
 
 // A hosted SoftN app's icon, share image and loading colours (AppLookService), and the page a link
@@ -1347,6 +1353,12 @@ $app->add(new BodySizeLimitMiddleware(
         // Native projects include base64 media; the service separately caps decoded content at
         // NativeAppService::MAX_PROJECT_BYTES (64 MB), which base64 makes about 86 MB of JSON.
         ['path' => '#^/api/apps/[a-zA-Z0-9_-]+/native$#', 'method' => 'PUT', 'maxBytes' => 96 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
+        // An app's database brought from where it ran before (NativeAppController, operation import).
+        ['path' => '#^/api/apps/[a-zA-Z0-9_-]+/native/import$#', 'method' => 'POST', 'maxBytes' => $backupMax + (1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
+        // A request from an app's page: a photo upload route takes up to 5.6 MB (SoftN's limit), which
+        // the controller holds each route to (NativeAppService::visitorRequest); any other, 2 MB as before.
+        ['path' => '#^/api/app/[^/]+/native/request$#', 'method' => 'POST', 'maxBytes' => 6 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => false],
+
         ['path' => '#^/api/account/backup/import$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/v1/data-node/restores$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => ['application/zip'], 'auth' => false],
         ['path' => '#^/api/admin/upgrade/upload$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
@@ -3400,6 +3412,18 @@ $nativeRecordLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'native_rec
 $app->map(['GET', 'POST'], '/api/apps/{id}/native/{operation:records}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($nativeRecordLimiter)->add($authRequired);
+// The owner's Twilio Verify details for the app's phone sign-in codes (NativePhoneVerification):
+// read as the rest of the app's settings are, changed under the budget installs use.
+$app->get('/api/apps/{id}/native/{operation:verification}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
+$app->map(['PUT', 'DELETE'], '/api/apps/{id}/native/{operation:verification}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($hostingLimiter)->add($authRequired);
+// The app's data from where it ran before: its database, and the key it was kept under.
+$app->post('/api/apps/{id}/native/{operation:import}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
 $nativeLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'native_apps', true, true, null, true);
 $app->get('/api/app/{slug}/entry', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->entry($request, $response, $getArgs($request));

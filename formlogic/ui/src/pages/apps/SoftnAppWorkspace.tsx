@@ -4,7 +4,7 @@
 // Screens step, a collapsed "Hosting & app tools" section and the native hosting dialog.
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, Lock, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wand2 } from 'lucide-react';
+import { Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, Lock, MessageSquare, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wand2 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Textarea } from '../../components/ui/Textarea';
@@ -12,6 +12,8 @@ import { Switch } from '../../components/ui/Switch';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
 import { SoftnLookPanel } from '../../components/apps/SoftnLookPanel';
+import { PhoneSignInPanel } from '../../components/apps/PhoneSignInPanel';
+import { BringDataPanel } from '../../components/apps/BringDataPanel';
 import { RequirementsSetting } from '../../components/apps/RequirementsSetting';
 import { AppEditorDialog, type AppEditorKind } from '../../components/studio/AppEditorDialog';
 import type { EditorBrief } from '../../components/studio/editorAgent';
@@ -317,6 +319,18 @@ function Workspace({ app }: { app: App }) {
           {backend ? <>
             <p className="mb-4 text-sm leading-6 text-slate-600 dark:text-slate-400">Everything your app stores, table by table. Add, edit and delete records here; your app sees the changes at once. To add a table or a column, ask AI Studio.</p>
             <NativeRecordsBrowser key={`${app.id}:${version}`} appId={app.id} version={version} readOnly={readOnly} openFirstTable />
+            {app.ownerId === userId && !readOnly && <details className="mt-5 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+              <summary className="cursor-pointer text-sm font-medium text-slate-900 dark:text-white">Bring data from where it ran before</summary>
+              <div className="mt-3">
+                <BringDataPanel appId={app.id} disabled={busy} waiting={dirty ? 'Publish or discard your unpublished changes first: bringing data installs the app again.' : null}
+                  onImported={result => {
+                    setReloadKey(key => key + 1); setPreviewKey(key => key + 1);
+                    toast.success('Data brought in', result.keyImported ? 'With the key it was kept under.' : 'The app keeps its own key here.');
+                    if (result.verification?.configured) toast.info('Sign-in codes are on', 'Its Twilio Verify details now send this app’s codes.');
+                    if (result.verificationProblem) toast.warning('Sign-in codes are not set up', result.verificationProblem);
+                  }} />
+              </div>
+            </details>}
           </> : <div className="flex items-start gap-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
             <Database className="mt-0.5 h-5 w-5 shrink-0 text-slate-400" aria-hidden="true" />
             <p><span className="font-semibold text-slate-900 dark:text-white">This app has no database on the server.</span> It has no backend of its own, so what it saves stays in each visitor&apos;s browser. To keep data here and see it in this tab, give the app a backend: AI Studio can add one.</p>
@@ -351,7 +365,11 @@ function Workspace({ app }: { app: App }) {
                 </label>)}
             </fieldset>
           </Panel>}
+          {app.ownerId === userId && backend && <Panel title="Phone sign-in codes" icon={<MessageSquare className="h-4 w-4" />}>
+            <PhoneSignInPanel appId={app.id} version={version} disabled={readOnly} />
+          </Panel>}
           {app.ownerId === userId && <Panel title="Look and sharing" icon={<Palette className="h-4 w-4" />}>
+
             <SoftnLookPanel project={project} look={app.settings?.softnLook} themeColor={app.settings?.pwaThemeColor} disabled={readOnly} onSave={changeLook} />
           </Panel>}
           <Panel title="Address" icon={<Globe className="h-4 w-4" />}>

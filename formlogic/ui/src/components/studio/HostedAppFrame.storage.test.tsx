@@ -356,7 +356,24 @@ it('takes saves apart from the four backend calls, and tells the frame it may se
   await act(async () => finish());
 });
 
+it('takes a request to the app backend as large as a photo upload, and no larger', async () => {
+  vi.mocked(api.runNativeRequest).mockResolvedValue({ data: { result: { status: 201, body: {} } } } as never);
+  const { iframe } = await mountNative();
+  await act(async () => sendReady(iframe, 1));
+  // A 4 MB photo as a data: URL is about 5.4 MB of text: refused at 32 KB until the server could take it.
+  const photo = 'data:image/jpeg;base64,' + 'A'.repeat(5_400_000);
+  await act(async () => call(channels[0], { url: '/api/photos/upload', options: { method: 'POST', body: { data_url: photo } } }, 1, 'nativeRequest'));
+  expect(api.runNativeRequest).toHaveBeenCalledWith('notes', expect.objectContaining({ path: '/api/photos/upload', body: { data_url: photo } }), expect.anything(), undefined);
+  await act(async () => call(channels[0], { url: '/api/photos/upload', options: { method: 'POST', body: { data_url: photo + 'A'.repeat(1_000_000) } } }, 2, 'nativeRequest'));
+  expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 2, result: { error: 'Invalid action input.' } });
+  expect(api.runNativeRequest).toHaveBeenCalledTimes(1);
+  // Any other action keeps its 32 KB.
+  await act(async () => call(channels[0], { title: 'x'.repeat(40000) }, 3, 'save'));
+  expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 3, result: { error: 'Invalid action input.' } });
+});
+
 it('sends a method upper-cased, as a browser sends it', async () => {
+
   vi.mocked(api.runNativeRequest).mockResolvedValue({ data: { result: { status: 201, body: {} } } } as never);
   const { iframe } = await mountNative();
   await act(async () => sendReady(iframe, 1));

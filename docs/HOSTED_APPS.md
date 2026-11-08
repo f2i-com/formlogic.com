@@ -119,7 +119,58 @@ reads, with the domain's manifest. Three things put it there (`ui/src/lib/domain
 Each keeps the site's own value beside what it gives (`data-fl-original`, `data-fl-applied`), and a
 page of the domain that isn't the app's (the legal pages, a form) gets FormLogic's back.
 
+**Photos.** An app with the `photos` capability may give a route `upload: "photo"` (Coffee.Dating's
+profile photos). The page sends the photo as a `data_url`; the server redraws it as SoftN's own hosts
+do (Support/PhotoSanitizer, after apps/softn-host-php/runtime/photos.php): a still JPEG, PNG or WebP
+of at most 4 MB and 16 megapixels, 32 to 8,192 pixels a side, read from its bytes, turned as its EXIF
+says, transparency painted white, written again as a 960-pixel JPEG and a 240-pixel thumbnail with
+none of the original's metadata. The backend gets `req.upload = {sanitized: true, image, thumbnail}`
+and an empty body; a photo that is not taken reaches it as refused, and it answers `photo_rejected`.
+`softn.config.photos` (and `/api/meta`) say whether this server can: PHP's GD with JPEG, PNG and WebP.
+A photo route takes the body it and the app declare, up to 5,600,100 bytes; every other route the
+2 MB it always had (NativeAppService::visitorRequest), and the page passes a request up to 6 MB to
+its backend (HostedAppFrame), where every other call keeps its 32 KB; a plugin's page is held to its
+2 MB as before. A photo is decoded only once its request holds a worker slot, so no more are decoded
+at once than requests run. The app opens the picture through `softn.files`, so **Files on this
+device** must be Allowed (or Ask) for its picker to work.
+
+
+**Phone sign-in codes** (Settings, the owner alone, for an app with a backend). An app that signs
+people in with a code by text names `config.app.verificationProvider: "twilio-verify"` in its
+manifest, as Coffee.Dating does; SoftN leaves sending to the host's operator, and FormLogic is that
+operator here (NativePhoneVerification, after Coffee.Dating's operator/verify.mjs). The owner gives
+their own Twilio account SID, Verify service SID and auth token: kept in the app's private folder
+(`private/verify.json`), the token sealed with the site's data key where one is set, never shown
+again, and never given to the app's code, its page, a log or an answer. Then:
+
+- `POST /api/auth/send-code` runs the backend first with `req.context.verificationProvider` set, so
+  its own limits (per number, per address, overall) stand before the owner's SMS bill; only a 202
+  with a `challenge_id` (stored in `otp_challenges` as `queued` with `code_hash` `verify:pending`) is
+  sent, and the challenge becomes `ready` with the provider's id. A provider that cannot send fails
+  the challenge (429 or 503); one replaced meanwhile is answered 409 `challenge_replaced`.
+- `POST /api/auth/verify` counts the attempt on the challenge first (five at most), asks the
+  provider, and tells the backend its yes in `req.context.verification` (`challengeId`, `phone`,
+  `sid`, `attempt`), which the backend checks against the challenge it stored.
+- Until the owner sets it up, the request is refused before the backend is asked: "Sign-in
+  messaging is not configured yet." A host configuration in development (never FormLogic's own)
+  passes everything through, and the app shows its own codes.
+
+**Bringing data** (the Data tab, or "Bring its data too" when adding an app from a `.softn` file).
+An app moved from SoftN's own hosting brings its database (`private/data/application.sqlite`) and,
+optionally, that host's `private/config.json`, for the key the data was kept under: of that file
+only `keyHex`, `cryptoDomains` and the app id are taken (the id must be this app's), and its Twilio
+Verify details when the owner says to use them. The database is checked before anything changes:
+SQLite's own file and check, no trigger, view or virtual table, no host table but the runner's
+(`_migrations`, `_request_limits`, `_formlogic_record_events`, whose queued events are dropped), and
+a migration ledger this version of the app lists, file for file. It is then installed as the app's
+next version through the install journal (NativeAppService::importData): the app's database and
+configuration are snapshotted first and put back if the app does not start on what came. Without the
+key file the app keeps its own key: what the old host sealed or keyed (codes being sent at the move,
+an outbox) will not read; Coffee.Dating's accounts, profiles and messages are not sealed. Stop the old
+site before copying its database, so nothing is left in its write-ahead log.
+
 Building with AI uses the person's default AI (Settings → AI). Where it cannot answer yet, the
+
 page says why and offers **Use FormLogic Site AI** in one click when the operator offers Site AI,
 beside connecting their own; the Visual Builder and uploads never need AI. The editor's own save
 button takes FormLogic's name for it (**Save changes**, or **Keep changes** once the app is live),

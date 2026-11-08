@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
-use FormLogic\Services\{AccessGateService, AppService, AppUserService, NativeAppService, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService};
+use FormLogic\Services\{AccessGateService, AppService, AppUserService, NativeAppService, NativePhoneVerification, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService};
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -19,7 +19,7 @@ class NativeAppController
     // $engines is required, not optional-with-a-default: this controller is autowired, and PHP-DI's
     // reflection autowiring SKIPS optional parameters (ReflectionBasedAutowiring), so an `= null`
     // here would silently hand production a controller that decides no app's engine.
-    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null, private ?AppLookService $look = null) {}
+    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null, private ?AppLookService $look = null, private ?NativePhoneVerification $verification = null) {}
 
 
     public function manage(Request $request, Response $response, array $args): Response
@@ -33,6 +33,52 @@ class NativeAppController
         $readOnly = $this->isDemoRequest($request);
         if ($request->getMethod() !== 'GET' && ($blocked = $this->blockIfDemo($request, $response, self::DEMO_READ_ONLY))) return $blocked;
         return $this->respond($response, function () use ($request, $app, $args, $readOnly) {
+            // Phone sign-in codes through the owner's Twilio Verify (NativePhoneVerification): the
+            // two ids are shown back, the token never is.
+            if (($args['operation'] ?? '') === 'verification') {
+                if ($this->verification === null) throw new \RuntimeException('Phone verification is not available on this server', 503);
+                if ($request->getMethod() === 'GET') return $this->verification->describe($app['id']);
+                if ($request->getMethod() === 'DELETE') return $this->verification->clear($app['id']);
+                $input = $request->getParsedBody();
+                if (!is_array($input)) throw new \InvalidArgumentException('Provide the Twilio details');
+                return $this->verification->save($app['id'], $input['accountSid'] ?? null, $input['serviceSid'] ?? null, $input['authToken'] ?? null);
+            }
+            // The app's data from where it ran before: its database, and optionally the earlier
+            // host's private configuration for the key it was kept under (and its Twilio details,
+            // when the owner says to use them).
+            if (($args['operation'] ?? '') === 'import') {
+                $uploads = $request->getUploadedFiles();
+                $database = $uploads['database'] ?? null;
+                if (!$database instanceof \Psr\Http\Message\UploadedFileInterface || $database->getError() !== UPLOAD_ERR_OK) throw new \InvalidArgumentException('Choose the app\'s database file (application.sqlite).');
+                $config = $uploads['config'] ?? null;
+                $imported = ['key' => null, 'verification' => null];
+                if ($config instanceof \Psr\Http\Message\UploadedFileInterface && $config->getError() === UPLOAD_ERR_OK) {
+                    if ($config->getSize() !== null && $config->getSize() > 65536) throw new \InvalidArgumentException('That key file is too large to be a host configuration.');
+                    $imported = NativeAppService::importedKey((string) $config->getStream());
+                }
+                $useVerification = (($request->getParsedBody() ?? [])['useVerification'] ?? '') === '1' && $imported['verification'] !== null && $this->verification !== null;
+                // Twilio details this site would not keep are said before anything changes, and
+                // never take the data with them: the data is the import, the details a setting.
+                $verificationProblem = null;
+                if ($useVerification) {
+                    try { NativePhoneVerification::assertDetails($imported['verification']['accountSid'], $imported['verification']['serviceSid'], $imported['verification']['authToken']); }
+                    catch (\InvalidArgumentException $e) { $verificationProblem = 'Its Twilio details were not used: ' . $e->getMessage(); $useVerification = false; }
+                }
+                $path = $this->native->importDropPath($app['id']);
+                try {
+                    $database->moveTo($path);
+                    $installed = $this->native->importData($app['id'], $path, $imported['key']);
+                } finally {
+                    // With what SQLite made beside a WAL-mode upload as it was read.
+                    foreach (['', '-wal', '-shm', '-journal'] as $suffix) if (is_file($path . $suffix)) @unlink($path . $suffix);
+                }
+                $verification = null;
+                if ($useVerification) {
+                    try { $verification = $this->verification->save($app['id'], $imported['verification']['accountSid'], $imported['verification']['serviceSid'], $imported['verification']['authToken']); }
+                    catch (\Throwable $e) { error_log('Native import: Twilio details not kept for app ' . $app['id'] . ': ' . get_class($e)); $verificationProblem = 'Its Twilio details could not be kept: enter them in Settings → Phone sign-in codes.'; }
+                }
+                return ['project' => $installed, 'keyImported' => $imported['key'] !== null, 'verificationFound' => $imported['verification'] !== null, 'verification' => $verification, 'verificationProblem' => $verificationProblem];
+            }
             // A new SoftN app's first version: the starter project, named after the app. Only
             // for an app with nothing installed (install() refuses expectedVersion 0 otherwise).
             if (($args['operation'] ?? '') === 'starter') {
@@ -286,12 +332,19 @@ class NativeAppController
             $body = is_object($sent) && property_exists($sent, 'body') && $sent->body !== null ? $sent->body : ($input['body'] ?? (object) []);
             if (is_string($body)) $body = json_decode($body, false, 64, JSON_THROW_ON_ERROR);
             if (!is_array($body) && !is_object($body)) throw new \InvalidArgumentException('App request body must be JSON');
-            $result = $this->native->request($app['id'], [
+            $nativeRequest = [
                 'method' => $input['method'], 'path' => $input['path'], 'query' => (object) ($input['query'] ?? []), 'body' => $body,
                 // Both always present, empty when not sent, as SoftN's PHP host gives them.
                 'headers' => (object) ['authorization' => $authorization, 'idempotency-key' => $idempotency],
                 'client_ip' => \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request), 'photos' => false,
-            ], $identity, $this->flows->nativeRecordSubscriptions($app['id']), (int) ($project['version'] ?? 0), true);
+            ];
+            $subscriptions = $this->flows->nativeRecordSubscriptions($app['id']);
+            // The app's own page (not a plugin's): photos are redrawn here, and the body held to its route.
+            // $context is the host's word to the backend, added to who is asking (never the caller's).
+            $run = fn(array $context = []) => $this->native->request($app['id'], $nativeRequest, $identity + $context, $subscriptions, (int) ($project['version'] ?? 0), true, $plugin === null ? 'app' : 'plugin');
+            $result = $plugin === null && $this->verification !== null && $this->verification->applies($app['id'], $nativeRequest)
+                ? $this->verification->handle($app['id'], $nativeRequest, $run)
+                : $run();
             if ($plugin !== null) {
                 if ($this->gate === null) throw new \RuntimeException('Plugins are not available', 503);
                 $result = $this->gate->recordFromPluginAnswer($plugin, (string) $user, $input['method'], $input['path'], $result);
@@ -357,7 +410,7 @@ class NativeAppController
         }
         catch (\InvalidArgumentException|\JsonException $e) { return $this->jsonError($response, $e->getMessage(), 400); }
         catch (\RuntimeException $e) {
-            if (in_array($e->getCode(), [402,403,404,409,422,429], true)) return $this->jsonError($response, $e->getMessage(), $e->getCode());
+            if (in_array($e->getCode(), [402,403,404,409,413,422,429,501], true)) return $this->jsonError($response, $e->getMessage(), $e->getCode());
             error_log('Native app error: ' . $e->getMessage());
             if ($owner && $e->getCode() === 0 && preg_match(self::RECOVERY_REQUIRED, $e->getMessage())) return $this->jsonError($response, $e->getMessage(), 503, 'recovery_required');
             return $this->jsonError($response, 'The native app host is unavailable. Check its runtime configuration.', 503);

@@ -104,6 +104,13 @@ class NativeAppService
 
     /** The install journal, relative to the installation root. */
     private const JOURNAL = '/private/install.json';
+    /** The runner's queue of committed record events (SoftN's record_events.rs), delivered by dispatchRecordEvents(). */
+    private const RECORD_OUTBOX = '_formlogic_record_events';
+    /** A photo waiting to be redrawn once the request holds its worker slots (visitorRequest, invoke); never sent on. */
+    private const PHOTO_PENDING = "\0photo";
+    /** The tables SQLite keeps for itself that an app's database may have; any other `sqlite_` name is not one. */
+    private const SQLITE_OWN = ['sqlite_sequence', 'sqlite_stat1', 'sqlite_stat2', 'sqlite_stat3', 'sqlite_stat4'];
+
 
     /** Records browsing: rows per page, and the furthest offset a page may start at. */
     public const RECORD_PAGE = 50;
@@ -1774,7 +1781,176 @@ class NativeAppService
         }
     }
 
-    public function install(string $appId, array $project, int $expectedVersion): array
+    /**
+     * Bring an app's data from where it ran before: its SQLite database (application.sqlite), and
+     * with it, optionally, the key its host kept it under (importedKey()), so what that host sealed
+     * or keyed still reads. It is installed as an update of the version in place, through install()'s
+     * journal: the database and configuration are snapshotted first and put back if the app does not
+     * start on what came, and the version number goes up, so a page open on the old data reloads.
+     *
+     * @param array{appId: ?string, keyHex: string, cryptoDomains: array{hmac: string, seal: string}}|null $key
+     */
+    public function importData(string $appId, string $databasePath, ?array $key): array
+    {
+        $project = $this->get($appId);
+        if ($project === null) throw new RuntimeException('Install the app before bringing its data', 409);
+        $manifest = json_decode((string) ($project['files']['manifest.json'] ?? ''), true);
+        if (!is_array($manifest) || !array_key_exists('server', $manifest)) throw new InvalidArgumentException('This app has no backend, so it keeps no database to bring.');
+        $identity = self::configuredIdentity($this->root($appId) . '/private/config.json') ?? self::identity($manifest, $appId, null);
+        if ($key !== null && $key['appId'] !== null && $key['appId'] !== $identity) throw new InvalidArgumentException("That key belongs to {$key['appId']}, and this app runs as {$identity}.");
+        self::assertImportableDatabase($databasePath, $manifest, is_array($project['files'] ?? null) ? $project['files'] : []);
+        return $this->install($appId, $project, (int) ($project['version'] ?? 0), ['database' => $databasePath, 'key' => $key]);
+    }
+
+    /**
+     * What an earlier host's private configuration (its private/config.json) gives an import: the
+     * key and its two domains, and Twilio Verify details where it kept them. Nothing else of it is
+     * taken: an operator's hooks and flags are that host's.
+     *
+     * @return array{key: array{appId: ?string, keyHex: string, cryptoDomains: array{hmac: string, seal: string}}, verification: ?array{accountSid: string, serviceSid: string, authToken: string}}
+     */
+    public static function importedKey(string $json): array
+    {
+        $config = json_decode($json, true);
+        if (!is_array($config)) throw new InvalidArgumentException('That key file is not the JSON configuration a SoftN host keeps (private/config.json).');
+        $keyHex = is_string($config['keyHex'] ?? null) ? strtolower($config['keyHex']) : '';
+        if (!preg_match('/^[0-9a-f]{64}$/D', $keyHex)) throw new InvalidArgumentException('That configuration holds no key (keyHex, 64 hexadecimal characters).');
+        $domains = $config['cryptoDomains'] ?? null;
+        $domain = static fn(mixed $value): bool => is_string($value) && preg_match('/^[\x21-\x7e]{1,120}$/D', $value) === 1;
+        if (!is_array($domains) || !$domain($domains['hmac'] ?? null) || !$domain($domains['seal'] ?? null)) throw new InvalidArgumentException('That configuration names no crypto domains (cryptoDomains.hmac and .seal), which its key is used with.');
+        $appId = is_string($config['appId'] ?? null) && preg_match('/^[a-zA-Z0-9._-]{1,120}$/D', $config['appId']) ? $config['appId'] : null;
+        $sms = is_array($config['sms'] ?? null) ? $config['sms'] : [];
+        $verification = null;
+        if (is_string($sms['TWILIO_SID'] ?? null) && preg_match('/^AC[0-9a-fA-F]{32}$/D', $sms['TWILIO_SID'])
+            && is_string($sms['TWILIO_VERIFY_SERVICE_SID'] ?? null) && preg_match('/^VA[0-9a-fA-F]{32}$/D', $sms['TWILIO_VERIFY_SERVICE_SID'])
+            && is_string($sms['TWILIO_TOKEN'] ?? null) && $sms['TWILIO_TOKEN'] !== '') {
+            $verification = ['accountSid' => $sms['TWILIO_SID'], 'serviceSid' => $sms['TWILIO_VERIFY_SERVICE_SID'], 'authToken' => $sms['TWILIO_TOKEN']];
+        }
+        return ['key' => ['appId' => $appId, 'keyHex' => $keyHex, 'cryptoDomains' => ['hmac' => $domains['hmac'], 'seal' => $domains['seal']]], 'verification' => $verification];
+    }
+
+    /** Where an uploaded database waits for importData(), in the app's private folder; the caller removes it. */
+    public function importDropPath(string $appId): string
+    {
+        $private = $this->root($appId) . '/private';
+        if (!is_dir($private)) throw new RuntimeException('Install the app before bringing its data', 409);
+        // What an import that never finished left (its process ended mid-way): an hour old is no one's now.
+        foreach ([...(glob($private . '/import-*.sqlite*') ?: []), ...(glob($private . '/data/importing-*.sqlite*') ?: [])] as $left) {
+            if (is_file($left) && !is_link($left) && filemtime($left) < time() - 3600) @unlink($left);
+        }
+        return $private . '/import-' . bin2hex(random_bytes(8)) . '.sqlite';
+    }
+
+    /**
+     * A database an app may be given: SQLite's own file, sound, holding only what migrations make
+     * (tables and indexes: a trigger or a view would run, or answer, on the app's behalf, and no
+     * migration may make one), with no host table but the runner's, and having run only migrations
+     * this version of the app lists, each the same file. The runner checks the last again as it starts.
+     */
+    private static function assertImportableDatabase(string $path, array $manifest, array $files): void
+    {
+        $head = @file_get_contents($path, false, null, 0, 100);
+        if (!is_string($head) || strlen($head) < 100 || substr($head, 0, 16) !== "SQLite format 3\0") throw new InvalidArgumentException('That file is not a SQLite database.');
+        // Judged from SQLite's own list of what is in the file before anything in it is read, so no
+        // view (one named _migrations, say) runs; read-only, trusting nothing the schema names.
+        // Read, then closed, then judged: a connection an exception still referred to kept the
+        // file open, and on Windows the upload could then not be removed.
+        $check = $objects = $ledger = [];
+        $failure = $problem = null;
+        $tables = [];
+        try {
+            $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::SQLITE_ATTR_OPEN_FLAGS => PDO::SQLITE_OPEN_READONLY]);
+            $db->exec('PRAGMA busy_timeout=1500');
+            $db->exec('PRAGMA trusted_schema=OFF');
+            $objects = $db->query('SELECT type, name, rootpage, sql FROM sqlite_master')->fetchAll();
+            foreach ($objects as $object) {
+                $name = (string) $object['name'];
+                if ($object['type'] === 'trigger' || $object['type'] === 'view') { $problem = "That database has a {$object['type']} ({$name}), which no app migration makes: it would run on the app's behalf. Bring the database the app's own host kept."; break; }
+                if ($object['type'] !== 'table') continue;
+                // A virtual table has no pages of its own, whatever its CREATE statement says (and
+                // a real table may say "virtual" in a comment or a value).
+                if ((int) $object['rootpage'] <= 0) { $problem = "That database has a virtual table ({$name}), which a SoftN app may not have."; break; }
+                if (str_starts_with(strtolower($name), 'sqlite_')) {
+                    if (!in_array(strtolower($name), self::SQLITE_OWN, true)) { $problem = "That database has a table named as SQLite's own ({$name}), which SQLite never makes."; break; }
+                    continue;
+                }
+                if (str_starts_with($name, '_') && !in_array($name, ['_migrations', '_request_limits', self::RECORD_OUTBOX], true)) { $problem = "That database has a table the host keeps for itself ({$name}), which is not a SoftN host's."; break; }
+                $tables[$name] = true;
+            }
+            if ($problem === null) {
+                $check = $db->query('PRAGMA quick_check')->fetchAll(PDO::FETCH_COLUMN);
+                // A table now, if it is there at all: the list above refused every other kind.
+                if (isset($tables['_migrations'])) $ledger = $db->query('SELECT name, sha256 FROM _migrations')->fetchAll();
+            }
+        } catch (\PDOException $error) {
+            $failure = $error->getMessage();
+        } finally {
+            $db = null;
+        }
+        if ($problem !== null) throw new InvalidArgumentException($problem);
+        if ($failure !== null || $check !== ['ok']) throw new InvalidArgumentException('That database could not be read, or is damaged (SQLite\'s check failed). Copy it again from the old site, with the old site stopped.');
+        $wanted = [];
+        foreach (is_array($manifest['server']['database']['migrations'] ?? null) ? $manifest['server']['database']['migrations'] : [] as $migration) {
+            if (is_string($migration) && is_string($files[$migration] ?? null)) $wanted[$migration] = hash('sha256', $files[$migration]);
+        }
+        if ($ledger === [] && array_diff(array_keys($tables), ['_migrations', '_request_limits', self::RECORD_OUTBOX]) !== []) {
+            throw new InvalidArgumentException('That database has tables but no record of the migrations that made them (_migrations), so it was not kept by a SoftN host.');
+        }
+        foreach ($ledger as $row) {
+            $name = (string) $row['name'];
+            if (!isset($wanted[$name])) throw new InvalidArgumentException("That database has run a migration this version of the app does not list ({$name}). Upload the version of the app it came from, or a later one.");
+            if ($wanted[$name] !== (string) $row['sha256']) throw new InvalidArgumentException("The migration {$name} that made that database is not this version's file of that name.");
+        }
+    }
+
+
+    /**
+     * Inside install(), once the new source is active and before the app starts: the imported
+     * key into the configuration, and the imported database in place of the app's. The journal's
+     * backups of both are put back if the start that follows fails.
+     */
+    private function placeImport(string $root, array $import, string $configPath): void
+    {
+        if (is_array($import['key'] ?? null)) {
+            $config = json_decode((string) file_get_contents($configPath), true, 64, JSON_THROW_ON_ERROR);
+            $config['keyHex'] = $import['key']['keyHex'];
+            $config['cryptoDomains'] = $import['key']['cryptoDomains'];
+            $this->writeHostConfig($configPath, json_encode($config, JSON_THROW_ON_ERROR));
+        }
+        $source = (string) $import['database'];
+        $target = $root . '/private/data/application.sqlite';
+        self::assertOwnDatabase($target);
+        // The app's own page size: a failed start puts the app's database back through SQLite's
+        // backup API, which cannot write into a database of another page size once the runner has
+        // made it WAL, and the app would be left needing recovery.
+        $pageSize = null;
+        if (is_file($target)) {
+            try { $live = new PDO('sqlite:' . $target, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]); $pageSize = (int) $live->query('PRAGMA page_size')->fetchColumn(); }
+            finally { $live = null; }
+        }
+        $placing = $root . '/private/data/importing-' . bin2hex(random_bytes(6)) . '.sqlite';
+        try {
+            if (!copy($source, $placing) || !$this->sameSize($placing, $source)) throw new RuntimeException('Could not place the imported database');
+            try {
+                $db = new PDO('sqlite:' . $placing, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+                // Its earlier host's queued automation events, if it was a FormLogic: not this site's to deliver.
+                if ($db->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=" . $db->quote(self::RECORD_OUTBOX))->fetchColumn()) $db->exec('DELETE FROM ' . self::RECORD_OUTBOX);
+                $db->exec('PRAGMA journal_mode=DELETE');
+                if ($pageSize !== null && $pageSize > 0 && (int) $db->query('PRAGMA page_size')->fetchColumn() !== $pageSize) {
+                    $db->exec('PRAGMA page_size=' . $pageSize);
+                    $db->exec('VACUUM');
+                }
+            } finally {
+                $db = null;
+            }
+            foreach (['-wal', '-shm', '-journal'] as $suffix) if (is_file($target . $suffix)) @unlink($target . $suffix);
+            if (!@rename($placing, $target)) throw new RuntimeException('Could not place the imported database');
+        } finally {
+            foreach (['', '-journal', '-wal', '-shm'] as $suffix) if (is_file($placing . $suffix)) @unlink($placing . $suffix);
+        }
+    }
+
+    public function install(string $appId, array $project, int $expectedVersion, ?array $import = null): array
     {
         [$files, $decoded, $manifest, $capabilities] = self::validateProject($project);
         // An app with no backend runs nothing on this server, so a server that cannot start the
@@ -1872,8 +2048,10 @@ class NativeAppService
             if ($journal['previous'] !== null && !rename($root . '/app', $root . '/' . $journal['previous'])) throw new RuntimeException('Could not stage the update');
             if (!rename($staging, $root . '/app')) throw new RuntimeException('Could not activate app source');
             $this->advance($root, $journal, 'source-activated');
+            if ($import !== null) $this->placeImport($root, $import, $configPath);
             // This runs the native host's manifest and migration validation, using its real SQLite
             // database. A client-only app has no backend to start, so nothing runs for it.
+
             if (array_key_exists('server', $manifest)) {
                 $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
                 if (($health['status'] ?? 500) !== 200) throw new RuntimeException(self::startupFailure((string) ($health['body']['diagnostic'] ?? '')), 422);
@@ -1920,7 +2098,11 @@ class NativeAppService
      * $bodyAsWritten: the answer's body keeps the backend's objects as objects, for a caller that
      * sends it on as JSON (the app's page); otherwise it is read as arrays.
      */
-    public function request(string $appId, array $request, array $identity = [], array $subscriptions = [], ?int $generation = null, bool $bodyAsWritten = false): array
+    /**
+     * $from: 'app' for a request from the app's own page (visitorRequest), 'plugin' for one from a
+     * plugin's page (held to the 2 MB its route always had), null for this site's own calls.
+     */
+    public function request(string $appId, array $request, array $identity = [], array $subscriptions = [], ?int $generation = null, bool $bodyAsWritten = false, ?string $from = null): array
     {
         // The project without its media (runtimeCache), read under the same lock: this call needs its
         // version and its manifest's server block, and decoding every picture and sound for them on
@@ -1931,10 +2113,121 @@ class NativeAppService
             $project = $this->runtimeCache($root)['project'];
             if ($generation !== null && (int) ($project['version'] ?? 0) !== $generation) throw new RuntimeException('The app was updated while this request was in flight. Reload and try again.', 409);
             if (!self::hasBackend($project)) throw new RuntimeException('This app has no backend', 404);
+            if ($from === 'app') $request = self::visitorRequest($project, $request);
+            elseif ($from === 'plugin' && strlen(json_encode($request['body'] ?? (object) [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)) > 2 * 1024 * 1024) throw new RuntimeException('This request is larger than the app accepts.', 413);
             return $this->invoke($root, $request, $identity, $subscriptions, $bodyAsWritten);
         }
         finally { flock($lock, LOCK_UN); fclose($lock); }
     }
+
+    /**
+     * A request from the app's own page, as SoftN's hosts give it: held to its route's body limit,
+     * told whether this server can take photos, and on a photo upload route (`upload: "photo"`)
+     * carrying the photo this server redrew (PhotoSanitizer) instead of the person's file, or saying
+     * that it was refused, which the backend counts and answers. The image itself goes no further.
+     */
+    private static function visitorRequest(array $project, array $request): array
+    {
+        $manifest = json_decode((string) ($project['files']['manifest.json'] ?? ''), true);
+        $manifest = is_array($manifest) ? $manifest : [];
+        $route = null;
+        foreach (is_array($manifest['server']['routes'] ?? null) ? $manifest['server']['routes'] : [] as $candidate) {
+            if (is_array($candidate) && ($candidate['path'] ?? null) === ($request['path'] ?? null) && ($candidate['method'] ?? null) === ($request['method'] ?? null)) { $route = $candidate; break; }
+        }
+        $upload = $route !== null && ($route['upload'] ?? null) === 'photo' && ($request['method'] ?? '') === 'POST';
+        // Every other route as before: the 2 MB this site has always taken. A photo route takes what
+        // it and the app declare, up to SoftN's 5.6 MB.
+        $limit = $upload ? self::uploadLimit($route['maxBodySize'] ?? null, $manifest['config']['server']['maxBodySize'] ?? null) : 2 * 1024 * 1024;
+        $size = strlen(json_encode($request['body'] ?? (object) [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        if ($limit === null || $size > $limit) throw new RuntimeException('This request is larger than the app accepts.', 413);
+        $request['photos'] = \FormLogic\Support\PhotoSanitizer::available();
+        unset($request['upload'], $request['refused'], $request[self::PHOTO_PENDING]);
+        if (!$upload) return $request;
+        if (!$request['photos']) throw new RuntimeException('Photo uploads need PHP\'s GD extension with JPEG, PNG and WebP support on this server.', 501);
+        $body = $request['body'] ?? null;
+        $dataUrl = is_object($body) ? ($body->data_url ?? null) : (is_array($body) ? ($body['data_url'] ?? null) : null);
+        // Redrawn once the request holds its worker slots (invoke): no more photos are decoded at
+        // once than requests run, however many arrive.
+        $request[self::PHOTO_PENDING] = $dataUrl;
+        $request['body'] = (object) [];
+        return $request;
+    }
+
+    /** A photo route's body limit (SoftN's softn_body_limit): the smaller of the two declared, at most 5,600,100 bytes; null for a value that is not a size. */
+    private static function uploadLimit(mixed $route, mixed $global): ?int
+    {
+        $declared = [];
+        foreach ([$route, $global] as $value) {
+            if ($value === null) continue;
+            if (is_string($value) && preg_match('/^[0-9]{1,15}$/D', $value)) $value = (int) $value;
+            if (!is_int($value) && !(is_float($value) && floor($value) === $value)) return null;
+            if ($value < 0) return null;
+            $declared[] = (int) $value;
+        }
+        return $declared === [] ? 5600100 : min(5600100, ...$declared);
+    }
+
+    /**
+     * Run $use with a connection to the app's database, under the shared management lock, as the
+     * runner works on it: for the host's own steps around a request (NativePhoneVerification).
+     *
+     * @template T
+     * @param callable(PDO): T $use
+     * @return T
+     */
+    public function withDatabase(string $appId, callable $use): mixed
+    {
+        [$root, $lock] = $this->openShared($appId, null, false);
+        if ($lock === null) throw new RuntimeException('Native app not found', 404);
+        try {
+            $path = $root . '/private/data/application.sqlite';
+            if (!is_file($path)) throw new RuntimeException('This app has no database yet', 409);
+            self::assertOwnDatabase($path);
+            $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $db->exec('PRAGMA busy_timeout=5000');
+            try { return $use($db); } finally { $db = null; }
+        } finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /** The installed app's manifest, as its source holds it now. */
+    public function installedManifest(string $appId): array
+    {
+        $text = @file_get_contents($this->root($appId) . '/app/manifest.json');
+        $manifest = is_string($text) ? json_decode($text, true) : null;
+        return is_array($manifest) ? $manifest : [];
+    }
+
+    /**
+     * FormLogic's own small settings for an installed app, kept in its private folder beside its keys
+     * (never the app's configuration, which the runner reads): a name such as `verify.json`.
+     */
+    public function readPrivateFile(string $appId, string $name): ?string
+    {
+        $path = $this->privateFile($appId, $name);
+        if (!is_file($path) || is_link($path)) return null;
+        $text = @file_get_contents($path);
+        return is_string($text) ? $text : null;
+    }
+
+    public function writePrivateFile(string $appId, string $name, string $text): void
+    {
+        $path = $this->privateFile($appId, $name);
+        if (!is_dir(dirname($path)) || !is_file($this->root($appId) . '/project.json')) throw new RuntimeException('Install the app before changing its settings', 409);
+        $this->writeExact($path, $text, 0600);
+    }
+
+    public function removePrivateFile(string $appId, string $name): void
+    {
+        $path = $this->privateFile($appId, $name);
+        if (is_file($path) && !@unlink($path)) throw new RuntimeException('Could not remove the setting');
+    }
+
+    private function privateFile(string $appId, string $name): string
+    {
+        if (!preg_match('/^[a-z][a-z0-9-]{0,30}\.json$/D', $name) || $name === 'config.json') throw new InvalidArgumentException('Invalid private setting name');
+        return $this->root($appId) . '/private/' . $name;
+    }
+
 
     /** Deliver committed events only. Failed delivery leaves the event available for retry. */
     public function dispatchRecordEvents(string $appId, callable $deliver, int $limit = 100): int
@@ -1973,7 +2266,6 @@ class NativeAppService
         $base = $root . '/private/request-' . bin2hex(random_bytes(12));
         $input = json_encode($request, JSON_THROW_ON_ERROR);
         if (strlen($input) > 6000000) throw new InvalidArgumentException('Request exceeds the native host limit');
-        file_put_contents($base . '.in', $input);
         $process = null;
         // Bound concurrent native workers across every app in this storage root.
         $slots = dirname($root) . '/.runtime-slots';
@@ -2002,11 +2294,22 @@ class NativeAppService
         }
         if (!$slot) {
             if ($appSlot) { flock($appSlot, LOCK_UN); fclose($appSlot); }
-            unlink($base . '.in');
             throw new RuntimeException('The native host is busy. Try again shortly.', 429);
         }
         $answered = false;
         try {
+            // A photo is redrawn here, with the slots held (visitorRequest): what is not taken is a
+            // refusal the backend counts and answers.
+            if (array_key_exists(self::PHOTO_PENDING, $request)) {
+                $dataUrl = $request[self::PHOTO_PENDING];
+                unset($request[self::PHOTO_PENDING]);
+                try { $request['upload'] = \FormLogic\Support\PhotoSanitizer::sanitize($dataUrl); }
+                catch (\RuntimeException) { $request['refused'] = 'photo'; }
+                unset($dataUrl);
+                $input = json_encode($request, JSON_THROW_ON_ERROR);
+            }
+            file_put_contents($base . '.in', $input);
+            unset($input);
             $node = $this->nodeBinary();
             // Only the allowlisted variables reach the runtime (see NODE_ENV_ALLOWLIST); the
             // three SOFTN_* values are the whole host context the worker reads.

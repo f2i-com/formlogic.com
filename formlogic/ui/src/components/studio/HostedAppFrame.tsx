@@ -13,6 +13,8 @@ import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurre
 import { copyHostedActor, HOSTED_ACTOR_ERROR, isHostedAdmissionCurrent, sameHostedActor, type HostedAdmission } from '../../lib/hostedActor';
 
 const navigate = (path: string) => window.location.assign(path);
+/** The largest request a page sends its app's backend: a photo upload (SoftN takes 5.6 MB) and its envelope. */
+const NATIVE_REQUEST_INPUT = 6 * 1024 * 1024;
 
 /** The server's decision for one mount: the engine to run, and the revision actions send back. */
 type FrameEngine = { id: string; revision: string };
@@ -377,9 +379,11 @@ export function HostedAppFrame({
         // A structured clone can carry what JSON cannot (a BigInt, an object that contains
         // itself): that input is refused like an oversized one rather than left unanswered.
         const measure = (value: object) => { try { return JSON.stringify(value).length; } catch { return Infinity; } };
-        // A save may be as large as the store keeps (a game's saved state); every other call is
-        // held to the 32 KB it always was.
-        const inputLimit = storage && action === "nativeStorage" && limits ? Math.max(32768, limits.input) : 32768;
+        // A request to the app's own backend may carry a photo (SoftN's upload routes take 5.6 MB;
+        // the server holds each route to its own limit), and a save may be as large as the store
+        // keeps (a game's saved state). Every other call is held to the 32 KB it always was.
+        const inputLimit = mountNative && action === "nativeRequest" ? NATIVE_REQUEST_INPUT
+          : storage && action === "nativeStorage" && limits ? Math.max(32768, limits.input) : 32768;
         if (
           !input ||
           typeof input !== "object" ||

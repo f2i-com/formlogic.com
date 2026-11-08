@@ -3,11 +3,13 @@
 // its first version. Every path lands in the app's workspace with the app running.
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, FileUp, PencilRuler, Sparkles } from 'lucide-react';
+import { ArrowRight, Database, FileUp, KeyRound, PencilRuler, Sparkles } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
+import { readKeyFile } from '../../components/apps/BringDataPanel';
+import { api } from '../../lib/api';
 import { createSoftnApp, projectFromUpload, projectHasBackend, softnWorkspacePath, uploadName, type SoftnStart } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
@@ -46,6 +48,14 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
   const [review, setReview] = useState<FileReview | null>(null);
   const [fileError, setFileError] = useState('');
   const [dragging, setDragging] = useState(false);
+  // Its data from where it ran before, optional: the database, and the key file it was kept under.
+  const [data, setData] = useState<File | null>(null);
+  const [keyFile, setKeyFile] = useState<File | null>(null);
+  const [keyTwilio, setKeyTwilio] = useState(false);
+  const [useTwilio, setUseTwilio] = useState(true);
+  const [dataError, setDataError] = useState('');
+  const dataInput = useRef<HTMLInputElement>(null);
+  const keyInput = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const lock = useRef(false);
@@ -80,6 +90,13 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
       const start: SoftnStart = method === 'upload' && file ? { kind: 'upload', file } : { kind: 'starter' };
       const created = await createSoftnApp({ name, description: method === 'ai' ? request.slice(0, 500) : undefined, start });
       if (created.error) toast.info('Your app was created', created.error);
+      // Its data, once its first version is in: installed as the next version, or not at all.
+      if (created.project && method === 'upload' && review?.backend && data) {
+        const brought = await api.importNativeData(created.app.id, data, keyFile, keyTwilio && useTwilio);
+        if (brought.error) toast.error('Your app was created, without its data', `${brought.error} You can bring it from the app's Data tab.`);
+        else toast.success('Its data came with it', brought.data?.keyImported ? 'With the key it was kept under.' : 'The app has a key of its own here.');
+        if (brought.data?.verificationProblem) toast.warning('Sign-in codes are not set up', brought.data.verificationProblem);
+      }
       if (created.project && method !== 'upload') {
         setSoftnOpen({ appId: created.app.id, editor: method === 'ai' ? 'studio' : 'builder', ...(method === 'ai' ? { brief: { prompt: request.trim(), kind: 'build' as const } } : {}) });
       } else if (!created.project && method === 'ai') {
@@ -147,6 +164,31 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
       {aiReady === false && <AiConnectNotice lead="Building with AI needs an AI connection" reason={aiReason} onConnected={onAiRecheck} />}
     </div>}
     {method === 'upload' && dropZone}
+    {method === 'upload' && review?.backend && <div className="rounded-xl border border-gray-200 p-4 dark:border-white/10">
+      <p className="text-sm font-semibold text-gray-900 dark:text-white">Bring its data too <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span></p>
+      <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">Moving it from SoftN&apos;s own hosting? Add its database (<code>private/data/application.sqlite</code>), and the key file it was kept under (<code>private/config.json</code>). Stop the old site first, so the copy is complete.</p>
+      <input ref={dataInput} type="file" accept=".sqlite,.db,.sqlite3" className="hidden" aria-label="Choose its database" onChange={event => { setData(event.target.files?.[0] ?? null); setDataError(''); event.target.value = ''; }} />
+      <input ref={keyInput} type="file" accept=".json,application/json" className="hidden" aria-label="Choose its key file" onChange={event => {
+        const picked = event.target.files?.[0] ?? null;
+        event.target.value = '';
+        setKeyFile(null); setKeyTwilio(false); setDataError('');
+        if (picked) void readKeyFile(picked).then(info => { if ('error' in info) setDataError(info.error); else { setKeyFile(picked); setKeyTwilio(info.twilio); } });
+      }} />
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="secondary" disabled={creating || disabled} onClick={() => dataInput.current?.click()} leftIcon={<Database className="h-4 w-4" />}>{data ? 'Another database' : 'Choose its database'}</Button>
+        {data && <span className="break-all text-xs text-gray-600 dark:text-slate-300">{data.name}</span>}
+      </div>
+      {data && <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="ghost" disabled={creating || disabled} onClick={() => keyInput.current?.click()} leftIcon={<KeyRound className="h-4 w-4" />}>{keyFile ? 'Another key file' : 'Add its key file'}</Button>
+        {keyFile && <span className="break-all text-xs text-gray-600 dark:text-slate-300">{keyFile.name}</span>}
+      </div>}
+      {keyTwilio && <label className="mt-2 flex items-start gap-2 text-xs leading-5 text-gray-600 dark:text-slate-300">
+        <input type="checkbox" className="mt-0.5" checked={useTwilio} onChange={event => setUseTwilio(event.target.checked)} disabled={creating || disabled} />
+        <span>It also holds Twilio Verify details: use them to send this app&apos;s sign-in codes.</span>
+      </label>}
+      {dataError && <p role="alert" className="mt-2 rounded-lg bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">{dataError}</p>}
+    </div>}
+
     {uploadOnly && nameField}
     {error &&<p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
     <div className="flex items-center justify-end">

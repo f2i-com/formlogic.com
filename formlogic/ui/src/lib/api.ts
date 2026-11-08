@@ -120,6 +120,25 @@ function clientEngineHeader(clientEngine?: string): { headers?: Record<string, s
 }
 
 /** Result of running an onSubmit script via the test endpoint (mirrors ScriptResult). */
+/** An app's phone sign-in codes through its owner's Twilio Verify (NativePhoneVerification): never the token. */
+export interface NativeVerification {
+  provider: 'twilio-verify';
+  configured: boolean;
+  accountSid: string | null;
+  serviceSid: string | null;
+  /** Whether the installed app names this provider for its sign-in codes. */
+  asked: boolean;
+}
+
+/** What bringing an app's data did: the version it is now, and what the key file held. */
+export interface NativeDataImport {
+  project: import('./nativeHosting').NativeProject;
+  keyImported: boolean;
+  verificationFound: boolean;
+  verification: NativeVerification | null;
+  /** Its Twilio details were found but not used, and why: the data came all the same. */
+  verificationProblem?: string | null;
+}
 export interface DeepHealthCheck {
   ok: boolean;
   critical: boolean;
@@ -2111,7 +2130,49 @@ class ApiClient {
   async installNativeStarter(id: string): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native/starter`, { method: 'POST', body: '{}' });
   }
+  /** The owner's Twilio Verify details for the app's phone sign-in codes: the ids, never the token. */
+  async getNativeVerification(id: string): Promise<ApiResponse<NativeVerification>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/verification`);
+  }
+  /** An empty authToken keeps the one already kept. */
+  async saveNativeVerification(id: string, input: { accountSid: string; serviceSid: string; authToken: string }): Promise<ApiResponse<NativeVerification>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/verification`, { method: 'PUT', body: JSON.stringify(input) });
+  }
+  async clearNativeVerification(id: string): Promise<ApiResponse<NativeVerification>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/verification`, { method: 'DELETE' });
+  }
+  /**
+   * The app's data from where it ran before: its database, and optionally the earlier host's
+   * private configuration for the key it was kept under (and, when `useVerification`, its Twilio
+   * details). Installed as the next version; the app's earlier data is put back if it fails.
+   */
+  async importNativeData(id: string, database: File, config: File | null, useVerification: boolean): Promise<ApiResponse<NativeDataImport>> {
+    const generation = currentSessionGeneration();
+    if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
+    const formData = new FormData();
+    formData.append('database', database);
+    if (config) formData.append('config', config);
+    formData.append('useVerification', useVerification ? '1' : '0');
+    try {
+      const headers: Record<string, string> = {};
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+      const response = await fetch(`${this.baseUrl}/apps/${encodeURIComponent(id)}/native/import`, { method: 'POST', body: formData, headers, credentials: 'include' });
+      noteServerRelease(response.headers?.get?.(RELEASE_HEADER));
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        if (response.status === 401) this.handleUnauthorized(generation);
+        if (response.status === 413) return { error: 'That database is larger than this server takes in one upload.', status: 413 };
+        return { error: data?.message || data?.error || 'The data could not be brought in.', status: response.status };
+      }
+      return { data };
+    } catch (error) {
+      logger.error('Native data import failed:', error);
+      return { error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
   async manageNativeRecord(id: string, input: { table: string; action: 'read' | 'create' | 'update' | 'delete'; key?: Record<string, string>; revision?: string; values?: Record<string, string | null> }): Promise<ApiResponse<{ saved?: boolean; record?: import('./nativeHosting').NativeRecordDetail }>> {
+
     return this.request(`/apps/${encodeURIComponent(id)}/native/records`, { method: 'POST', body: JSON.stringify(input) });
   }
   async getFormTemplates(signal?: AbortSignal): Promise<ApiResponse<import('../data/formTemplates').FormTemplateCatalog>> {
