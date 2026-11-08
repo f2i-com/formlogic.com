@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, useEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,9 +23,10 @@ let container: HTMLDivElement;
 let go: (path: string) => void = () => {};
 function Navigator() {
   const navigate = useNavigate();
-  go = (path) => navigate(path);
+  useEffect(() => { go = (path) => navigate(path); }, [navigate]);
   return null;
 }
+
 const show = (path: string) => act(async () => root.render(
   <MemoryRouter initialEntries={[path]}>
     <Navigator />

@@ -8,7 +8,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
-import { readKeyFile } from '../../components/apps/BringDataPanel';
+import { readKeyFile } from '../../lib/appKeyFile';
 import { api } from '../../lib/api';
 import { createSoftnApp, projectFromUpload, projectHasBackend, softnWorkspacePath, uploadName, type SoftnStart } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
