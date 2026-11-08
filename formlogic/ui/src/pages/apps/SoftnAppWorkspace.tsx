@@ -14,6 +14,7 @@ import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
 import { SoftnLookPanel } from '../../components/apps/SoftnLookPanel';
 import { PhoneSignInPanel } from '../../components/apps/PhoneSignInPanel';
 import { BringDataPanel } from '../../components/apps/BringDataPanel';
+import { AddBackendPanel } from '../../components/apps/AddBackendPanel';
 import { RequirementsSetting } from '../../components/apps/RequirementsSetting';
 import { AppEditorDialog, type AppEditorKind } from '../../components/studio/AppEditorDialog';
 import type { EditorBrief } from '../../components/studio/editorAgent';
@@ -188,6 +189,19 @@ function Workspace({ app }: { app: App }) {
     await draft.save({ project: next, confirmConflict: false, notice });
   };
 
+  // An API backend added to an app with none (AddBackendPanel): installed at once while the app is
+  // a draft, kept in the draft for the owner to publish once it is live, as an uploaded version is.
+  // Installed from `next` without editing the draft first: the draft having a backend is what
+  // swaps the panel for the records, so a refused install would take the panel, and the reason
+  // it shows, away with it.
+  const addBackend = async (next: NativeProject, from: 'starter' | 'file') => {
+    const said = from === 'starter'
+      ? 'Backend added: an items table, and GET and POST /api/items. Change it in the source code, or ask AI Studio.'
+      : 'Its backend is added: this page as it was, with the routes and database of the file you chose.';
+    if (published) { draft.edit(next); draft.setNotice(`${said} Publish to make it live.`); return; }
+    await draft.save({ project: next, confirmConflict: false, notice: said, raise: true });
+  };
+
   const uploadVersion = async (file: File | undefined) => {
     const imported = await draft.importFile(file, published ? 'Uploaded as a draft. Publish it to update the live app.' : 'Uploaded.');
     if (imported && !published) await draft.save({ project: imported, confirmConflict: false, notice: 'Uploaded. The preview shows the new version.' });
@@ -310,7 +324,7 @@ function Workspace({ app }: { app: App }) {
               </div>
               <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{backend
                 ? <>Records stay in the app&apos;s database when you upload a new version. Downloads hold the source only.</>
-                : <>This app has no backend: what it saves stays in each visitor&apos;s browser. Downloads hold the source only.</>}</p>
+                : <>This app has no backend: what it saves stays in each visitor&apos;s browser. Downloads hold the source only. <button type="button" className="font-medium text-indigo-600 underline-offset-2 hover:underline dark:text-indigo-300" onClick={() => setTab('data')}>Add a backend</button></>}</p>
             </Panel>
           </aside>}
         </div>}
@@ -333,8 +347,14 @@ function Workspace({ app }: { app: App }) {
             </details>}
           </> : <div className="flex items-start gap-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
             <Database className="mt-0.5 h-5 w-5 shrink-0 text-slate-400" aria-hidden="true" />
-            <p><span className="font-semibold text-slate-900 dark:text-white">This app has no database on the server.</span> It has no backend of its own, so what it saves stays in each visitor&apos;s browser. To keep data here and see it in this tab, give the app a backend: AI Studio can add one.</p>
+            <div className="min-w-0 space-y-3">
+              <p><span className="font-semibold text-slate-900 dark:text-white">This app has no database on the server.</span> It has no backend of its own, so what it saves stays in each visitor&apos;s browser. To keep data here and see it in this tab, give the app a backend: add one below, or ask AI Studio to.</p>
+              {project && app.ownerId === userId && !readOnly && <AddBackendPanel project={project} disabled={busy}
+                waiting={dirty ? 'Publish or discard your unpublished changes first: adding a backend makes a new version.' : null}
+                onAdd={addBackend} />}
+            </div>
           </div>}
+
         </section>}
 
         {tab === 'settings' && <div role="tabpanel" id="softn-panel-settings" aria-labelledby="softn-tab-settings" className="mt-4 grid gap-4 lg:grid-cols-2">

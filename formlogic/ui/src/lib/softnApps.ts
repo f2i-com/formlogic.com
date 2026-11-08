@@ -3,6 +3,7 @@
 // starter, or a .softn file — and managed in the SoftN app workspace (/apps/:id/softn).
 import { api } from './api';
 import { importNativeProject, type NativeProject } from './nativeHosting';
+import { backendOf, withBackend } from './softnBackend';
 import { useAppStore } from '../stores/appStore';
 import type { App } from '../types/app';
 
@@ -15,7 +16,8 @@ export function isSoftnApp(app: Pick<App, 'settings'> | null | undefined): boole
 export const softnWorkspacePath = (appId: string) => `/apps/${appId}/softn`;
 
 /** How a new SoftN app's first version is made. */
-export type SoftnStart = { kind: 'starter' } | { kind: 'upload'; file: File };
+/** `backendFile`: for a file with no backend of its own, the app's full file, whose backend is added to it (lib/softnBackend). */
+export type SoftnStart = { kind: 'starter' } | { kind: 'upload'; file: File; backendFile?: File };
 
 export interface CreatedSoftnApp {
   app: App;
@@ -61,7 +63,12 @@ export const SOFTN_NEEDS_ACCOUNT = 'SoftN apps are hosted on the server, so they
 export async function createSoftnApp(input: { name: string; description?: string; start: SoftnStart }): Promise<CreatedSoftnApp> {
   // The demo keeps its apps in this browser; a SoftN app runs on the server, so nothing is created.
   if (api.isDemoMode()) throw new Error(SOFTN_NEEDS_ACCOUNT);
-  const uploaded = input.start.kind === 'upload' ? await projectFromUpload(input.start.file) : null;
+  let uploaded = input.start.kind === 'upload' ? await projectFromUpload(input.start.file) : null;
+  if (uploaded && input.start.kind === 'upload' && input.start.backendFile) {
+    const backend = backendOf(await importNativeProject(input.start.backendFile));
+    if (!backend) throw new Error(`${input.start.backendFile.name} has no backend: its manifest.json has no server block.`);
+    uploaded = withBackend(uploaded, backend);
+  }
   // An upload with no name given is named after the app it carries.
   const name = input.name.trim() || (uploaded && input.start.kind === 'upload' ? uploadName(uploaded, input.start.file) : '');
   if (!name) throw new Error('Give the app a name.');

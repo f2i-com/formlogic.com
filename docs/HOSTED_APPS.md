@@ -119,6 +119,24 @@ reads, with the domain's manifest. Three things put it there (`ui/src/lib/domain
 Each keeps the site's own value beside what it gives (`data-fl-original`, `data-fl-applied`), and a
 page of the domain that isn't the app's (the legal pages, a form) gets FormLogic's back.
 
+**Adding an API backend.** An app with none (all its pages run in the visitor's browser) gets one
+from its Data tab (AddBackendPanel, lib/softnBackend), installed as its next version, or kept in the
+draft for the owner to publish once the app is live:
+
+- **Add a backend**: the starter's (backend/resources/native-app-starter.json): an `items` table,
+  `GET` and `POST /api/items`, and the address its page calls them at (`https://app.example`,
+  added to `config.server.allowedOrigins`, which this host routes to the app's own backend). The
+  owner changes it in the source editor, or asks AI Studio to.
+- **Add its backend from a file**: for an app built in two halves, as Coffee.Dating's hosting was (a
+  public `app.softn` with the page alone, and a private bundle with its `server/` folder): the
+  other file's server block, its `server/` folder (never the old host's `private/`, which may hold
+  its key), the origins its page calls them at and the settings its backend reads (`config.app`,
+  which the page can read too) are added; the page, its media and its own settings stay. The app
+  keeps the page's `id`, or takes the file's where the page names none; a file of another app is
+  refused. The same is offered when adding an app from a file that has no backend ("Add its
+  backend"), and the merged app is checked against this host's limits before anything is created.
+
+
 **Photos.** An app with the `photos` capability may give a route `upload: "photo"` (Coffee.Dating's
 profile photos). The page sends the photo as a `data_url`; the server redraws it as SoftN's own hosts
 do (Support/PhotoSanitizer, after apps/softn-host-php/runtime/photos.php): a still JPEG, PNG or WebP

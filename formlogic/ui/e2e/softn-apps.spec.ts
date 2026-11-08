@@ -215,7 +215,7 @@ test.describe('hosted SoftN apps', () => {
     await expect(preview(page).getByText('Uploaded app', { exact: true })).toBeVisible({ timeout: 60000 });
   });
 
-  test('uploaded without a backend: a browser-only app is added under its own name, runs, and downloads as it came', async ({ page, context }) => {
+  test('uploaded without a backend: a browser-only app is added under its own name, runs, downloads as it came, and is given a backend from its Data tab', async ({ page, context }) => {
     test.setTimeout(180000);
     // Most SoftN apps are like this one: no server block, no id, and seed data of their own.
     const name = `Field notes ${Date.now()}`;
@@ -251,7 +251,17 @@ test.describe('hosted SoftN apps', () => {
     const saved = join(tmpdir(), `softn-client-download-${Date.now()}.softn`);
     await (await download).saveAs(saved);
     expect(Object.fromEntries(Object.entries(unzipSync(readFileSync(saved))).map(([p, bytes]) => [p, strFromU8(bytes)]))).toEqual(files);
+    // Its Data tab gives it a backend: the starter's, installed as its next version, the page kept.
+    await page.getByRole('tab', { name: 'Data' }).click();
+    await page.getByRole('button', { name: 'Add a backend', exact: true }).click();
+    await expect(page.getByText('Backend added', { exact: false }).first()).toBeVisible({ timeout: 60000 });
+    const added = (await nativeProject(context, appId))!;
+    expect(JSON.parse(added.files['manifest.json']).server.routes.map((route: { method: string; path: string }) => `${route.method} ${route.path}`)).toEqual(['POST /api/items', 'GET /api/items']);
+    expect(added.files['ui/main.ui']).toBe(files['ui/main.ui']);
+    await expect.poll(async () => ((await (await context.request.get(`/api/apps/${appId}/native/records?offset=0`)).json()).tables ?? [])
+      .map((table: string | { name: string }) => typeof table === 'string' ? table : table.name), { timeout: 30000 }).toContain('items');
   });
+
 
   test('uploaded with seed data: the app opens with its records, once, and its own media', async ({ page }) => {
     test.setTimeout(180000);

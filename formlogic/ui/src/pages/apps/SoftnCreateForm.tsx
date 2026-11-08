@@ -9,6 +9,8 @@ import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { readKeyFile } from '../../lib/appKeyFile';
+import { importNativeProject } from '../../lib/nativeHosting';
+import { backendOf, withBackend } from '../../lib/softnBackend';
 import { api } from '../../lib/api';
 import { createSoftnApp, projectFromUpload, projectHasBackend, softnWorkspacePath, uploadName, type SoftnStart } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
@@ -54,6 +56,29 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
   const [keyTwilio, setKeyTwilio] = useState(false);
   const [useTwilio, setUseTwilio] = useState(true);
   const [dataError, setDataError] = useState('');
+  // A file with no backend of its own, and the app's full file to take one from (optional).
+  const [backendFile, setBackendFile] = useState<File | null>(null);
+  const [backendError, setBackendError] = useState('');
+  const [readingBackend, setReadingBackend] = useState(false);
+  const backendInput = useRef<HTMLInputElement>(null);
+  // The backend file most recently chosen, as `latest` is for the app's file.
+  const latestBackend = useRef<File | null>(null);
+  /** Read the backend file and put it with the page at once, so what would refuse it shows now, not at Create. */
+  const takeBackend = async (picked: File | null, page: File | null) => {
+    latestBackend.current = picked;
+    setBackendFile(null); setBackendError('');
+    if (!picked || !page) return;
+    setReadingBackend(true);
+    try {
+      const backend = backendOf(await importNativeProject(picked));
+      if (!backend) throw new Error(`${picked.name} has no backend either: its manifest.json has no server block. Choose the app's full file, the one with its server/ folder.`);
+      withBackend(await projectFromUpload(page), backend);
+      if (latestBackend.current === picked) setBackendFile(picked);
+    } catch (reason) {
+      if (latestBackend.current === picked) setBackendError(reason instanceof Error ? reason.message : 'That file could not be read as a SoftN app.');
+    } finally { if (latestBackend.current === picked) setReadingBackend(false); }
+  };
+  const withItsBackend = !!review?.backend || !!backendFile;
   const dataInput = useRef<HTMLInputElement>(null);
   const keyInput = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
@@ -67,12 +92,14 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
   // An uploaded app is named after itself unless the person names it.
   const named = !!name.trim() || (method === 'upload' && !!review);
   const canCreate = named && !creating && !disabled && !aiBlocked
-    && (method !== 'ai' || !!request.trim()) && (method !== 'upload' || (!!file && !!review && !fileError));
+    && (method !== 'ai' || !!request.trim()) && (method !== 'upload' || (!!file && !!review && !fileError && !readingBackend));
 
   /** Take a chosen or dropped file: the start becomes the upload, and the file is read at once, so a problem shows before anything is created. */
   const takeFile = async (picked: File | null) => {
     latest.current = picked;
     setFile(picked); setReview(null); setFileError(''); setError('');
+    // A backend chosen for the last file is not this one's.
+    latestBackend.current = null; setBackendFile(null); setBackendError(''); setReadingBackend(false);
     if (!picked) return;
     setChosen(true); setMethod('upload');
     try {
@@ -87,11 +114,11 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
     if (!canCreate || lock.current) return;
     lock.current = true; setCreating(true); setError('');
     try {
-      const start: SoftnStart = method === 'upload' && file ? { kind: 'upload', file } : { kind: 'starter' };
+      const start: SoftnStart = method === 'upload' && file ? { kind: 'upload', file, ...(backendFile && !review?.backend ? { backendFile } : {}) } : { kind: 'starter' };
       const created = await createSoftnApp({ name, description: method === 'ai' ? request.slice(0, 500) : undefined, start });
       if (created.error) toast.info('Your app was created', created.error);
       // Its data, once its first version is in: installed as the next version, or not at all.
-      if (created.project && method === 'upload' && review?.backend && data) {
+      if (created.project && method === 'upload' && withItsBackend && data) {
         const brought = await api.importNativeData(created.app.id, data, keyFile, keyTwilio && useTwilio);
         if (brought.error) toast.error('Your app was created, without its data', `${brought.error} You can bring it from the app's Data tab.`);
         else toast.success('Its data came with it', brought.data?.keyImported ? 'With the key it was kept under.' : 'The app has a key of its own here.');
@@ -164,7 +191,18 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
       {aiReady === false && <AiConnectNotice lead="Building with AI needs an AI connection" reason={aiReason} onConnected={onAiRecheck} />}
     </div>}
     {method === 'upload' && dropZone}
-    {method === 'upload' && review?.backend && <div className="rounded-xl border border-gray-200 p-4 dark:border-white/10">
+    {method === 'upload' && review && !review.backend && <div className="rounded-xl border border-gray-200 p-4 dark:border-white/10">
+      <p className="text-sm font-semibold text-gray-900 dark:text-white">Add its backend <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span></p>
+      <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">This file is the app&apos;s page alone. If its backend was built separately (its API and database, in a <code>server/</code> folder), choose the app&apos;s full file: its backend is added, and this page stays as it is.</p>
+      <input ref={backendInput} type="file" accept=".softn,.zip" className="hidden" aria-label="Choose the file with its backend" onChange={event => { const picked = event.target.files?.[0] ?? null; event.target.value = ''; void takeBackend(picked, file); }} />
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="secondary" disabled={creating || disabled} isLoading={readingBackend} onClick={() => backendInput.current?.click()} leftIcon={<FileUp className="h-4 w-4" />}>{backendFile ? 'Another file' : 'Choose the file with its backend'}</Button>
+        {backendFile && <span className="break-all text-xs text-gray-600 dark:text-slate-300">{backendFile.name} · its backend will be added</span>}
+      </div>
+      {backendError && <p role="alert" className="mt-2 rounded-lg bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">{backendError}</p>}
+    </div>}
+    {method === 'upload' && withItsBackend && <div className="rounded-xl border border-gray-200 p-4 dark:border-white/10">
+
       <p className="text-sm font-semibold text-gray-900 dark:text-white">Bring its data too <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span></p>
       <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">Moving it from SoftN&apos;s own hosting? Add its database (<code>private/data/application.sqlite</code>), and the key file it was kept under (<code>private/config.json</code>). Stop the old site first, so the copy is complete.</p>
       <input ref={dataInput} type="file" accept=".sqlite,.db,.sqlite3" className="hidden" aria-label="Choose its database" onChange={event => { setData(event.target.files?.[0] ?? null); setDataError(''); event.target.value = ''; }} />
