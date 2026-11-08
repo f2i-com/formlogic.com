@@ -42,6 +42,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadReleaseSigner, signReleaseManifest } from './release-signing.mjs';
 import { checkReleaseRuntime, checkAppEditors, checkNativeRuntime, checkDistEngines, zippLicensesText, engineIdentity } from './release-runtime.mjs';
+import { checkSiteZipp, withSiteZipp } from './site-zipp.mjs';
+
 import { checkSandbox } from './runtime-provenance.mjs';
 import { runtimeIdentity, checkZippTree, checkZippVariantTree, checkTorchCopies } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
@@ -452,6 +454,15 @@ if (webVariant) {
 } else if (existsSync(zippWebDir)) {
   fail('formlogic/ui/vendor/zipp-wasm-web is present but the installed release records no web variant; the UI build would embed a stale engine. Run node scripts/fetch-softn-release.mjs.');
 }
+// The site's ZIPP (site-zipp.mjs): what the page and its form-logic worker run, the /zipp/ folder
+// publishes, the server sandbox is built from and the zip's engine notices describe. The Softn
+// release's, unless zipp-release.json pins another, which the Softn runtime and editors then run.
+let siteZipp;
+try { siteZipp = await checkSiteZipp({ root: repoRoot }); }
+catch (error) { fail(error.message); }
+const siteSource = siteZipp.site;
+const siteDir = path.join(uiDir, 'vendor/zipp');
+if (siteZipp.differs) info(`the site runs ZIPP ${siteSource.release} (${siteSource.sha256.slice(0, 12)}), its own; Softn ${softnRelease?.tag ?? ''} ships ZIPP ${zippSource.release}`);
 // The server sandbox is generated too: both launchers must be the ones its
 // SOURCE.json records, embedding one guest built from the ZIPP release the
 // installed Softn release names; a release takes only what one CI run built.
@@ -495,18 +506,19 @@ for (const f of ['index.html', '.htaccess', 'assets']) {
 // Every ZIPP engine the build emitted (found by its exports, whatever Vite
 // named it) is the installed release's, and the app's own copy is among them.
 try {
-  const engines = await checkDistEngines(distDir, zippSource, { web: webVariant });
-  info(`${engines.length} ZIPP engine copies in formlogic/ui/dist, all ${expectedRuntime.sha256.slice(0, 12)}${webVariant ? ` but the one web variant asset (${webVariant.sha256.slice(0, 12)})` : ''}`);
+  // The page's engines are the site's ZIPP: the Softn release's trees carry none (v0.0.35 on).
+  const engines = await checkDistEngines(distDir, siteSource, { web: siteSource.variants?.web ?? null });
+  info(`${engines.length} ZIPP engine copies in formlogic/ui/dist, all ${siteSource.sha256.slice(0, 12)}${siteSource.variants?.web ? ` but the one web variant asset (${siteSource.variants.web.sha256.slice(0, 12)})` : ''}`);
 } catch (error) { fail(error.message); }
 
 // The site's ZIPP folder (publish-zipp.mjs): a runtime or an editor built with another ZIPP than
 // this one loads its glue and torch package there. A build from before it has none.
 {
-  const folder = path.join(distDir, 'zipp', String(zippSource.sha256).slice(0, 12));
-  for (const file of ['zipp_wasm.js', 'SOURCE.json', ...(zippSource.packages?.torch ? ['zipp_torch.wasm'] : [])]) {
+  const folder = path.join(distDir, 'zipp', String(siteSource.sha256).slice(0, 12));
+  for (const file of ['zipp_wasm.js', 'SOURCE.json', ...(siteSource.packages?.torch ? ['zipp_torch.wasm'] : [])]) {
     if (!existsSync(path.join(folder, file))) fail(`UI build incomplete: formlogic/ui/dist/zipp/${path.basename(folder)}/${file} is missing; rebuild the UI (npm run build publishes it)`);
   }
-  if ((await import('node:crypto')).createHash('sha256').update(readFileSync(path.join(folder, 'zipp_wasm.js'))).digest('hex') !== zippSource.glueSha256) fail(`formlogic/ui/dist/zipp/${path.basename(folder)}/zipp_wasm.js is not the glue the installed ZIPP records; rebuild the UI`);
+  if ((await import('node:crypto')).createHash('sha256').update(readFileSync(path.join(folder, 'zipp_wasm.js'))).digest('hex') !== siteSource.glueSha256) fail(`formlogic/ui/dist/zipp/${path.basename(folder)}/zipp_wasm.js is not the glue the site's ZIPP records; rebuild the UI`);
 }
 // Even --skip-ui-build must supply a complete, matching hosted runtime.
 await checkReleaseRuntime(path.join(distDir, 'hosted-runtime'), expectedRuntime);
@@ -605,10 +617,13 @@ writeFileSync(path.join(staging, 'UPGRADE.txt'), upgradeTxt(version));
 // The bundled engine's notices (Softn's curated third-party notices — Unicode
 // since ZIPP v0.0.21, which has no RustPython code — then ZIPP's own licence),
 // from the installed release rather than a committed copy.
-try { writeFileSync(path.join(staging, 'zipp-licenses.txt'), await zippLicensesText(zippDir, zippSource)); }
+// The browser engine is the site's ZIPP; an app backend's is the Softn release's own, whose notices
+// the native runtime carries (ZIPP-THIRD-PARTY-LICENSES.txt).
+try { writeFileSync(path.join(staging, 'zipp-licenses.txt'), await zippLicensesText(siteDir, siteSource)); }
 catch (error) { fail(error.message); }
-// Which engine this zip carries, and which Softn release it came from.
-writeFileSync(path.join(staging, 'engine-identity.json'), JSON.stringify(engineIdentity(zippSource, softnRelease, sandbox), null, 2) + '\n');
+// Which engine this zip carries (the site's ZIPP), and which Softn release it came from, with that
+// release's own ZIPP where the site runs another.
+writeFileSync(path.join(staging, 'engine-identity.json'), JSON.stringify({ ...engineIdentity(siteSource, withSiteZipp(softnRelease, repoRoot), sandbox), ...(siteZipp.differs ? { softnZipp: { release: zippSource.release, sha256: zippSource.sha256 } } : {}) }, null, 2) + '\n');
 
 // [7] Sanity checks on the staged tree ------------------------------------------
 step('Verifying the staged tree');

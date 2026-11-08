@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-11-08T06:29:03.962Z",
+  "generatedAt": "2026-11-08T08:38:42.437Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "5d35887e7f236d5eae5eed31cf33e14c3f427892",
+      "revision": "5a7d09b660530335b0fa88c7895a67d0a3517d6b",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -17,9 +17,9 @@
     },
     "softn": {
       "pinnedBy": "latest GitHub release of f2i-com/softn.com (scripts/fetch-softn-release.mjs); SOFTN_RELEASE pins a tag; a release run freezes one record (--resolve-only) that every job installs (--frozen) and the release gate checks with --exact",
-      "release": "v0.0.35",
-      "revision": "9b28010e4a9fec8341db9ef2040f3063952e8126",
-      "archiveSha256": "1d0012c46fd017f6a55aaaab941a9ccd218f1afc17525b45cf666cad99e067a0",
+      "release": "v0.0.36",
+      "revision": "b21fc1af6078d6dfa8aaca8ab4e474dacef65632",
+      "archiveSha256": "721cc6bde8076a90d29d2c177582d0e1ec2658f4a855c5b4c3aa78e3ce66a21d",
       "frozen": null,
       "nativeProtocol": 1,
       "recordEvents": 1,
@@ -86,6 +86,13 @@
       "path": "docs/contracts/aokie-connector-contract.v1.json",
       "contractVersion": 1,
       "sha256": "07d2589987e19b28da7de1757f5fa4429769cf797d92c07600642ceab739f8a2"
+    },
+    "siteZipp": {
+      "pinnedBy": "the installed Softn release's ZIPP, copied to formlogic/ui/vendor/zipp (generated)",
+      "release": "v0.0.33",
+      "revision": "cc75c2a38980fb84696e4b2da7abf943fcf7dd58",
+      "sumsSha256": "88d207601cfdc4fa67925079b66965637b8ec80398152aad3be652ba945df1bc",
+      "sha256": "a844efe3d7d04ceb2d7c65f95feaa3e8d436e5df02e7e9fe105d9b868b3895af"
     }
   },
   "nativeRuntime": {

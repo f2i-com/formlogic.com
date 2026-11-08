@@ -11,7 +11,7 @@
 // downloads or pins a release, and no tag or sha appears anywhere in this file. Engine
 // identity is read as DATA from two places and compared: `oaiy-cli.json` (written by
 // oaiy.com's `pack-cli-asset.mjs` from the CLI's own `capabilities --json`) beside the
-// CLI, and `vendor/zipp-wasm/SOURCE.json` for the engine FormLogic has installed.
+// CLI, and `vendor/zipp/SOURCE.json` for the engine FormLogic has installed.
 //
 // WHAT IS COMPARED, AND WHAT IS NOT. Per case: the outcome CLASS first, then the payload.
 //
@@ -101,7 +101,7 @@ import {
 // this file never uses. The kinds are the same seven all the same.
 import type { EvalKind } from './zipp-host';
 import { getNodeSpec } from '../../components/flows/editor/nodeCatalog';
-import zippSource from '../../../vendor/zipp-wasm/SOURCE.json';
+import zippSource from '../../../vendor/zipp/SOURCE.json';
 
 // ── Where everything lives ───────────────────────────────────────────────────
 
@@ -814,7 +814,7 @@ suite('OAIY leaf-script parity — the shared corpora on a real `oaiy script`', 
     const cliRelease = CLI_RECORD?.engine.release ?? null;
     const installedRelease = installedZipp.release ?? null;
     expect(cliRelease, `oaiy-cli.json (${CLI_RECORD_PATH}) names no engine release`).toBeTruthy();
-    expect(installedRelease, `vendor/zipp-wasm/SOURCE.json names no engine release`).toBeTruthy();
+    expect(installedRelease, `vendor/zipp/SOURCE.json names no engine release`).toBeTruthy();
     expect(
       cliRelease,
       `the OAIY CLI runs ZIPP ${cliRelease} (revision ${CLI_RECORD?.engine.revision}) but FormLogic has ZIPP ` +

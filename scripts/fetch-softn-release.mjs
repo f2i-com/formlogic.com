@@ -97,6 +97,7 @@ import { runtimeIdentity, assertMatchingRuntime, checkEntryDocuments, checkRunti
 import { checkAppEditors } from '../formlogic/ui/scripts/check-app-editors.mjs';
 import { checkNativeRuntime, nativeImportProblems } from './release-runtime.mjs';
 import { writeAdapter, adapterDigest, ADAPTER_SOURCE } from '../formlogic/ui/scripts/sync-softn.mjs';
+import { checkSiteZipp, installSiteZipp, SiteZippError } from './site-zipp.mjs';
 
 export const RELEASE_REPOSITORY = 'f2i-com/softn.com';
 export const ASSET_PATTERN = /^softn-formlogic-runtime-.+\.zip$/;
@@ -1147,11 +1148,21 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const frozenArg = frozenIndex >= 0 ? args[frozenIndex + 1] : null;
   if (frozenIndex >= 0 && (!frozenArg || frozenArg.startsWith('--'))) { console.error('fetch-softn-release: --frozen needs a file path'); process.exit(1); }
   try {
+    // The site's ZIPP follows every install (site-zipp.mjs): the Softn release's own, or the one
+    // zipp-release.json pins, which the Softn release's own installer puts beside it.
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
     if (args.includes('--resolve-only')) await resolveOnly({ frozenPath: frozenArg || process.env.SOFTN_FROZEN || DEFAULT_FROZEN_PATH });
-    else if (args.includes('--check')) await checkInstalled({ frozen: frozenArg || process.env.SOFTN_FROZEN || null });
-    else await fetchSoftnRelease({ syncAdapter: args.includes('--sync-adapter'), frozen: frozenArg || process.env.SOFTN_FROZEN || null });
+    else if (args.includes('--check')) {
+      await checkInstalled({ frozen: frozenArg || process.env.SOFTN_FROZEN || null });
+      const { site, differs } = await checkSiteZipp({ root });
+      console.log(`The site runs ZIPP ${site.release} (${site.sha256.slice(0, 12)})${differs ? ', its own (zipp-release.json)' : ', the Softn release\'s'}.`);
+    } else {
+      await fetchSoftnRelease({ syncAdapter: args.includes('--sync-adapter'), frozen: frozenArg || process.env.SOFTN_FROZEN || null });
+      await installSiteZipp({ root });
+    }
   } catch (error) {
     if (error instanceof ReleaseError) { console.error(`fetch-softn-release: ${error.message}`); process.exit(1); }
+    if (error instanceof SiteZippError) { console.error(`fetch-softn-release: ${error.message}`); process.exit(1); }
     throw error;
   }
 }

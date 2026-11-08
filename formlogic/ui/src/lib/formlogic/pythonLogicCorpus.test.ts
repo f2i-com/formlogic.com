@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { engineLanguages, runEval, SandboxGuestError, warmUp, type EvalKind } from './zipp-host';
 import { CONTRACT_ID } from './python/pythonContract';
-import zippSource from '../../../vendor/zipp-wasm/SOURCE.json';
+import zippSource from '../../../vendor/zipp/SOURCE.json';
 
 const installedZipp = zippSource as { release?: string; revision?: string; sha256: string };
 

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import source from '../../../vendor/zipp-wasm/SOURCE.json';
+import source from '../../../vendor/zipp/SOURCE.json';
 import { createWasmByteBroker, engineIdentity, engineNeedsBytes, getEngineBytes, getZippWebWasmBytes, webVariantIdentity, ZIPP_RUNTIME_IDENTITY, ZIPP_WEB_IDENTITY, type ZippSourceRecord } from './zipp-bytes';
 import { OWN_DOCUMENT_ENGINE } from './frameEngine';
 

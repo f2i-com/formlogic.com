@@ -44,6 +44,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync,
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zippReleaseIdentity } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { withSiteZipp } from './site-zipp.mjs';
 
 export const ZIPP_REPOSITORY = 'https://github.com/f2i-com/zipp.org';
 export const GUEST_PACKAGE = 'formlogic-runtime-guest';
@@ -74,7 +75,9 @@ function git(args, options = {}) {
 export function installedZipp(root) {
   const { current } = sourcePaths(root);
   if (!existsSync(current)) throw new Error('No Softn release is installed (.runtime-source/softn-release/current.json is missing): run node scripts/fetch-softn-release.mjs first; the sandbox is built from the ZIPP release it names.');
-  const release = JSON.parse(readFileSync(current, 'utf8'));
+  // The site's ZIPP where it is installed (site-zipp.mjs): the Softn release's unless
+  // zipp-release.json pins another, so the server runs the ZIPP the browser does.
+  const release = withSiteZipp(JSON.parse(readFileSync(current, 'utf8')), root);
   let zipp;
   try { zipp = zippReleaseIdentity(release.zipp); }
   catch (error) { throw new Error(`The installed Softn release ${release.tag ?? '(untagged)'} names no ZIPP release to build the sandbox from; it needs Softn v0.0.15 or later. ${error.message}`); }

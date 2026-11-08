@@ -33,6 +33,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zippReleaseIdentity } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 import { loadFrozen } from './fetch-softn-release.mjs';
+import { siteZippSource, withSiteZipp } from './site-zipp.mjs';
 import { ZIPP_LOCK, ZIPP_REPOSITORY } from './zipp-source.mjs';
 
 export const PROVENANCE_FORMAT = 1;
@@ -49,7 +50,8 @@ const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
 export function runtimePaths(root) {
   return {
     current: resolve(root, '.runtime-source/softn-release/current.json'),
-    buildInfo: resolve(root, 'formlogic/ui/vendor/zipp-wasm/BUILD-INFO.txt'),
+    // The site's ZIPP (site-zipp.mjs): the sandbox is built from it, the one the browser runs.
+    buildInfo: resolve(root, 'formlogic/ui/vendor/zipp/BUILD-INFO.txt'),
     stamp: resolve(root, '.runtime-source/zipp/source.json'),
     fragments: resolve(root, '.runtime-source/sandbox'),
     guestWasm: resolve(root, 'formlogic/runtime/host', GUEST.artifact),
@@ -291,7 +293,7 @@ function readFragment(root, kind) {
  */
 export function toolchain(root) {
   const { current, buildInfo, stamp } = runtimePaths(root);
-  const zipp = existsSync(current) ? readJson(current).zipp ?? null : null;
+  const zipp = siteZippSource(root) ?? (existsSync(current) ? readJson(current).zipp ?? null : null);
   const recorded = zipp?.rustc ?? null;
   const built = existsSync(buildInfo) ? buildInfoRustc(readFileSync(buildInfo, 'utf8')) : null;
   if (built && recorded && built !== recorded) {
@@ -380,7 +382,8 @@ export function writeProvenance(root, { env = process.env, formlogic = null, now
     }
     launchers.push(record);
   }
-  const source = mergeProvenance({ current: readJson(paths.current), guest, launchers, formlogic: formlogic ?? formlogicCommit(root, env), hostLockText: readFileSync(paths.hostLock, 'utf8'), now });
+  // The site's ZIPP, which is the Softn release's unless zipp-release.json pins another (site-zipp.mjs).
+  const source = mergeProvenance({ current: withSiteZipp(readJson(paths.current), root), guest, launchers, formlogic: formlogic ?? formlogicCommit(root, env), hostLockText: readFileSync(paths.hostLock, 'utf8'), now });
   mkdirSync(paths.bin, { recursive: true });
   writeFileSync(paths.source, JSON.stringify(source, null, 2) + '\n');
   return source;
@@ -398,7 +401,7 @@ export async function checkSandbox(root, { frozen = process.env.SOFTN_FROZEN || 
   }
   const problems = provenanceProblems({
     source,
-    current: readJson(paths.current),
+    current: withSiteZipp(readJson(paths.current), root),
     frozen: await loadFrozen(frozen, root),
     guestBytes: existsSync(paths.guestWasm) ? readFileSync(paths.guestWasm) : null,
     binFiles,

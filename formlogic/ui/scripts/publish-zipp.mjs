@@ -30,7 +30,7 @@ export function zippFolderName(source) {
  * an earlier build left is removed. Returns the folder name and the files written.
  */
 export function publishZipp(ui) {
-  const vendor = resolve(ui, 'vendor/zipp-wasm');
+  const vendor = resolve(ui, 'vendor/zipp');
   const source = JSON.parse(readFileSync(resolve(vendor, 'SOURCE.json'), 'utf8'));
   const name = zippFolderName(source);
   const files = [
@@ -41,7 +41,7 @@ export function publishZipp(ui) {
   if (torch) {
     // The release's torch tree where it is installed, else the hosted runtime's copy, which the
     // Softn release installer has already held to the same digest.
-    const tree = resolve(ui, 'vendor/zipp-wasm-torch/zipp_torch.wasm');
+    const tree = resolve(ui, 'vendor/zipp-torch/zipp_torch.wasm');
     files.push({ as: 'zipp_torch.wasm', from: existsSync(tree) ? tree : resolve(ui, 'public/hosted-runtime/assets/core-runtime/zipp_torch.wasm'), sha256: torch.sha256, what: 'the torch package' });
   }
   for (const file of files) {

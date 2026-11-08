@@ -11,8 +11,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const trap = vi.hoisted(() => ({ next: false }));
 
-vi.mock('../../../vendor/zipp-wasm/zipp_wasm.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../vendor/zipp-wasm/zipp_wasm.js')>();
+vi.mock('../../../vendor/zipp/zipp_wasm.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../vendor/zipp/zipp_wasm.js')>();
   class TrappingEngine extends actual.Engine {
     constructor() {
       if (trap.next) {

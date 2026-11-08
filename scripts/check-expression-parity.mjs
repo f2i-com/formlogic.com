@@ -38,6 +38,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { siteZippSource } from './site-zipp.mjs';
 
 const rootIndex = process.argv.indexOf('--root');
 const ROOT = rootIndex > 0 ? resolve(process.argv[rootIndex + 1]) : join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -91,7 +92,10 @@ if (shas.size > 1) {
 const zippOf = (l) => (typeof l.zipp?.release === 'string' && typeof l.zipp?.revision === 'string' ? `${l.zipp.release} ${l.zipp.revision}` : null);
 const unnamed = legs.filter((l) => !zippOf(l));
 const installedFile = join(ROOT, '.runtime-source', 'softn-release', 'current.json');
-const installed = existsSync(installedFile) ? JSON.parse(readFileSync(installedFile, 'utf8')).zipp ?? null : null;
+// The site's ZIPP (site-zipp.mjs): the browser engine and the sandbox's source, the Softn release's
+// unless zipp-release.json pins another.
+const installed = siteZippSource(ROOT) ?? (existsSync(installedFile) ? JSON.parse(readFileSync(installedFile, 'utf8')).zipp ?? null : null);
+
 const expectedZipp = installed ? `${installed.release} ${installed.revision}` : null;
 if (unnamed.length || new Set(legs.map(zippOf)).size > 1 || (expectedZipp && legs.some((l) => zippOf(l) !== expectedZipp))) {
   console.error('Legs did not run one ZIPP release' + (expectedZipp ? `, the installed Softn release's (${expectedZipp})` : '') + ':\n');

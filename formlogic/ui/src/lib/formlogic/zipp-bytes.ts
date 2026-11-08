@@ -1,4 +1,4 @@
-import source from '../../../vendor/zipp-wasm/SOURCE.json';
+import source from '../../../vendor/zipp/SOURCE.json';
 // The vocabulary lives with the rule that uses it (frameEngine), which reaches no DOM, message or
 // fetch; this module is the page's actual holdings. Keeping them apart means a test that stubs
 // what this page holds cannot also, silently, stub what the announcement is compared against.
@@ -33,7 +33,7 @@ export function hostZippFiles(origin: string = location.origin): { glue: HostZip
     ...(typeof torch === 'string' ? { torch: { url: `${folder}zipp_torch.wasm`, sha256: torch } } : {}),
   };
 }
-const wasmUrl = new URL('../../../vendor/zipp-wasm/zipp_wasm_bg.wasm', import.meta.url);
+const wasmUrl = new URL('../../../vendor/zipp/zipp_wasm_bg.wasm', import.meta.url);
 const MAX_WASM_BYTES = 32 * 1024 * 1024;
 
 /**
@@ -44,7 +44,7 @@ const MAX_WASM_BYTES = 32 * 1024 * 1024;
  * the precache exclusion and the runtime cache rule in vite.config.ts cover both — when the file
  * is there (verified on Vite 8.3.0). A static `new URL(...)` would fail the build when absent.
  */
-const webWasmUrls = import.meta.glob('../../../vendor/zipp-wasm-web/zipp_wasm_bg.wasm', { query: '?url', import: 'default', eager: true }) as Record<string, string>;
+const webWasmUrls = import.meta.glob('../../../vendor/zipp-web/zipp_wasm_bg.wasm', { query: '?url', import: 'default', eager: true }) as Record<string, string>;
 const webWasmUrl: string | undefined = Object.values(webWasmUrls)[0];
 
 /** The shape of the installed engine's SOURCE.json this module reads: the primary record and its variants. */

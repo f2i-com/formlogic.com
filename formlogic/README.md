@@ -142,8 +142,16 @@ When editing the canonical workspace or Aokie client templates in Softn, also ru
 
 Form expressions and `onSubmit` scripts run in a **zipp** sandbox on both sides, sharing one standard-library prelude (`ui/src/lib/formlogic/prelude.js`):
 
-- **Browser:** the module in `ui/vendor/zipp-wasm/` runs in a Web Worker; Vite bundles its WASM and the prelude. It is not in git: `node scripts/fetch-softn-release.mjs` installs it from the Softn release (the ZIPP release that Softn release was built with).
-- **Server:** the PHP API invokes a per-OS launcher under `backend/bin/runtime/`, which runs zipp as a WebAssembly guest under wasmtime. It is not in git: CI builds it every run, and `scripts/build-runtime.sh all` builds it locally, from the source of the ZIPP release the installed Softn release names, so the server and the browser run one ZIPP release; `backend/bin/runtime/SOURCE.json` records how. See the [runtime README](runtime/README.md). The UI build's `prebuild` step syncs the prelude into `backend/resources/formlogic-prelude.js`.
+- **Browser:** the site's ZIPP, `ui/vendor/zipp/` (with `zipp-web/` and `zipp-torch/`), runs in a Web Worker; Vite bundles its WASM and the prelude. It is not in git: `node scripts/fetch-softn-release.mjs` installs it with the Softn release, as a copy of that release's own ZIPP (`ui/vendor/zipp-wasm/`) unless `zipp-release.json` pins another (below). The page hands the same engine to hosted apps and the editors.
+- **Server:** the PHP API invokes a per-OS launcher under `backend/bin/runtime/`, which runs zipp as a WebAssembly guest under wasmtime. It is not in git: CI builds it every run, and `scripts/build-runtime.sh all` builds it locally, from the source of the site's ZIPP release, so the server and the browser run one ZIPP release; `backend/bin/runtime/SOURCE.json` records how. See the [runtime README](runtime/README.md). The UI build's `prebuild` step syncs the prelude into `backend/resources/formlogic-prelude.js`.
+
+**A newer ZIPP without a new Softn.** To run a ZIPP release other than the one the installed Softn release was built with, pin it in `zipp-release.json` at the repository root, with the sha256 of that release's `SHA256SUMS`, and run `node scripts/fetch-softn-release.mjs` (or `node scripts/site-zipp.mjs`):
+
+```json
+{ "release": "v0.0.34", "sumsSha256": "<sha256 of the release's SHA256SUMS>" }
+```
+
+The release is installed by the ZIPP installer the Softn release carries (Softn v0.0.37 on), with every check Softn makes of a ZIPP release, and only where the Softn runtime and editors can run it (`host-zipp/1`) and its JavaScript exports every name they call; otherwise nothing changes and the reason is printed. The site's forms, its server sandbox, hosted apps' pages and Builder and Studio then run that ZIPP; a hosted app's backend runs on the Softn release's own native runtime and its ZIPP. CI is the gate: with the pin committed, every job installs that ZIPP and runs the engine tests on it (`npm run test:zipp-sharing`, `npm test`, the end-to-end suite, the server sandbox built from its source, the expression parity between the two); its OAIY parity job needs an OAIY release on the same ZIPP. Remove the file to go back to the Softn release's ZIPP.
 
 On Linux/macOS ensure the launcher is executable (`chmod +x backend/bin/runtime/formlogic-runtime-linux-x86_64`); `install.sh` and `install.php` both do this for you.
 

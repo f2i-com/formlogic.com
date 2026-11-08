@@ -4,11 +4,11 @@
 // Python as a host error, before any Engine is built, and keep running JavaScript. The real
 // engine is loaded; only its profile is made to report JavaScript alone.
 import { describe, expect, it, vi } from 'vitest';
-import { Engine } from '../../../vendor/zipp-wasm/zipp_wasm.js';
+import { Engine } from '../../../vendor/zipp/zipp_wasm.js';
 import { engineLanguages, runEval, SandboxGuestError } from './zipp-host';
 
-vi.mock('../../../vendor/zipp-wasm/zipp_wasm.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../vendor/zipp-wasm/zipp_wasm.js')>();
+vi.mock('../../../vendor/zipp/zipp_wasm.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../vendor/zipp/zipp_wasm.js')>();
   return {
     ...actual,
     zippProfile: () => JSON.stringify({ ...JSON.parse(actual.zippProfile()), languages: ['javascript'] }),

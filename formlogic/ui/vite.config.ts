@@ -108,7 +108,7 @@ export default defineConfig(({ mode }) => {
         const match = /^\/zipp\/[0-9a-f]{12}\/(zipp_wasm\.js|zipp_torch\.wasm|SOURCE\.json)$/.exec(req.url?.split('?')[0] ?? '');
         if (!match) { next(); return; }
         const at = (path: string) => fileURLToPath(new URL(path, import.meta.url));
-        const file = { 'zipp_wasm.js': at('./vendor/zipp-wasm/zipp_wasm.js'), 'SOURCE.json': at('./vendor/zipp-wasm/SOURCE.json'), 'zipp_torch.wasm': existsSync(at('./vendor/zipp-wasm-torch/zipp_torch.wasm')) ? at('./vendor/zipp-wasm-torch/zipp_torch.wasm') : at('./public/hosted-runtime/assets/core-runtime/zipp_torch.wasm') }[match[1]]!;
+        const file = { 'zipp_wasm.js': at('./vendor/zipp/zipp_wasm.js'), 'SOURCE.json': at('./vendor/zipp/SOURCE.json'), 'zipp_torch.wasm': existsSync(at('./vendor/zipp-torch/zipp_torch.wasm')) ? at('./vendor/zipp-torch/zipp_torch.wasm') : at('./public/hosted-runtime/assets/core-runtime/zipp_torch.wasm') }[match[1]]!;
         if (!existsSync(file)) { next(); return; }
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Content-Type', match[1].endsWith('.js') ? 'text/javascript' : match[1].endsWith('.wasm') ? 'application/wasm' : 'application/json');

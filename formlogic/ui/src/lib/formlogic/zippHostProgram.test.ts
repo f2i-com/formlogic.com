@@ -8,7 +8,7 @@
 // it is replaced by a marker and the snapshot stays readable.
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import PRELUDE from './prelude.js?raw';
-import { Engine } from '../../../vendor/zipp-wasm/zipp_wasm.js';
+import { Engine } from '../../../vendor/zipp/zipp_wasm.js';
 import { runEval, type EvalKind } from './zipp-host';
 
 const CASE_TIMEOUT_MS = 20_000;

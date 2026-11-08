@@ -51,6 +51,10 @@ async function prebuildRoot(t) {
   await mkdir(resolve(ui, 'src/lib/softn'), { recursive: true });
   await copyFile(resolve(here, '../src/lib/softn/protocol.json'), resolve(ui, 'src/lib/softn/protocol.json'));
   await writeZippTree(resolve(ui, 'vendor/zipp-wasm'), release.files);
+  // The site's ZIPP (scripts/site-zipp.mjs, which the hosted-runtime check reads): the Softn release's, with no pin.
+  await writeZippTree(resolve(ui, 'vendor/zipp'), release.files);
+  await mkdir(resolve(root, 'scripts/lib'), { recursive: true });
+  for (const name of ['site-zipp.mjs', 'lib/archive.mjs']) await copyFile(resolve(here, '../../../scripts', name), resolve(root, 'scripts', name));
   await mkdir(resolve(ui, 'public/hosted-runtime'), { recursive: true });
   // Both entry documents the hosted runtime ships: one shell, one attribute apart.
   const shell = '<body><script type="module" src="./assets/main-abc.js"></script></body>';

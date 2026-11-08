@@ -167,6 +167,12 @@ export async function syncZippFromSoftn({
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try { await syncZippFromSoftn(); }
+  try {
+    await syncZippFromSoftn();
+    // And the site's ZIPP, which is that one unless zipp-release.json pins another (site-zipp.mjs).
+    const { installSiteZipp } = await import('./site-zipp.mjs');
+    await installSiteZipp({ root: resolve(dirname(fileURLToPath(import.meta.url)), '..') });
+  }
   catch (error) { console.error(`sync-zipp-from-softn: ${error.message}`); process.exit(1); }
 }
+

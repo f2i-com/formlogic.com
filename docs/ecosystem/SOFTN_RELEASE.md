@@ -270,9 +270,23 @@ adds the package to the engine at install and runs `import torch`. The
 workbox precache ignores `hosted-runtime/**`, so the package is never in the
 PWA's startup precache either.
 
+### The site's ZIPP (Softn v0.0.37 on)
+
+The site's ZIPP, `formlogic/ui/vendor/zipp` (with `zipp-web` and `zipp-torch`), is what the page and
+its form-logic worker run, what the server sandbox is built from and what the expression corpus is
+held to (`scripts/site-zipp.mjs`, run by every fetch). It is a copy of the Softn release's ZIPP
+(`vendor/zipp-wasm`, which stays exactly as the release shipped it, for the checks of the runtime,
+the editors and the native runtime) unless `zipp-release.json` pins another release and the sha256
+of its SHA256SUMS. A pinned release is installed by the installer the Softn release carries
+(`zipp-tools/scripts/fetch-zipp-release.mjs`, taken from the kept archive and held to the digest
+current.json records), with every check Softn makes of a ZIPP release, and only where the Softn
+runtime and editors declare `host-zipp/1` and the pinned glue exports every name in their
+`zippGlueExports`. `.runtime-source/site-zipp.json` records which it is; `--check` holds the
+install to the pin, or to the Softn release's ZIPP without one.
+
 ### The site's ZIPP folder (Softn v0.0.36 on)
 
-The build publishes the installed ZIPP's glue (`zipp_wasm.js`), torch package
+The build publishes the site's ZIPP's glue (`zipp_wasm.js`), torch package
 and `SOURCE.json` in `dist/zipp/<the first 12 hex of the engine's sha256>/`
 (`ui/scripts/publish-zipp.mjs`, each file held to the digest `SOURCE.json`
 records). A Softn runtime with the `host-zipp/1` feature, and Builder and

@@ -37,7 +37,7 @@
 // engine and under the same three limits: a fresh Engine per attempt, the same
 // instruction budget, no bridges, and the context crossing as a pythonCall
 // argument. Nothing here drains host requests, UI or Python input.
-import initZipp, { Engine, zippInstanceUsage, zippProfile } from '../../../vendor/zipp-wasm/zipp_wasm.js';
+import initZipp, { Engine, zippInstanceUsage, zippProfile } from '../../../vendor/zipp/zipp_wasm.js';
 // Canonical standard library — single source of truth, shared with the backend
 // guest (ui/scripts/sync-prelude.mjs writes the backend copy).
 import PRELUDE from './prelude.js?raw';
@@ -117,7 +117,7 @@ const MAX_OUTPUT_DEPTH = 8;
 let readyPromise: Promise<void> | null = null;
 
 /**
- * Node parity tests read the installed engine (vendor/zipp-wasm, generated from
+ * Node parity tests read the installed engine (vendor/zipp, generated from
  * the Softn release by scripts/fetch-softn-release.mjs). Browser workers receive the
  * page's verified bytes and never download another copy themselves. Keep the
  * Node-only URL dynamic so Vite does not emit a second worker-owned WASM asset.
@@ -125,7 +125,7 @@ let readyPromise: Promise<void> | null = null;
 async function loadNodeWasm(): Promise<ArrayBuffer> {
   const isNode =
     typeof process !== 'undefined' && !!(process as { versions?: { node?: string } }).versions?.node;
-  const nodeArtifact = '../../../vendor/zipp-wasm/zipp_wasm_bg.wasm';
+  const nodeArtifact = '../../../vendor/zipp/zipp_wasm_bg.wasm';
   const wasmUrl = new URL(/* @vite-ignore */ nodeArtifact, import.meta.url);
   if (isNode && wasmUrl.protocol === 'file:') {
     const fsSpecifier = 'node:fs/promises';

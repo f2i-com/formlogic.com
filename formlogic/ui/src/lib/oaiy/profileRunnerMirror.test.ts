@@ -38,7 +38,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { Engine } from '../../../vendor/zipp-wasm/zipp_wasm.js';
+import { Engine } from '../../../vendor/zipp/zipp_wasm.js';
 import { SandboxGuestError, engineLanguages, runEval, warmUp, type EvalKind } from '../formlogic/zipp-host';
 import { authorMessage } from '../formlogic/python/pythonContract';
 import { pythonModeJob, type PythonModeJob } from './scriptJob';

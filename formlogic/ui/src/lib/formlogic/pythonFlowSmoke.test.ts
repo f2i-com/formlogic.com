@@ -14,7 +14,7 @@ vi.mock('./zipp-bytes', () => ({
   // The page verifies and caches these bytes; here they are the installed engine itself.
   getZippWasmBytes: async () => {
     const { readFile } = await import('node:fs/promises');
-    const buf = await readFile(new URL('../../../vendor/zipp-wasm/zipp_wasm_bg.wasm', import.meta.url));
+    const buf = await readFile(new URL('../../../vendor/zipp/zipp_wasm_bg.wasm', import.meta.url));
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   },
 }));

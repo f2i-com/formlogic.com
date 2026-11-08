@@ -20,11 +20,11 @@ const hostedRoot = join(root, 'public/hosted-runtime');
 // Only where the two differ: a runtime built with the site's ZIPP runs it on the glue it carries.
 const runtimeManifest = JSON.parse(await readFile(join(hostedRoot, 'runtime-manifest.json'), 'utf8'));
 const siteZipp = runtimeManifest.features?.includes('host-zipp/1') === true
-  && runtimeManifest.zipp?.sha256 !== JSON.parse(await readFile(join(root, 'vendor/zipp-wasm/SOURCE.json'), 'utf8')).sha256;
+  && runtimeManifest.zipp?.sha256 !== JSON.parse(await readFile(join(root, 'vendor/zipp/SOURCE.json'), 'utf8')).sha256;
 await import('./check-hosted-runtime.mjs');
 // The installed engine and, when the installed Softn release ships it, its JavaScript-only web
 // variant (served as zipp-web). The variant-dependent order below runs only when it is there.
-const primary = JSON.parse(await readFile(join(root, 'vendor/zipp-wasm/SOURCE.json'), 'utf8'));
+const primary = JSON.parse(await readFile(join(root, 'vendor/zipp/SOURCE.json'), 'utf8'));
 const webVariant = primary.variants?.web ?? null;
 const output = await mkdtemp(join(tmpdir(), 'formlogic-zipp-sharing-'));
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm' };
@@ -53,8 +53,8 @@ try {
     // The site's ZIPP folder, as a build publishes it (publish-zipp.mjs), from the installed ZIPP.
     const zippFile = /^\/zipp\/[0-9a-f]{12}\/(zipp_wasm\.js|zipp_torch\.wasm|SOURCE\.json)$/.exec(path)?.[1];
     if (zippFile) {
-      const torchTree = join(root, 'vendor/zipp-wasm-torch/zipp_torch.wasm');
-      const from = { 'zipp_wasm.js': join(root, 'vendor/zipp-wasm/zipp_wasm.js'), 'SOURCE.json': join(root, 'vendor/zipp-wasm/SOURCE.json'), 'zipp_torch.wasm': existsSync(torchTree) ? torchTree : join(hostedRoot, 'assets/core-runtime/zipp_torch.wasm') }[zippFile];
+      const torchTree = join(root, 'vendor/zipp-torch/zipp_torch.wasm');
+      const from = { 'zipp_wasm.js': join(root, 'vendor/zipp/zipp_wasm.js'), 'SOURCE.json': join(root, 'vendor/zipp/SOURCE.json'), 'zipp_torch.wasm': existsSync(torchTree) ? torchTree : join(hostedRoot, 'assets/core-runtime/zipp_torch.wasm') }[zippFile];
       response.setHeader('Content-Type', mime[extname(from)] || 'application/octet-stream');
       try { response.end(await readFile(from)); } catch { response.writeHead(404).end(); }
       return;

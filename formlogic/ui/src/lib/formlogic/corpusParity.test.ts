@@ -50,7 +50,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runEval, SandboxGuestError, type EvalKind } from './zipp-host';
-import zippSource from '../../../vendor/zipp-wasm/SOURCE.json';
+import zippSource from '../../../vendor/zipp/SOURCE.json';
 
 /** The generated engine record; typed loosely so the check does not depend on which release's fields are installed. */
 const installedZipp = zippSource as { release?: string; revision?: string; sha256: string };

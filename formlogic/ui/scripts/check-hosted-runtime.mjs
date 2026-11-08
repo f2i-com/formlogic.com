@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { assertNoInterruptedPromotion, checkEntryDocuments, checkRuntimeArtifact, checkZippTree, checkZippVariantTree, runtimeIdentity } from './hosted-runtime-artifact.mjs';
+import { checkSiteZipp } from '../../../scripts/site-zipp.mjs';
 assertNoInterruptedPromotion(fileURLToPath(new URL('../../../', import.meta.url)));
 // vendor/zipp-wasm is generated: the Softn release's zipp/ tree, installed by the fetch.
 let source;
@@ -37,4 +38,11 @@ try {
   await checkEntryDocuments(fileURLToPath(new URL('../public/hosted-runtime/', import.meta.url)));
 } catch (error) {
   throw new Error(`The hosted app runtime's entry documents are not the two this FormLogic serves. Run node scripts/fetch-softn-release.mjs from the repository root (or npm run build:hosted-runtime against a Softn source checkout). ${error.message}`);
+}
+// The site's ZIPP (vendor/zipp, scripts/site-zipp.mjs), which the page builds on: the Softn
+// release's above, or the one zipp-release.json pins, which the runtime then has to run.
+try {
+  await checkSiteZipp({ root: fileURLToPath(new URL('../../../', import.meta.url)) });
+} catch (error) {
+  throw new Error(`The site's ZIPP (formlogic/ui/vendor/zipp) is missing or is not the one this site runs. Run node scripts/fetch-softn-release.mjs (or node scripts/site-zipp.mjs) from the repository root. ${error.message}`);
 }

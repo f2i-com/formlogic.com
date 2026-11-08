@@ -238,6 +238,9 @@ for (const candidate of ['formlogic/backend/resources/contracts/aokie-connector-
   if (existsSync(path)) { aokieContract = { path: candidate, contractVersion: json(path).contractVersion, sha256: sha256Text(read(path)) }; break; }
 }
 
+const siteZippFile = resolve(root, 'formlogic/ui/vendor/zipp/SOURCE.json');
+const siteZipp = existsSync(siteZippFile) ? json(siteZippFile) : null;
+const siteZippPinned = existsSync(resolve(root, 'zipp-release.json')) && !sourceMode;
 const manifest = {
   kind: 'formlogic.ecosystemCompatibilityManifest',
   formatVersion: 1,
@@ -251,6 +254,9 @@ const manifest = {
     xdb: { pinnedBy: sourceMode ? (xdbInSoftn ? 'part of the Softn checkout (crates/softn-xdb), at its revision' : 'softn/.github/scripts/checkout-xdb.sh') : 'the installed Softn release (softn-release.json xdb.revision, when it records one)', revision: xdbPin, checkoutRevision: xdbHead, consumedAs: loaderXdbDependency, note: 'Native peer networking is opt-in and local-only by default at this revision; see xdb docs/networking-and-restore-policy.md' },
     zipp: { pinnedBy: sourceMode ? 'the SOFTN_REPO checkout\'s packages/@softn/core/wasm-zipp (npm run fetch:zipp there), synced to formlogic/ui/vendor/zipp-wasm (generated)' : 'the installed Softn release (softn-release.json zipp), installed at formlogic/ui/vendor/zipp-wasm (generated)', release: flZipp.release ?? null, version: flZipp.version, revision: flZipp.revision, build: flZipp.build ?? null, bundle: flZipp.bundle ?? null, bundleSha256: flZipp.bundleSha256 ?? null, sumsSha256: flZipp.sumsSha256 ?? null, variant: flZipp.variant, languages: flZipp.languages, artifact: flZipp.artifact, sha256: flZipp.sha256, rustc: flZipp.rustc ?? null, wasmBindgen: flZipp.wasmBindgen ?? null, variants: flZipp.variants ?? null, packages: flZipp.packages ?? null },
     aokie: aokieContract ?? { note: 'connector contract copy not present in this tree' },
+    // The site's ZIPP (scripts/site-zipp.mjs): what the browser and the server sandbox run. The
+    // Softn release's (zipp above) unless zipp-release.json pins another.
+    ...(siteZipp ? { siteZipp: { pinnedBy: siteZippPinned ? 'zipp-release.json, installed by the Softn release\'s zipp-tools/ at formlogic/ui/vendor/zipp (generated)' : 'the installed Softn release\'s ZIPP, copied to formlogic/ui/vendor/zipp (generated)', release: siteZipp.release ?? null, revision: siteZipp.revision, sumsSha256: siteZipp.sumsSha256 ?? null, sha256: siteZipp.sha256 } } : {}),
   },
   nativeRuntime: runtimeProvenance ? { nativeProtocol: runtimeProvenance.nativeProtocol, zipp: runtimeProvenance.zipp, modules: runtimeProvenance.modules } : { note: 'run scripts/prepare-native-runtime.mjs to record the prepared runtime' },
   compatibility: {
@@ -296,7 +302,10 @@ if (check) {
     if (c.softn) { delete c.softn.checkoutRevision; delete c.softn.release; delete c.softn.revision; delete c.softn.archiveSha256; delete c.softn.frozen; delete c.softn.minimumNode; }
     if (c.xdb) { delete c.xdb.checkoutRevision; delete c.xdb.revision; delete c.xdb.consumedAs; }
     if (c.zipp) c.zipp = unpinZipp(c.zipp);
-    if (sourceMode) for (const name of ['softn', 'xdb', 'zipp']) if (c[name]) delete c[name].pinnedBy;
+    // The site's ZIPP is compared by how it is pinned: a pin committed or removed moves the manifest.
+    if (c.siteZipp) c.siteZipp = unpinZipp(c.siteZipp);
+    if (sourceMode) for (const name of ['softn', 'xdb', 'zipp', 'siteZipp']) if (c[name]) delete c[name].pinnedBy;
+
     const n = nativeRuntime ? { nativeProtocol: nativeRuntime.nativeProtocol ?? null, zipp: unpinZipp(nativeRuntime.zipp ?? null) } : null;
     return { ...rest, components: c, nativeRuntime: n };
   };

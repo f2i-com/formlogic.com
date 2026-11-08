@@ -5,7 +5,7 @@
 // are classified. What the contract MEANS is in docs/contracts/formlogic-python-logic-corpus.json
 // (pythonLogicCorpus.test.ts); this file pins how this host runs it.
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Engine } from '../../../vendor/zipp-wasm/zipp_wasm.js';
+import { Engine } from '../../../vendor/zipp/zipp_wasm.js';
 import { runEval, SandboxGuestError, type EvalKind } from './zipp-host';
 
 const CASE_TIMEOUT_MS = 60_000;

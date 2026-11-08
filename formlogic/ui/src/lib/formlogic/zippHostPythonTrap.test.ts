@@ -8,7 +8,7 @@
 // instance for every other case in the file, and no longer traps v0.0.19 (which stops such a
 // run on its memory budget), so no released engine offers a trigger to run here.
 import { describe, expect, it, vi } from 'vitest';
-import { Engine } from '../../../vendor/zipp-wasm/zipp_wasm.js';
+import { Engine } from '../../../vendor/zipp/zipp_wasm.js';
 import { INSTANCE_RETAINED_BUDGET_BYTES } from './engine';
 import { instanceUsage, runEval, SandboxGuestError } from './zipp-host';
 

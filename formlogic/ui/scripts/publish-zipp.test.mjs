@@ -17,10 +17,10 @@ const ENGINE = 'a844efe3d7d0'.padEnd(64, '0');
 function ui(t, { torchTree = true, glue = GLUE, torchRecorded = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'publish-zipp-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  mkdirSync(join(root, 'vendor/zipp-wasm'), { recursive: true });
-  writeFileSync(join(root, 'vendor/zipp-wasm/zipp_wasm.js'), glue);
-  writeFileSync(join(root, 'vendor/zipp-wasm/SOURCE.json'), JSON.stringify({ release: 'v0.0.33', version: '0.0.33', sha256: ENGINE, glueSha256: sha256(GLUE), ...(torchRecorded ? { packages: { torch: { sha256: sha256(TORCH) } } } : {}) }));
-  const torchAt = torchTree ? 'vendor/zipp-wasm-torch' : 'public/hosted-runtime/assets/core-runtime';
+  mkdirSync(join(root, 'vendor/zipp'), { recursive: true });
+  writeFileSync(join(root, 'vendor/zipp/zipp_wasm.js'), glue);
+  writeFileSync(join(root, 'vendor/zipp/SOURCE.json'), JSON.stringify({ release: 'v0.0.33', version: '0.0.33', sha256: ENGINE, glueSha256: sha256(GLUE), ...(torchRecorded ? { packages: { torch: { sha256: sha256(TORCH) } } } : {}) }));
+  const torchAt = torchTree ? 'vendor/zipp-torch' : 'public/hosted-runtime/assets/core-runtime';
   mkdirSync(join(root, torchAt), { recursive: true });
   writeFileSync(join(root, torchAt, 'zipp_torch.wasm'), TORCH);
   return root;
