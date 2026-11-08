@@ -90,12 +90,16 @@ The expected identity is derived from the release, never from this tree:
   `SOURCE.json` name the same engine, and `zipp_wasm.mjs` is `zipp/zipp_wasm.js`.
 - Every engine copy in the archive, found by its exports (`zippProfile`,
   `zipp_start`, `engine_evalInContext`) rather than its file name, has the
-  recorded digest, and every copy Softn's packager places is found: `zipp/`,
-  `native-runtime/wasm/`, and in `hosted-runtime/` and each editor
-  `assets/zipp_wasm_bg-*.wasm`. A copy at `assets/core-runtime/zipp_wasm_bg.wasm`,
-  which releases through v0.0.27 carry, is held to the digest where it is
-  present and not required: a Softn page posts the engine it compiled to every
-  worker it starts, so no worker reads that copy.
+  recorded digest, and every copy Softn's packager places is found: `zipp/` and
+  `native-runtime/wasm/`. A copy in `hosted-runtime/` or an editor is held to
+  the digest where it is present and not required. The page downloads `zipp/`'s
+  engine once (the build's `assets/zipp_wasm_bg-*.wasm`, sent as its brotli twin
+  where the browser asks for one) and gives it to the app frame when it starts
+  and, from Softn v0.0.35, to Builder and Studio when it connects to them
+  (`AppEditorDialog`'s `engine` capability), so a release from then on carries
+  no copy there; releases through v0.0.34 carry one in each, and through v0.0.27
+  a second at `assets/core-runtime/zipp_wasm_bg.wasm`. A Softn page posts the
+  engine it compiled to every worker it starts, so no worker reads a copy.
 
 This proves consistency, not authenticity: checking the bytes against ZIPP's
 published `SHA256SUMS` is Softn's job (at install, and again online when it

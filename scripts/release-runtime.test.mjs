@@ -11,7 +11,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkDistEngines, zippLicensesText, engineIdentity, checkNativeRuntime, relativeImports, nativeImportProblems, NATIVE_MODULES } from './release-runtime.mjs';
+import { checkDistEngines, checkReleaseRuntime, zippLicensesText, engineIdentity, checkNativeRuntime, relativeImports, nativeImportProblems, NATIVE_MODULES } from './release-runtime.mjs';
 import { createHash } from 'node:crypto';
 import { wasmModule, writeZippTree, zippEngineWasm, zippReleaseFixture } from '../formlogic/ui/scripts/zipp-release-fixture.mjs';
 
@@ -61,7 +61,20 @@ test('checkDistEngines refuses an engine other than the installed release, under
   await assert.rejects(checkDistEngines(renamed, RELEASE.source), /assets\/chunks\/engine-9f8e\.bin is a ZIPP engine/);
 });
 
+test('checkReleaseRuntime takes a hosted runtime without an engine of its own (Softn v0.0.35 on), and refuses another build\'s', async (t) => {
+  const expected = { version: RELEASE.source.version, sha256: RELEASE.source.sha256 };
+  const runtime = (files) => {
+    const all = { 'index.html': Buffer.from('<!doctype html>'), 'assets/app.js': Buffer.from('export {};'), ...files };
+    const digests = Object.fromEntries(Object.entries(all).map(([path, bytes]) => [path, createHash('sha256').update(bytes).digest('hex')]));
+    return { ...all, 'runtime-manifest.json': Buffer.from(JSON.stringify({ formatVersion: 1, zipp: expected, files: digests })) };
+  };
+  await checkReleaseRuntime(await tree(t, runtime({})), expected);
+  await checkReleaseRuntime(await tree(t, runtime({ 'assets/zipp_wasm_bg-C4f3.wasm': RELEASE.wasm })), expected);
+  await assert.rejects(checkReleaseRuntime(await tree(t, runtime({ 'assets/zipp_wasm_bg-C4f3.wasm': zippEngineWasm('another build') })), expected), /The hosted runtime ZIPP binary is incompatible/);
+});
+
 test('checkDistEngines refuses a build without the app\'s own engine, and does not follow the staged backend', async (t) => {
+
   const { 'assets/zipp_wasm_bg-CAyqw9Mx.wasm': _app, ...withoutApp } = uiDist();
   const dist = await tree(t, withoutApp);
   await assert.rejects(checkDistEngines(dist, RELEASE.source), /formlogic\/ui\/dist has no assets\/zipp_wasm_bg-\*\.wasm engine \(found: app-editors\/studio\/assets\/zipp_wasm_bg-CAyqw9Mx\.wasm, hosted-runtime\/assets\/core-runtime\/zipp_wasm_bg\.wasm\)/);

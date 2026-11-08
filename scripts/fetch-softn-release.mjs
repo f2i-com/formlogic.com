@@ -142,15 +142,17 @@ const PYTHON_LOGIC_FEATURE = 'python-logic/1';
 const WEB_ENGINE_PATH = 'zipp-web/zipp_wasm_bg.wasm';
 /**
  * Where a release's engine copies live, as Softn's packager requires them: the
- * browser engine tree, the native runtime, and in the hosted runtime and each
- * editor the hashed app asset — and, when the release records a web variant,
- * that variant's engine at WEB_ENGINE_PATH. Each must yield one to the content
- * scan, so an engine whose exports changed, or a copy a Softn packaging change
- * dropped, fails the fetch instead of a later build or package.
+ * browser engine tree (the one this site's page downloads) and the native
+ * runtime — and, when the release records a web variant, that variant's engine
+ * at WEB_ENGINE_PATH. Each must yield one to the content scan, so an engine
+ * whose exports changed, or a copy a Softn packaging change dropped, fails the
+ * fetch instead of a later build or package.
  *
- * Not the copy at assets/core-runtime/zipp_wasm_bg.wasm, which releases
- * through v0.0.27 carry and later ones need not: a Softn page posts the engine
- * it compiled to every worker it starts, so no worker reads that copy. Where a
+ * Not a copy in the hosted runtime or an editor. The page gives the runtime the
+ * engine it downloaded when the app frame starts, and from Softn v0.0.35 gives
+ * Builder and Studio theirs when it connects to them (AppEditorDialog), so a
+ * release from then on carries none there; releases through v0.0.34 carry one
+ * in each (and through v0.0.27 a second at assets/core-runtime/). Where a
  * release has one, the content scan still holds it to the release's digest.
  */
 function knownEngineCopies(withWebVariant) {
@@ -158,7 +160,6 @@ function knownEngineCopies(withWebVariant) {
     'zipp/zipp_wasm_bg.wasm',
     ...(withWebVariant ? [WEB_ENGINE_PATH] : []),
     'native-runtime/wasm/zipp_wasm_bg.wasm',
-    ...['hosted-runtime', 'app-editors/builder', 'app-editors/studio'].map((prefix) => `${prefix}/assets/zipp_wasm_bg-*.wasm`),
   ].map((where) => ({ where, pattern: new RegExp(`^${where.replace(/[.]/g, '\\.').replace('*', '[^/]+')}$`) }));
 }
 /**

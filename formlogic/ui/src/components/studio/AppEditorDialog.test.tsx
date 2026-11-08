@@ -16,7 +16,12 @@ vi.mock('fflate', () => ({
   strFromU8: (bytes: Uint8Array) => new TextDecoder().decode(bytes),
   strToU8: (text: string) => new TextEncoder().encode(text),
 }));
+vi.mock('../../lib/formlogic/zipp-bytes', () => ({
+  getZippWasmBytes: vi.fn(async () => new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]).buffer),
+  ZIPP_RUNTIME_IDENTITY: { version: 'v0.0.33', sha256: 'a'.repeat(64) },
+}));
 import { AppEditorDialog, type AppEditorKind } from './AppEditorDialog';
+import { getZippWasmBytes } from '../../lib/formlogic/zipp-bytes';
 import { resolveDefaultLlm, resolveDefaultLlmTools } from '../../client-runtime/flows/aiDefault';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -58,6 +63,38 @@ async function mount(onApply: (bytes: Uint8Array) => Promise<void>, kind: AppEdi
   const connect = () => toFrame.mock.calls.map(call => call[0] as Record<string, unknown>).find(m => m.kind === 'formlogic-editor-connect');
   return { port, sent, editorSays, onClose, connect };
 }
+
+describe('AppEditorDialog engine (Softn v0.0.35 on)', () => {
+  const build = { version: 'v0.0.33', sha256: 'a'.repeat(64) };
+
+  it("sends this page's engine to an editor that names the build it runs, with the connection, cloned", async () => {
+    const { connect, sent } = await mount(vi.fn(async () => {}), 'builder', { kind: 'formlogic-editor-ready', protocol: 1, engine: 1, zipp: build });
+    expect(getZippWasmBytes).toHaveBeenCalledTimes(1);
+    expect(new Uint8Array(connect()!.zippWasm as ArrayBuffer)).toEqual(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+    // Then the app, as before.
+    expect(sent().find(m => m.method === 'open')).toBeTruthy();
+  });
+
+  it('sends none, and downloads none, to an editor from before it or one made with another build', async () => {
+    for (const ready of [{ kind: 'formlogic-editor-ready', protocol: 1 }, { kind: 'formlogic-editor-ready', protocol: 1, engine: 1, zipp: { ...build, sha256: 'b'.repeat(64) } }, { kind: 'formlogic-editor-ready', protocol: 1, engine: 2, zipp: build }]) {
+      vi.mocked(getZippWasmBytes).mockClear();
+      const { connect } = await mount(vi.fn(async () => {}), 'studio', ready);
+      expect(connect()).toBeTruthy();
+      expect(connect()).not.toHaveProperty('zippWasm');
+      expect(getZippWasmBytes).not.toHaveBeenCalled();
+      await act(async () => root?.unmount());
+      root = undefined;
+      channels.length = 0;
+    }
+  });
+
+  it('says why when the engine cannot be downloaded, and connects nothing', async () => {
+    vi.mocked(getZippWasmBytes).mockRejectedValueOnce(new Error('The app engine could not be downloaded (503).'));
+    const { connect } = await mount(vi.fn(async () => {}), 'builder', { kind: 'formlogic-editor-ready', protocol: 1, engine: 1, zipp: build });
+    expect(connect()).toBeUndefined();
+    expect(document.body.textContent).toContain('The app engine could not be downloaded (503).');
+  });
+});
 
 describe('AppEditorDialog save acknowledgement', () => {
   it('refuses a save requested before the editor opened the app, with a reason', async () => {

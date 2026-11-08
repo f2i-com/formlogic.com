@@ -279,6 +279,17 @@ server {
     root /var/www/formlogic/ui/dist;
     index index.html;
 
+    # The app engine (assets/zipp_wasm_bg-*.wasm, 6.6 MB) has a brotli twin the build wrote beside
+    # it (.wasm.br, about 1.7 MB), as the bundled .htaccess sends it. brotli_static is the ngx_brotli
+    # module (Debian and Ubuntu: libnginx-mod-http-brotli-static), and nginx refuses to start on a
+    # directive it does not know, so it waits here for that module: uncomment it then. Until then
+    # gzip compresses the engine, and the rest, per request.
+    # brotli_static on;
+    gzip on;
+    gzip_vary on;
+    gzip_types text/css application/javascript application/json application/manifest+json application/wasm image/svg+xml;
+
+
     # nginx stops at 1 MB unless told. The app keeps ordinary requests far below this, and grants
     # the full size to backup and upgrade uploads alone: see "Request-size layers" in DEPLOYMENT.md.
     client_max_body_size 220m;

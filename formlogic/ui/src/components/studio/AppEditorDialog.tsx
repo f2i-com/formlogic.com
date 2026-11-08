@@ -4,11 +4,14 @@ import { editorBundle } from '../../lib/appEditorArchive';
 import { editorAiLabel, resolveDefaultLlm, resolveDefaultLlmTools, TOOLS_UNSUPPORTED } from '../../client-runtime/flows/aiDefault';
 import { EDITOR_AI_LIMITS, EDITOR_AI_TOOLS_VERSION, validateEditorAiToolRequest } from '../../client-runtime/flows/aiToolCalls';
 import { EDITOR_BRIDGE_PROTOCOL } from '../../lib/softn/protocol';
+import { getZippWasmBytes } from '../../lib/formlogic/zipp-bytes';
+import { editorTakesEngine } from './editorEngine';
 import { ArrowLeft, Check, Copy, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { EDITOR_AGENT_RUNS_VERSION, readAgentStatus, type EditorAgentStatus, type EditorBrief } from './editorAgent';
 
 export type AppEditorKind = 'builder' | 'studio';
+
 
 /** Editor changes return to the owner's draft. Publishing still uses version-checked hosting APIs. */
 export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, applyLabel = 'Review changes' }: {
@@ -126,15 +129,26 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
         else waiting.reject(new Error(typeof data.error === 'string' ? data.error : 'Editor operation failed.'));
       };
       channel.port1.start();
-      frame.current!.contentWindow!.postMessage({ kind: 'formlogic-editor-connect', protocol: EDITOR_BRIDGE_PROTOCOL, ...(aiTools ? { aiTools: EDITOR_AI_TOOLS_VERSION } : {}), ...(agentRuns ? { agentRuns: EDITOR_AGENT_RUNS_VERSION } : {}) }, location.origin, [channel.port2]);
+      const target = frame.current!.contentWindow!;
+      // An editor that takes this page's engine waits for it, so it is sent with the connection;
+      // a download that fails is said here, where the editor could only say it has no engine.
+      const takesEngine = editorTakesEngine(event.data);
       const sendBrief = !!brief && agentRuns;
       if (brief && kind === 'studio' && !agentRuns) setBriefToPaste(brief.prompt);
-      // Studio is told which AI answers its requests (`aiLabel`, SoftN v0.0.29 on): it showed
-      // "FormLogic default" and a local server's address, so the person's AI looked unused. An
-      // editor before it ignores the key; the Builder has no AI and is not sent one.
-      void (kind === 'studio' ? editorAiLabel() : Promise.resolve(null))
-        .then(aiLabel => request('open', { bytes: editorBundle(bundle), name, theme: document.documentElement.classList.contains("dark") ? "dark" : "light", saveLabel: applyLabel, ...(aiLabel ? { aiLabel } : {}), ...(sendBrief ? { brief } : {}) }))
-        .then(() => { if (!disposed) setReady(true); }).catch(reason => { if (!disposed) setError(reason.message); });
+      void (async () => {
+        const zippWasm = takesEngine ? await getZippWasmBytes() : null;
+        if (disposed) return;
+        // Cloned, never transferred: the page keeps its copy for the app frame and the next editor.
+        target.postMessage({ kind: 'formlogic-editor-connect', protocol: EDITOR_BRIDGE_PROTOCOL, ...(aiTools ? { aiTools: EDITOR_AI_TOOLS_VERSION } : {}), ...(agentRuns ? { agentRuns: EDITOR_AGENT_RUNS_VERSION } : {}), ...(zippWasm ? { zippWasm } : {}) }, location.origin, [channel.port2]);
+        // Studio is told which AI answers its requests (`aiLabel`, SoftN v0.0.29 on): it showed
+        // "FormLogic default" and a local server's address, so the person's AI looked unused. An
+        // editor before it ignores the key; the Builder has no AI and is not sent one.
+        const aiLabel = kind === 'studio' ? await editorAiLabel() : null;
+        if (disposed) return;
+        await request('open', { bytes: editorBundle(bundle), name, theme: document.documentElement.classList.contains("dark") ? "dark" : "light", saveLabel: applyLabel, ...(aiLabel ? { aiLabel } : {}), ...(sendBrief ? { brief } : {}) });
+        if (!disposed) setReady(true);
+      })().catch(reason => { if (!disposed) setError(reason instanceof Error ? reason.message : 'The editor could not open this app.'); });
+
     };
     window.addEventListener('message', receive);
     const timer = setTimeout(() => { if (!port.current && !disposed) setError('The editor could not load. Check that the editor assets are installed on this server.'); }, 25000);

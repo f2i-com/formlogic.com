@@ -10,8 +10,11 @@ export async function checkAppEditors(directory, expected) {
   if (metadata.protocol !== EDITOR_BRIDGE_PROTOCOL || JSON.stringify(metadata.editors) !== JSON.stringify(['builder', 'studio'])) throw new Error('Unsupported app editor bridge protocol.');
   for (const editor of metadata.editors) {
     const artifact = await checkRuntimeArtifact(resolve(directory, editor), expected);
+    // From Softn v0.0.35 an editor carries no engine: the page gives it the one it downloaded
+    // when it connects (AppEditorDialog). One carried by an earlier release has to be the release's.
     const wasm = Object.entries(artifact.files).filter(([path]) => /zipp_wasm_bg(?:-[^/]+)?\.wasm$/.test(path));
-    if (!wasm.length || wasm.some(([, hash]) => hash !== expected.sha256)) throw new Error(`${editor} uses an incompatible ZIPP engine.`);
+    if (wasm.some(([, hash]) => hash !== expected.sha256)) throw new Error(`${editor} uses an incompatible ZIPP engine.`);
+
   }
 }
 

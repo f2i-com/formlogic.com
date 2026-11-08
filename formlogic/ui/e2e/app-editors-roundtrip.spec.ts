@@ -102,6 +102,9 @@ test.describe('embedded editors: round trip and live conflict', () => {
   test('import → Builder → acknowledged draft → Studio → publish → live run → export → reimport', async ({ page, context }) => {
     test.setTimeout(420_000);
     page.on('pageerror', e => console.log('PAGE ERROR', e.message));
+    // Every engine the page or a frame in it asks for, by path.
+    const engineRequests: string[] = [];
+    page.on('request', request => { const path = new URL(request.url()).pathname; if (/zipp_wasm_bg[^/]*\.wasm$/.test(path)) engineRequests.push(path); });
     const headers = await login(context);
     // Every app is created inside the try, and whatever was created is deleted: a failed
     // second create (a rate or plan limit) must not leave the first in the seeded account.
@@ -170,6 +173,10 @@ test.describe('embedded editors: round trip and live conflict', () => {
       expect(studioRequests.every(r => r.tools > 0)).toBe(true);
       await studio.getByRole('button', { name: 'Review changes', exact: true }).click();
       await expect(dialog).toBeVisible({ timeout: 30000 });
+      // Editors from Softn v0.0.35 carry no engine: they ran the one this page downloaded and checked,
+      // which it gave them as they connected. One from before carries its own, and fetches it.
+      const editorFiles = Object.keys((await (await context.request.get('/app-editors/builder/runtime-manifest.json')).json()).files);
+      if (!editorFiles.some(file => /zipp_wasm_bg/.test(file))) expect(engineRequests.filter(path => !path.startsWith('/assets/'))).toEqual([]);
 
       // 4. Publish: both edits land in version 2 and the live hosted run shows them.
       await dialog.getByRole('button', { name: 'Publish changes', exact: true }).click();

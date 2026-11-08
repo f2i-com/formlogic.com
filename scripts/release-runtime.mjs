@@ -104,11 +104,12 @@ export async function checkReleaseRuntime(directory, expected) {
   if (!Object.keys(manifest.files).some(file => /^assets\/.+\.js$/.test(file))) {
     throw new Error('The hosted runtime JavaScript bundle is missing.');
   }
-  // The app's hashed engine; a Softn release through v0.0.27 also carries a
-  // copy at assets/core-runtime/, which later ones need not.
+  // The runtime runs the engine the page sends it, and never fetches one; a Softn
+  // release through v0.0.34 carries a copy anyway (through v0.0.27 a second at
+  // assets/core-runtime/), which has to be the release's.
   const engines = Object.entries(manifest.files).filter(([file]) => /^assets\/(?:zipp_wasm_bg-[^/]+|core-runtime\/zipp_wasm_bg)\.wasm$/.test(file));
-  if (!engines.length || engines.some(([, digest]) => digest !== expected.sha256)) {
-    throw new Error('The hosted runtime ZIPP binary is missing or incompatible.');
+  if (engines.some(([, digest]) => digest !== expected.sha256)) {
+    throw new Error('The hosted runtime ZIPP binary is incompatible.');
   }
   return manifest;
 }

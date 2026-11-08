@@ -12,7 +12,7 @@
     "sync:prelude": "node scripts/sync-prelude.mjs",
     "build:script-profile": "node scripts/build-script-profile.mjs",
     "prebuild": "node scripts/sync-prelude.mjs && node scripts/build-script-profile.mjs && node scripts/check-hosted-runtime.mjs && node scripts/check-app-editors.mjs && node scripts/clean-dist.mjs",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/precompress-engine.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "pretest": "node scripts/check-hosted-runtime.mjs",

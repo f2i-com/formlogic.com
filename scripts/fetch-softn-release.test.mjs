@@ -60,7 +60,7 @@ function runtimeManifest(files, zipp, advertised = {}) {
 // `advertised` is what hosted-runtime/runtime-manifest.json says this runtime serves. The default
 // carries `python-logic/1` because the default `protocols` speak logicLanguages: the fetcher
 // refuses an archive that declares the protocol without advertising the feature.
-function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_RELEASE, protocols = PROTOCOLS, adapter = ADAPTER, hostedCode = 'export const hosted = true;', advertised = { features: ['python-logic/1'] }, coreRuntimeEngine = true, runners = null } = {}) {
+function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_RELEASE, protocols = PROTOCOLS, adapter = ADAPTER, hostedCode = 'export const hosted = true;', advertised = { features: ['python-logic/1'] }, coreRuntimeEngine = true, treeEngines = true, runners = null } = {}) {
   const entries = {};
   const put = (name, data) => { entries[name] = Buffer.isBuffer(data) ? data : Buffer.from(data); };
   const { wasm, source, record: zipp } = zippRelease;
@@ -78,13 +78,14 @@ function archiveEntries({ tag = 'v0.0.13', commit = COMMIT, zippRelease = ZIPP_R
   // one attribute that selects the host-JavaScript engine and its weaker policy.
   // Two entry documents, as `protocols.hostedEngines` declares, shaped like the real ones: the
   // same shell script, and one attribute on <html> that is the whole difference between them.
-  const hosted = { 'index.html': Buffer.from('<!doctype html><html><body><script src="./assets/app.js"></script></body></html>'), 'host.html': Buffer.from('<!doctype html><html data-softn-logic-engine="host-js"><body><script src="./assets/app.js"></script></body></html>'), 'assets/app.js': Buffer.from(hostedCode), 'assets/zipp_wasm_bg-hosted.wasm': wasm, ...coreCopy, ...torchCopy, 'README.txt': Buffer.from('fixture') };
+  // `treeEngines: false` is a release from Softn v0.0.35 on: the runtime and the editors carry no engine, the page gives them its own.
+  const hosted = { 'index.html': Buffer.from('<!doctype html><html><body><script src="./assets/app.js"></script></body></html>'), 'host.html': Buffer.from('<!doctype html><html data-softn-logic-engine="host-js"><body><script src="./assets/app.js"></script></body></html>'), 'assets/app.js': Buffer.from(hostedCode), ...(treeEngines ? { 'assets/zipp_wasm_bg-hosted.wasm': wasm } : {}), ...coreCopy, ...torchCopy, 'README.txt': Buffer.from('fixture') };
   for (const [n, d] of Object.entries(hosted)) put(`hosted-runtime/${n}`, d);
   put('hosted-runtime/runtime-manifest.json', runtimeManifest(hosted, zipp, advertised));
   // app editors
   const editors = {};
   for (const editor of ['builder', 'studio']) {
-    const files = { 'index.html': Buffer.from(`<script src="./assets/${editor}.js"></script>`), [`assets/${editor}.js`]: Buffer.from(`export const ${editor} = 1;`), 'assets/zipp_wasm_bg-abc.wasm': wasm, ...coreCopy, ...torchCopy };
+    const files = { 'index.html': Buffer.from(`<script src="./assets/${editor}.js"></script>`), [`assets/${editor}.js`]: Buffer.from(`export const ${editor} = 1;`), ...(treeEngines ? { 'assets/zipp_wasm_bg-abc.wasm': wasm } : {}), ...coreCopy, ...torchCopy };
     for (const [n, d] of Object.entries(files)) editors[`${editor}/${n}`] = d;
     editors[`${editor}/runtime-manifest.json`] = runtimeManifest(files, zipp);
   }
@@ -350,7 +351,7 @@ test('the zipp/ tree must be the release the manifest records, and the native ru
   assert.ok(!existsSync(resolve(root, 'formlogic/ui/vendor')));
 });
 
-test('every ZIPP engine in the archive is found by its content: a stray engine under another name is refused, and so is a missing known copy', async (t) => {
+test('every ZIPP engine in the archive is found by its content: a stray engine under another name is refused, and a release whose runtime and editors carry none installs', async (t) => {
   const root = await formlogicRoot(t);
   const stray = await writeFixtureArchive(resolve(root, 'stray'), {}, null, (entries) => { entries['hosted-runtime/assets/other-abc.wasm'] = zippEngineWasm('a stray older engine'); });
   await assert.rejects(fetchSoftnRelease({ root, archivePath: stray.path, ...quiet }), /hosted-runtime\/assets\/other-abc\.wasm is a ZIPP engine \([0-9a-f]{12}\) other than the ZIPP v0\.0\.18 engine/);
@@ -358,15 +359,11 @@ test('every ZIPP engine in the archive is found by its content: a stray engine u
   const unrelated = await writeFixtureArchive(resolve(root, 'unrelated'), {}, null, (entries) => { entries['extras/ort-wasm-simd-threaded.wasm'] = wasmModule(['run', 'memory_usage'], 'onnxruntime'); });
   await fetchSoftnRelease({ root, archivePath: unrelated.path, ...quiet });
   await checkInstalled({ root, ...quiet });
-  const missingCopy = await writeFixtureArchive(resolve(root, 'renamed'), {}, null, (entries) => {
-    // The editors' hashed engines replaced by bytes the scan does not recognise: the known copies are not all found.
-    for (const editor of ['builder', 'studio']) entries[`app-editors/${editor}/assets/zipp_wasm_bg-abc.wasm`] = Buffer.from('not a module');
-  });
-  await assert.rejects(fetchSoftnRelease({ root, archivePath: missingCopy.path, ...quiet }), /No ZIPP engine copy matches app-editors\/builder\/assets\/zipp_wasm_bg-\*\.wasm, app-editors\/studio\/assets\/zipp_wasm_bg-\*\.wasm in/);
-  // Every known copy is required, not one per folder: a release without the hosted runtime's own engine
-  // would install here and fail only at packaging (checkReleaseRuntime).
-  const noHosted = await writeFixtureArchive(resolve(root, 'no-hosted'), {}, null, (entries) => { delete entries['hosted-runtime/assets/zipp_wasm_bg-hosted.wasm']; });
-  await assert.rejects(fetchSoftnRelease({ root, archivePath: noHosted.path, ...quiet }), (e) => e instanceof ReleaseError && /No ZIPP engine copy matches hosted-runtime\/assets\/zipp_wasm_bg-\*\.wasm in Softn v0\.0\.13 \(found: .*hosted-runtime\/assets\/core-runtime\/zipp_wasm_bg\.wasm/.test(e.message));
+  // From Softn v0.0.35 the hosted runtime and the editors carry no engine: the page gives them the one it
+  // downloaded. Such a release installs, and its trees pass the checks a build and a package make.
+  const engineFree = await writeFixtureArchive(resolve(root, 'engine-free'), { treeEngines: false, coreRuntimeEngine: false });
+  await fetchSoftnRelease({ root, archivePath: engineFree.path, ...quiet });
+  await checkInstalled({ root, ...quiet });
   // The copy at assets/core-runtime/ is not one of them: a Softn page posts its engine to every worker it starts,
   // and a release after v0.0.27 need not carry it. Without it, the release installs.
   const noCoreRuntime = await writeFixtureArchive(resolve(root, 'no-core-runtime'), { coreRuntimeEngine: false });
