@@ -56,8 +56,9 @@ if (preg_match('#^/(app/[^/]+(/native)?/?)?$#', $uri) && preg_match('~(facebooke
     return true;
 }
 
-// The hosted runtime and the embedded editors, with the headers the .htaccess gives them in production.
-if (preg_match('#^/(hosted-runtime|app-editors)/#', $uri)) {
+// The hosted runtime, the embedded editors and the site's ZIPP folder, with the headers the
+// .htaccess files give them in production (ui/public/zipp/.htaccess for the last).
+if (preg_match('#^/(hosted-runtime|app-editors|zipp)/#', $uri)) {
     $root = realpath($dist);
     $file = $root !== false ? realpath($root . $uri) : false;
     if ($file !== false && str_starts_with($file, $root . DIRECTORY_SEPARATOR) && is_file($file)) {
@@ -83,8 +84,15 @@ if (preg_match('#^/(hosted-runtime|app-editors)/#', $uri)) {
             // And its no-transform: a CDN leaves the app's documents as they were sent.
             if ($sandbox !== '') header('Cache-Control: no-cache, no-transform');
         }
+        // A ZIPP folder is named by its engine, so its files never change.
+        if (str_starts_with($uri, '/zipp/')) header('Cache-Control: public, max-age=31536000, immutable');
         header('Content-Length: ' . filesize($file));
         readfile($file);
+        return true;
+    }
+    // A file of a ZIPP this site does not have is missing, never the app shell: a frame imports the glue as a script.
+    if (str_starts_with($uri, '/zipp/')) {
+        http_response_code(404);
         return true;
     }
 }

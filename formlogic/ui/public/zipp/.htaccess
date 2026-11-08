@@ -1,0 +1,16 @@
+# The site's ZIPP folder (scripts/publish-zipp.mjs writes one folder per ZIPP, named by its
+# engine's sha256): the glue the app frame and the editors import, the torch package, the record.
+# The app frame has an opaque origin, so what it asks of this site is a cross-origin request
+# (a module script is always fetched that way): it is answered to anyone, as the hosted
+# runtime's files are. A folder's files never change, so they are kept for good.
+<IfModule mod_headers.c>
+  Header always set Access-Control-Allow-Origin "*"
+  Header always set X-Content-Type-Options "nosniff"
+  Header set Cache-Control "public, max-age=31536000, immutable"
+</IfModule>
+<IfModule mod_mime.c>
+  # A module script is refused under any type but JavaScript's.
+  AddType text/javascript .js
+  AddType application/wasm .wasm
+  AddType application/json .json
+</IfModule>

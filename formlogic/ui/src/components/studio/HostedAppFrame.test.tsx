@@ -15,6 +15,7 @@ vi.mock('../../lib/formlogic/zipp-bytes', () => ({
   engineIdentity: (id: string) =>
     id === 'zipp-web-python' ? { version: '0.0.17', sha256: 'current' } : id === 'zipp-web' ? { version: '0.0.17', sha256: 'web' } : id === 'host-js' ? true : undefined,
   engineNeedsBytes: (id: string) => id !== 'host-js',
+  hostZippFiles: () => ({ glue: { url: 'http://localhost:3000/zipp/a844efe3d7d0/zipp_wasm.js', sha256: 'g'.repeat(64) }, torch: { url: 'http://localhost:3000/zipp/a844efe3d7d0/zipp_torch.wasm', sha256: 't'.repeat(64) } }),
 }));
 vi.mock('../../lib/api', () => ({ api: { runHostedAction: vi.fn(), runNativeRequest: vi.fn(), getHostedRuntime: vi.fn(), getNativeRuntime: vi.fn() } }));
 vi.mock('../../lib/softn/workspaceBridge', () => ({ workspaceBridge: vi.fn() }));
@@ -81,6 +82,51 @@ async function callAction(channel: StubChannel, id = 1) {
   await act(async () => channel.port1.onmessage?.({ data: { type: 'call', id, action: 'save', input: {} } }));
 }
 const initOf = (post: ReturnType<typeof vi.spyOn>) => post.mock.calls[0][0] as Record<string, unknown>;
+
+describe("the site's own ZIPP (SoftN v0.0.36 frames)", () => {
+  const readyFrom = (iframe: HTMLIFrameElement, data: Record<string, unknown>) => window.dispatchEvent(new MessageEvent('message', { source: iframe.contentWindow!, data: { type: 'formlogic:ready', ...data } }));
+
+  it("sends a frame that runs it this site's glue and torch with the engine, whichever ZIPP the frame was built with", async () => {
+    const { iframe, post } = await mount();
+    await act(async () => readyFrom(iframe, { zipp: { version: '0.0.99', sha256: 'another-build' }, zippGlue: 1, zippGlueExports: ['default', 'Engine'] }));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    const init = initOf(post);
+    expect(init.zippWasm).toBeInstanceOf(ArrayBuffer);
+    expect(init.zippGlue).toEqual({ url: 'http://localhost:3000/zipp/a844efe3d7d0/zipp_wasm.js', sha256: 'g'.repeat(64) });
+    expect(init.zippTorch).toEqual({ url: 'http://localhost:3000/zipp/a844efe3d7d0/zipp_torch.wasm', sha256: 't'.repeat(64) });
+  });
+
+  it('sends none to a frame that runs it but was built with this page\'s ZIPP: its own glue is the same, and a server without the ZIPP folder keeps working', async () => {
+    const { iframe, post } = await mount();
+    await act(async () => readyFrom(iframe, { zipp: identity, zippGlue: 1 }));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(initOf(post).zippWasm).toBeInstanceOf(ArrayBuffer);
+    expect(initOf(post)).not.toHaveProperty('zippGlue');
+  });
+
+  it("runs the variant the owner chose on a frame built with another ZIPP, on this page's variant bytes", async () => {
+    const { iframe, post } = await mount({ id: 'zipp-web', revision: 'r1' });
+    await act(async () => readyFrom(iframe, { zipp: { version: '0.0.99', sha256: 'another-build' }, engines: { 'zipp-web-python': { version: '0.0.99', sha256: 'another-build' }, 'zipp-web': { version: '0.0.99', sha256: 'another-web' } }, zippGlue: 1 }));
+    expect(initOf(post).engine).toBe('zipp-web');
+    expect(getBytes).toHaveBeenCalledWith('zipp-web');
+    expect(initOf(post)).toHaveProperty('zippGlue');
+  });
+
+  it('sends none to a frame from before it, which is still held to this page\'s ZIPP', async () => {
+    const { iframe, post } = await mount();
+    await act(async () => readyFrom(iframe, { zipp: identity }));
+    expect(initOf(post)).not.toHaveProperty('zippGlue');
+    expect(initOf(post)).not.toHaveProperty('zippTorch');
+  });
+
+  it('sends no ZIPP at all to host JavaScript, which has no engine to pair a glue with', async () => {
+    const { iframe, post } = await mount({ id: 'host-js', revision: 'r1' });
+    await act(async () => readyFrom(iframe, { zipp: identity, engines: { 'host-js': true, 'zipp-web-python': identity }, zippGlue: 1 }));
+    const init = initOf(post);
+    expect(init).not.toHaveProperty('zippWasm');
+    expect(init).not.toHaveProperty('zippGlue');
+  });
+});
 
 describe('hosted app engine handoff', () => {
   it('waits for the trusted matching frame before loading or sending bytes', async () => {

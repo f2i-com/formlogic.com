@@ -166,16 +166,26 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
   for (const line of htaccess.split('\n')) {
     const rule = line.trim();
     if (!/^(Redirect(Match|Permanent|Temp)?|RewriteRule)\s/i.test(rule)) continue;
-    if (/\/?(hosted-runtime|app-editors)\//.test(rule) && !/^RewriteRule\s+\S+\s+-\s+\[R=404,L\]$/.test(rule)) {
-      fail(`ui/public/.htaccess must not redirect or rewrite under the frame trees: ${rule}`);
+    // The site's ZIPP folder is in the app frame's connect-src and script-src too (Softn v0.0.36 on).
+    if (/\/?(hosted-runtime|app-editors|zipp)\//.test(rule) && !/^RewriteRule\s+\S+\s+-\s+\[R=404,L\]$/.test(rule)) {
+      fail(`ui/public/.htaccess must not redirect or rewrite under the frame trees or the ZIPP folder: ${rule}`);
     }
   }
   // A frame open across an update asks for chunks that have gone. Answered with the app shell, that
   // is an HTML "script" a CDN keeps under the script's name, in the trees as much as in assets/. The
-  // rule names them from the root: /app/assets/ is the route of an app with that slug.
-  if (!/^\s*RewriteRule \^\(assets\|hosted-runtime\/assets\|app-editors\/\[\^\/\]\+\/assets\)\/ - \[R=404,L\]$/m.test(htaccess.replace(/\r\n/g, '\n'))) {
-    fail('.htaccess must answer 404 for a missing build file in assets/, hosted-runtime/assets/ and app-editors/*/assets/');
+  // rule names them from the root: /app/assets/ is the route of an app with that slug. A file of a
+  // ZIPP the site no longer has is the same: a frame imports the glue as a script.
+  if (!/^\s*RewriteRule \^\(assets\|hosted-runtime\/assets\|app-editors\/\[\^\/\]\+\/assets\|zipp\)\/ - \[R=404,L\]$/m.test(htaccess.replace(/\r\n/g, '\n'))) {
+    fail('.htaccess must answer 404 for a missing build file in assets/, hosted-runtime/assets/, app-editors/*/assets/ and zipp/');
   }
+  // The ZIPP folder answers the opaque-origin frame's module and fetch requests (CORS), types the
+  // glue as JavaScript (a module is refused under any other type) and is never sniffed.
+  const zippRules = readFileSync(resolve(root, 'public/zipp/.htaccess'), 'utf8');
+  for (const [rule, why] of [
+    [/^\s*Header always set Access-Control-Allow-Origin "\*"$/m, 'answer the app frame, an opaque origin'],
+    [/^\s*Header always set X-Content-Type-Options "nosniff"$/m, 'never be sniffed'],
+    [/^\s*AddType text\/javascript \.js$/m, 'type the glue as JavaScript'],
+  ]) if (!rule.test(zippRules.replace(/\r\n/g, '\n'))) fail(`ui/public/zipp/.htaccess must ${why}`);
 
   // The nginx example in the README is what a site without Apache copies, and nothing runs it. It
   // drifted from .htaccess until no /api/ request reached PHP and no embedded form could load.

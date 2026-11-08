@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, resolve, sep } from 'node:path';
@@ -14,6 +15,12 @@ import react from '@vitejs/plugin-react';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const fixture = join(root, 'e2e/fixtures/zipp-sharing.html');
 const hostedRoot = join(root, 'public/hosted-runtime');
+// Whether the frame runs the site's own ZIPP (Softn v0.0.36 on, built with another ZIPP than the
+// site's): its glue and torch package are then the site's ZIPP folder's, which this check serves as a build publishes it.
+// Only where the two differ: a runtime built with the site's ZIPP runs it on the glue it carries.
+const runtimeManifest = JSON.parse(await readFile(join(hostedRoot, 'runtime-manifest.json'), 'utf8'));
+const siteZipp = runtimeManifest.features?.includes('host-zipp/1') === true
+  && runtimeManifest.zipp?.sha256 !== JSON.parse(await readFile(join(root, 'vendor/zipp-wasm/SOURCE.json'), 'utf8')).sha256;
 await import('./check-hosted-runtime.mjs');
 // The installed engine and, when the installed Softn release ships it, its JavaScript-only web
 // variant (served as zipp-web). The variant-dependent order below runs only when it is there.
@@ -41,6 +48,15 @@ try {
       // and the request carries it, so it is named back as the server would name its session.
       const actor = JSON.parse(request.headers['x-formlogic-hosted-actor'] ?? 'null');
       response.end(JSON.stringify({ result: { message: JSON.parse(input).message }, actor }));
+      return;
+    }
+    // The site's ZIPP folder, as a build publishes it (publish-zipp.mjs), from the installed ZIPP.
+    const zippFile = /^\/zipp\/[0-9a-f]{12}\/(zipp_wasm\.js|zipp_torch\.wasm|SOURCE\.json)$/.exec(path)?.[1];
+    if (zippFile) {
+      const torchTree = join(root, 'vendor/zipp-wasm-torch/zipp_torch.wasm');
+      const from = { 'zipp_wasm.js': join(root, 'vendor/zipp-wasm/zipp_wasm.js'), 'SOURCE.json': join(root, 'vendor/zipp-wasm/SOURCE.json'), 'zipp_torch.wasm': existsSync(torchTree) ? torchTree : join(hostedRoot, 'assets/core-runtime/zipp_torch.wasm') }[zippFile];
+      response.setHeader('Content-Type', mime[extname(from)] || 'application/octet-stream');
+      try { response.end(await readFile(from)); } catch { response.writeHead(404).end(); }
       return;
     }
     const isHosted = path.startsWith('/hosted-runtime/');
@@ -126,13 +142,19 @@ try {
       // /api and off every other origin; and no form, frame or base can point anywhere at all. Both
       // documents, so the host document cannot be the one that quietly gains a source.
       // From SoftN v0.0.28 the shell may also name `data:`, so an app can fetch its own media (the
-      // data: URLs it was handed): that is no network at all, and nothing else may join it.
+      // data: URLs it was handed): that is no network at all. From v0.0.36 it names the site's ZIPP
+      // folder beside its own (`/zipp/`, this site's static ZIPP install, whose glue it imports and
+      // whose torch package it fetches, each checked against its digest), and in script-src too.
+      // Nothing else may join them.
       const runtimeDirectory = `${origin}/hosted-runtime/`;
+      const zippFolder = `${origin}/zipp/`;
       for (const [document, policy] of [['index.html', index], ['host.html', host]]) {
         const sources = Object.fromEntries(policy.split(';').map(d => d.trim()).filter(Boolean).map(d => { const [name, ...rest] = d.split(/\s+/); return [name, rest]; }));
         assert.deepEqual(sources['default-src'], ["'none'"], `${document} must write default-src 'none': ${policy}`);
         assert.equal(sources['connect-src']?.[0], runtimeDirectory, `${document} must write connect-src as its runtime directory ${runtimeDirectory} first: ${policy}`);
-        assert.ok([[runtimeDirectory], [runtimeDirectory, 'data:']].some(allowed => JSON.stringify(allowed) === JSON.stringify(sources['connect-src'])), `${document} must write connect-src as exactly its runtime directory ${runtimeDirectory}, and data: at most, with no other source: ${policy}`);
+        assert.ok([[runtimeDirectory], [runtimeDirectory, 'data:'], [runtimeDirectory, zippFolder, 'data:']].some(allowed => JSON.stringify(allowed) === JSON.stringify(sources['connect-src'])), `${document} must write connect-src as exactly its runtime directory ${runtimeDirectory}, the site's ZIPP folder and data: at most, with no other source: ${policy}`);
+        // script-src likewise: the runtime directory, the ZIPP folder from v0.0.36, and the WebAssembly (and, in host.html, eval) tokens.
+        assert.ok(sources['script-src']?.filter(source => !source.startsWith("'")).every(source => source === runtimeDirectory || source === zippFolder), `${document} must load scripts from its runtime directory and the site's ZIPP folder alone: ${policy}`);
         assert.deepEqual(sources['form-action'], ["'none'"], `${document} must write form-action 'none': ${policy}`);
         assert.deepEqual(sources['frame-src'], ["'none'"], `${document} must write frame-src 'none': ${policy}`);
         assert.deepEqual(sources['base-uri'], ["'none'"], `${document} must write base-uri 'none': ${policy}`);
@@ -209,11 +231,14 @@ try {
       const engineRequests = wasmRequests.filter(url => !torchRequests.includes(url));
       assert.equal(engineRequests.length, 1, `The app needs the one ZIPP engine, once: ${engineRequests.join(', ')}`);
       assert(engineRequests.every(url => !url.includes('/hosted-runtime/')), 'Hosted apps must reuse parent bytes for the engine');
-      assert.deepEqual(torchRequests.map(url => new URL(url).pathname), ['/hosted-runtime/assets/core-runtime/zipp_torch.wasm'], `torch is fetched once, from beside the hosted runtime's core chunk: ${torchRequests.join(', ')}`);
+      // A runtime that runs the site's own ZIPP (host-zipp/1) is given the torch package of that
+      // ZIPP, in the site's ZIPP folder; one from before fetches the copy beside its core chunk.
+      const torchAt = siteZipp ? `/zipp/${primary.sha256.slice(0, 12)}/zipp_torch.wasm` : '/hosted-runtime/assets/core-runtime/zipp_torch.wasm';
+      assert.deepEqual(torchRequests.map(url => new URL(url).pathname), [torchAt], `torch is fetched once, from ${torchAt}: ${torchRequests.join(', ')}`);
       assert.equal(await digests.get(torchRequests[0]), torch.sha256, `the frame received the torch package the release records (${torch.sha256.slice(0, 12)})`);
       await expect(page.locator('iframe').first()).toHaveAttribute('sandbox', 'allow-scripts');
       assert.deepEqual(errors, [], 'The browser must not report uncaught exceptions');
-      console.log(`PASS ${order}: a .py bundle declaring torch ran on index.html with the served torch package ${torch.sha256.slice(0, 12)}, fetched once from /hosted-runtime/`);
+      console.log(`PASS ${order}: a .py bundle declaring torch ran on index.html with the served torch package ${torch.sha256.slice(0, 12)}, fetched once from ${torchAt}`);
       await context.close();
       continue;
     }

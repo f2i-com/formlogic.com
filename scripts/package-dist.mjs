@@ -499,6 +499,15 @@ try {
   info(`${engines.length} ZIPP engine copies in formlogic/ui/dist, all ${expectedRuntime.sha256.slice(0, 12)}${webVariant ? ` but the one web variant asset (${webVariant.sha256.slice(0, 12)})` : ''}`);
 } catch (error) { fail(error.message); }
 
+// The site's ZIPP folder (publish-zipp.mjs): a runtime or an editor built with another ZIPP than
+// this one loads its glue and torch package there. A build from before it has none.
+{
+  const folder = path.join(distDir, 'zipp', String(zippSource.sha256).slice(0, 12));
+  for (const file of ['zipp_wasm.js', 'SOURCE.json', ...(zippSource.packages?.torch ? ['zipp_torch.wasm'] : [])]) {
+    if (!existsSync(path.join(folder, file))) fail(`UI build incomplete: formlogic/ui/dist/zipp/${path.basename(folder)}/${file} is missing; rebuild the UI (npm run build publishes it)`);
+  }
+  if ((await import('node:crypto')).createHash('sha256').update(readFileSync(path.join(folder, 'zipp_wasm.js'))).digest('hex') !== zippSource.glueSha256) fail(`formlogic/ui/dist/zipp/${path.basename(folder)}/zipp_wasm.js is not the glue the installed ZIPP records; rebuild the UI`);
+}
 // Even --skip-ui-build must supply a complete, matching hosted runtime.
 await checkReleaseRuntime(path.join(distDir, 'hosted-runtime'), expectedRuntime);
 await checkAppEditors(path.join(distDir, 'app-editors'), expectedRuntime);

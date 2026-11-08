@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -99,6 +102,18 @@ export default defineConfig(({ mode }) => {
         if (req.url?.startsWith('/hosted-runtime/')) res.setHeader('Access-Control-Allow-Origin', '*');
         next();
       });
+      // The site's ZIPP folder, as a build publishes it (scripts/publish-zipp.mjs), from the installed
+      // ZIPP: an app frame or an editor running the site's own ZIPP loads its glue and torch package here.
+      server.middlewares.use((req, res, next) => {
+        const match = /^\/zipp\/[0-9a-f]{12}\/(zipp_wasm\.js|zipp_torch\.wasm|SOURCE\.json)$/.exec(req.url?.split('?')[0] ?? '');
+        if (!match) { next(); return; }
+        const at = (path: string) => fileURLToPath(new URL(path, import.meta.url));
+        const file = { 'zipp_wasm.js': at('./vendor/zipp-wasm/zipp_wasm.js'), 'SOURCE.json': at('./vendor/zipp-wasm/SOURCE.json'), 'zipp_torch.wasm': existsSync(at('./vendor/zipp-wasm-torch/zipp_torch.wasm')) ? at('./vendor/zipp-wasm-torch/zipp_torch.wasm') : at('./public/hosted-runtime/assets/core-runtime/zipp_torch.wasm') }[match[1]]!;
+        if (!existsSync(file)) { next(); return; }
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', match[1].endsWith('.js') ? 'text/javascript' : match[1].endsWith('.wasm') ? 'application/wasm' : 'application/json');
+        res.end(readFileSync(file));
+      });
     } },
     {
       name: 'inject-app-shell-csp',
@@ -167,6 +182,8 @@ export default defineConfig(({ mode }) => {
         //   would cost every visitor 6.58 MB up front, which is the worse trade.
         globIgnores: [
           'hosted-runtime/**',
+          // The site's ZIPP folder: a frame's and an editor's, fetched on their own.
+          'zipp/**',
           'app-editors/**',
           '**/esbuild-*.wasm',
           '**/ts.worker-*.js',
@@ -187,7 +204,8 @@ export default defineConfig(({ mode }) => {
         // shell now that scope is '/'.
         // Public forms have a route of their own below: this fallback would answer
         // them from the precache even online, and an embed needs the network's headers.
-        navigateFallbackAllowlist: [/^\/(?!api\/|app-editors\/|form\/|hosted-runtime\/|screen-host\.html)/],
+        navigateFallbackAllowlist: [/^\/(?!api\/|app-editors\/|form\/|hosted-runtime\/|zipp\/|screen-host\.html)/],
+
         runtimeCaching: [
           // SECURITY: authenticated, tenant-scoped GET responses (/api/app/{slug},
           // .../forms/{id}, .../responses) are intentionally NOT cached. Workbox

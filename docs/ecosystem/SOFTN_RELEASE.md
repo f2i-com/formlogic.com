@@ -270,6 +270,24 @@ adds the package to the engine at install and runs `import torch`. The
 workbox precache ignores `hosted-runtime/**`, so the package is never in the
 PWA's startup precache either.
 
+### The site's ZIPP folder (Softn v0.0.36 on)
+
+The build publishes the installed ZIPP's glue (`zipp_wasm.js`), torch package
+and `SOURCE.json` in `dist/zipp/<the first 12 hex of the engine's sha256>/`
+(`ui/scripts/publish-zipp.mjs`, each file held to the digest `SOURCE.json`
+records). A Softn runtime with the `host-zipp/1` feature, and Builder and
+Studio announcing the bridge's `glue: 1`, can run a ZIPP other than the one
+they were built with: when the ZIPP this site installs differs from theirs,
+the page sends its engine bytes with the address and digest of that ZIPP's
+glue and torch package in the folder (`HostedAppFrame`, `AppEditorDialog`),
+and they check each file before importing or running it. When the two agree,
+nothing is sent and the folder is not asked for, so a server that does not yet
+answer it keeps working. The folder is answered to the frame's opaque origin
+(`ui/public/zipp/.htaccess`: `Access-Control-Allow-Origin: *`, nosniff, kept
+for good, JavaScript typed as such; a missing file is a 404, never the app
+shell); on nginx, the README's `location ^~ /zipp/` block does the same. Only
+the browser: an app's backend runs on the native runtime's own ZIPP.
+
 ## One release per run
 
 A CI run prepares the runtime in several jobs. "Latest" is a moving target:

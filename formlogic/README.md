@@ -348,6 +348,17 @@ server {
         add_header X-Content-Type-Options "nosniff" always;
     }
 
+    # The site's ZIPP folder, one folder per ZIPP named by its engine (as ui/public/zipp/.htaccess
+    # has it): the app frame, an opaque origin, imports the glue and fetches the torch package from
+    # here. A missing file is a 404, never the app shell; a folder's files never change.
+    location ^~ /zipp/ {
+        try_files $uri =404;
+        types { text/javascript js; application/wasm wasm; application/json json; }
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
     # The two runtime documents sandbox themselves. nginx drops inherited add_header lines, so
     # these repeat them, and exact matches win over the prefix above. allow-downloads: the frame's own
     # sandbox decides which app may save a file (only one its owner lets use files). no-transform:

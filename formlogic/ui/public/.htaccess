@@ -190,7 +190,8 @@ Options -Indexes
   # own keeps this file's. Named from the root, so /app/assets/ stays the route of an app with
   # that slug. A status outside 3xx sends no Location, so this redirects nothing.
   RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteRule ^(assets|hosted-runtime/assets|app-editors/[^/]+/assets)/ - [R=404,L]
+  RewriteRule ^(assets|hosted-runtime/assets|app-editors/[^/]+/assets|zipp)/ - [R=404,L]
+
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   # ...and hand every other path to the app shell for client-side routing.

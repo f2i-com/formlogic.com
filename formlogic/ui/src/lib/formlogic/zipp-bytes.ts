@@ -8,6 +8,31 @@ export type { EngineIdentity, FrameEngineBytes };
 
 /** Immutable public engine identity, shared with the trusted hosted-app shell. */
 export const ZIPP_RUNTIME_IDENTITY = Object.freeze({ version: source.version, sha256: source.sha256 });
+
+/**
+ * The site's ZIPP folder for this build's ZIPP (scripts/publish-zipp.mjs): its glue and its torch
+ * package, which an app frame and the editors load themselves when they run the site's own ZIPP
+ * (Softn v0.0.36 on), beside the engine bytes this page sends them. Named by the engine.
+ */
+export const ZIPP_FOLDER_PATH = `${import.meta.env.BASE_URL}zipp/${source.sha256.slice(0, 12)}/`;
+
+/** A file of the site's ZIPP as a frame or an editor is told it: its address, and the digest it is checked against. */
+export interface HostZippFile { url: string; sha256: string }
+
+/**
+ * The site's ZIPP files, by absolute address on this origin: the glue, and the torch package
+ * where the release records one. A frame or an editor checks each against its digest before it
+ * imports or runs it.
+ */
+export function hostZippFiles(origin: string = location.origin): { glue: HostZippFile; torch?: HostZippFile } {
+  const folder = new URL(ZIPP_FOLDER_PATH, origin).href;
+  const record = source as { glueSha256?: string; packages?: { torch?: { sha256?: string } } };
+  const torch = record.packages?.torch?.sha256;
+  return {
+    glue: { url: `${folder}zipp_wasm.js`, sha256: String(record.glueSha256) },
+    ...(typeof torch === 'string' ? { torch: { url: `${folder}zipp_torch.wasm`, sha256: torch } } : {}),
+  };
+}
 const wasmUrl = new URL('../../../vendor/zipp-wasm/zipp_wasm_bg.wasm', import.meta.url);
 const MAX_WASM_BYTES = 32 * 1024 * 1024;
 

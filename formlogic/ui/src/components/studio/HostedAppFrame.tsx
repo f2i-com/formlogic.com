@@ -4,7 +4,7 @@ import { readLook, type NativeLook } from "../../lib/appLook";
 import { api } from "../../lib/api";
 import { workspaceBridge } from "../../lib/softn/workspaceBridge";
 import { NATIVE_PROTOCOL } from "../../lib/softn/protocol";
-import { engineIdentity, engineNeedsBytes, getEngineBytes } from "../../lib/formlogic/zipp-bytes";
+import { engineIdentity, engineNeedsBytes, getEngineBytes, hostZippFiles } from "../../lib/formlogic/zipp-bytes";
 import { announcedIdentity, chooseFrameEngine, frameSource, sameIdentity } from "../../lib/formlogic/frameEngine";
 
 import { nativeAppStorage, nativeFrameAppId, NativeStorageError, isNativeStorageScope, onNativeStorageChange, SMALL_STORAGE_LIMITS, type NativeStorageLimits, type NativeStorageScope } from "../../lib/nativeAppStorage";
@@ -302,8 +302,16 @@ export function HostedAppFrame({
       // The shell answered: now the engine is decided, from what it serves and what this page holds.
       // `null` means the document that was mounted cannot serve what was asked for — the host
       // document, whose shell did not announce host-js — and there is nothing to fall back to on it.
-      const chosen = chooseFrameEngine(engineId ? { id: engineId } : undefined, event.data.engines, engineIdentity);
-      if (chosen === null || !sameIdentity(announcedIdentity(event.data, chosen), engineIdentity(chosen))) {
+      const runsSiteZipp = event.data.zippGlue === 1;
+      const chosen = chooseFrameEngine(engineId ? { id: engineId } : undefined, event.data.engines, engineIdentity, runsSiteZipp);
+      // A frame built with this page's ZIPP runs these bytes on the glue it carries, as it always did.
+      // One built with another ZIPP that runs the site's own (SoftN v0.0.36 on, ready's `zippGlue: 1`)
+      // is sent this site's glue and torch package from its ZIPP folder with the bytes, so it runs the
+      // ZIPP this site has. Only then: a site whose server does not answer the ZIPP folder yet keeps
+      // working for as long as its ZIPP is the runtime's. Any other frame is out of date.
+      const sameZipp = chosen !== null && sameIdentity(announcedIdentity(event.data, chosen), engineIdentity(chosen));
+      const siteZipp = chosen !== null && !sameZipp && runsSiteZipp && engineNeedsBytes(chosen);
+      if (chosen === null || (!sameZipp && !siteZipp)) {
         clearTimeout(timeout);
         setError("This app runtime is out of date. Please update the hosted app runtime and reload.");
         return;
@@ -518,6 +526,9 @@ export function HostedAppFrame({
           // not undefined, for an engine that needs none: a structured clone carries an explicit
           // undefined across, and the host document must not be sent an engine field at all.
           ...(zippWasm ? { zippWasm } : {}),
+          // The glue and torch package of the ZIPP those bytes are, in this site's ZIPP folder, each
+          // with the digest the frame checks before it imports or runs it.
+          ...(siteZipp && zippWasm ? (({ glue, torch }) => ({ zippGlue: glue, ...(torch ? { zippTorch: torch } : {}) }))(hostZippFiles()) : {}),
         },
         "*",
         [channel.port2],

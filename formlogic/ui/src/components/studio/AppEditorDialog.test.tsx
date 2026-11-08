@@ -19,6 +19,7 @@ vi.mock('fflate', () => ({
 vi.mock('../../lib/formlogic/zipp-bytes', () => ({
   getZippWasmBytes: vi.fn(async () => new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]).buffer),
   ZIPP_RUNTIME_IDENTITY: { version: 'v0.0.33', sha256: 'a'.repeat(64) },
+  hostZippFiles: () => ({ glue: { url: 'http://localhost:3000/zipp/aaaaaaaaaaaa/zipp_wasm.js', sha256: 'g'.repeat(64) }, torch: { url: 'http://localhost:3000/zipp/aaaaaaaaaaaa/zipp_torch.wasm', sha256: 't'.repeat(64) } }),
 }));
 import { AppEditorDialog, type AppEditorKind } from './AppEditorDialog';
 import { getZippWasmBytes } from '../../lib/formlogic/zipp-bytes';
@@ -87,6 +88,25 @@ describe('AppEditorDialog engine (Softn v0.0.35 on)', () => {
       channels.length = 0;
     }
   });
+
+  it("sends an editor that runs the site's own ZIPP the engine and its glue, whichever ZIPP it was built with (Softn v0.0.36)", async () => {
+    const { connect } = await mount(vi.fn(async () => {}), 'studio', { kind: 'formlogic-editor-ready', protocol: 1, engine: 1, glue: 1, zipp: { version: 'v0.0.99', sha256: 'b'.repeat(64) } });
+    expect(connect()?.zippWasm).toBeInstanceOf(ArrayBuffer);
+    expect(connect()?.zippGlue).toEqual({ url: 'http://localhost:3000/zipp/aaaaaaaaaaaa/zipp_wasm.js', sha256: 'g'.repeat(64) });
+    expect(connect()?.zippTorch).toEqual({ url: 'http://localhost:3000/zipp/aaaaaaaaaaaa/zipp_torch.wasm', sha256: 't'.repeat(64) });
+  });
+
+  it('sends the glue only to an editor that asks for it and was built with another ZIPP', async () => {
+    for (const ready of [{ kind: 'formlogic-editor-ready', protocol: 1, engine: 1, zipp: build }, { kind: 'formlogic-editor-ready', protocol: 1, engine: 1, glue: 1, zipp: build }]) {
+      const { connect } = await mount(vi.fn(async () => {}), 'builder', ready);
+      expect(connect()?.zippWasm).toBeInstanceOf(ArrayBuffer);
+      expect(connect()).not.toHaveProperty('zippGlue');
+      await act(async () => root?.unmount());
+      root = undefined;
+      channels.length = 0;
+    }
+  });
+
 
   it('says why when the engine cannot be downloaded, and connects nothing', async () => {
     vi.mocked(getZippWasmBytes).mockRejectedValueOnce(new Error('The app engine could not be downloaded (503).'));

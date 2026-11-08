@@ -102,12 +102,17 @@ export function chooseFrameEngine(
   requested: { id: string } | undefined,
   readyEngines: unknown,
   installed: (id: string) => FrameEngineBytes | undefined,
+  // A shell that runs the site's own ZIPP (SoftN v0.0.36 on, ready's `zippGlue: 1`) runs a ZIPP
+  // engine it announces on this page's bytes for that id, whichever ZIPP it was built with.
+  siteZipp = false,
 ): string | null {
   const id = requested?.id;
-  const honoured =
-    typeof id === 'string' &&
-    !!readyEngines && typeof readyEngines === 'object' && Object.hasOwn(readyEngines, id) &&
-    sameIdentity((readyEngines as Record<string, unknown>)[id], installed(id));
+  const held = typeof id === 'string' ? installed(id) : undefined;
+  const announced = typeof id === 'string' && !!readyEngines && typeof readyEngines === 'object' && Object.hasOwn(readyEngines, id);
+  const honoured = announced && (
+    sameIdentity((readyEngines as Record<string, unknown>)[id!], held) ||
+    (siteZipp && id !== HOST_JS_ENGINE && held !== undefined && held !== OWN_DOCUMENT_ENGINE)
+  );
   if (id === HOST_JS_ENGINE) return honoured ? HOST_JS_ENGINE : null;
   if (typeof id !== 'string' || id === DEFAULT_ENGINE) return DEFAULT_ENGINE;
   return honoured ? id : DEFAULT_ENGINE;
