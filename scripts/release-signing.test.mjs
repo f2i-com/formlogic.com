@@ -127,7 +127,8 @@ test('release runtime requires real JavaScript and matching ZIPP bytes, even wit
   mkdirSync(join(directory, 'assets/core-runtime'), { recursive: true });
   writeFileSync(join(directory, 'assets/main.js'), 'console.log("fixture")');
   await writeRuntimeManifest(directory, expected);
-  await assert.rejects(checkReleaseRuntime(directory, expected), /ZIPP binary/);
+  // From Softn v0.0.35 the runtime carries no engine of its own: the page sends it the one it downloaded.
+  await checkReleaseRuntime(directory, expected);
   writeFileSync(join(directory, 'assets/core-runtime/zipp_wasm_bg.wasm'), 'wasm fixture');
   await writeRuntimeManifest(directory, expected);
   await checkReleaseRuntime(directory, expected);
