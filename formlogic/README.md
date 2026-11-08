@@ -254,10 +254,11 @@ npm run build     # output: ui/dist/
 # script sent with no Cache-Control, which leaves returning visitors on the old release's page.
 # As in the bundled .htaccess; an empty value sends no header.
 map $uri $formlogic_cache {
-    default        "";
-    /index.html    "no-cache";
-    /sw.js         "no-cache";
-    /registerSW.js "no-cache";
+    default          "";
+    /index.html      "no-cache";
+    /sw.js           "no-cache";
+    /registerSW.js   "no-cache";
+    /domain-head.js  "no-cache";
 }
 
 # Redirect all plain HTTP to HTTPS.

@@ -14,6 +14,12 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
 {
     /** The policy an image a person may open as a page is sent under: nothing in it runs, it has no origin, it may style itself. */
     public const SANDBOXED_IMAGE = "sandbox; default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+    /**
+     * The policy the site's own page is sent under from here (AppLookController::sitePage, the site's
+     * root): the one ui/public/.htaccess gives it as a file, which check-security-invariants holds
+     * equal. The page's own <meta> policy says what it may run.
+     */
+    public const SITE_PAGE = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'";
 
     private bool $isProduction;
 
@@ -78,6 +84,10 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
         // policy and a sandbox, with styles. Any other policy a response carries is replaced, as ever.
         if ($response->getHeaderLine('Content-Security-Policy') === self::SANDBOXED_IMAGE) {
             $csp = self::SANDBOXED_IMAGE;
+        }
+        // The site's own page, exactly: under this API's policy it could run nothing at all.
+        if ($response->getHeaderLine('Content-Security-Policy') === self::SITE_PAGE) {
+            $csp = self::SITE_PAGE;
         }
         $response = $response->withHeader('Content-Security-Policy', $csp);
 

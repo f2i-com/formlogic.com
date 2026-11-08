@@ -159,6 +159,16 @@ Options -Indexes
   RewriteCond %{HTTP_USER_AGENT} (facebookexternalhit|Twitterbot|Slackbot|Discordbot|LinkedInBot|WhatsApp|TelegramBot|SkypeUriPreview|redditbot|Pinterestbot|Embedly|vkShare|Iframely|Mastodon|Bluesky) [NC]
   RewriteRule ^(app/[^/]+(/native)?/?)?$ api/public/index.php [QSA,L]
 
+  # The site's root, for everyone else: the same page, from the backend, which on the domain of a
+  # SoftN app that opens there writes the app's name and description into its head, so a first visit
+  # and a search engine see the app's, not FormLogic's (AppLookController::sitePage). Once the site is
+  # set up (api/.env), and only to read it: anything else at the root, and every other path, is the
+  # file as ever, so a backend that is down takes nothing else with it.
+  RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
+  RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
+  RewriteCond %{DOCUMENT_ROOT}/api/.env -f
+  RewriteRule ^$ api/public/index.php [QSA,L]
+
   # SPA: serve real files (assets, index.html, service worker) as-is...
   RewriteRule ^index\.html$ - [L]
   # A build file that isn't here is a page from an older release asking for it. Answered with the
@@ -188,6 +198,11 @@ Options -Indexes
 # ============================================================================
 <IfModule mod_headers.c>
   <FilesMatch "^(sw\.js|registerSW\.js|index\.html)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  # The script that names a domain's app before the page's own (src/lib/domainHead.ts) is named
+  # for what it does, not its content, so it is asked for every time too.
+  <FilesMatch "^domain-head\.js$">
     Header set Cache-Control "no-cache"
   </FilesMatch>
   # The app runtime's two documents, no-transform as well: a CDN leaves them as they were sent.

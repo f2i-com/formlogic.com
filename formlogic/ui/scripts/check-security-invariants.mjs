@@ -139,6 +139,17 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
     if (unconditional.length) fail(`.htaccess must keep ${name} off the API's answers (env=!IS_API), or it replaces the API's own under PHP-FPM: ${unconditional[0]}`);
     if (!headerLines.some((line) => line.startsWith(`Header always set ${name} `) && line.endsWith(' env=!IS_API'))) fail(`.htaccess must still send ${name} for every other answer (env=!IS_API)`);
   }
+  // The site's root comes from the backend (AppLookController::sitePage), which sends the shell's
+  // policy as the bundled rules do here: under the API's own it could run nothing.
+  const middleware = readFileSync(resolve(root, '../backend/src/Middleware/SecurityHeadersMiddleware.php'), 'utf8');
+  const sitePolicy = middleware.match(/const SITE_PAGE = "([^"]*)";/)?.[1];
+  const shellPolicy = headerLines.find((line) => line.startsWith('Header always set Content-Security-Policy ') && line.endsWith(' env=!IS_API'))?.match(/"([^"]*)"/)?.[1];
+  if (!sitePolicy || sitePolicy !== shellPolicy) fail(`SecurityHeadersMiddleware::SITE_PAGE must be the shell's own policy from .htaccess (${shellPolicy}), not ${sitePolicy}`);
+  // Only the root, only to read it, and only once the site is set up: every other path stays a file.
+  if (!/RewriteCond %\{REQUEST_METHOD\} \^\(GET\|HEAD\)\$\s+RewriteCond %\{DOCUMENT_ROOT\}\/api\/public\/index\.php -f\s+RewriteCond %\{DOCUMENT_ROOT\}\/api\/\.env -f\s+RewriteRule \^\$ api\/public\/index\.php \[QSA,L\]/.test(htaccess)) {
+    fail('.htaccess must send the root, and only the root, to the backend for GET and HEAD once api/.env exists');
+  }
+  if (!/<FilesMatch "\^domain-head\\\.js\$">\s+Header set Cache-Control "no-cache"/.test(htaccess)) fail('.htaccess must send domain-head.js with Cache-Control: no-cache');
   // A CDN that rewrites HTML (Cloudflare's Web Analytics, which adds its script) leaves alone only
   // what says no-transform; the runtime documents must, after the no-cache section that also names
   // index.html, or that one would replace it.
@@ -172,7 +183,8 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
   const nginx = readme.match(/```nginx\n([\s\S]*?)```/)?.[1] ?? '';
   if (!nginx) fail('README.md must keep its nginx example, or this check must go with it');
   const nginxBlock = (opening) => nginx.split(/\n(?=    (?:#|location ))/).find((block) => block.startsWith(`    location ${opening} `)) ?? '';
-  for (const name of ['/index.html', '/sw.js', '/registerSW.js']) {
+  for (const name of ['/index.html', '/sw.js', '/registerSW.js', '/domain-head.js']) {
+
     if (!/<FilesMatch "\^\(sw\\\.js\|registerSW\\\.js\|index\\\.html\)\$">\s+Header set Cache-Control "no-cache"/.test(htaccess)) {
       fail('.htaccess must send sw.js, registerSW.js and index.html with Cache-Control: no-cache: a CDN holds them otherwise, and returning visitors stay on the old release');
     }

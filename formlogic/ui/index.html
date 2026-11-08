@@ -32,6 +32,11 @@
     <meta name="twitter:description" content="Turn forms into connected apps, dashboards and automations — cloud or self-hosted. Add FormLogic Desktop for local AI, devices and headless flows, including Aokie, your AI phone receptionist." />
     <meta name="twitter:image" content="/og-image.png" />
 
+    <!-- On a customer's domain whose app opens there, the app's name in the head before anything
+         else runs or is drawn (src/lib/domainHead.ts). After the title and the metas it names, and
+         before the stylesheets the build adds, which a script would wait for. -->
+    <script src="/domain-head.js"></script>
+
     <!-- Fonts: load non-render-blocking (preload as style, then main.tsx promotes
          to stylesheet — an inline onload handler would violate the app-shell CSP,
          which has no 'unsafe-inline'/'unsafe-hashes' for scripts). -->
@@ -42,6 +47,7 @@
   </head>
   <body>
     <div id="root"></div>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

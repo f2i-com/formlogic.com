@@ -63,10 +63,12 @@ final class AppLookController
     }
 
     /**
-     * GET / and /app/{slug}, for a link-preview service only (the rewrite sends nobody else): the
-     * app's name, description, image and icon, at the address that was shared, for a published
-     * SoftN app at /app/<slug> or on its own domain. Anything else, and anyone else, gets the site's
-     * own page as it is.
+     * GET / and /app/{slug}. For a link-preview service (the rewrite sends /app/{slug} to nobody
+     * else): the app's name, description, image and icon, at the address that was shared, for a
+     * published SoftN app at /app/<slug> or on its own domain. For everyone else, the site's own page
+     * as it is, but at the root of a domain whose app opens there, with the app's name and
+     * description in its head (domainHead()), so the tab and a search engine name the app from the
+     * first moment, not FormLogic.
      */
     public function sharePage(Request $request, Response $response, array $args): Response
     {
@@ -74,17 +76,18 @@ final class AppLookController
         $host = strtolower(trim(explode(':', $request->getHeaderLine('Host'))[0] ?? ''));
         $app = null;
         $onDomain = false;
-        if (self::isPreviewBot($request->getHeaderLine('User-Agent'))) {
-            try {
-                if ($slug === null) {
-                    $resolved = $host !== '' ? $this->domains->resolveAppSlugByHost($host) : null;
-                    if ($resolved !== null) { $app = $this->apps->getAppBySlug($resolved['slug']); $onDomain = true; }
-                } else {
-                    $app = $this->apps->getAppBySlug($slug);
-                }
-            } catch (\Throwable) {
-                $app = null;
+        if (!self::isPreviewBot($request->getHeaderLine('User-Agent'))) {
+            return $this->sitePage($response, $slug === null ? $this->domainHead($host) : null);
+        }
+        try {
+            if ($slug === null) {
+                $resolved = $host !== '' ? $this->domains->resolveAppSlugByHost($host) : null;
+                if ($resolved !== null) { $app = $this->apps->getAppBySlug($resolved['slug']); $onDomain = true; }
+            } else {
+                $app = $this->apps->getAppBySlug($slug);
             }
+        } catch (\Throwable) {
+            $app = null;
         }
         if (!$app || ($app['status'] ?? '') !== 'published' || empty($app['settings']['softnApp'])) return $this->sitePage($response);
         try { $look = $this->look->resolve($app); } catch (\Throwable) { $look = null; }
@@ -143,18 +146,100 @@ final class AppLookController
         return $userAgent !== '' && preg_match('~(?:' . self::PREVIEW_BOTS . ')~i', $userAgent) === 1;
     }
 
-    /** The site's own page, as the web server serves it to everyone else. */
-    private function sitePage(Response $response): Response
+    /**
+     * The site's own page, as the web server serves it, with the headers it gives it there (the API's
+     * policy would let it run nothing). With $head, the app's name and description in it (withAppHead).
+     *
+     * @param array{name: string, description: string, themeColor: ?string}|null $head
+     */
+    private function sitePage(Response $response, ?array $head = null): Response
     {
-        $root = (string) ($_SERVER['DOCUMENT_ROOT'] ?? '');
-        $file = $root !== '' ? rtrim($root, '/\\') . '/index.html' : '';
-        $html = $file !== '' && is_file($file) ? @file_get_contents($file) : false;
+        $html = false;
+        // The web root, or in the package (api/src/Controllers) the folder above the API, where the UI is.
+        foreach ([(string) ($_SERVER['DOCUMENT_ROOT'] ?? ''), dirname(__DIR__, 3)] as $root) {
+            $file = $root !== '' ? rtrim($root, '/\\') . '/index.html' : '';
+            $html = $file !== '' && is_file($file) ? @file_get_contents($file) : false;
+            if (is_string($html)) break;
+        }
         if (!is_string($html)) return $this->notFound($response);
-        $response->getBody()->write($html);
+        $response->getBody()->write($head !== null ? self::withAppHead($html, $head) : $html);
         return $response
             ->withHeader('Content-Type', 'text/html; charset=utf-8')
             ->withHeader('Cache-Control', 'no-cache')
-            ->withHeader('Vary', 'User-Agent');
+            ->withHeader('Vary', 'User-Agent')
+            ->withHeader('X-Content-Type-Options', 'nosniff')
+            ->withHeader('Content-Security-Policy', \FormLogic\Middleware\SecurityHeadersMiddleware::SITE_PAGE);
+    }
+
+    /**
+     * What the head of a connected domain's root says of its app: a published SoftN app's name and
+     * description, where the domain opens the app at its root ('runtime_direct'), which is where the
+     * page shows it (DomainLaunchRouter). Null anywhere else: this site's own address, any other app
+     * or mode, and wherever it can't be found out, as the page has to come whatever happens.
+     *
+     * @return array{name: string, description: string, themeColor: ?string}|null
+     */
+    private function domainHead(string $host): ?array
+    {
+        if ($host === '') return null;
+        try {
+            if ($this->domains->isThisSiteHost($host)) return null;
+            $resolved = $this->domains->resolveAppSlugByHost($host);
+            if ($resolved === null || ($resolved['mode'] ?? '') !== 'runtime_direct') return null;
+            $app = $this->apps->getAppBySlug($resolved['slug']);
+            if (!$app || ($app['status'] ?? '') !== 'published' || empty($app['settings']['softnApp'])) return null;
+            $name = trim((string) ($app['name'] ?? ''));
+            if ($name === '') return null;
+            $look = $this->look->resolve($app);
+        } catch (\Throwable) {
+            return null;
+        }
+        $description = $look !== null && $look['description'] !== '' ? $look['description'] : trim((string) ($app['description'] ?? ''));
+        return ['name' => $name, 'description' => $description, 'themeColor' => $look['themeColor'] ?? null];
+    }
+
+    /**
+     * $html with the app's name and description in its head: the title, the description, the name an
+     * iPhone gives a home-screen icon, the theme colour, the manifest (the domain's own, which installs
+     * the app), and the titles and description a link shows. Each element it changes keeps the site's
+     * own value (data-fl-original) and the one given it (data-fl-applied), so the page can put the
+     * site's back where the domain shows anything but its app (ui/src/lib/domainHead.ts). Every value
+     * is text, never markup. An element the page doesn't have is left out.
+     *
+     * @param array{name: string, description: string, themeColor: ?string} $head
+     */
+    public static function withAppHead(string $html, array $head): string
+    {
+        $end = stripos($html, '</head>');
+        if ($end === false) return $html;
+        $top = substr($html, 0, $end);
+        $e = static fn(string $text): string => htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8');
+        $marks = static fn(string $original, string $applied): string => ' data-fl-original="' . $original . '" data-fl-applied="' . $applied . '"';
+        $name = $e($head['name']);
+        $top = preg_replace_callback('~<title>([^<]*)</title>~i', static function (array $m) use ($e, $marks, $name): string {
+            return '<title' . $marks($e(html_entity_decode($m[1], ENT_QUOTES | ENT_HTML5, 'UTF-8')), $name) . '>' . $name . '</title>';
+        }, $top, 1) ?? $top;
+        // The first <$tag> naming $which, its $attribute given $value. The value it had is already
+        // written as an attribute's, so it is kept as it was written.
+        $set = static function (string $top, string $tag, string $which, string $attribute, string $value) use ($marks): string {
+            $pattern = '~<' . $tag . '\b(?=[^>]*\s' . preg_quote($which, '~') . '[\s/>])[^>]*>~i';
+            return preg_replace_callback($pattern, static function (array $m) use ($attribute, $value, $marks): string {
+                return preg_replace_callback('~\s' . $attribute . '="([^"]*)"~i', static fn(array $a): string => ' ' . $attribute . '="' . $value . '"' . $marks($a[1], $value), $m[0], 1) ?? $m[0];
+            }, $top, 1) ?? $top;
+        };
+        foreach (['name="apple-mobile-web-app-title"', 'property="og:site_name"', 'property="og:title"', 'name="twitter:title"'] as $which) {
+            $top = $set($top, 'meta', $which, 'content', $name);
+        }
+        if ($head['description'] !== '') {
+            foreach (['name="description"', 'property="og:description"', 'name="twitter:description"'] as $which) {
+                $top = $set($top, 'meta', $which, 'content', $e($head['description']));
+            }
+        }
+        if ($head['themeColor'] !== null && preg_match('/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $head['themeColor'])) {
+            $top = $set($top, 'meta', 'name="theme-color"', 'content', $head['themeColor']);
+        }
+        $top = $set($top, 'link', 'rel="manifest"', 'href', '/manifest.json');
+        return $top . substr($html, $end);
     }
 
     /** https://<the domain> (http only in development), the Host being a connected domain's. */

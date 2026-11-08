@@ -57,6 +57,11 @@ class MaintenanceMiddleware implements MiddlewareInterface
         }
 
         $path = $request->getUri()->getPath();
+        // The site's own page, which its web server sends here at the root (AppLookController::sitePage):
+        // the page that tells a visitor of the maintenance, never itself refused. It holds no data.
+        if ($path === '/' && in_array(strtoupper($request->getMethod()), ['GET', 'HEAD'], true)) {
+            return $handler->handle($request);
+        }
         foreach (self::ALLOWED_PREFIXES as $prefix) {
             if ($path === rtrim($prefix, '/') || str_starts_with($path, $prefix)) {
                 return $handler->handle($request);

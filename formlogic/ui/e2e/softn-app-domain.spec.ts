@@ -11,6 +11,7 @@ const RUN = Date.now().toString(36);
 const MEMBERS_DOMAIN = `members-${RUN}.e2e-apps.com`;
 const PUBLIC_DOMAIN = `public-${RUN}.e2e-apps.com`;
 const EARLIER_DOMAIN = `earlier-${RUN}.e2e-apps.com`;
+const NAMED_DOMAIN = `named-${RUN}.e2e-apps.com`;
 const site = (domain: string) => `http://${domain}:${PORT}`;
 // Only the browser resolves these names, so a call outside a page names the host in its header.
 const asDomain = (domain: string) => ({ Host: `${domain}:${PORT}`, Origin: site(domain) });
@@ -19,7 +20,7 @@ test.use({
   launchOptions: {
     args: [
       '--host-resolver-rules=MAP *.e2e-apps.com 127.0.0.1',
-      `--unsafely-treat-insecure-origin-as-secure=${site(MEMBERS_DOMAIN)},${site(PUBLIC_DOMAIN)},${site(EARLIER_DOMAIN)}`,
+      `--unsafely-treat-insecure-origin-as-secure=${site(MEMBERS_DOMAIN)},${site(PUBLIC_DOMAIN)},${site(EARLIER_DOMAIN)},${site(NAMED_DOMAIN)}`,
     ],
   },
 });
@@ -267,7 +268,53 @@ test('a public SoftN app opens on its domain for anyone, and removing the domain
   await visitor.close();
 });
 
+test("a domain's app is named in the tab from the first moment, never FormLogic", async ({ page, context, browser }) => {
+  test.setTimeout(180_000);
+  const name = `domain-named-${RUN}`;
+  const SITE_TITLE = 'FormLogic — Build the system that runs your business';
+  await signInOnPlatform(context.request, `${name}@e2e-apps.com`);
+  const { app } = await publishApp(context, context.request, name, 'application', notesProject());
+  await connectDomain(page, app.id, NAMED_DOMAIN);
+
+  // The domain's root as it is sent, for a first visit and a search engine: the app's name already in
+  // its head, the site's kept beside it, under the site page's own headers.
+  const sent = await context.request.get(`${E2E_FRONTEND_BASE_URL}/`, { headers: { Host: asDomain(NAMED_DOMAIN).Host } });
+  expect(sent.status()).toBe(200);
+  const html = await sent.text();
+  expect(html).toContain(`<title data-fl-original="${SITE_TITLE}" data-fl-applied="${name}">${name}</title>`);
+  expect(html).toContain('<link rel="manifest" href="/manifest.json" data-fl-original="/manifest.webmanifest" data-fl-applied="/manifest.json">');
+  expect(sent.headers()['content-security-policy']).toBe("frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
+  expect(sent.headers()['x-frame-options']).toBe('DENY');
+  expect(sent.headers()['cache-control']).toBe('no-cache');
+  // The site's own root, as it always was; and read with HEAD, as an uptime monitor does.
+  const own = await context.request.get('/');
+  expect(await own.text()).toContain(`<title>${SITE_TITLE}</title>`);
+  expect(await own.text()).not.toContain('data-fl-applied');
+  expect((await context.request.head('/')).status()).toBe(200);
+
+  // No service worker, so the page's own code can be held back below.
+  const visitor = await browser.newContext({ serviceWorkers: 'block' });
+  const home = await visitor.newPage();
+  await home.goto(`${site(NAMED_DOMAIN)}/`, { waitUntil: 'domcontentloaded' });
+  expect(await home.title()).toBe(name);
+  await expect(home.frameLocator(FRAME).getByText('Saved: nothing')).toBeVisible({ timeout: 60_000 });
+  await expect(home).toHaveTitle(name);
+  // Any other path is the file every domain shares. With none of the page's own code let run, the
+  // script before it names the app from what this browser heard on the way in.
+  await home.route('**/assets/**', route => route.abort());
+  await home.goto(`${site(NAMED_DOMAIN)}/somewhere`, { waitUntil: 'domcontentloaded' });
+  expect(await home.title()).toBe(name);
+  expect(await home.evaluate(() => document.querySelector('link[rel="manifest"]')?.getAttribute('href'))).toBe('/manifest.json');
+  await home.unroute('**/assets/**');
+  // The legal pages are FormLogic's, on the domain too.
+  await home.goto(`${site(NAMED_DOMAIN)}/privacy`);
+  await expect(home.getByRole('heading', { name: /privacy/i }).first()).toBeVisible({ timeout: 30_000 });
+  expect(await home.title()).not.toBe(name);
+  await visitor.close();
+});
+
 test('a SoftN app moved onto FormLogic at its own domain opens on the saves its earlier page left there', async ({ page, context, browser }) => {
+
   test.setTimeout(180_000);
   await signInOnPlatform(context.request, `domain-earlier-${RUN}@e2e-apps.com`);
   const { app } = await publishApp(context, context.request, `domain-earlier-${RUN}`, 'application', notesProject());

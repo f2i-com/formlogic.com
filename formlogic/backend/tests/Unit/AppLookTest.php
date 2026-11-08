@@ -161,7 +161,8 @@ final class AppLookTest extends TestCase
         $apps->method('getAppBySlug')->willReturn($app);
         $apps->method('isRuntimeVisible')->willReturnCallback(static fn(array $candidate, $user) => ($candidate['status'] ?? '') === 'published' || $user === 'owner');
         $domains = $this->createMock(AppDomainService::class);
-        $domains->method('resolveAppSlugByHost')->willReturnCallback(static fn(string $host) => $host === 'outerstead.example' && $domainApp ? ['slug' => $domainApp['slug']] + $domainApp : null);
+        $domains->method('resolveAppSlugByHost')->willReturnCallback(static fn(string $host) => $host === 'outerstead.example' && $domainApp ? ['slug' => $domainApp['slug']] + $domainApp + ['mode' => 'runtime_direct'] : null);
+        $domains->method('isThisSiteHost')->willReturnCallback(static fn(string $host) => $host === 'forms.example');
         $this->service = new AppLookService($this->install(['icon' => 'assets/icon.svg', 'description' => 'First <Light>.'], ['assets/icon.svg' => self::SVG, 'assets/art/logo.png' => self::png()]));
         return new AppLookController($apps, $this->service, $domains);
     }
@@ -209,6 +210,9 @@ final class AppLookTest extends TestCase
         // Anything else is replaced, however it starts.
         $this->assertSame($api, $through('sandbox; script-src *'));
         $this->assertSame($api, $through("sandbox allow-scripts allow-same-origin; default-src 'none'; script-src 'unsafe-inline'"));
+        // The site's own page (sitePage), exactly: under the API's it could run nothing.
+        $this->assertSame(\FormLogic\Middleware\SecurityHeadersMiddleware::SITE_PAGE, $through(\FormLogic\Middleware\SecurityHeadersMiddleware::SITE_PAGE));
+        $this->assertSame($api, $through(\FormLogic\Middleware\SecurityHeadersMiddleware::SITE_PAGE . "; script-src 'unsafe-inline'"), 'and only exactly');
         $this->assertSame($api, $through(''), 'everything else as before');
         $this->assertSame($api, $through("default-src 'self'"), 'and nothing looser survives it');
     }
@@ -266,7 +270,96 @@ final class AppLookTest extends TestCase
         $this->assertMatchesRegularExpression('~<link rel="icon" href="https://outerstead\.example/api/app/outerstead/look/icon\.svg\?v=~', $html);
     }
 
+    /** The site's page as the build makes it: index.html, and the manifest link the PWA plugin adds. */
+    private function builtSitePage(): string
+    {
+        $this->storage ??= sys_get_temp_dir() . '/formlogic-app-look-' . bin2hex(random_bytes(8));
+        if (!is_dir($this->storage)) mkdir($this->storage, 0700, true);
+        $_SERVER['DOCUMENT_ROOT'] = $this->storage;
+
+        $html = (string) file_get_contents(__DIR__ . '/../../../ui/index.html');
+        $html = str_replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"></head>', $html);
+        file_put_contents($this->storage . '/index.html', $html);
+        return $html;
+    }
+
+    private function person(string $host): \Psr\Http\Message\ServerRequestInterface
+    {
+        return $this->get('/', ['User-Agent' => 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1', 'Host' => $host]);
+    }
+
+    public function testAPersonAtTheRootOfTheAppsDomainIsGivenTheSitesPageNamingTheApp(): void
+    {
+        $app = self::app();
+        $controller = $this->controller($app, $app);
+        $site = $this->builtSitePage();
+        $response = $controller->sharePage($this->person('outerstead.example'), new Response(), []);
+        $html = (string) $response->getBody();
+        $name = 'Outer&lt;stead&gt; &amp; &quot;Co&quot;';
+        $this->assertStringContainsString('<title data-fl-original="FormLogic — Build the system that runs your business" data-fl-applied="' . $name . '">' . $name . '</title>', $html, 'the name is text, never markup');
+        foreach (['name="apple-mobile-web-app-title"', 'property="og:site_name"', 'property="og:title"', 'name="twitter:title"'] as $which) {
+            $this->assertMatchesRegularExpression('~<meta ' . preg_quote($which, '~') . ' content="' . preg_quote($name, '~') . '" data-fl-original="[^"]+" data-fl-applied="' . preg_quote($name, '~') . '"~', $html, $which);
+        }
+        foreach (['name="description"', 'property="og:description"', 'name="twitter:description"'] as $which) {
+            $this->assertMatchesRegularExpression('~<meta ' . preg_quote($which, '~') . ' content="First &lt;Light&gt;\." data-fl-original="Turn forms[^"]*" data-fl-applied="First &lt;Light&gt;\."~', $html, $which);
+        }
+        $this->assertStringContainsString('<link rel="manifest" href="/manifest.json" data-fl-original="/manifest.webmanifest" data-fl-applied="/manifest.json">', $html);
+        // Nothing else of the page is touched: its scripts, its body, the rest of its head.
+        $this->assertSame(substr_count($site, '<script'), substr_count($html, '<script'));
+        $this->assertSame(substr($site, (int) strpos($site, '</head>')), substr($html, (int) strpos($html, '</head>')));
+        $this->assertStringContainsString('<meta name="theme-color" content="#6366f1" />', $html, 'no theme colour of its own: the site\'s');
+        // Under the shell's headers, which the security middleware leaves as they are.
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame('text/html; charset=utf-8', $response->getHeaderLine('Content-Type'));
+        $this->assertSame(\FormLogic\Middleware\SecurityHeadersMiddleware::SITE_PAGE, $response->getHeaderLine('Content-Security-Policy'));
+        $this->assertSame('no-cache', $response->getHeaderLine('Cache-Control'));
+        $this->assertSame('nosniff', $response->getHeaderLine('X-Content-Type-Options'));
+    }
+
+    public function testANameOrDescriptionThatLooksLikeMarkupStaysText(): void
+    {
+        $app = ['name' => '</title><script>alert(1)</script>', 'description' => 'x'] + self::app(['description' => '"><script>alert(2)</script>']);
+        $controller = $this->controller($app, $app);
+        $site = $this->builtSitePage();
+        $html = (string) $controller->sharePage($this->person('outerstead.example'), new Response(), [])->getBody();
+        $this->assertSame(substr_count($site, '<script'), substr_count($html, '<script'));
+        $this->assertStringContainsString('&lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;</title>', $html);
+        $this->assertStringContainsString('content="&quot;&gt;&lt;script&gt;alert(2)&lt;/script&gt;"', $html);
+    }
+
+    public function testEverywhereElseAPersonIsGivenTheSitesPageAsItIs(): void
+    {
+        $app = self::app();
+        $site = $this->builtSitePage();
+        $page = fn(AppLookController $controller, string $host): string => (string) $controller->sharePage($this->person($host), new Response(), [])->getBody();
+        $this->assertSame($site, $page($this->controller($app, $app), 'forms.example'), 'the site\'s own address');
+        $this->assertSame($site, $page($this->controller($app, $app), 'elsewhere.example'), 'a host nobody connected');
+        $this->assertSame($site, $page($this->controller($app, ['mode' => 'launch_page'] + $app), 'outerstead.example'), 'a domain that opens on its launch page');
+        $this->assertSame($site, $page($this->controller(self::app([], 'draft'), $app), 'outerstead.example'), 'a draft');
+        $forms = ['id' => 'game', 'slug' => 'outerstead', 'name' => 'Forms', 'status' => 'published', 'settings' => []];
+        $this->assertSame($site, $page($this->controller($forms, $forms), 'outerstead.example'), 'any other kind of app');
+        // And when the lookup fails, the page still comes, as it is: the site's front page never fails for it.
+        $apps = $this->createMock(AppService::class);
+        $domains = $this->createMock(AppDomainService::class);
+        $domains->method('resolveAppSlugByHost')->willThrowException(new \RuntimeException('database gone'));
+        $this->service = new AppLookService($this->install([], []));
+        $broken = $this->builtSitePage();
+        $response = (new AppLookController($apps, $this->service, $domains))->sharePage($this->person('outerstead.example'), new Response(), []);
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame($broken, (string) $response->getBody());
+    }
+
+    public function testTheSitesRootComesFromTheBackendForEveryoneAndOnlyBotsAreLimited(): void
+    {
+        $htaccess = str_replace("\r\n", "\n", (string) file_get_contents(__DIR__ . '/../../../ui/public/.htaccess'));
+        $this->assertStringContainsString("RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$\n  RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f\n  RewriteCond %{DOCUMENT_ROOT}/api/.env -f\n  RewriteRule ^$ api/public/index.php [QSA,L]", $htaccess);
+        $this->assertStringContainsString("if (\$uri === '/' && in_array(\$_SERVER['REQUEST_METHOD'] ?? 'GET', ['GET', 'HEAD'], true)) {", (string) file_get_contents(__DIR__ . '/../../../ci/router.php'));
+        $routes = str_replace("\r\n", "\n", (string) file_get_contents(__DIR__ . '/../../public/index.php'));
+        $this->assertMatchesRegularExpression('~\$app->get\(\'/\', function[^}]+\}\)->add\(function \(\$request, \$handler\) use \(\$appLookRateLimiter\) \{\n\s+return \\\\FormLogic\\\\Controllers\\\\AppLookController::isPreviewBot\(~', $routes);
+    }
+
     public function testTheWebServerSendsThePreviewServicesAndOnlyThose(): void
+
     {
         $htaccess = (string) file_get_contents(__DIR__ . '/../../../ui/public/.htaccess');
         $router = (string) file_get_contents(__DIR__ . '/../../../ci/router.php');

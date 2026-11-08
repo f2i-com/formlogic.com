@@ -402,11 +402,14 @@ class AdminPanelTest extends TestCase
         $this->assertTrue($body['maintenance']);
         $this->assertSame('Back at 9pm sharp.', $body['message']);
 
-        // The allowlist stays reachable (health for embeds, login/me for admins, the panel itself).
-        foreach (['/api/health', '/api/auth/login', '/api/auth/me', '/api/admin/maintenance'] as $path) {
+        // The allowlist stays reachable (health for embeds, login/me for admins, the panel itself),
+        // and the site's own page at its root, which the web server sends here.
+        foreach (['/api/health', '/api/auth/login', '/api/auth/me', '/api/admin/maintenance', '/'] as $path) {
             $r = $mw->process($this->request('GET', $path), $this->passthroughHandler());
             $this->assertSame(200, $r->getStatusCode(), "{$path} must stay reachable during maintenance");
         }
+        $this->assertSame(503, $mw->process($this->request('POST', '/'), $this->passthroughHandler())->getStatusCode(), 'only to read the page');
+
 
         // A platform admin's token bypasses maintenance everywhere.
         $adminReq = $this->request('GET', '/api/forms')

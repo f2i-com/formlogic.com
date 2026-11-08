@@ -42,6 +42,13 @@ if (preg_match('#^/(manifest\.json|\.well-known/(formlogic-app|assetlinks)\.json
     return true;
 }
 
+// The site's root, for everyone (mirrors the .htaccess rule): the site's page from the backend, with a
+// domain's app named in its head (AppLookController::sitePage).
+if ($uri === '/' && in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['GET', 'HEAD'], true)) {
+    require __DIR__ . '/../backend/public/index.php';
+    return true;
+}
+
 // A link-preview service fetching the root or /app/<slug> (mirrors the .htaccess rule): the app's name,
 // description and image (AppLookController::sharePage).
 if (preg_match('#^/(app/[^/]+(/native)?/?)?$#', $uri) && preg_match('~(facebookexternalhit|Twitterbot|Slackbot|Discordbot|LinkedInBot|WhatsApp|TelegramBot|SkypeUriPreview|redditbot|Pinterestbot|Embedly|vkShare|Iframely|Mastodon|Bluesky)~i', $_SERVER['HTTP_USER_AGENT'] ?? '')) {

@@ -2444,11 +2444,18 @@ $app->get('/manifest.json', function ($request, $response) use ($container) {
     return $container->get(AppPublicController::class)->manifestByHost($request, $response);
 })->add($publicFormRateLimiter);
 
-// A link-preview service fetching the site's root or /app/<slug> (ui/public/.htaccess and ci/router.php
-// send only those here): a published SoftN app's name, description and image; the site's page otherwise.
+// The site's root, for everyone (ui/public/.htaccess and ci/router.php): the site's page, with a
+// domain's app named in its head; for a link-preview service, the app's name, description and image.
+// /app/<slug> comes here for a link-preview service only. Only those services are held to a limit:
+// behind a proxy every visitor can share one address, and the site's front page is never refused.
 $app->get('/', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\AppLookController::class)->sharePage($request, $response, []);
-})->add($appLookRateLimiter);
+})->add(function ($request, $handler) use ($appLookRateLimiter) {
+    return \FormLogic\Controllers\AppLookController::isPreviewBot($request->getHeaderLine('User-Agent'))
+        ? $appLookRateLimiter->process($request, $handler)
+        : $handler->handle($request);
+});
+
 $app->get('/app/{slug}[/{rest:.*}]', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\AppLookController::class)->sharePage($request, $response, ['slug' => (string) ($getArgs($request)['slug'] ?? '')]);
 })->add($appLookRateLimiter);

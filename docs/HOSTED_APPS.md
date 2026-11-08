@@ -101,6 +101,24 @@ cached; people, and search engines, which run the page, get the app as always. T
 those services there: `ui/public/.htaccess` on Apache, `ci/router.php` for PHP's own server, and on
 nginx the same rule in the example in `formlogic/README.md`.
 
+On the app's own domain the page carries the app's name from the first moment, never FormLogic's:
+in the tab, as an iPhone names a home-screen icon, in the description and the titles a search engine
+reads, with the domain's manifest. Three things put it there (`ui/src/lib/domainHead.ts`):
+
+- **The backend writes it into the root page** (AppLookController::sitePage), for a first visit and
+  a search engine, where the domain opens a published SoftN app at its root. The bundled
+  `.htaccess` and `ci/router.php` send the root there for everyone (GET and HEAD, once `api/.env`
+  exists); the rest of the site stays a file. Anywhere else the page is the file as it is, under
+  the same headers, and maintenance mode lets it through. On nginx the root stays a file: a first
+  visit is named a moment later, once the page has asked who the domain is.
+- **`public/domain-head.js`**, before anything else on the page runs, names it from what this
+  browser last heard of the domain: a reload, a page the service worker answers from its copy, an
+  installed app opening.
+- **The page** names it once the domain's answer comes, on a first visit to any other path.
+
+Each keeps the site's own value beside what it gives (`data-fl-original`, `data-fl-applied`), and a
+page of the domain that isn't the app's (the legal pages, a form) gets FormLogic's back.
+
 Building with AI uses the person's default AI (Settings → AI). Where it cannot answer yet, the
 page says why and offers **Use FormLogic Site AI** in one click when the operator offers Site AI,
 beside connecting their own; the Visual Builder and uploads never need AI. The editor's own save

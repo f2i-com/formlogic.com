@@ -1062,6 +1062,12 @@ The panel can only prove ownership. Traffic for the domain still has to reach th
   `.htaccess` does it on Apache; the nginx example in `formlogic/README.md` has the same rule. Without
   it a link shows the site's own preview and nothing else changes. A cache in front (Cloudflare) does
   not keep those pages: they are sent `private, no-store`.
+- **The app's name on its domain from the first moment**: the bundled `.htaccess` sends the site's
+  root to the backend for every visitor (GET and HEAD, once `api/.env` exists), which writes a SoftN
+  app's name and description into the page on its domain, and sends the page as it is everywhere
+  else, under the same headers. Nothing else of the site goes through PHP. On nginx the root stays
+  a file, and a first visit names the app once the page has asked (see `docs/HOSTED_APPS.md`).
+
 
 ### Backend
 

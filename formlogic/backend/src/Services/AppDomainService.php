@@ -123,6 +123,12 @@ class AppDomainService
      * takes itself for the main site. Other listed origins don't count: connecting one is how an
      * operator who listed a customer's domain moves it off that list.
      */
+    /** Whether a request's host is this site's own name (isThisSite), however it is written. */
+    public function isThisSiteHost(string $host): bool
+    {
+        return $this->isThisSite($this->normalizeDomain($host));
+    }
+
     private function isThisSite(string $domain): bool
     {
         foreach ([Environment::nonEmpty('APP_URL', ''), Environment::nonEmpty('CORS_ORIGIN', ''), AppUrl::configuredBase()] as $address) {
@@ -460,7 +466,7 @@ class AppDomainService
      * packageName + fingerprints). Public-safe — never form schemas, fields, reports, or scripts.
      * Returns null when the host isn't a connected+active domain of a published app.
      *
-     * @return array{id:string, ownerId:string, slug:string, name:string, status:string, nativeConfig:array<string,mixed>}|null
+     * @return array{id:string, ownerId:string, slug:string, name:string, status:string, nativeConfig:array<string,mixed>, mode:string}|null
      */
     public function resolveAppSlugByHost(string $host): ?array
     {
@@ -470,7 +476,7 @@ class AppDomainService
         }
         $stmt = $this->mysql->prepare(
             "SELECT a.id AS app_id, a.slug AS app_slug, a.name AS app_name, a.status AS app_status,
-                    a.owner_id AS owner_id, d.native_config AS native_config
+                    a.owner_id AS owner_id, d.native_config AS native_config, d.mode AS domain_mode
              FROM app_domains d JOIN apps a ON a.id = d.app_id
              WHERE d.normalized_domain = :d AND d.status = 'active' LIMIT 1"
         );
@@ -486,6 +492,8 @@ class AppDomainService
             'name' => (string) $row['app_name'],
             'status' => (string) $row['app_status'],
             'nativeConfig' => $this->decodeJson($row['native_config'] ?? null),
+            // What the domain's root shows: the app itself ('runtime_direct') or its launch page.
+            'mode' => (string) ($row['domain_mode'] ?? ''),
         ];
     }
 

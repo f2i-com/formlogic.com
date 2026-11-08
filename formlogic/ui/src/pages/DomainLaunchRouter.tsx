@@ -21,14 +21,11 @@ import { useLocation } from 'react-router-dom';
 import { DomainNativeApp } from '../components/app-runtime/AppEntryRouter';
 import { api } from '../lib/api';
 import { signInDestination } from '../lib/authRedirect';
+import { LEGAL_PATHS, nameDomainPage, PASSWORD_PATHS, restorePlatformHead, showsAppAt, SIGN_IN_PATHS, SIGN_IN_RETURN_PATH } from '../lib/domainHead';
 import { lookUpHost, rememberedHost, rememberHost, type LaunchConfig, type SoftnAccess } from '../lib/domainLaunchApi';
 import { DomainSignInContext, finishDomainSignIn, startDomainSignIn } from '../lib/domainSignIn';
 import { AppLaunchPage } from './AppLaunchPage';
 
-const SIGN_IN_PATHS = ['/login', '/signup'];
-const PASSWORD_PATHS = ['/forgot-password', '/reset-password', '/accept-invite'];
-const LEGAL_PATHS = ['/privacy', '/terms'];
-const SIGN_IN_RETURN_PATH = '/sign-in/complete';
 /** The longest a page that takes a password waits, on a host remembered as no domain, for news that it has become one. */
 const BRIEF_WAIT_MS = 2_500;
 /** How long a page on a host nothing is known of waits before saying it can't reach the site. */
@@ -204,12 +201,23 @@ export function DomainLaunchRouter({ host, children }: { host: string; children:
   const leavesFor = takesPassword ? signInAddress(heard ? heard.config : lookedUp) : null;
   const finishing = !!platformUrl && path === SIGN_IN_RETURN_PATH;
   const accountPage = takesPassword || LEGAL_PATHS.includes(path);
-  // FormLogic's own address, if an older version let an app connect to it: /admin and /forms stay.
-  const ownAddress = !!config?.platformUrl?.endsWith(`//${host}`);
   // A form's link and its embed are the same address. It opens the form, whatever the app.
   const formPage = path.startsWith('/form/');
-  const showsApp = !!config && !!softnAccess && !ownAddress && !accountPage && !formPage && !finishing && !(pathname === '/' && !direct);
+  // Never FormLogic's own address, if an older version let an app connect to it: /admin and /forms stay.
+  const showsApp = showsAppAt({ config, softnAccess, host, pathname, origin: window.location.origin });
   useDomainManifest(showsApp);
+  // The app's name in the tab as soon as it is known, where nothing named it before the page ran
+  // (a first visit to any path but the root, which the backend writes), and the site's own back on
+  // a page that isn't the app's (domainHead.ts).
+  const appName = showsApp ? config?.app.name : undefined;
+  const appDescription = showsApp ? config?.app.description : undefined;
+  useEffect(() => {
+    if (appName) nameDomainPage({ name: appName, description: appDescription });
+  }, [appName, appDescription]);
+  useEffect(() => {
+    if (!showsApp) restorePlatformHead();
+  }, [showsApp, pathname]);
+
 
   useEffect(() => {
     if (!leavesFor) return;

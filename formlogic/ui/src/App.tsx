@@ -26,6 +26,7 @@ import { SyncConflictDialog } from './components/sync/SyncConflictDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeManager } from './components/ui/ThemeManager';
 import { lazyWithRetry } from './lib/lazyWithRetry';
+import { restorePlatformHead } from './lib/domainHead';
 
 const HostedAppPage = lazyWithRetry(() => import('./pages/apps/HostedAppPage'));
 const NativeAppPage = lazyWithRetry(() => import('./pages/apps/NativeAppPage'));
@@ -532,8 +533,11 @@ function getLaunchHost(): string | null {
  */
 function RootGate() {
   const launchHost = React.useMemo(() => getLaunchHost(), []);
+  // FormLogic's own address keeps its own head, whatever this browser once heard of the host.
+  React.useEffect(() => { if (!launchHost) restorePlatformHead(); }, [launchHost]);
   return launchHost ? <DomainLaunchRouter host={launchHost}><AppRoutes /></DomainLaunchRouter> : <AppRoutes />;
 }
+
 
 /** Only an administrator loads the confirmation dialog. */
 function AdminConfirmGate() {
