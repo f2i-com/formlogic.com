@@ -11,7 +11,7 @@
  * By default it is the installed Softn release's own (formlogic/ui/vendor/zipp-wasm, copied), so
  * nothing changes. With a pin (zipp-release.json at the repository's root: a ZIPP release and the
  * sha256 of its SHA256SUMS) it is that release, installed by the ZIPP installer the Softn release
- * carries (zipp-tools/, Softn v0.0.37 on), with every check Softn makes of a ZIPP release: so
+ * carries (zipp-tools/, Softn v0.0.38 on), with every check Softn makes of a ZIPP release: so
  * FormLogic can take a newer ZIPP without a new Softn. The Softn release's runtime and editors
  * run it in the browser (host-zipp/1); the Softn release's own trees (vendor/zipp-wasm, the hosted
  * runtime, the editors, the native runtime an app's backend runs on) stay as Softn shipped them.
@@ -110,10 +110,10 @@ export function assertRunsSiteZipp(paths, glue, release) {
   const runtime = readJson(resolve(paths.hostedRuntime, 'runtime-manifest.json'));
   const editors = readJson(resolve(paths.appEditors, 'manifest.json'));
   if (!runtime.features?.includes('host-zipp/1') || !editors.features?.includes('host-zipp/1')) {
-    refuse(`The installed Softn runtime and editors cannot run a ZIPP of the site's own (they lack host-zipp/1): ZIPP ${release} would be refused by every app. Install Softn v0.0.37 or later, or remove ${PIN_FILE}.`);
+    refuse(`The installed Softn runtime and editors cannot run a ZIPP of the site's own (they lack host-zipp/1): ZIPP ${release} would be refused by every app. Install Softn v0.0.38 or later, or remove ${PIN_FILE}.`);
   }
   const needed = Array.isArray(runtime.zippGlueExports) && runtime.zippGlueExports.length ? runtime.zippGlueExports : editors.zippGlueExports;
-  if (!Array.isArray(needed) || !needed.length) refuse('The installed Softn runtime does not say what a ZIPP glue must export (zippGlueExports); install Softn v0.0.37 or later.');
+  if (!Array.isArray(needed) || !needed.length) refuse('The installed Softn runtime does not say what a ZIPP glue must export (zippGlueExports); install Softn v0.0.38 or later.');
   const exported = glueExports(glue);
   const missing = needed.filter((name) => !exported.has(name));
   if (missing.length) refuse(`ZIPP ${release}'s glue does not export ${missing.join(', ')}, which the installed Softn runtime calls: this ZIPP is not one it runs.`);
@@ -143,7 +143,7 @@ function unpackInstaller(paths) {
   const { tag, bytes } = installedArchive(paths);
   const { entries } = readArchive(bytes);
   const tools = [...entries.keys()].filter((name) => name.startsWith('zipp-tools/') && !name.endsWith('/'));
-  if (!tools.includes('zipp-tools/scripts/fetch-zipp-release.mjs')) refuse(`Softn ${tag} carries no ZIPP installer (zipp-tools/, Softn v0.0.37 on): it cannot install a ZIPP of the site's own. Install a later Softn release, or remove ${PIN_FILE}.`);
+  if (!tools.includes('zipp-tools/scripts/fetch-zipp-release.mjs')) refuse(`Softn ${tag} carries no ZIPP installer (zipp-tools/, Softn v0.0.38 on): it cannot install a ZIPP of the site's own. Install a later Softn release, or remove ${PIN_FILE}.`);
   const base = resolve(paths.releases, tag);
   const dir = resolve(base, 'zipp-tools');
   rmSync(dir, { recursive: true, force: true });

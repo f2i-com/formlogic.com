@@ -270,7 +270,7 @@ adds the package to the engine at install and runs `import torch`. The
 workbox precache ignores `hosted-runtime/**`, so the package is never in the
 PWA's startup precache either.
 
-### The site's ZIPP (Softn v0.0.37 on)
+### The site's ZIPP (Softn v0.0.38 on)
 
 The site's ZIPP, `formlogic/ui/vendor/zipp` (with `zipp-web` and `zipp-torch`), is what the page and
 its form-logic worker run, what the server sandbox is built from and what the expression corpus is
