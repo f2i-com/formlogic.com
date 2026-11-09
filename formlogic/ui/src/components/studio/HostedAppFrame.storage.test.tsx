@@ -347,9 +347,10 @@ it('takes saves apart from the four backend calls, and tells the frame it may se
   const { iframe, post } = await mountNative();
   await act(async () => sendReady(iframe, 1));
   expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'formlogic:init', storageLane: true }), '*', expect.anything());
-  // Four slow backend calls fill the four slots; a fifth is refused, a save is not.
+  // Four slow backend calls fill the four slots; a fifth is refused, a save is not. The refusal is
+  // the app host's own "too many requests" (429 rate_limited), which an app already backs off for.
   await act(async () => { for (const id of [1, 2, 3, 4, 5]) void call(channels[0], { url: '/api/notes', options: {} }, id, 'nativeRequest'); });
-  expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 5, result: { error: 'Please wait for the current request.' } });
+  expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 5, result: { result: { status: 429, body: { error: 'Too many requests.', code: 'rate_limited' } } } });
   await act(async () => call(channels[0], { operation: 'set', key: 'draft', value: 'kept' }, 1_000_000_000));
   expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 1_000_000_000, result: { result: { saved: true } } });
   expect(localStorage.getItem(storageKey)).toBe(JSON.stringify({ draft: 'kept' }));
@@ -370,6 +371,19 @@ it('takes a request to the app backend as large as a photo upload, and no larger
   // Any other action keeps its 32 KB.
   await act(async () => call(channels[0], { title: 'x'.repeat(40000) }, 3, 'save'));
   expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 3, result: { error: 'Invalid action input.' } });
+});
+
+it("answers FormLogic's own throttling as the app host's 429, and any other refusal as the error it was", async () => {
+  const { iframe } = await mountNative();
+  await act(async () => sendReady(iframe, 1));
+  // The per-member limit on the bridge, and a native host with every worker busy, both reach the
+  // page as HTTP 429: the app sees what its host sends for its own limit.
+  vi.mocked(api.runNativeRequest).mockResolvedValueOnce({ error: 'Too many requests. Please try again later.', status: 429 } as never);
+  await act(async () => call(channels[0], { url: '/api/notes', options: {} }, 1, 'nativeRequest'));
+  expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 1, result: { result: { status: 429, body: { error: 'Too many requests.', code: 'rate_limited' } } } });
+  vi.mocked(api.runNativeRequest).mockResolvedValueOnce({ error: 'The app is busy. Try again shortly.', status: 409 } as never);
+  await act(async () => call(channels[0], { url: '/api/notes', options: {} }, 2, 'nativeRequest'));
+  expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 2, result: { error: 'The app is busy. Try again shortly.' } });
 });
 
 it('sends a method upper-cased, as a browser sends it', async () => {
