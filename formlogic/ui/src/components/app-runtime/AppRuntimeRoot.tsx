@@ -33,6 +33,7 @@ function HiddenFormGuard({ children }: { children: React.ReactNode }) {
 export function AppRuntimeRoot() {
   const { appSlug } = useParams();
   const { initialize, config, reset } = useAppRuntimeStore();
+  const canRunFlows = useAppRuntimeStore(state => state.canRunFlows());
 
   useEffect(() => {
     if (appSlug) {
@@ -46,11 +47,13 @@ export function AppRuntimeRoot() {
   // FormLogic Flows (docs/FORMLOGIC_FLOWS.md §5): start the event dispatcher once the
   // runtime config is loaded (member session established). Inert for apps without flows;
   // stops on unload / app switch. Keyed on the app id so config saves don't restart it.
+  // Only for a viewer who may run flows: the server refuses the runtime flow surface to any
+  // other member (403), so starting it for them only logged that refusal on every visit.
   const appId = config?.app?.id;
   useEffect(() => {
-    if (!appSlug || !appId) return;
+    if (!appSlug || !appId || !canRunFlows) return;
     return startFlowDispatcher(appSlug, { id: appId });
-  }, [appSlug, appId]);
+  }, [appSlug, appId, canRunFlows]);
 
   // Point the browser at THIS app's dynamic manifest + theme-color so an
   // installed PWA uses the owner-configured install name/theme instead of the

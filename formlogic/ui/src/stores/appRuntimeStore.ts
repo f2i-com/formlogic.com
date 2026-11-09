@@ -96,6 +96,11 @@ interface AppRuntimeState {
   // Permission helpers
   /** True only for the app owner (someone who can manage/edit the app + its dashboards). */
   isOwner: () => boolean;
+  /**
+   * True for the app owner and for a role granted execute_flows: the only viewers the server lets
+   * load and run the app's flows (FlowController::resolveRuntime answers everyone else 403).
+   */
+  canRunFlows: () => boolean;
   canSubmit: (formId: string) => boolean;
   canViewOwn: (formId: string) => boolean;
   canViewAll: (formId: string) => boolean;
@@ -492,6 +497,8 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         const app = get().config?.app;
         return !!(app?.canManage ?? app?.ownerId);
       },
+
+      canRunFlows: () => get().isOwner() || (get().permissions?.appLevel?.includes('execute_flows') ?? false),
 
       canSubmit: (formId) => {
         const p = get().permissions;

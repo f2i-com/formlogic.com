@@ -12,11 +12,14 @@ import { startFlowDispatcher } from '../../client-runtime/flows/flowDispatcher';
 
 function MemberNativeApp({ slug, signInTo, onDomain = false }: { slug: string; signInTo?: string; onDomain?: boolean }) {
   const { initialize, reset, config } = useAppRuntimeStore();
+  const canRunFlows = useAppRuntimeStore(state => state.canRunFlows());
   useEffect(() => { void initialize(slug); return () => reset(); }, [slug, initialize, reset]);
   const appId = config?.app?.id;
+  // Flows run for the owner and roles granted execute_flows; the server answers any other member's
+  // request for them 403, which every visit of theirs used to log.
   useEffect(() => {
-    if (appId && config?.app?.slug === slug) return startFlowDispatcher(slug, { id: appId });
-  }, [slug, appId, config?.app?.slug]);
+    if (appId && config?.app?.slug === slug && canRunFlows) return startFlowDispatcher(slug, { id: appId });
+  }, [slug, appId, config?.app?.slug, canRunFlows]);
   return <AppRuntimeAuthGuard><NativeAppPage slug={slug} signInTo={signInTo} onDomain={onDomain} /></AppRuntimeAuthGuard>;
 }
 
