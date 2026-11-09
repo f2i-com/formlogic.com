@@ -120,6 +120,9 @@ try {
             $kept['countersRemoved'],
             $kept['filesRemoved']
         ));
+        // App payments: a charge left pending by a request that never finished is given back.
+        $given = \FormLogic\Services\AppWalletService::standalone($mysql)->refundStale();
+        fwrite(STDOUT, sprintf("[%s] App payments: gave back %d charge(s) a request never finished.\n", date('c'), $given));
     }
     exit(0);
 } catch (\Throwable $e) {

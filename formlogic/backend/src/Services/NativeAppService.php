@@ -2277,17 +2277,42 @@ class NativeAppService
         }
     }
 
-    private function invoke(string $root, array $request, array $identity = [], array $subscriptions = [], bool $bodyAsWritten = false): array
+    /** The app root whose worker slots withSlots() holds now: invoke() takes none of its own for it. */
+    private ?string $heldRoot = null;
+
+    /**
+     * Run $work with one of the app's worker slots, and one of the site's, held from start to end:
+     * every request $work makes runs in them (NativeAppCharges: both runs of a charge, so a debit is
+     * never followed by a second run turned away busy). Waits up to three seconds for them, as a
+     * request does, and throws 429 when none frees.
+     *
+     * @template T
+     * @param callable(): T $work
+     * @return T
+     */
+    public function withSlots(string $appId, callable $work): mixed
     {
-        $protocol = json_decode((string) file_get_contents($this->runtime() . '/host-protocol.json'), true);
-        if ($subscriptions && (!is_file($this->runtime() . '/record-events.mjs') || ($protocol['recordEvents'] ?? null) !== self::RECORD_EVENTS_PROTOCOL)) throw new RuntimeException('Update the native runtime to enable record automations');
-        $runner = $this->runnerBinary();
-        if ($runner === null) $this->assertNodeMeetsMinimum(is_array($protocol) ? $protocol : null);
-        $base = $root . '/private/request-' . bin2hex(random_bytes(12));
-        $input = json_encode($request, JSON_THROW_ON_ERROR);
-        if (strlen($input) > 6000000) throw new InvalidArgumentException('Request exceeds the native host limit');
-        $process = null;
-        // Bound concurrent native workers across every app in this storage root.
+        $root = $this->root($appId);
+        if ($this->heldRoot === $root) return $work();
+        $slots = $this->takeSlots($root);
+        $this->heldRoot = $root;
+        try {
+            return $work();
+        } finally {
+            $this->heldRoot = null;
+            $this->releaseSlots($slots);
+        }
+    }
+
+    /**
+     * One of the app's worker slots and one of the site's, waiting up to three seconds for them: most
+     * requests run in well under a second, so a burst (a screen loading four lists at once) is served,
+     * not answered busy.
+     *
+     * @return list<resource>
+     */
+    private function takeSlots(string $root): array
+    {
         $slots = dirname($root) . '/.runtime-slots';
         $this->directory($slots);
         $take = static function (string $prefix, int $count) use ($slots) {
@@ -2302,9 +2327,6 @@ class NativeAppService
         $slot = null;
         $perApp = filter_var(Environment::nonEmpty('NATIVE_WORKERS_PER_APP'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         $perApp = min(self::WORKERS, $perApp === false ? self::WORKERS_PER_APP : $perApp);
-        // A request waits up to three seconds for a slot before it is turned away: most run in
-        // well under a second, so a burst (a screen loading four lists at once) is served, not
-        // answered busy.
         $waitUntil = microtime(true) + 3;
         while (true) {
             $appSlot ??= $take(basename($root) . '-', $perApp);
@@ -2316,6 +2338,30 @@ class NativeAppService
             if ($appSlot) { flock($appSlot, LOCK_UN); fclose($appSlot); }
             throw new RuntimeException('The native host is busy. Try again shortly.', 429);
         }
+        return [$slot, $appSlot];
+    }
+
+    /** @param list<resource> $slots */
+    private function releaseSlots(array $slots): void
+    {
+        foreach ($slots as $lock) {
+            if (is_resource($lock)) { flock($lock, LOCK_UN); fclose($lock); }
+        }
+    }
+
+    private function invoke(string $root, array $request, array $identity = [], array $subscriptions = [], bool $bodyAsWritten = false): array
+    {
+        $protocol = json_decode((string) file_get_contents($this->runtime() . '/host-protocol.json'), true);
+        if ($subscriptions && (!is_file($this->runtime() . '/record-events.mjs') || ($protocol['recordEvents'] ?? null) !== self::RECORD_EVENTS_PROTOCOL)) throw new RuntimeException('Update the native runtime to enable record automations', 503);
+        $runner = $this->runnerBinary();
+        if ($runner === null) $this->assertNodeMeetsMinimum(is_array($protocol) ? $protocol : null);
+        $base = $root . '/private/request-' . bin2hex(random_bytes(12));
+        $input = json_encode($request, JSON_THROW_ON_ERROR);
+        if (strlen($input) > 6000000) throw new InvalidArgumentException('Request exceeds the native host limit');
+        $process = null;
+        // Bound concurrent native workers across every app in this storage root: a request takes a
+        // slot of its own, unless withSlots() holds one for this app already.
+        $slots = $this->heldRoot === $root ? [] : $this->takeSlots($root);
         $answered = false;
         try {
             // A photo is redrawn here, with the slots held (visitorRequest): what is not taken is a
@@ -2338,7 +2384,8 @@ class NativeAppService
             $env = self::nodeEnvironment(getenv(), ['SOFTN_BACKEND_ROOT' => $root, 'SOFTN_HOST_CONTEXT' => json_encode($identity, JSON_THROW_ON_ERROR), 'SOFTN_RECORD_EVENTS' => json_encode($subscriptions, JSON_THROW_ON_ERROR)] + ($memory !== null ? ['SOFTN_RUNNER_MEMORY_MB' => $memory] : []));
             $command = $runner !== null ? [$runner] : self::runnerCommand($node, $this->runtime());
             $process = proc_open($command, [0 => ['file', $base . '.in', 'r'], 1 => ['file', $base . '.out', 'w'], 2 => ['file', $base . '.err', 'w']], $pipes, $root, $env, ['bypass_shell' => true]);
-            if (!is_resource($process)) throw new RuntimeException('Native runtime could not start');
+            // Coded: it never ran, so it committed nothing (NativeAppCharges gives a charge back for it).
+            if (!is_resource($process)) throw new RuntimeException('Native runtime could not start', 503);
             $deadline = microtime(true) + 25;
             do {
                 $status = proc_get_status($process);
@@ -2356,8 +2403,7 @@ class NativeAppService
             return $result;
         } finally {
             if (is_resource($process)) proc_close($process);
-            flock($slot, LOCK_UN); fclose($slot);
-            flock($appSlot, LOCK_UN); fclose($appSlot);
+            $this->releaseSlots($slots);
             // A visitor gets a general error, so this is all anyone will have to go on.
             if (!$answered && is_file($base . '.err') && filesize($base . '.err') > 0) {
                 error_log('Native runner failed in ' . basename($root) . ': ' . file_get_contents($base . '.err', false, null, 0, 4096));

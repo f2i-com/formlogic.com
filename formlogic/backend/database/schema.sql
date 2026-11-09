@@ -950,6 +950,45 @@ CREATE TABLE `app_wallet_codes` (
   KEY `idx_app_wallet_codes_ip` (`ip_key`,`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- A charge's state, pending from its debit until its second run answers (AppWalletService::charge).
+CREATE TABLE `app_wallet_charges` (
+  `id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `wallet_id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `charge_id` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `item` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ref` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `amount_cents` int NOT NULL,
+  `state` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime(3) NOT NULL,
+  `updated_at` datetime(3) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_app_wallet_charges_ref` (`wallet_id`,`ref`),
+  KEY `idx_app_wallet_charges_charge` (`wallet_id`,`charge_id`),
+  KEY `idx_app_wallet_charges_state` (`state`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Each PayPal refund of a top-up, once, for its own amount.
+CREATE TABLE `app_wallet_refunds` (
+  `id` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `topup_id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `amount_cents` int NOT NULL,
+  `created_at` datetime(3) NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_app_wallet_refunds_topup` (`topup_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- A dispute about a top-up: the wallet is held while any on its top-ups is open.
+CREATE TABLE `app_wallet_disputes` (
+  `dispute_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `topup_id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime(3) NOT NULL,
+  `updated_at` datetime(3) NOT NULL,
+  PRIMARY KEY (`dispute_id`,`topup_id`),
+  KEY `idx_app_wallet_disputes_topup` (`topup_id`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Linking an OAIY server with a one-time code (DesktopLinkCodeService): the code's keyed hash, ten minutes and one use.
 CREATE TABLE `desktop_link_codes` (
   `id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,

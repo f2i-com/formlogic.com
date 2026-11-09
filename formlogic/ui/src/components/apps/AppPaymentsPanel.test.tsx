@@ -55,6 +55,18 @@ it('shows what the app sells and what it sold, and saves a lower price with paym
   expect(container.textContent).toContain('Taking payments');
 });
 
+it('marks an item an update added, and saving confirms every price shown', async () => {
+  const items = [{ id: 'download', label: 'Download a logo', priceCents: 5 }, { id: 'poster', label: 'A poster', priceCents: 300 }];
+  vi.spyOn(api, 'getAppPayments').mockResolvedValue({ data: view({ declared: { purpose: 'Logos.', items, routes: ['/api/download'] }, settings: { enabled: true, prices: { download: 5 }, unconfirmed: { poster: 300 } }, maxChargeCents: 200 }) });
+  const put = vi.spyOn(api, 'putAppPayments').mockResolvedValue({ data: view({ declared: { purpose: 'Logos.', items, routes: ['/api/download'] }, settings: { enabled: true, prices: { download: 5, poster: 200 }, unconfirmed: {} } }) });
+  root = createRoot(container);
+  await act(async () => root!.render(<AppPaymentsPanel appId="app-1" />));
+  expect(container.textContent).toContain('not sold until you save its price');
+  await act(async () => [...container.querySelectorAll('button')].find((b) => b.textContent === 'Save')!.click());
+  expect(put).toHaveBeenCalledWith('app-1', { enabled: true, prices: { download: 5, poster: 200 } });
+  expect(container.textContent).not.toContain('not sold until you save its price');
+});
+
 it('says why it cannot be turned on for a member\'s app', async () => {
   vi.spyOn(api, 'getAppPayments').mockResolvedValue({ data: view() });
   vi.spyOn(api, 'putAppPayments').mockResolvedValue({ error: 'This app cannot take payments on this site. Payments go to this site\'s own PayPal, so only its administrators\' apps take them.', status: 400 });

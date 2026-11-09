@@ -24,7 +24,8 @@ export interface PaymentItem { id: string; label: string; priceCents: number }
 /** The owner's "Payments" (GET /api/apps/{id}/payments). */
 export interface AppPaymentsView {
   declared: { purpose: string; items: PaymentItem[]; routes: string[] } | null;
-  settings?: { enabled: boolean; prices: Record<string, number> };
+  /** `prices`: the items the owner has confirmed; `unconfirmed`: ones an update added, not sold until the owner saves a price. */
+  settings?: { enabled: boolean; prices: Record<string, number>; unconfirmed?: Record<string, number> };
   available?: boolean;
   reason?: string | null;
   reasonText?: string | null;

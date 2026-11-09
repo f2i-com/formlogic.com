@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = '719fe7e2de0c0ae0cb91fda61a5175f2';
+    public const SCHEMA_STAMP = '2b2dca3afebb052a26a6a7e6ba569014';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -3130,6 +3130,46 @@ class MySQLConnection
                 created_at DATETIME(3) NOT NULL,
                 KEY idx_app_wallet_codes_email (app_id, email_hash, created_at),
                 KEY idx_app_wallet_codes_ip (ip_key, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        // A charge's state, pending from its debit until its second run answers (AppWalletService::charge).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_wallet_charges (
+                id CHAR(32) NOT NULL PRIMARY KEY,
+                wallet_id CHAR(32) NOT NULL,
+                app_id VARCHAR(36) NOT NULL,
+                charge_id VARCHAR(100) NOT NULL,
+                item VARCHAR(40) NOT NULL,
+                ref VARCHAR(120) NOT NULL,
+                amount_cents INT NOT NULL,
+                state VARCHAR(10) NOT NULL,
+                created_at DATETIME(3) NOT NULL,
+                updated_at DATETIME(3) NOT NULL,
+                UNIQUE KEY uq_app_wallet_charges_ref (wallet_id, ref),
+                KEY idx_app_wallet_charges_charge (wallet_id, charge_id),
+                KEY idx_app_wallet_charges_state (state, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        // Each PayPal refund of a top-up, once, for its own amount.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_wallet_refunds (
+                id VARCHAR(120) NOT NULL PRIMARY KEY,
+                topup_id CHAR(32) NOT NULL,
+                amount_cents INT NOT NULL,
+                created_at DATETIME(3) NOT NULL,
+                KEY idx_app_wallet_refunds_topup (topup_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        // A dispute about a top-up: the wallet is held while any on its top-ups is open.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_wallet_disputes (
+                dispute_id VARCHAR(64) NOT NULL,
+                topup_id CHAR(32) NOT NULL,
+                status VARCHAR(10) NOT NULL,
+                created_at DATETIME(3) NOT NULL,
+                updated_at DATETIME(3) NOT NULL,
+                PRIMARY KEY (dispute_id, topup_id),
+                KEY idx_app_wallet_disputes_topup (topup_id, status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
     }

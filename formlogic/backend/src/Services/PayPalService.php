@@ -17,6 +17,9 @@ class PayPalService
     private string $clientId;
     private string $secret;
     private string $baseUrl;
+    private string $webhookId;
+    /** A stand-in's address named outside development: refused, and payments read as not set up. */
+    private bool $standInRefused = false;
     private ?string $cachedToken = null;
 
     public function __construct(?array $config = null)
@@ -28,13 +31,17 @@ class PayPalService
         $this->baseUrl = $env === 'live'
             ? 'https://api-m.paypal.com'
             : 'https://api-m.sandbox.paypal.com';
+        $this->webhookId = (string) ($config['webhookId'] ?? $_ENV['PAYPAL_WEBHOOK_ID'] ?? '');
         // A stand-in for PayPal (tests/Support/stub-paypal-server.php): named by the code, or by
-        // PAYPAL_BASE_URL outside production only, where it is ignored and said so.
+        // PAYPAL_BASE_URL in development only. Anything but an exact APP_ENV=development is production,
+        // as config/settings.php reads it: there the address is refused, and payments are unavailable
+        // until it is removed (standInRefused()), never sent to whatever it names.
         $override = $config['baseUrl'] ?? null;
         $fromEnv = $_ENV['PAYPAL_BASE_URL'] ?? null;
         if ($override === null && is_string($fromEnv) && $fromEnv !== '') {
-            if (($_ENV['APP_ENV'] ?? 'production') === 'production') {
-                error_log('FormLogic PayPalService: PAYPAL_BASE_URL is ignored in production.');
+            if (($_ENV['APP_ENV'] ?? 'production') !== 'development') {
+                $this->standInRefused = true;
+                error_log('FormLogic PayPalService: PAYPAL_BASE_URL is refused outside development; app payments are unavailable until it is removed.');
             } else {
                 $override = $fromEnv;
             }
@@ -47,6 +54,12 @@ class PayPalService
     public function isConfigured(): bool
     {
         return $this->clientId !== '' && $this->secret !== '';
+    }
+
+    /** Whether PAYPAL_BASE_URL named a stand-in outside development (refused: see the constructor). */
+    public function standInRefused(): bool
+    {
+        return $this->standInRefused;
     }
 
     public function getClientId(): string
@@ -105,7 +118,7 @@ class PayPalService
 
     public function getWebhookId(): string
     {
-        return (string) ($_ENV['PAYPAL_WEBHOOK_ID'] ?? '');
+        return $this->webhookId;
     }
 
     /**

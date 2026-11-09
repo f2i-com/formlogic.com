@@ -424,9 +424,12 @@ them.
 An app that declares `formlogicPayments` can charge its visitors (or members) a few cents from a
 balance they top up through **this site's PayPal**. The money is the site's, so in this version only an
 **administrator's app** takes payments, and only while the administrator's **App payments** switch,
-the Plans payments switch and PayPal are all on and `BETA_MODE` is off. The owner confirms (or lowers)
-each item's price and turns payments on in the app's **Payments** settings; the price charged is the
-owner's, never a number the app sends.
+the Plans payments switch and PayPal are all on and `BETA_MODE` is off. PayPal counts as on with its
+credentials and `PAYPAL_WEBHOOK_ID` (without the webhook, refunds and disputes would never reach a
+wallet), and never with `PAYPAL_BASE_URL` set outside `APP_ENV=development` (a stand-in's address
+there makes payments unavailable). The owner confirms (or lowers) each item's price and turns
+payments on in the app's **Payments** settings; the price charged is the owner's, never a number the
+app sends. An item an app update adds is not sold until the owner saves its price.
 
 **What the app sees** on every request (`req.context.formlogic.wallet`):
 `{available, balanceCents, currency: "USD", items: {<item>: <cents>}, reason?}`. `reason` says why
@@ -441,19 +444,28 @@ that route within one request:
    `A-Z a-z 0-9 _ . : -`; `item` is one of the manifest's items. A route that needs no charge (the
    visitor bought it already, by the app's own records) just answers, and that answer goes back.
 2. **FormLogic decides**: the payer is whoever made this request, the price the owner's for the item.
-   It debits the balance atomically, once per charge id: the same id again is `alreadyPaid` and not
-   charged twice.
+   It debits the balance atomically, once per charge id. The charge is **pending** until the second
+   run answers: the same id from another request meanwhile is declined `in_progress` (ask again in a
+   moment); once settled, the same id is `alreadyPaid`, for its own item only (another item under it
+   is declined `charge_conflict`).
 3. **The second run** carries `req.context.formlogic.payment`
    `{chargeId, item, amountCents, status: "paid" | "declined", code?, balanceCents, alreadyPaid}`.
    Its answer is the one the page gets. `code` on a decline: `insufficient_funds`, `limit_reached` (the
-   wallet's day), `wallet_blocked`, `payments_off`, `unknown_item`, `bad_charge`, `price_too_high`,
-   `visitor_required`.
+   wallet's day), `wallet_blocked`, `payments_off`, `unknown_item`, `price_unconfirmed`, `bad_charge`,
+   `price_too_high`, `visitor_required`, `in_progress`, `charge_conflict`. Both runs hold one worker
+   slot from the first to the last, so a second run is never turned away busy after a debit.
 
 **Rules for the app's author:**
 - Make the charge id the thing being bought, so a retry completes the purchase (`alreadyPaid`) and
   never pays twice.
-- In the second run, answer **2xx when you have delivered what was bought**. A paid charge whose
-  second run answers anything else, throws or times out is **given back at once**.
+- In the second run, answer **2xx when you have delivered what was bought**. A paid charge is
+  **given back** only when that run committed nothing: it threw (FormLogic rolled it back), it never
+  started (the app updated meanwhile, no worker free, the runtime unable to start), it asked to charge
+  again, or it said so itself with `formlogicRefund: true` in its body **and** `rollback: true` (out
+  of stock, say). Any other answer keeps the charge, whatever its status, and so does a run that timed
+  out or whose answer was lost: it may have written the sale, and a retry with the same charge id is
+  `alreadyPaid`, and delivers. A charge whose request died before it answered is given back after 15
+  minutes.
 - Ask once per request: a second ask in the second run is never charged, and the page is told the
   request failed.
 - On a decline the page opens FormLogic's wallet: `softn.backend.call("formlogicWallet", {op: "open"})`.
@@ -463,16 +475,20 @@ that route within one request:
 **The wallet sheet** shows the balance and its latest lines, the top-ups the administrator offers
 ($2 at least), PayPal's buttons, and, where the site can send email, **Save my balance with an email**
 and **Restore a saved balance**: a six-digit code sent to the address joins this browser to the
-balance saved under it. Only a keyed hash of the email is kept. Its routes, for FormLogic's own page:
+balance saved under it. Only a keyed hash of the email is kept. A code is good for five guesses and one
+use, counted atomically; a restore asked for an address no balance is saved under is answered, and
+mailed, the same way. A held balance (disputed, or below zero) is not moved until that is settled.
+Its routes, for FormLogic's own page:
 `GET /api/app/{slug}/wallet`, `POST …/wallet/orders {cents}`, `POST …/wallet/orders/{orderId}` (capture),
 `POST …/wallet/email {purpose: save|restore, email}`, `POST …/wallet/confirm {purpose, email, code}`;
 a visitor's carry `X-FormLogic-Visitor: 1`, as the app's own requests do.
 
 **The ledger.** Every top-up, charge, refund, transfer and correction is a ledger line written with
 the balance, in one transaction. A top-up is credited once (the capture call and PayPal's webhook,
-whichever comes first). A refund or reversal in PayPal takes the money back, below zero if it was
-spent, and the wallet is then held until a top-up settles it; a dispute holds it until it is
-resolved. Five top-ups an hour per visitor and per address; five email codes an hour per address and
+whichever comes first), to the wallet its holder has when it is credited. Each refund or reversal in
+PayPal takes back its own amount once, by its id, below zero if it was spent, and the wallet is then
+held until a top-up settles it; a dispute holds it until every dispute on its top-ups is resolved.
+Five top-ups an hour per visitor and per address; five email codes an hour per address and
 a day per email. Money records never cascade: they outlive the app and its visitors' accounts.
 
 ### Connecting an OAIY server

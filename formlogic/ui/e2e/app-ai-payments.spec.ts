@@ -145,7 +145,7 @@ test('A visitor gets a picture from the site\'s AI and pays 5 cents to download 
   expect((await context.request.post(`/api/apps/${app.id}/publish`, { headers: { 'X-CSRF-Token': csrf }, data: {} })).ok()).toBe(true);
   const ai = await context.request.put(`/api/apps/${app.id}/ai`, { headers: { 'X-CSRF-Token': csrf }, data: { mode: 'site', perRequesterDay: 10, perIpDay: 20, perIpHour: 10, perAppDay: 500 } });
   expect(ai.ok(), await ai.text()).toBe(true);
-  const payments = await context.request.put(`/api/apps/${app.id}/payments`, { headers: { 'X-CSRF-Token': csrf }, data: { enabled: true } });
+  const payments = await context.request.put(`/api/apps/${app.id}/payments`, { headers: { 'X-CSRF-Token': csrf }, data: { enabled: true, prices: { download: 5 } } });
   expect(payments.ok(), await payments.text()).toBe(true);
 
   // The visitor: no account, their own browser.

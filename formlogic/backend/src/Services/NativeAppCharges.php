@@ -15,8 +15,15 @@ namespace FormLogic\Services;
  *    price the owner's for that item, once per charge id.
  * 3. **The second run** carries the outcome in `req.context.formlogic.payment`
  *    {chargeId, item, amountCents, status: paid|declined, code?, balanceCents, alreadyPaid}. Its
- *    answer is the one the page gets. A paid charge whose second run does not answer 2xx (it failed,
- *    timed out, or refused) is given back at once: the visitor pays only for what the app delivered.
+ *    answer is the one the page gets.
+ *
+ * A charge made now is pending until the second run answers. It is given back only when that run
+ * committed nothing: it never started (neverRan()), the runner rolled it back (its own `host_error`
+ * or `database_busy` answer), it asked to charge again (an ask writes nothing), or it said so itself
+ * (`formlogicRefund: true`, with `rollback: true`). Anything else settles it, whatever its status,
+ * and so does a run that timed out or whose answer was lost: it may have written the sale, and a
+ * retry is told it is paid already. Both runs hold one worker slot from first to last ($hold), so a
+ * debit is never followed by a second run turned away busy.
  *
  * Nothing in the page's request, or in the first answer beyond the charge id and the item, decides
  * anything. A second ask in the second run is not charged.
@@ -36,11 +43,20 @@ final class NativeAppCharges
     /**
      * Run the route once or twice. $run(identity) runs the app's backend as $identity and answers
      * `['status' => int, 'body' => mixed]`; $identity is the request's own, its `formlogic.wallet`
-     * already there.
+     * already there. $hold(work) runs work with the app's worker slot held throughout
+     * (NativeAppService::withSlots); without it, each run takes its own.
      *
      * @param callable(array): array $run
+     * @param (callable(callable): array)|null $hold
      */
-    public function handle(array $app, array $declared, ?array $holder, array $identity, callable $run): array
+    public function handle(array $app, array $declared, ?array $holder, array $identity, callable $run, ?callable $hold = null): array
+    {
+        $work = fn(): array => $this->twice($app, $declared, $holder, $identity, $run);
+        return $hold !== null ? $hold($work) : $work();
+    }
+
+    /** @param callable(array): array $run */
+    private function twice(array $app, array $declared, ?array $holder, array $identity, callable $run): array
     {
         $first = $run($identity);
         $ask = self::ask($first);
@@ -50,20 +66,61 @@ final class NativeAppCharges
             : $this->wallets->charge($app, $declared, $holder, $ask['id'], $ask['item']);
         $second = $identity;
         $second['formlogic']['payment'] = array_intersect_key($charge, array_flip(['chargeId', 'item', 'amountCents', 'status', 'code', 'balanceCents', 'alreadyPaid']));
-        $paidNow = $charge['status'] === 'paid' && !$charge['alreadyPaid'] && isset($charge['ref'], $charge['walletId']);
+        $paidNow = $charge['status'] === 'paid' && !$charge['alreadyPaid'] && isset($charge['charge']);
         try {
             $answer = $run($second);
         } catch (\Throwable $e) {
-            if ($paidNow) $this->wallets->refundCharge($charge['walletId'], $charge['ref'], 'The app could not finish: ' . mb_substr($e->getMessage(), 0, 150));
+            // No answer. Given back only if the run never started; one that timed out, or whose answer
+            // was lost, may have committed the sale: it stands, and a retry is told it is paid.
+            if ($paidNow) {
+                if (self::neverRan($e)) $this->wallets->refundCharge($charge['charge'], 'The app could not run: ' . mb_substr($e->getMessage(), 0, 150));
+                else $this->wallets->settleCharge($charge['charge']);
+            }
             throw $e;
         }
         $status = (int) ($answer['status'] ?? 0);
         $asksAgain = self::ask($answer) !== null;
-        if ($paidNow && ($asksAgain || $status < 200 || $status > 299)) {
-            $this->wallets->refundCharge($charge['walletId'], $charge['ref'], 'The app answered ' . $status . ' after the charge.');
+        if ($paidNow) {
+            $why = match (true) {
+                $asksAgain => 'The app asked to charge again.',
+                self::rolledBack($answer) => 'The app could not finish (HTTP ' . $status . ').',
+                self::refundAsked($answer) => 'The app gave it back (HTTP ' . $status . ').',
+                default => null,
+            };
+            if ($why !== null) $this->wallets->refundCharge($charge['charge'], $why);
+            else $this->wallets->settleCharge($charge['charge']);
         }
         // A second ask is never charged: the page is told it went wrong.
         return $asksAgain ? ['status' => 500, 'body' => ['error' => 'The app asked to charge twice for one request.']] : $answer;
+    }
+
+    /**
+     * Whether a run that threw provably never started, so committed nothing (NativeAppService): the
+     * app or its backend gone (404), updated meanwhile (409), the request too large (413 or refused
+     * as invalid), no worker free (429), or the runtime unable to start (503). A timeout or a lost
+     * answer carries no such code.
+     */
+    private static function neverRan(\Throwable $e): bool
+    {
+        return $e instanceof \InvalidArgumentException
+            || ($e instanceof \RuntimeException && in_array($e->getCode(), [404, 409, 413, 429, 503], true));
+    }
+
+    /**
+     * The runner's own answer for a run it rolled back: a handler that threw or failed a host call
+     * (500 `host_error`), or a database it could not begin a transaction on (503 `database_busy`).
+     */
+    private static function rolledBack(array $answer): bool
+    {
+        $status = (int) ($answer['status'] ?? 0);
+        $code = self::field($answer['body'] ?? null, 'code');
+        return ($status === 500 && $code === 'host_error') || ($status === 503 && $code === 'database_busy');
+    }
+
+    /** The app's own word that its second run delivered and wrote nothing: `formlogicRefund: true` (with `rollback: true`). */
+    private static function refundAsked(array $answer): bool
+    {
+        return self::field($answer['body'] ?? null, 'formlogicRefund') === true;
     }
 
     /**

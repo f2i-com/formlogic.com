@@ -31,9 +31,14 @@ export function AppPaymentsPanel({ appId }: { appId: string }) {
 
   if (!view) return error ? <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p> : null;
   if (!view.declared) return null;
+  const declared = view.declared;
+  const ceiling = (asked: number) => Math.min(asked, view.maxChargeCents ?? asked);
+  const unconfirmed = view.settings?.unconfirmed ?? {};
   const save = async () => {
     setBusy(true); setError(null); setSaved(false);
-    const result = await api.putAppPayments(appId, { enabled, prices });
+    // Every item at the price shown, so saving confirms the ones an update added as well.
+    const all = Object.fromEntries(declared.items.map((item) => [item.id, prices[item.id] ?? ceiling(item.priceCents)]));
+    const result = await api.putAppPayments(appId, { enabled, prices: all });
     setBusy(false);
     if (result.error || !result.data) { setError(result.error ?? 'It could not be saved.'); return; }
     setView(result.data);
@@ -41,7 +46,6 @@ export function AppPaymentsPanel({ appId }: { appId: string }) {
     setEnabled(result.data.settings?.enabled ?? false);
     setSaved(true);
   };
-  const ceiling = (declared: number) => Math.min(declared, view.maxChargeCents ?? declared);
 
   return (
     <div className="space-y-4" data-testid="app-payments-panel">
@@ -49,11 +53,15 @@ export function AppPaymentsPanel({ appId }: { appId: string }) {
       <p className="text-sm" role="status">{view.available ? 'Taking payments: visitors pay from a balance they top up through this site\'s PayPal.' : view.reasonText ?? 'Not taking payments.'}</p>
       <Switch label="Take payments" description="Visitors pay these prices from their balance with this app." checked={enabled} onChange={setEnabled} />
       <div className="space-y-2">
-        {view.declared.items.map((item) => (
+        {declared.items.map((item) => (
           <label key={item.id} className="flex items-center justify-between gap-3 text-sm">
-            <span><span className="font-medium">{item.label}</span><span className="block text-xs text-gray-500 dark:text-slate-400">The app asks {formatCents(item.priceCents)}; you may lower it.</span></span>
+            <span>
+              <span className="font-medium">{item.label}</span>
+              <span className="block text-xs text-gray-500 dark:text-slate-400">The app asks {formatCents(item.priceCents)}; you may lower it.</span>
+              {item.id in unconfirmed && <span className="block text-xs text-amber-700 dark:text-amber-300">New in this version: not sold until you save its price.</span>}
+            </span>
             <span className="flex items-center gap-1">
-              <input type="number" min={1} max={ceiling(item.priceCents)} className="w-20 rounded-lg border border-gray-300 px-2 py-1 text-right dark:border-slate-600 dark:bg-slate-800" value={prices[item.id] ?? item.priceCents}
+              <input type="number" min={1} max={ceiling(item.priceCents)} className="w-20 rounded-lg border border-gray-300 px-2 py-1 text-right dark:border-slate-600 dark:bg-slate-800" value={prices[item.id] ?? ceiling(item.priceCents)}
                 onChange={(event) => setPrices((current) => ({ ...current, [item.id]: Math.max(1, Math.min(ceiling(item.priceCents), Math.floor(Number(event.target.value) || 1))) }))} />¢
             </span>
           </label>

@@ -118,7 +118,7 @@ final class AppPaymentsTest extends TestCase
             $this->mail[] = ['to' => $to, 'code' => preg_match('/<strong>(\d{6})<\/strong>/', $html, $m) ? $m[1] : null];
             return true;
         });
-        $paypal = new PayPalService(['clientId' => 'stub-client', 'secret' => 'stub-secret', 'baseUrl' => self::$paypal->base]);
+        $paypal = new PayPalService(['clientId' => 'stub-client', 'secret' => 'stub-secret', 'baseUrl' => self::$paypal->base, 'webhookId' => 'stub-webhook']);
         $this->wallets = new AppWalletService(self::$mysql, $this->site, $paypal, $this->platform, $this->visitors, $this->beta, $email);
         $engines = $this->createMock(RuntimeEngineService::class);
         $engines->method('effective')->willReturn(['id' => 'zipp-web-python', 'requested' => 'zipp-web-python', 'stored' => null, 'revision' => '0123456789abcdef']);
@@ -131,7 +131,9 @@ final class AppPaymentsTest extends TestCase
     {
         if (self::$pdo === null) return;
         foreach ($this->appIds as $appId) {
-            foreach (['app_wallet_ledger', 'app_wallet_topups', 'app_wallet_codes', 'app_wallet_holders', 'app_wallets'] as $table) self::$pdo->prepare("DELETE FROM {$table} WHERE app_id = ?")->execute([$appId]);
+            self::$pdo->prepare('DELETE r FROM app_wallet_refunds r JOIN app_wallet_topups t ON t.id = r.topup_id WHERE t.app_id = ?')->execute([$appId]);
+            self::$pdo->prepare('DELETE d FROM app_wallet_disputes d JOIN app_wallet_topups t ON t.id = d.topup_id WHERE t.app_id = ?')->execute([$appId]);
+            foreach (['app_wallet_charges', 'app_wallet_ledger', 'app_wallet_topups', 'app_wallet_codes', 'app_wallet_holders', 'app_wallets'] as $table) self::$pdo->prepare("DELETE FROM {$table} WHERE app_id = ?")->execute([$appId]);
             self::$pdo->prepare('DELETE FROM app_users WHERE app_id = ?')->execute([$appId]);
             self::$pdo->prepare('DELETE FROM app_role_permissions WHERE role_id IN (SELECT id FROM app_roles WHERE app_id = ?)')->execute([$appId]);
             self::$pdo->prepare('DELETE FROM app_roles WHERE app_id = ?')->execute([$appId]);
@@ -160,6 +162,7 @@ function download(req) {
   if (payment.status !== "paid") return { status: 402, body: { declined: payment.code, balanceCents: payment.balanceCents } };
   if (body.failAfter === "throw") throw new Error("could not make the file");
   if (body.failAfter === "status") return { status: 503, body: { error: "busy" } };
+  if (body.failAfter === "refund") return { status: 409, body: { error: "sold out", formlogicRefund: true }, rollback: true };
   if (body.askAgain) return { status: 402, body: { formlogicCharge: { id: "again", item: "download" } } };
   softn.sql.execute("INSERT INTO purchases(design, buyer, charge) VALUES(?,?,?)", [design, buyer(req), payment.chargeId]);
   return { status: 200, body: { design: design, paid: payment.amountCents, balanceCents: payment.balanceCents, alreadyPaid: payment.alreadyPaid } };
@@ -167,7 +170,10 @@ function download(req) {
 function whoami(req) { return { status: 200, body: { wallet: req.context && req.context.formlogic ? req.context.formlogic.wallet || null : null } }; }
 JS;
 
-    private function app(): array
+    /** The test app's formlogicPayments, as AppFormlogicManifest reads it. */
+    private const DECLARED = ['items' => ['download' => ['label' => 'Download a logo', 'priceCents' => 5], 'poster' => ['label' => 'A poster', 'priceCents' => 300]], 'routes' => ['/api/download'], 'purpose' => ''];
+
+    private function app(string $access = 'application'): array
     {
         $manifest = [
             'name' => 'Logo shop', 'version' => '0.0.1', 'main' => 'ui/main.ui',
@@ -184,23 +190,25 @@ JS;
         ];
         $app = self::$apps->createApp(['name' => 'Logo shop ' . bin2hex(random_bytes(3)), 'settings' => ['softnApp' => true]], $this->ownerId);
         $this->appIds[] = $app['id'];
-        $this->native->install($app['id'], ['version' => 0, 'home' => true, 'access' => 'application', 'assets' => [], 'files' => [
+        $this->native->install($app['id'], ['version' => 0, 'home' => true, 'access' => $access, 'assets' => [], 'files' => [
             'manifest.json' => json_encode($manifest, JSON_UNESCAPED_SLASHES), 'ui/main.ui' => '<Stack><Text>Shop</Text></Stack>', 'server/main.logic' => self::SERVER,
             'server/migrations/001.sql' => "CREATE TABLE purchases(design TEXT, buyer TEXT, charge TEXT);\nCREATE TABLE asked(design TEXT);",
         ]], 0);
         self::$pdo->prepare("UPDATE apps SET status = 'published' WHERE id = ?")->execute([$app['id']]);
-        self::$pdo->prepare('INSERT INTO app_payment_settings (app_id, enabled) VALUES (?, 1)')->execute([$app['id']]);
+        // Payments on, each item's price confirmed by the owner.
+        self::$pdo->prepare('INSERT INTO app_payment_settings (app_id, enabled, prices) VALUES (?, 1, ?)')->execute([$app['id'], '{"download":5,"poster":300}']);
         return self::$apps->getApp($app['id']);
     }
 
     /** One request from the app's page as a visitor whose browser holds $cookie (a new one when empty). */
-    private function call(array $app, string $path, array $body = [], array &$cookie = [], string $method = 'POST'): array
+    private function call(array $app, string $path, array $body = [], array &$cookie = [], string $method = 'POST', ?string $user = null): array
     {
         $payload = ['method' => $method, 'path' => $path, 'query' => [], 'headers' => [], 'body' => $body === [] ? new \stdClass() : $body];
         $request = (new ServerRequestFactory())->createServerRequest('POST', self::ORIGIN . '/api/app/' . $app['slug'] . '/native/request', ['REMOTE_ADDR' => self::IP])
             ->withHeader('Host', '127.0.0.1:8300')->withHeader('Content-Type', 'application/json')->withHeader(AppVisitors::HEADER, '1')->withHeader('Origin', self::ORIGIN)
             ->withCookieParams($cookie)->withParsedBody(json_decode((string) json_encode($payload), true));
         $request->getBody()->write((string) json_encode($payload));
+        if ($user !== null) $request = $request->withAttribute('userId', $user)->withAttribute('user', new \FormLogic\Models\User(id: $user, email: $user . '@test.local'));
         $response = $this->controller->runtime($request, new Response(), ['slug' => $app['slug']]);
         if (preg_match('/formlogic_visitor=([^;]+)/', $response->getHeaderLine('Set-Cookie'), $m)) $cookie = [AppVisitors::COOKIE => $m[1]];
         $data = json_decode((string) $response->getBody(), true);
@@ -262,9 +270,11 @@ JS;
         $this->assertSame([true, 196, 'USD', ['download' => 4, 'poster' => 300]], [$context['available'], $context['balanceCents'], $context['currency'], $context['items']]);
     }
 
-    public function testTheSameChargeIdIsNeverChargedTwiceAndAFailedSecondRunIsGivenBack(): void
+    /** M1: only a second run that committed nothing is given back; any other answer keeps the charge for a retry. */
+    #[DataProvider('runners')]
+    public function testTheSameChargeIdIsNeverChargedTwiceAndOnlyARunThatCommittedNothingIsGivenBack(string $runner): void
     {
-        $this->boot();
+        $this->boot($runner);
         $app = $this->app();
         $cookie = [];
         $this->call($app, '/api/whoami', [], $cookie, 'GET');
@@ -276,22 +286,207 @@ JS;
         $retry = $this->call($app, '/api/download', ['design' => 'd2'], $cookie);
         $this->assertSame([200, true, 195], [$retry['status'], $retry['body']['alreadyPaid'] ?? null, $retry['body']['balanceCents'] ?? null]);
 
-        foreach (['throw' => 500, 'status' => 503] as $how => $expected) {
+        // Given back: a run that threw (the runner rolled it back), and one that said so with rollback.
+        foreach (['throw' => [500, 'host_error'], 'refund' => [409, null]] as $how => [$expected, $code]) {
             $failed = $this->call($app, '/api/download', ['design' => 'd-' . $how, 'failAfter' => $how], $cookie);
-            $this->assertNotSame(200, $failed['status'] ?? $failed['http']);
+            $this->assertSame([$expected, $code], [$failed['status'], $failed['body']['code'] ?? null], $how . ': ' . json_encode($failed));
             $this->assertSame(195, (int) ($this->wallets->wallet($app['id'], $holder, false)['balance_cents'] ?? 0), "{$how}: the charge was given back");
         }
-        $kinds = array_column($this->ledger($app), 'kind');
-        $this->assertSame(['topup', 'charge', 'charge', 'refund', 'charge', 'refund'], $kinds);
-        // Bought again after a failure: a new charge, the next ref.
-        $ok = $this->call($app, '/api/download', ['design' => 'd-status'], $cookie);
-        $this->assertSame([200, 190], [$ok['status'], $ok['body']['balanceCents'] ?? null]);
+        // Not 2xx, but it may have written the sale: the charge stands, and the retry is told it is paid.
+        $kept = $this->call($app, '/api/download', ['design' => 'd-status', 'failAfter' => 'status'], $cookie);
+        $this->assertSame(503, $kept['status']);
+        $this->assertSame(190, (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents']);
+        $retry = $this->call($app, '/api/download', ['design' => 'd-status'], $cookie);
+        $this->assertSame([200, true, 190], [$retry['status'], $retry['body']['alreadyPaid'] ?? null, $retry['body']['balanceCents'] ?? null]);
+        $this->assertSame(['topup', 'charge', 'charge', 'refund', 'charge', 'refund', 'charge'], array_column($this->ledger($app), 'kind'));
+        // Bought again after one was given back: a new charge, the next ref.
+        $ok = $this->call($app, '/api/download', ['design' => 'd-throw'], $cookie);
+        $this->assertSame([200, 185], [$ok['status'], $ok['body']['balanceCents'] ?? null]);
         $lines = $this->ledger($app);
-        $this->assertSame('download:d-status#2', end($lines)['ref'] ?? null);
+        $this->assertSame('download:d-throw#2', end($lines)['ref'] ?? null);
         // A second ask in the second run is never charged, and the first is given back.
         $twice = $this->call($app, '/api/download', ['design' => 'd3', 'askAgain' => true], $cookie);
         $this->assertSame(500, $twice['status']);
-        $this->assertSame(190, (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents']);
+        $this->assertSame(185, (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents']);
+        $this->assertSame(0, (int) self::$pdo->query("SELECT COUNT(*) FROM app_wallet_charges WHERE state = 'pending' AND app_id = " . self::$pdo->quote($app['id']))->fetchColumn(), 'every charge settled or given back');
+    }
+
+    /** M1: a second run that throws is given back only when it never started; a timeout may have committed, and keeps it. */
+    public function testASecondRunThatThrowsIsGivenBackOnlyWhenItNeverStarted(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $cookie = [];
+        $this->call($app, '/api/whoami', [], $cookie, 'GET');
+        $holder = $this->visitorOf($cookie, $app['id']);
+        $this->topUp($app, $holder, 200);
+        $charges = new NativeAppCharges($this->wallets);
+        foreach ([
+            ['download:t1', new \RuntimeException('The app was updated while this request was in flight. Reload and try again.', 409), 'refunded'],
+            ['download:t2', new \RuntimeException('Native runtime could not start', 503), 'refunded'],
+            ['download:t3', new \RuntimeException('Native request timed out'), 'settled'],
+            ['download:t4', new \RuntimeException('Native runtime returned no response'), 'settled'],
+        ] as [$id, $thrown, $state]) {
+            $runs = 0;
+            $run = static function (array $identity) use (&$runs, $id, $thrown): array {
+                if (++$runs === 1) return ['status' => 402, 'body' => ['formlogicCharge' => ['id' => $id, 'item' => 'download']]];
+                throw $thrown;
+            };
+            try {
+                $charges->handle($app, self::DECLARED, $holder, ['formlogic' => ['appId' => $app['id']]], $run);
+                $this->fail('the second run threw');
+            } catch (\RuntimeException $e) {
+                $this->assertSame($thrown, $e, 'the page is told what went wrong');
+            }
+            $this->assertSame($state, self::$pdo->query('SELECT state FROM app_wallet_charges WHERE charge_id = ' . self::$pdo->quote($id))->fetchColumn(), $thrown->getMessage());
+        }
+        $this->assertSame(190, (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents'], 'the two that never ran given back; the two that may have committed kept');
+        $retry = $this->wallets->charge($app, self::DECLARED, $holder, 'download:t3', 'download');
+        $this->assertSame([true, 190], [$retry['alreadyPaid'], $retry['balanceCents']], 'and a retry delivers without paying again');
+    }
+
+    /** H1, M2: a charge being paid is in progress for any other request, never paid; another item under its id is a conflict. */
+    public function testAChargeBeingPaidIsInProgressElsewhereAndASettledOneIsPaidForItsOwnItemOnly(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $cookie = [];
+        $this->call($app, '/api/whoami', [], $cookie, 'GET');
+        $holder = $this->visitorOf($cookie, $app['id']);
+        $this->topUp($app, $holder, 200);
+        $paid = $this->wallets->charge($app, self::DECLARED, $holder, 'download:x', 'download');
+        $this->assertSame(['paid', false, 195], [$paid['status'], $paid['alreadyPaid'], $paid['balanceCents']]);
+        $this->assertSame(['declined', 'in_progress'], [($again = $this->wallets->charge($app, self::DECLARED, $holder, 'download:x', 'download'))['status'], $again['code'] ?? null], 'not told it is paid while the first is unfinished');
+        $this->assertSame('charge_conflict', $this->wallets->charge($app, self::DECLARED, $holder, 'download:x', 'poster')['code'] ?? null);
+        $this->wallets->settleCharge($paid['charge']);
+        $settled = $this->wallets->charge($app, self::DECLARED, $holder, 'download:x', 'download');
+        $this->assertSame(['paid', true, 5, 195], [$settled['status'], $settled['alreadyPaid'], $settled['amountCents'], $settled['balanceCents']]);
+        $poster = $this->wallets->charge($app, self::DECLARED, $holder, 'download:x', 'poster');
+        $this->assertSame(['declined', 'charge_conflict'], [$poster['status'], $poster['code'] ?? null], 'never the 300 cent poster on a 5 cent payment');
+        $this->assertFalse($this->wallets->refundCharge($paid['charge'], 'too late'), 'a settled charge is never given back');
+        $this->assertSame(195, (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents']);
+    }
+
+    /** L7: a charge a dead request left pending is given back, once, and the id can be bought again. */
+    public function testAChargeLeftPendingByARequestThatDiedIsGivenBack(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $cookie = [];
+        $this->call($app, '/api/whoami', [], $cookie, 'GET');
+        $holder = $this->visitorOf($cookie, $app['id']);
+        $this->topUp($app, $holder, 200);
+        $paid = $this->wallets->charge($app, self::DECLARED, $holder, 'download:dead', 'download');
+        $wallet = (string) $this->wallets->wallet($app['id'], $holder, false)['id'];
+        $this->assertSame(0, $this->wallets->refundStale($wallet), 'not yet stale');
+        self::$pdo->prepare('UPDATE app_wallet_charges SET created_at = ? WHERE id = ?')->execute([\FormLogic\Services\AppAiService::stamp(time() - AppWalletService::STALE_CHARGE_SECONDS - 60), $paid['charge']]);
+        $again = $this->wallets->charge($app, self::DECLARED, $holder, 'download:dead', 'download');
+        $this->assertSame(['paid', false, 195], [$again['status'], $again['alreadyPaid'], $again['balanceCents']], 'the stale one given back first, then charged anew');
+        $this->assertSame(['refunded', 'pending'], [
+            self::$pdo->query('SELECT state FROM app_wallet_charges WHERE id = ' . self::$pdo->quote($paid['charge']))->fetchColumn(),
+            self::$pdo->query('SELECT state FROM app_wallet_charges WHERE id = ' . self::$pdo->quote($again['charge']))->fetchColumn(),
+        ]);
+        $this->assertSame(0, $this->wallets->refundStale($wallet));
+    }
+
+    /** L5: an item the owner has not confirmed a price for is not sold. */
+    public function testAnItemTheOwnerHasNotConfirmedIsNotSold(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        self::$pdo->prepare('UPDATE app_payment_settings SET prices = ? WHERE app_id = ?')->execute(['{"download":5}', $app['id']]);
+        $cookie = [];
+        $context = $this->call($app, '/api/whoami', [], $cookie, 'GET')['body']['wallet'];
+        $this->assertSame(['download' => 5], $context['items'], 'only confirmed items are offered');
+        $holder = $this->visitorOf($cookie, $app['id']);
+        $this->topUp($app, $holder, 500);
+        $this->assertSame('price_unconfirmed', $this->wallets->charge($app, self::DECLARED, $holder, 'poster:1', 'poster')['code'] ?? null);
+        $this->assertSame(['poster' => 300], $this->wallets->settings($app['id'], self::DECLARED)['unconfirmed']);
+        $this->wallets->saveSettings($app, self::DECLARED, ['prices' => ['poster' => 250]], $this->ownerId);
+        $this->assertSame([], $this->wallets->settings($app['id'], self::DECLARED)['unconfirmed']);
+        $this->assertSame(['paid', 250], [($sold = $this->wallets->charge($app, self::DECLARED, $holder, 'poster:1', 'poster'))['status'], $sold['amountCents']]);
+    }
+
+    /** H1: both runs of a charge run in one worker slot, held from the first to the last. */
+    public function testBothRunsOfAChargeHoldOneWorkerSlot(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $before = [getenv('NATIVE_WORKERS_PER_APP'), $_ENV['NATIVE_WORKERS_PER_APP'] ?? null];
+        putenv('NATIVE_WORKERS_PER_APP=1');
+        $_ENV['NATIVE_WORKERS_PER_APP'] = '1';
+        try {
+            $ping = ['method' => 'GET', 'path' => '/api/whoami', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false];
+            $other = new NativeAppService((new \ReflectionProperty(NativeAppService::class, 'storagePath'))->getValue($this->native), null, getenv('FORMLOGIC_NODE_BIN') ?: null);
+            $seen = $this->native->withSlots($app['id'], function () use ($app, $ping, $other): array {
+                $answers = [$this->native->request($app['id'], $ping)['status'], $this->native->request($app['id'], $ping)['status']];
+                $started = microtime(true);
+                try {
+                    $other->request($app['id'], $ping);
+                    $answers[] = 'served';
+                } catch (\RuntimeException $e) {
+                    $answers[] = $e->getCode();
+                }
+                $answers[] = microtime(true) - $started >= 2.5;
+                return $answers;
+            });
+            $this->assertSame([200, 200, 429, true], $seen, 'the runs inside take the held slot; anyone else waits for it, then is turned away');
+            $this->assertSame(200, $other->request($app['id'], $ping)['status'], 'and it is free again once the work ends');
+        } finally {
+            $before[0] === false ? putenv('NATIVE_WORKERS_PER_APP') : putenv('NATIVE_WORKERS_PER_APP=' . $before[0]);
+            if ($before[1] === null) unset($_ENV['NATIVE_WORKERS_PER_APP']); else $_ENV['NATIVE_WORKERS_PER_APP'] = $before[1];
+        }
+    }
+
+    /** M3, M4: a stand-in PayPal is refused outside development, and payments need the webhook. */
+    public function testAStandInPayPalIsRefusedOutsideDevelopmentAndPaymentsNeedTheWebhook(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $before = [$_ENV['APP_ENV'] ?? null, $_ENV['PAYPAL_BASE_URL'] ?? null];
+        $wallets = fn(PayPalService $paypal) => new AppWalletService(self::$mysql, $this->site, $paypal, $this->platform, $this->visitors);
+        $base = static fn(PayPalService $paypal): string => (new \ReflectionProperty(PayPalService::class, 'baseUrl'))->getValue($paypal);
+        try {
+            $_ENV['PAYPAL_BASE_URL'] = self::$paypal->base;
+            foreach (['production', 'staging', 'prod', 'Production', 'Development', 'test', ''] as $env) {
+                $_ENV['APP_ENV'] = $env;
+                $paypal = new PayPalService(['clientId' => 'a', 'secret' => 'b', 'webhookId' => 'w']);
+                $this->assertSame([true, 'https://api-m.sandbox.paypal.com'], [$paypal->standInRefused(), $base($paypal)], "APP_ENV={$env}");
+                $this->assertSame('paypal_unconfigured', $wallets($paypal)->availability($app)['reason'], "APP_ENV={$env}: payments are unavailable, never sent to the stand-in");
+            }
+            $_ENV['APP_ENV'] = 'development';
+            $paypal = new PayPalService(['clientId' => 'a', 'secret' => 'b', 'webhookId' => 'w']);
+            $this->assertSame([false, self::$paypal->base], [$paypal->standInRefused(), $base($paypal)]);
+            $this->assertTrue($wallets($paypal)->availability($app)['available']);
+            $this->assertSame('paypal_unconfigured', $wallets(new PayPalService(['clientId' => 'a', 'secret' => 'b', 'webhookId' => '']))->availability($app)['reason'], 'no webhook: refunds and disputes would never reach a wallet');
+        } finally {
+            foreach (['APP_ENV' => $before[0], 'PAYPAL_BASE_URL' => $before[1]] as $name => $value) {
+                if ($value === null) unset($_ENV[$name]); else $_ENV[$name] = $value;
+            }
+        }
+    }
+
+    /** A members app's wallet is the member's, and one app's balance is never another's. */
+    public function testAMembersWalletIsTheirsAndAppsAreKeptApart(): void
+    {
+        $this->boot();
+        $members = $this->app('members');
+        $owner = ['kind' => 'user', 'id' => $this->ownerId];
+        $this->topUp($members, $owner, 200);
+        $none = [];
+        $bought = $this->call($members, '/api/download', ['design' => 'm1'], $none, 'POST', $this->ownerId);
+        $this->assertSame([200, 195], [$bought['status'], $bought['body']['balanceCents'] ?? null], json_encode($bought));
+        $this->assertSame('user:' . substr($this->ownerId, 0, 40), self::$pdo->query("SELECT actor FROM app_wallet_ledger WHERE kind = 'charge' AND app_id = " . self::$pdo->quote($members['id']))->fetchColumn());
+        // Another app: the same person has nothing there, and its orders are not theirs to capture.
+        $other = $this->app('members');
+        $this->assertSame('insufficient_funds', $this->wallets->charge($other, self::DECLARED, $owner, 'download:m1', 'download')['code'] ?? null);
+        $order = self::$pdo->query('SELECT order_id FROM app_wallet_topups WHERE app_id = ' . self::$pdo->quote($members['id']))->fetchColumn();
+        try {
+            $this->wallets->captureTopup($other, $owner, (string) $order);
+            $this->fail('another app\'s top-up');
+        } catch (WalletRefusal $e) {
+            $this->assertSame('not_found', $e->reason);
+        }
     }
 
     public function testDeclinesSayWhy(): void
@@ -457,10 +652,10 @@ JS;
         $second = [];
         $this->call($app, '/api/whoami', [], $second, 'GET');
         $this->topUp($app, $this->visitorOf($second, $app['id']), 200);
-        $this->wallet($app, 'POST', ['operation' => 'email'], ['purpose' => 'restore', 'email' => 'nobody@example.com'], $second);
-        $this->assertCount(1, $this->mail, 'no wallet under that email: nothing is sent, and the answer is the same');
+        $this->assertSame(202, $this->wallet($app, 'POST', ['operation' => 'email'], ['purpose' => 'restore', 'email' => 'nobody@example.com'], $second)['http']);
+        $this->assertSame(['nobody@example.com', null], [$this->mail[1]['to'], $this->mail[1]['code']], 'no balance under that email: answered and mailed the same, with no code');
         $this->assertSame(202, $this->wallet($app, 'POST', ['operation' => 'email'], ['purpose' => 'restore', 'email' => 'buyer@example.com'], $second)['http']);
-        $restored = $this->wallet($app, 'POST', ['operation' => 'confirm'], ['purpose' => 'restore', 'email' => 'buyer@example.com', 'code' => $this->mail[1]['code']], $second);
+        $restored = $this->wallet($app, 'POST', ['operation' => 'confirm'], ['purpose' => 'restore', 'email' => 'buyer@example.com', 'code' => $this->mail[2]['code']], $second);
         $this->assertSame(700, $restored['body']['data']['balanceCents'], 'both balances, in one wallet');
         $this->assertSame(
             $this->wallets->wallet($app['id'], $this->visitorOf($first, $app['id']), false)['id'],
@@ -475,6 +670,135 @@ JS;
         $this->wallet($app, 'POST', ['operation' => 'email'], ['purpose' => 'save', 'email' => 'buyer@example.com'], $second);
         for ($i = 0; $i < 5; $i++) $this->wallet($app, 'POST', ['operation' => 'confirm'], ['purpose' => 'save', 'email' => 'buyer@example.com', 'code' => '99999' . $i], $second);
         $this->assertSame(400, $this->wallet($app, 'POST', ['operation' => 'confirm'], ['purpose' => 'save', 'email' => 'buyer@example.com', 'code' => end($this->mail)['code']], $second)['http']);
+    }
+
+    /** M5: a code works once and for ten minutes. */
+    public function testACodeIsSpentOnceAndRunsOut(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $cookie = [];
+        $this->call($app, '/api/whoami', [], $cookie, 'GET');
+        $holder = $this->visitorOf($cookie, $app['id']);
+        $this->topUp($app, $holder, 200);
+        $this->wallets->sendCode($app, $holder, 'save', 'once@example.com', 'dddddddddddddddd');
+        $code = (string) end($this->mail)['code'];
+        $this->assertSame(200, $this->wallets->confirmCode($app, $holder, 'save', 'once@example.com', $code)['balanceCents']);
+        try {
+            $this->wallets->confirmCode($app, $holder, 'save', 'once@example.com', $code);
+            $this->fail('a code used twice');
+        } catch (WalletRefusal $e) {
+            $this->assertSame('bad_code', $e->reason);
+        }
+        $this->wallets->sendCode($app, $holder, 'save', 'late@example.com', 'dddddddddddddddd');
+        self::$pdo->prepare("UPDATE app_wallet_codes SET expires_at = UTC_TIMESTAMP() - INTERVAL 1 MINUTE WHERE app_id = ? AND used_at IS NULL")->execute([$app['id']]);
+        try {
+            $this->wallets->confirmCode($app, $holder, 'save', 'late@example.com', (string) end($this->mail)['code']);
+            $this->fail('a code past its ten minutes');
+        } catch (WalletRefusal $e) {
+            $this->assertSame('bad_code', $e->reason);
+        }
+    }
+
+    /** L2: a held balance stays where it is held; a blocked one a restore brings to zero or more is open again. */
+    public function testARestoreNeverMovesAHeldBalanceAndSettlesABlockedOne(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $saved = [];
+        $this->call($app, '/api/whoami', [], $saved, 'GET');
+        $savedHolder = $this->visitorOf($saved, $app['id']);
+        $this->wallets->sendCode($app, $savedHolder, 'save', 'held@example.com', 'eeeeeeeeeeeeeeee');
+        $this->wallets->confirmCode($app, $savedHolder, 'save', 'held@example.com', (string) end($this->mail)['code']);
+        $savedWallet = (string) $this->wallets->wallet($app['id'], $savedHolder, false)['id'];
+        // Held: a disputed balance in another browser is not moved into the saved one.
+        $held = [];
+        $this->call($app, '/api/whoami', [], $held, 'GET');
+        $heldHolder = $this->visitorOf($held, $app['id']);
+        $this->topUp($app, $heldHolder, 200);
+        self::$pdo->prepare("UPDATE app_wallets SET status = 'disputed' WHERE id = ?")->execute([$this->wallets->wallet($app['id'], $heldHolder, false)['id']]);
+        $this->wallets->sendCode($app, $heldHolder, 'restore', 'held@example.com', 'eeeeeeeeeeeeeeee');
+        try {
+            $this->wallets->confirmCode($app, $heldHolder, 'restore', 'held@example.com', (string) end($this->mail)['code']);
+            $this->fail('a disputed balance moved');
+        } catch (WalletRefusal $e) {
+            $this->assertSame([409, 'wallet_held'], [$e->status, $e->reason]);
+        }
+        $this->assertSame(['disputed', 200], [$this->wallets->wallet($app['id'], $heldHolder, false)['status'], (int) $this->wallets->wallet($app['id'], $heldHolder, false)['balance_cents']]);
+        // Blocked below zero, then a restore brings 200 to it: settled, and open again.
+        self::$pdo->prepare("UPDATE app_wallets SET status = 'blocked', balance_cents = -5 WHERE id = ?")->execute([$savedWallet]);
+        $fresh = [];
+        $this->call($app, '/api/whoami', [], $fresh, 'GET');
+        $freshHolder = $this->visitorOf($fresh, $app['id']);
+        $this->topUp($app, $freshHolder, 200);
+        $this->wallets->sendCode($app, $freshHolder, 'restore', 'held@example.com', 'ffffffffffffffff');
+        $this->assertSame(195, $this->wallets->confirmCode($app, $freshHolder, 'restore', 'held@example.com', (string) end($this->mail)['code'])['balanceCents']);
+        $this->assertSame('active', $this->wallets->wallet($app['id'], $freshHolder, false)['status']);
+    }
+
+    /** L3, L4, a mismatched capture: two disputes, refunds once each for their own amounts, and a reversal named by its capture. */
+    public function testRefundsAreTakenOnceEachAndAWalletIsHeldUntilEveryDisputeIsResolved(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $cookie = [];
+        $this->call($app, '/api/whoami', [], $cookie, 'GET');
+        $holder = $this->visitorOf($cookie, $app['id']);
+        $this->topUp($app, $holder, 500);
+        $this->topUp($app, $holder, 200);
+        $captures = array_map(static fn(string $order) => 'STUBCAP' . substr($order, 9), self::$pdo->query('SELECT order_id FROM app_wallet_topups WHERE app_id = ' . self::$pdo->quote($app['id']) . ' ORDER BY created_at')->fetchAll(PDO::FETCH_COLUMN));
+        $balance = fn(): int => (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents'];
+        $refund = static fn(string $id, string $capture, string $value, ?string $total = null) => ['id' => $id, 'amount' => ['currency_code' => 'USD', 'value' => $value],
+            'links' => [['rel' => 'up', 'href' => 'https://api-m.paypal.com/v2/payments/captures/' . $capture]]] + ($total !== null ? ['seller_payable_breakdown' => ['total_refunded_amount' => ['currency_code' => 'USD', 'value' => $total]]] : []);
+        // Two partial refunds of the $5 top-up, each delivered twice: each taken once, for its own amount.
+        foreach ([['R1', '1.00', '1.00'], ['R2', '2.00', '3.00'], ['R1', '1.00', '1.00'], ['R2', '2.00', '3.00']] as [$id, $value, $total]) {
+            $this->assertTrue($this->wallets->webhook('PAYMENT.CAPTURE.REFUNDED', $refund($id, $captures[0], $value, $total)));
+        }
+        $this->assertSame(400, $balance());
+        // A negative amount takes nothing; a reversal with no refund id or total takes what is left, once.
+        $this->wallets->webhook('PAYMENT.CAPTURE.REFUNDED', $refund('R3', $captures[0], '-4.00'));
+        $this->assertSame(400, $balance());
+        $reversal = ['id' => $captures[0], 'amount' => ['currency_code' => 'USD', 'value' => '5.00'], 'status' => 'REVERSED'];
+        $this->wallets->webhook('PAYMENT.CAPTURE.REVERSED', $reversal);
+        $this->wallets->webhook('PAYMENT.CAPTURE.REVERSED', $reversal);
+        $this->assertSame(200, $balance(), 'the $2 left of the $5, once: never more than the top-up');
+        $this->assertSame(['reversed', 500], array_map(static fn($v) => is_numeric($v) ? (int) $v : $v, self::$pdo->query('SELECT status, refunded_cents FROM app_wallet_topups WHERE capture_id = ' . self::$pdo->quote($captures[0]))->fetch(PDO::FETCH_NUM)));
+        // Two disputes on two top-ups: held until both are resolved.
+        $dispute = static fn(string $id, string $capture) => ['dispute_id' => $id, 'disputed_transactions' => [['seller_transaction_id' => $capture]]];
+        $this->wallets->webhook('CUSTOMER.DISPUTE.CREATED', $dispute('D1', $captures[0]));
+        $this->wallets->webhook('CUSTOMER.DISPUTE.CREATED', $dispute('D2', $captures[1]));
+        $this->wallets->webhook('CUSTOMER.DISPUTE.RESOLVED', $dispute('D1', $captures[0]));
+        $this->assertSame('disputed', $this->wallets->wallet($app['id'], $holder, false)['status'], 'the other is still open');
+        $this->wallets->webhook('CUSTOMER.DISPUTE.RESOLVED', $dispute('D2', $captures[1]));
+        $this->assertSame('active', $this->wallets->wallet($app['id'], $holder, false)['status']);
+        // A capture of another amount, by webhook: not credited.
+        $order = $this->wallets->createTopup($app, $holder, 200, 'aaaaaaaaaaaaaaaa')['orderId'];
+        self::$paypal->approve($order, 'pending');
+        $this->wallets->captureTopup($app, $holder, $order);
+        $this->wallets->webhook('PAYMENT.CAPTURE.COMPLETED', ['id' => 'STUBCAP' . substr($order, 9), 'status' => 'COMPLETED', 'amount' => ['currency_code' => 'USD', 'value' => '20.00']]);
+        $this->assertSame(200, $balance());
+    }
+
+    /** L8: a top-up is credited to the wallet its holder has when it is credited. */
+    public function testATopUpIsCreditedToTheWalletItsHolderHasNow(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $cookie = [];
+        $this->call($app, '/api/whoami', [], $cookie, 'GET');
+        $holder = $this->visitorOf($cookie, $app['id']);
+        $order = $this->wallets->createTopup($app, $holder, 200, 'aaaaaaaaaaaaaaaa')['orderId'];
+        $old = (string) $this->wallets->wallet($app['id'], $holder, false)['id'];
+        // Restored elsewhere meanwhile (the old wallet still held by another browser, so its top-ups stay).
+        $now = bin2hex(random_bytes(16));
+        $stamp = \FormLogic\Services\AppAiService::stamp(microtime(true));
+        self::$pdo->prepare("INSERT INTO app_wallets (id, app_id, balance_cents, status, created_at, updated_at) VALUES (?, ?, 0, 'active', ?, ?)")->execute([$now, $app['id'], $stamp, $stamp]);
+        self::$pdo->prepare('UPDATE app_wallet_holders SET wallet_id = ? WHERE app_id = ? AND holder_kind = ? AND holder_id = ?')->execute([$now, $app['id'], $holder['kind'], $holder['id']]);
+        self::$pdo->prepare("INSERT INTO app_wallet_holders (app_id, holder_kind, holder_id, wallet_id, created_at) VALUES (?, 'visitor', ?, ?, ?)")->execute([$app['id'], str_repeat('9', 32), $old, $stamp]);
+        self::$paypal->approve($order);
+        $this->assertSame(['completed', 200], array_values(array_intersect_key($this->wallets->captureTopup($app, $holder, $order), ['status' => 1, 'balanceCents' => 1])));
+        $this->assertSame([200, 0], [(int) self::$pdo->query('SELECT balance_cents FROM app_wallets WHERE id = ' . self::$pdo->quote($now))->fetchColumn(), (int) self::$pdo->query('SELECT balance_cents FROM app_wallets WHERE id = ' . self::$pdo->quote($old))->fetchColumn()]);
+        $this->assertSame($now, self::$pdo->query('SELECT wallet_id FROM app_wallet_topups WHERE order_id = ' . self::$pdo->quote($order))->fetchColumn());
     }
 
     public function testTheWalletNeedsFormLogicsMarkedRequest(): void

@@ -369,7 +369,10 @@ class NativeAppController
             $run = fn(array $context = [], ?array $who = null) => $this->native->request($app['id'], $nativeRequest, ($who ?? $identity) + $context, $subscriptions, (int) ($project['version'] ?? 0), true, $plugin === null ? 'app' : 'plugin');
             if ($plugin === null && $this->charges !== null && ($asks['payments'] ?? null) !== null && NativeAppCharges::applies($asks['payments'], $nativeRequest)) {
                 // A route that may ask for a charge: run once, and again with the outcome.
-                $result = $this->charges->handle($app, $asks['payments'], $requester, $identity, static fn(array $who) => $run([], $who));
+                // Both runs in one worker slot, held from the first to the last, so a debit is never
+                // followed by a second run turned away busy.
+                $result = $this->charges->handle($app, $asks['payments'], $requester, $identity, static fn(array $who) => $run([], $who),
+                    fn(callable $work): array => $this->native->withSlots((string) $app['id'], $work));
             } else {
                 $result = $plugin === null && $this->verification !== null && $this->verification->applies($app['id'], $nativeRequest)
                     ? $this->verification->handle($app['id'], $nativeRequest, $run)
