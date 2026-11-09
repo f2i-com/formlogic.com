@@ -17,12 +17,13 @@ namespace FormLogic\Services;
  *    {chargeId, item, amountCents, status: paid|declined, code?, balanceCents, alreadyPaid}. Its
  *    answer is the one the page gets.
  *
- * A charge made now is pending until the second run answers. It is given back only when that run
- * committed nothing: it never started (neverRan()), the runner rolled it back (its own `host_error`
- * or `database_busy` answer), it asked to charge again (an ask writes nothing), or it said so itself
- * (`formlogicRefund: true`, with `rollback: true`). Anything else settles it, whatever its status,
- * and so does a run that timed out or whose answer was lost: it may have written the sale, and a
- * retry is told it is paid already. Both runs hold one worker slot from first to last ($hold), so a
+ * A charge made now is pending, and running once its second run starts (from then a request that
+ * dies is settled by the sweeper, never given back). It is given back only when that run committed
+ * nothing: it never started (neverRan()), the runtime itself rolled it back (said on the runner's
+ * error channel, $rolledBack, never by the app's answer, which the app writes), it asked to charge
+ * again (an ask writes nothing), or it said so itself (`formlogicRefund: true`, with `rollback:
+ * true`). Anything else settles it, whatever its status, and so does a run that timed out or whose
+ * answer was lost: it may have written the sale, and a retry is told it is paid already. Both runs hold one worker slot from first to last ($hold), so a
  * debit is never followed by a second run turned away busy.
  *
  * Nothing in the page's request, or in the first answer beyond the charge id and the item, decides
@@ -44,19 +45,25 @@ final class NativeAppCharges
      * Run the route once or twice. $run(identity) runs the app's backend as $identity and answers
      * `['status' => int, 'body' => mixed]`; $identity is the request's own, its `formlogic.wallet`
      * already there. $hold(work) runs work with the app's worker slot held throughout
-     * (NativeAppService::withSlots); without it, each run takes its own.
+     * (NativeAppService::withSlots); without it, each run takes its own. $rolledBack() says whether
+     * the runtime itself ended the last run uncommitted (NativeAppService::lastRunRolledBack);
+     * without it, no answer counts as rolled back.
      *
      * @param callable(array): array $run
      * @param (callable(callable): array)|null $hold
+     * @param (callable(): bool)|null $rolledBack
      */
-    public function handle(array $app, array $declared, ?array $holder, array $identity, callable $run, ?callable $hold = null): array
+    public function handle(array $app, array $declared, ?array $holder, array $identity, callable $run, ?callable $hold = null, ?callable $rolledBack = null): array
     {
-        $work = fn(): array => $this->twice($app, $declared, $holder, $identity, $run);
+        $work = fn(): array => $this->twice($app, $declared, $holder, $identity, $run, $rolledBack);
         return $hold !== null ? $hold($work) : $work();
     }
 
-    /** @param callable(array): array $run */
-    private function twice(array $app, array $declared, ?array $holder, array $identity, callable $run): array
+    /**
+     * @param callable(array): array $run
+     * @param (callable(): bool)|null $rolledBack
+     */
+    private function twice(array $app, array $declared, ?array $holder, array $identity, callable $run, ?callable $rolledBack): array
     {
         $first = $run($identity);
         $ask = self::ask($first);
@@ -67,6 +74,12 @@ final class NativeAppCharges
         $second = $identity;
         $second['formlogic']['payment'] = array_intersect_key($charge, array_flip(['chargeId', 'item', 'amountCents', 'status', 'code', 'balanceCents', 'alreadyPaid']));
         $paidNow = $charge['status'] === 'paid' && !$charge['alreadyPaid'] && isset($charge['charge']);
+        // Running from here: the second run may commit the sale. Given back meanwhile (the sweeper
+        // found it stale first), the run is told nothing was paid.
+        if ($paidNow && !$this->wallets->startCharge($charge['charge'])) {
+            $paidNow = false;
+            $second['formlogic']['payment'] = ['status' => 'declined', 'code' => 'in_progress', 'alreadyPaid' => false] + $second['formlogic']['payment'];
+        }
         try {
             $answer = $run($second);
         } catch (\Throwable $e) {
@@ -83,7 +96,7 @@ final class NativeAppCharges
         if ($paidNow) {
             $why = match (true) {
                 $asksAgain => 'The app asked to charge again.',
-                self::rolledBack($answer) => 'The app could not finish (HTTP ' . $status . ').',
+                $rolledBack !== null && $rolledBack() => 'The app could not finish (HTTP ' . $status . ').',
                 self::refundAsked($answer) => 'The app gave it back (HTTP ' . $status . ').',
                 default => null,
             };
@@ -104,17 +117,6 @@ final class NativeAppCharges
     {
         return $e instanceof \InvalidArgumentException
             || ($e instanceof \RuntimeException && in_array($e->getCode(), [404, 409, 413, 429, 503], true));
-    }
-
-    /**
-     * The runner's own answer for a run it rolled back: a handler that threw or failed a host call
-     * (500 `host_error`), or a database it could not begin a transaction on (503 `database_busy`).
-     */
-    private static function rolledBack(array $answer): bool
-    {
-        $status = (int) ($answer['status'] ?? 0);
-        $code = self::field($answer['body'] ?? null, 'code');
-        return ($status === 500 && $code === 'host_error') || ($status === 503 && $code === 'database_busy');
     }
 
     /** The app's own word that its second run delivered and wrote nothing: `formlogicRefund: true` (with `rollback: true`). */

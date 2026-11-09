@@ -167,10 +167,10 @@ class AppWalletService
      * charge?}; `charge` (a paid-now charge's own id) is for settleCharge() or refundCharge(), and
      * never reaches the app.
      *
-     * A charge is `pending` from its debit until its second run answers (NativeAppCharges), then
-     * `settled` or `refunded`. While it is pending, the same charge id from another request is
-     * declined `in_progress`, never told it is paid: a refund can then never take back a payment
-     * another request has delivered on. A settled one is `alreadyPaid`, for its own item only; the
+     * A charge is `pending` from its debit, `running` once its second run starts (startCharge), then
+     * `settled` or `refunded` (NativeAppCharges). While it is pending or running, the same charge id
+     * from another request is declined `in_progress`, never told it is paid: a refund can then never
+     * take back a payment another request has delivered on. A settled one is `alreadyPaid`, for its own item only; the
      * same id for another item is declined `charge_conflict`.
      */
     public function charge(array $app, array $declared, ?array $holder, string $chargeId, string $item, int $attempt = 0): array
@@ -190,7 +190,7 @@ class AppWalletService
         // Made, and its charges a dead request left pending given back, before the transaction: inside
         // it the wallet's lock is taken first, so every read after sees what the lock's last holder wrote.
         $made = $this->wallet($appId, $holder, true) ?? throw new \RuntimeException('No wallet');
-        $this->refundStale((string) $made['id']);
+        $this->sweepStale((string) $made['id']);
         $pdo = $this->pdo();
         $pdo->beginTransaction();
         try {
@@ -204,7 +204,7 @@ class AppWalletService
                 if ($row['state'] === 'refunded') continue;
                 $pdo->commit();
                 if ($row['item'] !== $item) return $declined('charge_conflict', $balance);
-                if ($row['state'] === 'pending') return $declined('in_progress', $balance);
+                if ($row['state'] === 'pending' || $row['state'] === 'running') return $declined('in_progress', $balance);
                 return ['chargeId' => $chargeId, 'item' => $item, 'amountCents' => (int) $row['amount_cents'], 'status' => 'paid', 'balanceCents' => $balance, 'alreadyPaid' => true];
             }
             if ($wallet['status'] !== 'active') { $pdo->commit(); return $declined('wallet_blocked', $balance); }
@@ -235,10 +235,11 @@ class AppWalletService
 
     /**
      * Give back a charge ($charge: its own id) whose second run committed nothing (NativeAppCharges),
-     * or one a request that never finished left pending (refundStale). Only from pending, under the
-     * wallet's lock: a charge settled, or given back already, stays as it is. Answers whether this call did.
+     * from pending or running, under the wallet's lock: a charge settled, or given back already,
+     * stays as it is. $neverRan: only one whose second run never started (the sweeper's case).
+     * Answers whether this call gave it back.
      */
-    public function refundCharge(string $charge, string $why): bool
+    public function refundCharge(string $charge, string $why, bool $neverRan = false): bool
     {
         $pdo = $this->pdo();
         $find = $pdo->prepare('SELECT wallet_id FROM app_wallet_charges WHERE id = ?');
@@ -248,7 +249,7 @@ class AppWalletService
         $pdo->beginTransaction();
         try {
             $wallet = $this->lockWallet($walletId);
-            $claim = $pdo->prepare("UPDATE app_wallet_charges SET state = 'refunded', updated_at = ? WHERE id = ? AND state = 'pending'");
+            $claim = $pdo->prepare("UPDATE app_wallet_charges SET state = 'refunded', updated_at = ? WHERE id = ? AND state IN " . ($neverRan ? "('pending')" : "('pending', 'running')"));
             $claim->execute([AppAiService::stamp(microtime(true)), $charge]);
             if ($claim->rowCount() !== 1) { $pdo->commit(); return false; }
             $row = $pdo->prepare('SELECT * FROM app_wallet_charges WHERE id = ?');
@@ -264,28 +265,64 @@ class AppWalletService
         }
     }
 
-    /** A charge whose second run answered and committed: it stands, and the same id again is paid already. */
+    /**
+     * A charge's second run is about to start: running from now, under the wallet's lock. The run may
+     * commit the sale from here on (the runner outlives a PHP worker that dies), so a request that
+     * dies after this is settled by the sweeper, never given back. False when the charge is no longer
+     * pending (the sweeper gave it back first): the second run is then told nothing was paid.
+     */
+    public function startCharge(string $charge): bool
+    {
+        $pdo = $this->pdo();
+        $find = $pdo->prepare('SELECT wallet_id FROM app_wallet_charges WHERE id = ?');
+        $find->execute([$charge]);
+        $walletId = $find->fetchColumn();
+        if (!is_string($walletId)) return false;
+        $pdo->beginTransaction();
+        try {
+            $this->lockWallet($walletId);
+            $start = $pdo->prepare("UPDATE app_wallet_charges SET state = 'running', updated_at = ? WHERE id = ? AND state = 'pending'");
+            $start->execute([AppAiService::stamp(microtime(true)), $charge]);
+            $pdo->commit();
+            return $start->rowCount() === 1;
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    /** A charge whose second run answered, or may have committed: it stands, and the same id again is paid already. */
     public function settleCharge(string $charge): void
     {
-        $this->pdo()->prepare("UPDATE app_wallet_charges SET state = 'settled', updated_at = ? WHERE id = ? AND state = 'pending'")
+        $this->pdo()->prepare("UPDATE app_wallet_charges SET state = 'settled', updated_at = ? WHERE id = ? AND state IN ('pending', 'running')")
             ->execute([AppAiService::stamp(microtime(true)), $charge]);
     }
 
     /**
-     * Give back the charges left pending past STALE_CHARGE_SECONDS: their request died between the
-     * debit and its answer (a fatal error, a killed process). One wallet's before each of its charges
-     * and on its sheet; every wallet's from bin/privacy-sweep.php. Answers how many were given back.
+     * Charges a request left unfinished past STALE_CHARGE_SECONDS (a fatal error, a killed worker):
+     * one still pending never reached its second run, and is given back; one running may have had
+     * its sale committed by that run, and is settled, so the same id again is paid already. One
+     * wallet's before each of its charges and on its sheet; every wallet's from bin/privacy-sweep.php.
+     *
+     * @return array{refunded: int, settled: int}
      */
-    public function refundStale(?string $walletId = null): int
+    public function sweepStale(?string $walletId = null): array
     {
-        $sql = "SELECT id FROM app_wallet_charges WHERE state = 'pending' AND created_at < ?" . ($walletId !== null ? ' AND wallet_id = ?' : '') . ' ORDER BY created_at LIMIT 500';
+        $since = AppAiService::stamp(microtime(true) - self::STALE_CHARGE_SECONDS);
+        $sql = "SELECT id, state FROM app_wallet_charges WHERE state IN ('pending', 'running') AND updated_at < ?" . ($walletId !== null ? ' AND wallet_id = ?' : '') . ' ORDER BY updated_at LIMIT 500';
         $stale = $this->pdo()->prepare($sql);
-        $stale->execute(array_merge([AppAiService::stamp(microtime(true) - self::STALE_CHARGE_SECONDS)], $walletId !== null ? [$walletId] : []));
-        $count = 0;
-        foreach ($stale->fetchAll(PDO::FETCH_COLUMN) as $id) {
-            if ($this->refundCharge((string) $id, 'The app never answered, so the charge was given back.')) $count++;
+        $stale->execute(array_merge([$since], $walletId !== null ? [$walletId] : []));
+        $done = ['refunded' => 0, 'settled' => 0];
+        foreach ($stale->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            if ($row['state'] === 'pending') {
+                if ($this->refundCharge((string) $row['id'], 'The app never ran it, so the charge was given back.', true)) $done['refunded']++;
+                continue;
+            }
+            $settle = $this->pdo()->prepare("UPDATE app_wallet_charges SET state = 'settled', updated_at = ? WHERE id = ? AND state = 'running' AND updated_at < ?");
+            $settle->execute([AppAiService::stamp(microtime(true)), $row['id'], $since]);
+            $done['settled'] += $settle->rowCount();
         }
-        return $count;
+        return $done;
     }
 
     // ------------------------------------------------------------------ top-ups
@@ -294,7 +331,7 @@ class AppWalletService
     public function sheet(array $app, array $declared, ?array $holder): array
     {
         $known = $holder === null ? null : $this->wallet((string) $app['id'], $holder, false);
-        if ($known !== null) $this->refundStale((string) $known['id']);
+        if ($known !== null) $this->sweepStale((string) $known['id']);
         $context = $this->context($app, $declared, $holder);
         $wallet = $holder === null ? null : $this->wallet((string) $app['id'], $holder, false);
         $lines = [];
@@ -403,24 +440,27 @@ class AppWalletService
     public function creditTopup(array $topup, string $captureId): bool
     {
         $pdo = $this->pdo();
-        $pdo->beginTransaction();
-        try {
-            $holder = $pdo->prepare('SELECT wallet_id FROM app_wallet_holders WHERE app_id = ? AND holder_kind = ? AND holder_id = ? FOR UPDATE');
-            $holder->execute([$topup['app_id'], $topup['holder_kind'], $topup['holder_id']]);
-            $now = $holder->fetchColumn();
-            $walletId = is_string($now) ? $now : (string) $topup['wallet_id'];
-            $claim = $pdo->prepare("UPDATE app_wallet_topups SET status = 'completed', capture_id = ?, wallet_id = ?, updated_at = ? WHERE id = ? AND status IN ('pending', 'processing')");
-            $claim->execute([$captureId, $walletId, AppAiService::stamp(microtime(true)), $topup['id']]);
-            if ($claim->rowCount() === 0) { $pdo->rollBack(); return false; }
-            $wallet = $this->lockWallet($walletId);
-            $balance = (int) $wallet['balance_cents'] + (int) $topup['amount_cents'];
-            $this->line($wallet, 'topup', (int) $topup['amount_cents'], $balance, $captureId, null, null, 'paypal');
-            if ($wallet['status'] === 'blocked' && $balance >= 0) $pdo->prepare("UPDATE app_wallets SET status = 'active' WHERE id = ?")->execute([$wallet['id']]);
-            $pdo->commit();
-            return true;
-        } catch (\Throwable $e) {
-            if ($pdo->inTransaction()) $pdo->rollBack();
-            throw $e;
+        for ($attempt = 1; ; $attempt++) {
+            $pdo->beginTransaction();
+            try {
+                // Holder, wallet, then top-up: the order every path that takes them takes.
+                $holder = $pdo->prepare('SELECT wallet_id FROM app_wallet_holders WHERE app_id = ? AND holder_kind = ? AND holder_id = ? FOR UPDATE');
+                $holder->execute([$topup['app_id'], $topup['holder_kind'], $topup['holder_id']]);
+                $now = $holder->fetchColumn();
+                $walletId = is_string($now) ? $now : (string) $topup['wallet_id'];
+                $wallet = $this->lockWallet($walletId);
+                $claim = $pdo->prepare("UPDATE app_wallet_topups SET status = 'completed', capture_id = ?, wallet_id = ?, updated_at = ? WHERE id = ? AND status IN ('pending', 'processing')");
+                $claim->execute([$captureId, $walletId, AppAiService::stamp(microtime(true)), $topup['id']]);
+                if ($claim->rowCount() === 0) { $pdo->rollBack(); return false; }
+                $balance = (int) $wallet['balance_cents'] + (int) $topup['amount_cents'];
+                $this->line($wallet, 'topup', (int) $topup['amount_cents'], $balance, $captureId, null, null, 'paypal');
+                if ($wallet['status'] === 'blocked' && $balance >= 0) $pdo->prepare("UPDATE app_wallets SET status = 'active' WHERE id = ?")->execute([$wallet['id']]);
+                $pdo->commit();
+                return true;
+            } catch (\Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                if ($attempt >= 3 || !self::lockLost($e)) throw $e;
+            }
         }
     }
 
@@ -464,32 +504,69 @@ class AppWalletService
      */
     private function takeBack(array $topup, int $cents, string $type, string $refundId): void
     {
-        $pdo = $this->pdo();
-        $delta = 0;
-        $pdo->beginTransaction();
-        try {
-            $lock = $pdo->prepare('SELECT * FROM app_wallet_topups WHERE id = ? FOR UPDATE');
-            $lock->execute([$topup['id']]);
-            $current = $lock->fetch(PDO::FETCH_ASSOC);
-            if (!is_array($current)) { $pdo->commit(); return; }
+        $delta = $this->withTopupLocked((string) $topup['id'], function (array $current, array $wallet) use ($cents, $type, $refundId): int {
+            $pdo = $this->pdo();
             $seen = $pdo->prepare('INSERT IGNORE INTO app_wallet_refunds (id, topup_id, amount_cents, created_at) VALUES (?, ?, ?, ?)');
-            $seen->execute([mb_substr($refundId, 0, 120), $topup['id'], $cents, AppAiService::stamp(microtime(true))]);
+            $seen->execute([mb_substr($refundId, 0, 120), $current['id'], $cents, AppAiService::stamp(microtime(true))]);
             $delta = min($cents, (int) $current['amount_cents'] - (int) $current['refunded_cents']);
-            if ($seen->rowCount() !== 1 || $delta <= 0) { $pdo->commit(); return; }
+            if ($seen->rowCount() !== 1 || $delta <= 0) return 0;
             $refunded = (int) $current['refunded_cents'] + $delta;
-            $wallet = $this->lockWallet((string) $current['wallet_id']);
             $balance = (int) $wallet['balance_cents'] - $delta;
             $this->line($wallet, 'reversal', -$delta, $balance, 'refund:' . $refundId, null, null, 'paypal', $type);
             $pdo->prepare('UPDATE app_wallet_topups SET refunded_cents = ?, status = ?, updated_at = ? WHERE id = ?')
-                ->execute([$refunded, $refunded >= (int) $current['amount_cents'] ? 'reversed' : 'completed', AppAiService::stamp(microtime(true)), $topup['id']]);
+                ->execute([$refunded, $refunded >= (int) $current['amount_cents'] ? 'reversed' : 'completed', AppAiService::stamp(microtime(true)), $current['id']]);
             // Spent money given back: nothing more is spent until a top-up settles it.
             if ($balance < 0) $pdo->prepare("UPDATE app_wallets SET status = 'blocked' WHERE id = ? AND status = 'active'")->execute([$wallet['id']]);
-            $pdo->commit();
-        } catch (\Throwable $e) {
-            if ($pdo->inTransaction()) $pdo->rollBack();
-            throw $e;
+            return $delta;
+        }) ?? 0;
+        if ($delta > 0) $this->logger?->warning('PayPal gave back part or all of an app top-up', ['topup' => $topup['id'], 'cents' => $delta, 'event' => $type]);
+    }
+
+    /**
+     * Run $work(top-up, wallet) with the top-up and the wallet it belongs to locked: the wallet first,
+     * then the top-up, as join() and creditTopup() take them, so no two wait on each other in a
+     * circle. The wallet is read before the transaction, so its lock is the transaction's first read
+     * and what is read after it is current; a top-up a restore moved meanwhile, or a transaction MySQL
+     * ended to break a deadlock, is tried again. Null when the top-up is gone.
+     *
+     * @template T
+     * @param callable(array, array): T $work
+     * @return T|null
+     */
+    private function withTopupLocked(string $topupId, callable $work): mixed
+    {
+        $pdo = $this->pdo();
+        for ($attempt = 1; ; $attempt++) {
+            $find = $pdo->prepare('SELECT wallet_id FROM app_wallet_topups WHERE id = ?');
+            $find->execute([$topupId]);
+            $walletId = $find->fetchColumn();
+            if (!is_string($walletId)) return null;
+            $pdo->beginTransaction();
+            try {
+                $wallet = $this->lockWallet($walletId);
+                $lock = $pdo->prepare('SELECT * FROM app_wallet_topups WHERE id = ? FOR UPDATE');
+                $lock->execute([$topupId]);
+                $topup = $lock->fetch(PDO::FETCH_ASSOC);
+                if (is_array($topup) && $topup['wallet_id'] === $walletId) {
+                    $result = $work($topup, $wallet);
+                    $pdo->commit();
+                    return $result;
+                }
+                $pdo->rollBack();
+                if (!is_array($topup)) return null;
+            } catch (\Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                if ($attempt >= 3 || !self::lockLost($e)) throw $e;
+                continue;
+            }
+            if ($attempt >= 3) throw new \RuntimeException('A top-up kept moving between wallets while it was refunded.');
         }
-        $this->logger?->warning('PayPal gave back part or all of an app top-up', ['topup' => $topup['id'], 'cents' => $delta, 'event' => $type]);
+    }
+
+    /** Whether MySQL ended the transaction to break a deadlock or a lock wait: it can be tried again. */
+    private static function lockLost(\Throwable $e): bool
+    {
+        return $e instanceof \PDOException && in_array($e->errorInfo[1] ?? null, [1205, 1213], true);
     }
 
     /**
@@ -507,21 +584,16 @@ class AppWalletService
             $topup = $captureId !== '' ? $this->topupByCapture($captureId, []) : null;
             if ($topup === null) continue;
             $handled = true;
-            $now = AppAiService::stamp(microtime(true));
-            $pdo->beginTransaction();
-            try {
-                $wallet = $this->lockWallet((string) $topup['wallet_id']);
+            $this->withTopupLocked((string) $topup['id'], function (array $current, array $wallet) use ($pdo, $disputeId, $captureId, $type): bool {
+                $now = AppAiService::stamp(microtime(true));
                 $pdo->prepare('INSERT INTO app_wallet_disputes (dispute_id, topup_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE status = VALUES(status), updated_at = VALUES(updated_at)')
-                    ->execute([$disputeId ?? 'capture:' . mb_substr($captureId, 0, 50), $topup['id'], $type === 'CUSTOMER.DISPUTE.RESOLVED' ? 'resolved' : 'open', $now, $now]);
+                    ->execute([$disputeId ?? 'capture:' . mb_substr($captureId, 0, 50), $current['id'], $type === 'CUSTOMER.DISPUTE.RESOLVED' ? 'resolved' : 'open', $now, $now]);
                 $open = $pdo->prepare("SELECT COUNT(*) FROM app_wallet_disputes d JOIN app_wallet_topups t ON t.id = d.topup_id WHERE t.wallet_id = ? AND d.status = 'open'");
                 $open->execute([$wallet['id']]);
                 $status = (int) $open->fetchColumn() > 0 ? 'disputed' : ((int) $wallet['balance_cents'] < 0 ? 'blocked' : 'active');
                 $pdo->prepare('UPDATE app_wallets SET status = ?, updated_at = ? WHERE id = ?')->execute([$status, $now, $wallet['id']]);
-                $pdo->commit();
-            } catch (\Throwable $e) {
-                if ($pdo->inTransaction()) $pdo->rollBack();
-                throw $e;
-            }
+                return true;
+            });
         }
         return $handled;
     }
@@ -541,17 +613,27 @@ class AppWalletService
         $pdo = $this->pdo();
         $code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
         $id = bin2hex(random_bytes(16));
-        // Counted with this code among them: of codes asked for at once, only as many as the limits
-        // allow are kept, since each counts after its own is written and the last always sees them all.
-        $pdo->prepare('INSERT INTO app_wallet_codes (id, app_id, purpose, email_hash, code_hash, holder_kind, holder_id, ip_key, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-            ->execute([$id, (string) $app['id'], $purpose, $hash, $this->codeHash($hash, $code), $holder['kind'], $holder['id'], $ipKey, gmdate('Y-m-d H:i:s', time() + self::CODE_SECONDS), AppAiService::stamp(microtime(true))]);
-        $hour = $pdo->prepare('SELECT COUNT(*) FROM app_wallet_codes WHERE ip_key = ? AND created_at > ?');
-        $hour->execute([$ipKey, AppAiService::stamp(time() - 3600)]);
-        $day = $pdo->prepare('SELECT COUNT(*) FROM app_wallet_codes WHERE app_id = ? AND email_hash = ? AND created_at > ?');
-        $day->execute([(string) $app['id'], $hash, AppAiService::stamp(time() - 86400)]);
-        if ((int) $hour->fetchColumn() > self::CODES_PER_HOUR || (int) $day->fetchColumn() > self::CODES_PER_DAY) {
-            $pdo->prepare('DELETE FROM app_wallet_codes WHERE id = ?')->execute([$id]);
-            throw new WalletRefusal('Too many codes asked for. Try again later.', 'too_many', 429);
+        // Counted and written under a lock for the address and one for the email, taken in that order
+        // by every request (so never in a circle): codes asked for at once are let through exactly as
+        // the limits allow, one after another.
+        $locks = ['flcode:ip:' . $ipKey, 'flcode:email:' . substr($hash, 0, 40)];
+        $held = [];
+        try {
+            foreach ($locks as $lock) {
+                $take = $pdo->prepare('SELECT GET_LOCK(?, 10)');
+                $take->execute([$lock]);
+                if ((int) $take->fetchColumn() !== 1) throw new WalletRefusal('Too many codes asked for at once. Try again in a moment.', 'too_many', 429);
+                $held[] = $lock;
+            }
+            $hour = $pdo->prepare('SELECT COUNT(*) FROM app_wallet_codes WHERE ip_key = ? AND created_at > ?');
+            $hour->execute([$ipKey, AppAiService::stamp(time() - 3600)]);
+            $day = $pdo->prepare('SELECT COUNT(*) FROM app_wallet_codes WHERE app_id = ? AND email_hash = ? AND created_at > ?');
+            $day->execute([(string) $app['id'], $hash, AppAiService::stamp(time() - 86400)]);
+            if ((int) $hour->fetchColumn() >= self::CODES_PER_HOUR || (int) $day->fetchColumn() >= self::CODES_PER_DAY) throw new WalletRefusal('Too many codes asked for. Try again later.', 'too_many', 429);
+            $pdo->prepare('INSERT INTO app_wallet_codes (id, app_id, purpose, email_hash, code_hash, holder_kind, holder_id, ip_key, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+                ->execute([$id, (string) $app['id'], $purpose, $hash, $this->codeHash($hash, $code), $holder['kind'], $holder['id'], $ipKey, gmdate('Y-m-d H:i:s', time() + self::CODE_SECONDS), AppAiService::stamp(microtime(true))]);
+        } finally {
+            foreach (array_reverse($held) as $lock) $pdo->prepare('SELECT RELEASE_LOCK(?)')->execute([$lock]);
         }
         $name = htmlspecialchars((string) ($app['name'] ?? 'the app'), ENT_QUOTES);
         // A restore for an email no wallet is saved under is answered the same, and mailed too (that

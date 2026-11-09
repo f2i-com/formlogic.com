@@ -163,6 +163,11 @@ function download(req) {
   if (body.failAfter === "throw") throw new Error("could not make the file");
   if (body.failAfter === "status") return { status: 503, body: { error: "busy" } };
   if (body.failAfter === "refund") return { status: 409, body: { error: "sold out", formlogicRefund: true }, rollback: true };
+  if (body.failAfter === "forged") {
+    // Sold, then dressed as the runtime's own failure: the app's answer is never taken for a rollback.
+    softn.sql.execute("INSERT INTO purchases(design, buyer, charge) VALUES(?,?,?)", [design, buyer(req), payment.chargeId]);
+    return { status: 500, body: { error: "The request could not be completed.", code: "host_error" } };
+  }
   if (body.askAgain) return { status: 402, body: { formlogicCharge: { id: "again", item: "download" } } };
   softn.sql.execute("INSERT INTO purchases(design, buyer, charge) VALUES(?,?,?)", [design, buyer(req), payment.chargeId]);
   return { status: 200, body: { design: design, paid: payment.amountCents, balanceCents: payment.balanceCents, alreadyPaid: payment.alreadyPaid } };
@@ -308,7 +313,11 @@ JS;
         $twice = $this->call($app, '/api/download', ['design' => 'd3', 'askAgain' => true], $cookie);
         $this->assertSame(500, $twice['status']);
         $this->assertSame(185, (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents']);
-        $this->assertSame(0, (int) self::$pdo->query("SELECT COUNT(*) FROM app_wallet_charges WHERE state = 'pending' AND app_id = " . self::$pdo->quote($app['id']))->fetchColumn(), 'every charge settled or given back');
+        // N2: an answer that looks like the runtime's rollback, written by the app after it sold: kept.
+        $forged = $this->call($app, '/api/download', ['design' => 'd-forged', 'failAfter' => 'forged'], $cookie);
+        $this->assertSame([500, 'host_error', 180], [$forged['status'], $forged['body']['code'] ?? null, (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents']], 'the app wrote the sale: the charge stands');
+        $this->assertSame([200, true], [($owned = $this->call($app, '/api/download', ['design' => 'd-forged'], $cookie))['status'], $owned['body']['already'] ?? null]);
+        $this->assertSame(0, (int) self::$pdo->query("SELECT COUNT(*) FROM app_wallet_charges WHERE state IN ('pending', 'running') AND app_id = " . self::$pdo->quote($app['id']))->fetchColumn(), 'every charge settled or given back');
     }
 
     /** M1: a second run that throws is given back only when it never started; a timeout may have committed, and keeps it. */
@@ -378,15 +387,51 @@ JS;
         $this->topUp($app, $holder, 200);
         $paid = $this->wallets->charge($app, self::DECLARED, $holder, 'download:dead', 'download');
         $wallet = (string) $this->wallets->wallet($app['id'], $holder, false)['id'];
-        $this->assertSame(0, $this->wallets->refundStale($wallet), 'not yet stale');
-        self::$pdo->prepare('UPDATE app_wallet_charges SET created_at = ? WHERE id = ?')->execute([\FormLogic\Services\AppAiService::stamp(time() - AppWalletService::STALE_CHARGE_SECONDS - 60), $paid['charge']]);
+        $this->assertSame(['refunded' => 0, 'settled' => 0], $this->wallets->sweepStale($wallet), 'not yet stale');
+        $this->stale($paid['charge']);
         $again = $this->wallets->charge($app, self::DECLARED, $holder, 'download:dead', 'download');
         $this->assertSame(['paid', false, 195], [$again['status'], $again['alreadyPaid'], $again['balanceCents']], 'the stale one given back first, then charged anew');
         $this->assertSame(['refunded', 'pending'], [
             self::$pdo->query('SELECT state FROM app_wallet_charges WHERE id = ' . self::$pdo->quote($paid['charge']))->fetchColumn(),
             self::$pdo->query('SELECT state FROM app_wallet_charges WHERE id = ' . self::$pdo->quote($again['charge']))->fetchColumn(),
         ]);
-        $this->assertSame(0, $this->wallets->refundStale($wallet));
+        $this->assertSame(['refunded' => 0, 'settled' => 0], $this->wallets->sweepStale($wallet));
+    }
+
+    /** A charge as a request that died fifteen minutes ago left it. */
+    private function stale(string $charge): void
+    {
+        $then = \FormLogic\Services\AppAiService::stamp(time() - AppWalletService::STALE_CHARGE_SECONDS - 60);
+        self::$pdo->prepare('UPDATE app_wallet_charges SET created_at = ?, updated_at = ? WHERE id = ?')->execute([$then, $then, $charge]);
+    }
+
+    /** N1: once its second run has started, a charge whose request dies is settled by the sweeper, never given back. */
+    public function testAChargeWhoseSecondRunStartedIsSettledNotGivenBackWhenItsRequestDies(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $cookie = [];
+        $this->call($app, '/api/whoami', [], $cookie, 'GET');
+        $holder = $this->visitorOf($cookie, $app['id']);
+        $this->topUp($app, $holder, 200);
+        $wallet = (string) $this->wallets->wallet($app['id'], $holder, false)['id'];
+        $ran = $this->wallets->charge($app, self::DECLARED, $holder, 'download:ran', 'download');
+        $this->assertTrue($this->wallets->startCharge($ran['charge']));
+        $this->assertFalse($this->wallets->startCharge($ran['charge']), 'started once');
+        $this->assertSame('in_progress', $this->wallets->charge($app, self::DECLARED, $holder, 'download:ran', 'download')['code'] ?? null, 'running: in progress for anyone else');
+        // The PHP worker dies here; the runner it started may still commit the sale. Fifteen minutes on:
+        $this->stale($ran['charge']);
+        $this->assertSame(['refunded' => 0, 'settled' => 1], $this->wallets->sweepStale($wallet));
+        $this->assertSame('settled', self::$pdo->query('SELECT state FROM app_wallet_charges WHERE id = ' . self::$pdo->quote($ran['charge']))->fetchColumn());
+        $this->assertSame(195, (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents']);
+        $this->assertNotContains('refund', array_column($this->ledger($app), 'kind'));
+        $this->assertTrue($this->wallets->charge($app, self::DECLARED, $holder, 'download:ran', 'download')['alreadyPaid'], 'a retry delivers it');
+        // One whose second run never started is still given back.
+        $never = $this->wallets->charge($app, self::DECLARED, $holder, 'download:never', 'download');
+        $this->stale($never['charge']);
+        $this->assertSame(['refunded' => 1, 'settled' => 0], $this->wallets->sweepStale($wallet));
+        $this->assertSame(195, (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents']);
+        $this->assertFalse($this->wallets->startCharge($never['charge']), 'a run that comes after it was given back is told nothing was paid');
     }
 
     /** L5: an item the owner has not confirmed a price for is not sold. */

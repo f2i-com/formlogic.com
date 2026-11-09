@@ -372,7 +372,8 @@ class NativeAppController
                 // Both runs in one worker slot, held from the first to the last, so a debit is never
                 // followed by a second run turned away busy.
                 $result = $this->charges->handle($app, $asks['payments'], $requester, $identity, static fn(array $who) => $run([], $who),
-                    fn(callable $work): array => $this->native->withSlots((string) $app['id'], $work));
+                    fn(callable $work): array => $this->native->withSlots((string) $app['id'], $work),
+                    fn(): bool => $this->native->lastRunRolledBack());
             } else {
                 $result = $plugin === null && $this->verification !== null && $this->verification->applies($app['id'], $nativeRequest)
                     ? $this->verification->handle($app['id'], $nativeRequest, $run)

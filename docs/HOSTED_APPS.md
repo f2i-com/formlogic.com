@@ -444,10 +444,10 @@ that route within one request:
    `A-Z a-z 0-9 _ . : -`; `item` is one of the manifest's items. A route that needs no charge (the
    visitor bought it already, by the app's own records) just answers, and that answer goes back.
 2. **FormLogic decides**: the payer is whoever made this request, the price the owner's for the item.
-   It debits the balance atomically, once per charge id. The charge is **pending** until the second
-   run answers: the same id from another request meanwhile is declined `in_progress` (ask again in a
-   moment); once settled, the same id is `alreadyPaid`, for its own item only (another item under it
-   is declined `charge_conflict`).
+   It debits the balance atomically, once per charge id. The charge is **pending**, then **running**
+   once the second run starts, until that run answers: the same id from another request meanwhile is
+   declined `in_progress` (ask again in a moment); once settled, the same id is `alreadyPaid`, for its
+   own item only (another item under it is declined `charge_conflict`).
 3. **The second run** carries `req.context.formlogic.payment`
    `{chargeId, item, amountCents, status: "paid" | "declined", code?, balanceCents, alreadyPaid}`.
    Its answer is the one the page gets. `code` on a decline: `insufficient_funds`, `limit_reached` (the
@@ -459,13 +459,15 @@ that route within one request:
 - Make the charge id the thing being bought, so a retry completes the purchase (`alreadyPaid`) and
   never pays twice.
 - In the second run, answer **2xx when you have delivered what was bought**. A paid charge is
-  **given back** only when that run committed nothing: it threw (FormLogic rolled it back), it never
-  started (the app updated meanwhile, no worker free, the runtime unable to start), it asked to charge
-  again, or it said so itself with `formlogicRefund: true` in its body **and** `rollback: true` (out
-  of stock, say). Any other answer keeps the charge, whatever its status, and so does a run that timed
-  out or whose answer was lost: it may have written the sale, and a retry with the same charge id is
-  `alreadyPaid`, and delivers. A charge whose request died before it answered is given back after 15
-  minutes.
+  **given back** only when that run committed nothing: it threw and the runtime rolled it back (the
+  runtime says so on its own error channel; an answer that only looks like its `host_error` keeps the
+  charge, since the app writes its answer), it never started (the app updated meanwhile, no worker
+  free, the runtime unable to start), it asked to charge again, or it said so itself with
+  `formlogicRefund: true` in its body **and** `rollback: true` (out of stock, say). Any other answer
+  keeps the charge, whatever its status, and so does a run that timed out or whose answer was lost: it
+  may have written the sale, and a retry with the same charge id is `alreadyPaid`, and delivers. A
+  charge whose request died is settled after 15 minutes if its second run had started (the runner
+  outlives a PHP worker, so the sale may be written) and given back if it had not.
 - Ask once per request: a second ask in the second run is never charged, and the page is told the
   request failed.
 - On a decline the page opens FormLogic's wallet: `softn.backend.call("formlogicWallet", {op: "open"})`.
@@ -554,6 +556,17 @@ Five things for the site's owner, before the public uses an app's AI or pays thr
 5. **The worker.** App AI's jobs wait until `bin/app-ai-worker.php` runs: from cron every minute, or
    with `--watch` under a supervisor ([the worker](#app-ai-where-it-runs-and-what-the-app-is-delivered)).
    Admin → Platform → AI for apps warns when jobs are waiting and no worker has run lately.
+
+**A known limit, and the SoftN change that would lift it.** Whether a paid charge's second run was
+rolled back by the runtime is read from the runner's error channel: its own `softn: handler <name>:`
+line, which the app's code cannot write (`NativeAppService::lastRunRolledBack`). Both bundled runners
+(SoftN v0.0.38, softn-runner and `runner.mjs`) roll back a run whose handler throws or catches a
+failed host call and writes on, and print that line; the app's own answer, which can imitate the
+runtime's `host_error`, is never trusted. A log line is not a protocol, though: if a later SoftN
+changes it, such runs keep their charge (the safe side) until FormLogic reads the new one. What would
+make it a protocol: the runner's output carrying, outside the handler's answer and set by the host
+after the handler returns (any handler-supplied value replaced), `"softn": {"transaction":
+"committed" | "rolled_back" | "none"}`, for FormLogic to read instead of the log.
 
 ## Choose the right starting point
 

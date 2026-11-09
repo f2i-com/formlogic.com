@@ -200,6 +200,104 @@ final class AppWalletRaceTest extends TestCase
         $this->assertCount(7, array_filter($answers, static fn(array $a) => ($a['refused'] ?? null) === 'bad_code'));
     }
 
+    /** M5: the code limits hold when codes are asked for at once, from one address and for one email. */
+    public function testCodeLimitsHoldWhenCodesAreAskedForAtOnce(): void
+    {
+        $holder = $this->funded(0);
+        $byAddress = [];
+        $byEmail = [];
+        for ($i = 0; $i < 8; $i++) {
+            $byAddress[] = ['op' => 'sendCode', 'holder' => $holder, 'email' => "limit{$i}@example.com", 'ipKey' => 'cdcdcdcdcdcdcdcd'];
+            $byEmail[] = ['op' => 'sendCode', 'holder' => $holder, 'email' => 'same@example.com', 'ipKey' => sprintf('ee%014d', $i)];
+        }
+        foreach (['an address' => $byAddress, 'an email' => $byEmail] as $what => $jobs) {
+            $answers = $this->race($jobs);
+            $this->assertCount(AppWalletService::CODES_PER_HOUR, array_filter($answers, static fn(array $a) => ($a['sent'] ?? false) === true), $what . ': ' . json_encode($answers));
+            $this->assertCount(8 - AppWalletService::CODES_PER_HOUR, array_filter($answers, static fn(array $a) => ($a['refused'] ?? null) === 'too_many'), $what);
+        }
+        $this->assertSame(AppWalletService::CODES_PER_HOUR, (int) self::$pdo->query("SELECT COUNT(*) FROM app_wallet_codes WHERE ip_key = 'cdcdcdcdcdcdcdcd'")->fetchColumn(), 'only the codes the limit allows are kept');
+    }
+
+    /** A charge as a request that died fifteen minutes ago left it. */
+    private function stale(string $charge): void
+    {
+        $then = AppAiService::stamp(time() - AppWalletService::STALE_CHARGE_SECONDS - 60);
+        self::$pdo->prepare('UPDATE app_wallet_charges SET created_at = ?, updated_at = ? WHERE id = ?')->execute([$then, $then, $charge]);
+    }
+
+    private function refunds(): int
+    {
+        return (int) self::$pdo->query("SELECT COUNT(*) FROM app_wallet_ledger WHERE kind = 'refund' AND app_id = " . self::$pdo->quote($this->app['id']))->fetchColumn();
+    }
+
+    /** N1: a stale charge, its second run starting while the sweeper runs: one outcome, never both. */
+    public function testTheSweeperAndASecondRunStartingAtOnceAgreeOnOneOutcome(): void
+    {
+        $holder = $this->funded(200);
+        $paid = $this->wallets->charge($this->app, self::DECLARED, $holder, 'download:edge', 'download');
+        $this->stale($paid['charge']);
+        $wallet = (string) $this->wallets->wallet($this->app['id'], $holder, false)['id'];
+        $jobs = [['op' => 'start', 'charge' => $paid['charge']]];
+        for ($i = 0; $i < 5; $i++) $jobs[] = ['op' => 'sweep', 'wallet' => $wallet];
+        $answers = $this->race($jobs);
+        $state = self::$pdo->query('SELECT state FROM app_wallet_charges WHERE id = ' . self::$pdo->quote($paid['charge']))->fetchColumn();
+        $this->assertSame($answers[0]['started'] ? ['settled', 0, 195] : ['refunded', 1, 200], [$state, $this->refunds(), $this->balance($holder)], json_encode($answers));
+    }
+
+    /** N1: a stale running charge, swept while its late answer settles it: settled, never given back. */
+    public function testARunThatStartedIsNeverGivenBackHoweverManySweep(): void
+    {
+        $holder = $this->funded(200);
+        $paid = $this->wallets->charge($this->app, self::DECLARED, $holder, 'download:late', 'download');
+        $this->assertTrue($this->wallets->startCharge($paid['charge']));
+        $this->stale($paid['charge']);
+        $wallet = (string) $this->wallets->wallet($this->app['id'], $holder, false)['id'];
+        $jobs = [['op' => 'settle', 'charge' => $paid['charge']]];
+        for ($i = 0; $i < 6; $i++) $jobs[] = ['op' => 'sweep', 'wallet' => $wallet];
+        $answers = $this->race($jobs);
+        $this->assertSame(0, array_sum(array_map(static fn(array $a) => (int) ($a['refunded'] ?? 0), $answers)), json_encode($answers));
+        $this->assertSame(['settled', 0, 195], [self::$pdo->query('SELECT state FROM app_wallet_charges WHERE id = ' . self::$pdo->quote($paid['charge']))->fetchColumn(), $this->refunds(), $this->balance($holder)]);
+    }
+
+    /** A pending top-up for $holder's wallet $walletId, as createTopup records one. */
+    private function topupRow(array $holder, string $walletId, int $cents): array
+    {
+        $now = AppAiService::stamp(microtime(true));
+        $id = bin2hex(random_bytes(16));
+        self::$pdo->prepare("INSERT INTO app_wallet_topups (id, wallet_id, app_id, order_id, amount_cents, currency, package_cents, status, holder_kind, holder_id, ip_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'USD', ?, 'pending', ?, ?, 'abababababababab', ?, ?)")
+            ->execute([$id, $walletId, $this->app['id'], 'RACE-' . $id, $cents, $cents, $holder['kind'], $holder['id'], $now, $now]);
+        return self::$pdo->query('SELECT * FROM app_wallet_topups WHERE id = ' . self::$pdo->quote($id))->fetch(PDO::FETCH_ASSOC);
+    }
+
+    /** N3: a restore racing a credit and a refund of the same browser's top-ups: no deadlock, and not a cent lost or made. */
+    public function testARestoreRacingACreditAndARefundLosesNothing(): void
+    {
+        for ($round = 0; $round < 3; $round++) {
+            $email = "restore{$round}@example.com";
+            $ip = sprintf('ef%014d', $round);
+            $saved = $this->funded(100);
+            $this->wallets->sendCode($this->app, $saved, 'save', $email, $ip);
+            $this->wallets->confirmCode($this->app, $saved, 'save', $email, (string) end($this->mail));
+            $savedWallet = (string) $this->wallets->wallet($this->app['id'], $saved, false)['id'];
+            $mover = $this->funded(0);
+            $moverWallet = (string) $this->wallets->wallet($this->app['id'], $mover, false)['id'];
+            $capture = 'RACECAP1-' . bin2hex(random_bytes(6));
+            $this->assertTrue($this->wallets->creditTopup($this->topupRow($mover, $moverWallet, 200), $capture));
+            $pending = $this->topupRow($mover, $moverWallet, 300);
+            $this->wallets->sendCode($this->app, $mover, 'restore', $email, $ip);
+            $answers = $this->race([
+                ['op' => 'confirm', 'holder' => $mover, 'purpose' => 'restore', 'email' => $email, 'code' => (string) end($this->mail)],
+                ['op' => 'credit', 'topup' => $pending, 'capture' => 'RACECAP2-' . bin2hex(random_bytes(6))],
+                ['op' => 'webhook', 'type' => 'PAYMENT.CAPTURE.REFUNDED', 'resource' => ['id' => 'RACEREF-' . bin2hex(random_bytes(6)), 'amount' => ['currency_code' => 'USD', 'value' => '0.50'],
+                    'links' => [['rel' => 'up', 'href' => 'https://api-m.paypal.com/v2/payments/captures/' . $capture]]]],
+            ]);
+            $this->assertSame([true, true, true], [isset($answers[0]['balanceCents']), $answers[1]['credited'] ?? null, $answers[2]['handled'] ?? null], "round {$round}: " . json_encode($answers));
+            $this->assertSame($savedWallet, (string) $this->wallets->wallet($this->app['id'], $mover, false)['id'], 'restored into the saved wallet');
+            $this->assertSame(550, $this->balance($mover), "round {$round}: 100 + 200 + 300 - 50, whatever came first");
+            $this->assertSame(0, (int) self::$pdo->query('SELECT balance_cents FROM app_wallets WHERE id = ' . self::$pdo->quote($moverWallet))->fetchColumn());
+        }
+    }
+
     /** A top-up's capture and its webhook at once: credited once. */
     public function testACaptureAndItsWebhookAtOnceCreditOnce(): void
     {

@@ -2280,6 +2280,21 @@ class NativeAppService
     /** The app root whose worker slots withSlots() holds now: invoke() takes none of its own for it. */
     private ?string $heldRoot = null;
 
+    /** Whether the runtime itself ended the last run uncommitted (lastRunRolledBack()). */
+    private bool $lastRolledBack = false;
+
+    /**
+     * Whether the last request this service ran was ended by the runtime itself, so committed
+     * nothing: its handler threw or failed a host call and was rolled back, or it never got past
+     * starting. Read from the runner's error channel, the runtime's own `softn: handler …` or
+     * `softn: startup stage …` line, which the app's code cannot write to; never from the app's
+     * answer, which the app writes (NativeAppCharges gives a charge back on it).
+     */
+    public function lastRunRolledBack(): bool
+    {
+        return $this->lastRolledBack;
+    }
+
     /**
      * Run $work with one of the app's worker slots, and one of the site's, held from start to end:
      * every request $work makes runs in them (NativeAppCharges: both runs of a charge, so a debit is
@@ -2362,6 +2377,7 @@ class NativeAppService
         // Bound concurrent native workers across every app in this storage root: a request takes a
         // slot of its own, unless withSlots() holds one for this app already.
         $slots = $this->heldRoot === $root ? [] : $this->takeSlots($root);
+        $this->lastRolledBack = false;
         $answered = false;
         try {
             // A photo is redrawn here, with the slots held (visitorRequest): what is not taken is a
@@ -2393,6 +2409,9 @@ class NativeAppService
                 if (microtime(true) >= $deadline) { proc_terminate($process); throw new RuntimeException('Native request timed out'); }
                 usleep(20000);
             } while (true);
+            // The runtime's own word, out of the app's reach, that it rolled this run back (lastRunRolledBack).
+            $errors = is_file($base . '.err') ? (string) file_get_contents($base . '.err', false, null, 0, 16384) : '';
+            $this->lastRolledBack = preg_match('/^softn: (?:handler|startup stage) /m', $errors) === 1;
             $output = is_file($base . '.out') ? file_get_contents($base . '.out', false, null, 0, 3200000) : '';
             $result = json_decode($output, true);
             if (!is_array($result) || !is_int($result['status'] ?? null) || !array_key_exists('body', $result)) throw new RuntimeException('Native runtime returned no response');
