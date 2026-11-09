@@ -43,7 +43,7 @@ final class NativeRecordStoreTest extends TestCase
         $values = (array) $this->store->operate(['action' => 'read', 'table' => 'operators', 'key' => ['id' => '1']])['record']['values'];
         $this->assertSame(['id', 'display_name', 'request_key'], array_keys($values));
         $this->assertSame('digest', $this->db->query('SELECT key_hash FROM operators')->fetchColumn());
-        foreach (['key_hash', 'api_key', 'ACCESS_KEY', 'ssh_private_key', 'session_token', 'password_hash'] as $name) $this->assertMatchesRegularExpression(NativeRecordStore::HIDDEN_COLUMNS, $name);
+        foreach (['key_hash', 'api_key', 'ACCESS_KEY', 'ssh_private_key', 'session_token', 'password_hash', 'apiKey', 'accessKey', 'keyHash', 'privateKey', 'codeHash'] as $name) $this->assertMatchesRegularExpression(NativeRecordStore::HIDDEN_COLUMNS, $name);
         foreach (['request_key', 'primary_key', 'keyboard', 'hash'] as $name) $this->assertDoesNotMatchRegularExpression(NativeRecordStore::HIDDEN_COLUMNS, $name);
     }
 

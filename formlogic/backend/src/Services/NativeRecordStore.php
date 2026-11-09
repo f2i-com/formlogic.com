@@ -15,10 +15,11 @@ final class NativeRecordStore
      * Column names that hold a credential or sealed data: never listed, returned or put in an
      * automation's record preview. A key's digest is as much a credential as a token's is
      * (PIT FMS keeps operators' access-key digests in key_hash), and so is an API, access or
-     * private key. The native runtime's record events (the SoftN release's record-events.mjs)
-     * keep their own copy of this rule for the app's own writes.
+     * private key, in snake_case or camelCase (apiKey). The native runtime's record events
+     * (the SoftN release's record-events.mjs) keep their own copy of this rule for the app's
+     * own writes.
      */
-    public const HIDDEN_COLUMNS = '/password|token|secret|code_hash|key_hash|api_key|access_key|private_key|challenge|encrypted|sealed/i';
+    public const HIDDEN_COLUMNS = '/password|token|secret|code_?hash|key_?hash|api_?key|access_?key|private_?key|challenge|encrypted|sealed/i';
 
     private static function quote(string $name): string { return '"' . str_replace('"', '""', $name) . '"'; }
     private static function hidden(string $name): bool { return (bool) preg_match(self::HIDDEN_COLUMNS, $name); }
