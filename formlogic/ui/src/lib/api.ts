@@ -104,6 +104,14 @@ interface ApiResponse<T> {
 function isFormLogicReply(body: unknown): boolean {
   return !!body && typeof body === 'object' && !Array.isArray(body);
 }
+/**
+ * A request that threw. One its caller stopped (an AbortController's signal: a hosted app's frame
+ * torn down by a reload or a navigation) is not a failure, so it is no error in the console.
+ */
+function logRequestFailure(error: unknown): void {
+  if ((error as { name?: unknown } | null)?.name === 'AbortError') logger.log('API request aborted');
+  else logger.error('API request failed:', error);
+}
 const AUTH_SESSION_CHANGED = 'Session changed. Please try again.';
 /** The server's 503 while a migration runs past the 15 s a request waits for it (StartupFailure). */
 const MIGRATION_IN_PROGRESS = 'migration_in_progress';
@@ -1023,7 +1031,7 @@ class ApiClient {
 
       return { data };
     } catch (error) {
-      logger.error('API request failed:', error);
+      logRequestFailure(error);
       return { error: error instanceof Error ? error.message : 'Network error', transportFailure: true };
     }
   }
@@ -1071,7 +1079,7 @@ class ApiClient {
       }
       return { ok: response.ok, status: response.status, body };
     } catch (error) {
-      logger.error('API request failed:', error);
+      logRequestFailure(error);
       return { ok: false, status: 0, body: null, networkError: error instanceof Error ? error.message : 'Network error' };
     }
   }
@@ -2039,7 +2047,7 @@ class ApiClient {
 
       return { data };
     } catch (error) {
-      logger.error('API request failed:', error);
+      logRequestFailure(error);
       return { error: error instanceof Error ? error.message : 'Network error' };
     }
   }
