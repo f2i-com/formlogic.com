@@ -15,6 +15,7 @@ use FormLogic\Services\EmailService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\PayPalService;
 use FormLogic\Services\PlatformPlansService;
+use FormLogic\Tests\Support\LosesWalletLock;
 use PDO;
 use PHPUnit\Framework\TestCase;
 
@@ -22,7 +23,7 @@ use PHPUnit\Framework\TestCase;
  * App payments under real concurrency (PAYMENTS-REVIEW.md): several PHP processes at once against
  * MySQL (tests/Support/wallet-race.php), each starting at the same moment. One charge id is paid
  * once; a wallet's day holds; guesses at one code share its five, and a right code works once; a
- * capture and its webhook credit a top-up once.
+ * capture and its webhook credit a top-up once; two restores in opposite directions both finish.
  */
 final class AppWalletRaceTest extends TestCase
 {
@@ -296,6 +297,97 @@ final class AppWalletRaceTest extends TestCase
             $this->assertSame(550, $this->balance($mover), "round {$round}: 100 + 200 + 300 - 50, whatever came first");
             $this->assertSame(0, (int) self::$pdo->query('SELECT balance_cents FROM app_wallets WHERE id = ' . self::$pdo->quote($moverWallet))->fetchColumn());
         }
+    }
+
+    /** A visitor with $cents, their balance saved under $email: [holder, wallet id]. */
+    private function savedUnder(string $email, int $cents, string $ipKey): array
+    {
+        $holder = $this->funded($cents);
+        $this->wallets->sendCode($this->app, $holder, 'save', $email, $ipKey);
+        $this->wallets->confirmCode($this->app, $holder, 'save', $email, (string) end($this->mail));
+        return [$holder, (string) $this->wallets->wallet($this->app['id'], $holder, false)['id']];
+    }
+
+    /** A restore of the balance saved under $email, asked for by $holder: the job that confirms its code. */
+    private function restoreJob(array $holder, string $email, string $ipKey): array
+    {
+        $this->wallets->sendCode($this->app, $holder, 'restore', $email, $ipKey);
+        return ['op' => 'confirm', 'holder' => $holder, 'purpose' => 'restore', 'email' => $email, 'code' => (string) end($this->mail)];
+    }
+
+    private function walletBalance(string $walletId): int
+    {
+        return (int) self::$pdo->query('SELECT balance_cents FROM app_wallets WHERE id = ' . self::$pdo->quote($walletId))->fetchColumn();
+    }
+
+    /**
+     * Two restores at once between the same two wallets, each bringing its browser to the other's
+     * saved balance: both are answered (neither is ended by MySQL to break a deadlock, 1213), the
+     * browsers have changed places, and every cent is in one of the two, on a ledger that adds up.
+     */
+    public function testTwoRestoresInOppositeDirectionsAtOnceBothFinishAndLoseNothing(): void
+    {
+        $asked = 0;
+        $ip = static function () use (&$asked): string {
+            return sprintf('f1%014d', $asked++);
+        };
+        for ($round = 0; $round < 3; $round++) {
+            $pairs = [];
+            $jobs = [];
+            for ($pair = 0; $pair < 4; $pair++) {
+                $emails = ["left{$round}x{$pair}@example.com", "right{$round}x{$pair}@example.com"];
+                [$left, $leftWallet] = $this->savedUnder($emails[0], 100 + $pair, $ip());
+                [$right, $rightWallet] = $this->savedUnder($emails[1], 40, $ip());
+                $jobs[] = $this->restoreJob($left, $emails[1], $ip());
+                $jobs[] = $this->restoreJob($right, $emails[0], $ip());
+                $pairs[] = [$left, $leftWallet, $right, $rightWallet, 140 + $pair];
+            }
+            $answers = $this->race($jobs);
+            foreach ($pairs as $index => [$left, $leftWallet, $right, $rightWallet, $total]) {
+                $what = "round {$round}, pair {$index}: " . json_encode([$answers[$index * 2], $answers[$index * 2 + 1]]);
+                $this->assertSame([true, true], [isset($answers[$index * 2]['balanceCents']), isset($answers[$index * 2 + 1]['balanceCents'])], $what);
+                $this->assertSame([$rightWallet, $leftWallet], [(string) $this->wallets->wallet($this->app['id'], $left, false)['id'], (string) $this->wallets->wallet($this->app['id'], $right, false)['id']], 'each browser holds the other\'s saved balance now');
+                $balances = [$this->walletBalance($leftWallet), $this->walletBalance($rightWallet)];
+                sort($balances);
+                $this->assertSame([0, $total], $balances, $what);
+                foreach ([$leftWallet, $rightWallet] as $wallet) {
+                    $this->assertSame($this->walletBalance($wallet), (int) self::$pdo->query('SELECT COALESCE(SUM(amount_cents), 0) FROM app_wallet_ledger WHERE wallet_id = ' . self::$pdo->quote($wallet))->fetchColumn(), 'the ledger adds up to the balance');
+                }
+            }
+        }
+        $this->assertSame(0, (int) self::$pdo->query("SELECT COUNT(*) FROM app_wallet_codes WHERE purpose = 'restore' AND (attempts <> 1 OR used_at IS NULL) AND app_id = " . self::$pdo->quote($this->app['id']))->fetchColumn(), 'each code took one guess and was spent');
+    }
+
+    /**
+     * A restore MySQL ends to break a deadlock (LosesWalletLock makes one on demand) is tried again,
+     * on the one guess its code was counted. One that loses every try surfaces the error with nothing
+     * moved, its code unspent and still one guess used; confirmed again, it is done.
+     */
+    public function testARestoreThatLosesALockIsTriedAgainOnTheOneGuess(): void
+    {
+        [$saved, $savedWallet] = $this->savedUnder('kept@example.com', 100, 'f200000000000001');
+        $mover = $this->funded(30);
+        $moverWallet = (string) $this->wallets->wallet($this->app['id'], $mover, false)['id'];
+        $code = $this->restoreJob($mover, 'kept@example.com', 'f200000000000002')['code'];
+        $confirm = fn(): array => $this->wallets->confirmCode($this->app, $mover, 'restore', 'kept@example.com', $code);
+        $guesses = fn(): array => self::$pdo->query("SELECT attempts, used_at IS NOT NULL AS spent FROM app_wallet_codes WHERE purpose = 'restore' AND app_id = " . self::$pdo->quote($this->app['id']))->fetch(PDO::FETCH_NUM);
+        $transfers = fn(): int => (int) self::$pdo->query("SELECT COUNT(*) FROM app_wallet_ledger WHERE kind IN ('transfer_out', 'transfer_in') AND app_id = " . self::$pdo->quote($this->app['id']))->fetchColumn();
+
+        try {
+            LosesWalletLock::during(self::$pdo, 3, $confirm);
+            $this->fail('every try lost its lock');
+        } catch (\PDOException $e) {
+            $this->assertSame(1213, $e->errorInfo[1] ?? null);
+        }
+        $this->assertSame(3, LosesWalletLock::$lost, 'tried three times');
+        $this->assertSame([1, 0], array_map('intval', $guesses()), 'one guess counted for three tries, and the code unspent');
+        $this->assertSame([$moverWallet, 30, 100, 0], [(string) $this->wallets->wallet($this->app['id'], $mover, false)['id'], $this->walletBalance($moverWallet), $this->walletBalance($savedWallet), $transfers()], 'nothing moved');
+
+        $answer = LosesWalletLock::during(self::$pdo, 1, $confirm);
+        $this->assertSame([1, 130], [LosesWalletLock::$lost, $answer['balanceCents']], 'lost once, tried again, and done');
+        $this->assertSame([2, 1], array_map('intval', $guesses()), 'this confirm counted its own guess, once, and spent the code');
+        $this->assertSame([$savedWallet, 0, 130, 2], [(string) $this->wallets->wallet($this->app['id'], $mover, false)['id'], $this->walletBalance($moverWallet), $this->walletBalance($savedWallet), $transfers()], 'moved once');
+        $this->assertSame(130, $this->balance($saved));
     }
 
     /** A top-up's capture and its webhook at once: credited once. */

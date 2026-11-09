@@ -2285,14 +2285,43 @@ class NativeAppService
 
     /**
      * Whether the last request this service ran was ended by the runtime itself, so committed
-     * nothing: its handler threw or failed a host call and was rolled back, or it never got past
-     * starting. Read from the runner's error channel, the runtime's own `softn: handler …` or
-     * `softn: startup stage …` line, which the app's code cannot write to; never from the app's
-     * answer, which the app writes (NativeAppCharges gives a charge back on it).
+     * nothing: its handler threw or failed a host call and was rolled back, or it never got as far
+     * as its handler. Read from the runner's error channel (saysRolledBack()), which the app's code
+     * cannot write to; never from the app's answer, which the app writes (NativeAppCharges gives a
+     * charge back on it).
      */
     public function lastRunRolledBack(): bool
     {
         return $this->lastRolledBack;
+    }
+
+    /**
+     * The startup stages a runner names that end before a handler can run, in the order both bundled
+     * runners pass them (SoftN v0.0.38: request-worker.mjs, and softn-runner's worker.rs): a run
+     * that stopped in one of them committed nothing of the app's. `request_integration`, the stage
+     * after them, is left out: under Node it lasts through the handler and what follows its COMMIT
+     * (the engine's dispose, the answer being written), so it says nothing about what was committed.
+     * A stage a later SoftN adds is not here either, until it is read and found to end before the
+     * handler.
+     */
+    public const STAGES_BEFORE_HANDLER = [
+        'configuration_read', 'configuration_values', 'bundle_directory', 'manifest_read', 'application_identity',
+        'application_capabilities', 'crypto_domains', 'route_configuration', 'application_source', 'data_directory',
+        'request_input', 'database_open', 'database_lock', 'database_migrations', 'migration_stopped', 'request_limits',
+        'record_events', 'wasm_initialization',
+    ];
+
+    /**
+     * Whether a runner's error output carries the runtime's own word that the run committed nothing:
+     * its `softn: handler <name>: …` line, written as it rolls back a handler that threw or failed a
+     * host call, or a `softn: startup stage <stage>: …` line naming a stage that ends before the
+     * handler (STAGES_BEFORE_HANDLER). Any other line, `softn: startup stage request_integration`
+     * among them, is not that word: the run may have committed, and a paid charge is kept (a retry
+     * is told it is paid already).
+     */
+    public static function saysRolledBack(string $errors): bool
+    {
+        return preg_match('/^softn: (?:handler |startup stage (?:' . implode('|', self::STAGES_BEFORE_HANDLER) . '): )/m', $errors) === 1;
     }
 
     /**
@@ -2411,7 +2440,7 @@ class NativeAppService
             } while (true);
             // The runtime's own word, out of the app's reach, that it rolled this run back (lastRunRolledBack).
             $errors = is_file($base . '.err') ? (string) file_get_contents($base . '.err', false, null, 0, 16384) : '';
-            $this->lastRolledBack = preg_match('/^softn: (?:handler|startup stage) /m', $errors) === 1;
+            $this->lastRolledBack = self::saysRolledBack($errors);
             $output = is_file($base . '.out') ? file_get_contents($base . '.out', false, null, 0, 3200000) : '';
             $result = json_decode($output, true);
             if (!is_array($result) || !is_int($result['status'] ?? null) || !array_key_exists('body', $result)) throw new RuntimeException('Native runtime returned no response');

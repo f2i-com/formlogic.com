@@ -562,7 +562,10 @@ rolled back by the runtime is read from the runner's error channel: its own `sof
 line, which the app's code cannot write (`NativeAppService::lastRunRolledBack`). Both bundled runners
 (SoftN v0.0.38, softn-runner and `runner.mjs`) roll back a run whose handler throws or catches a
 failed host call and writes on, and print that line; the app's own answer, which can imitate the
-runtime's `host_error`, is never trusted. A log line is not a protocol, though: if a later SoftN
+runtime's `host_error`, is never trusted. A `softn: startup stage <stage>:` line counts too, for the
+stages that end before the handler runs (`NativeAppService::STAGES_BEFORE_HANDLER`), and never for
+`request_integration`: under Node that stage lasts through the handler and what follows its commit,
+so a run that fails there keeps its charge. A log line is not a protocol, though: if a later SoftN
 changes it, such runs keep their charge (the safe side) until FormLogic reads the new one. What would
 make it a protocol: the runner's output carrying, outside the handler's answer and set by the host
 after the handler returns (any handler-supplied value replaced), `"softn": {"transaction":

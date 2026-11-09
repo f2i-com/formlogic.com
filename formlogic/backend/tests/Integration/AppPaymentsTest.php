@@ -96,13 +96,13 @@ final class AppPaymentsTest extends TestCase
         return ['softn-runner (or Node where none ships)' => ['auto'], 'Node runner.mjs' => ['node']];
     }
 
-    private function boot(string $runner = 'auto', bool $admin = true): void
+    private function boot(string $runner = 'auto', bool $admin = true, ?string $runtime = null): void
     {
         if (self::$pdo === null) $this->markTestSkipped('No test database');
         if (self::$paypal === null) $this->markTestSkipped('Needs curl');
         $node = getenv('FORMLOGIC_NODE_BIN') ?: null;
         if ($runner === 'node' && $node === null) $this->markTestSkipped('Set FORMLOGIC_NODE_BIN to run the Node runner');
-        $this->native = new NativeAppService(self::$tmpRoot . '/native-' . bin2hex(random_bytes(3)), null, $node, $runner);
+        $this->native = new NativeAppService(self::$tmpRoot . '/native-' . bin2hex(random_bytes(3)), $runtime, $node, $runner);
         if (!$this->native->available()) $this->markTestSkipped('No SoftN runtime here');
         $this->ownerId = 'u-' . bin2hex(random_bytes(12));
         self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name, is_admin) VALUES (?, ?, 'x', 'Owner', ?)")->execute([$this->ownerId, $this->ownerId . '@test.local', $admin ? 1 : 0]);
@@ -318,6 +318,58 @@ JS;
         $this->assertSame([500, 'host_error', 180], [$forged['status'], $forged['body']['code'] ?? null, (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents']], 'the app wrote the sale: the charge stands');
         $this->assertSame([200, true], [($owned = $this->call($app, '/api/download', ['design' => 'd-forged'], $cookie))['status'], $owned['body']['already'] ?? null]);
         $this->assertSame(0, (int) self::$pdo->query("SELECT COUNT(*) FROM app_wallet_charges WHERE state IN ('pending', 'running') AND app_id = " . self::$pdo->quote($app['id']))->fetchColumn(), 'every charge settled or given back');
+    }
+
+    /**
+     * A copy of the bundled runtime, for Node, whose engine fails as it is disposed of once a paid
+     * run asked to with `failAfter: "dispose"` has committed: what a failing dispose does to the real
+     * one (wasm-host.mjs, the `finally` of a host's invoke). Null when the runtime no longer has it.
+     */
+    private function runtimeThatFailsAfterTheCommit(): ?string
+    {
+        $bundled = dirname(__DIR__, 2) . '/resources/softn-native';
+        $copy = self::$tmpRoot . '/runtime-late-' . bin2hex(random_bytes(3));
+        $disposes = 'if (engine) { try { engine.dispose(); } finally { engine.free(); } }';
+        $host = is_file($bundled . '/wasm-host.mjs') ? (string) file_get_contents($bundled . '/wasm-host.mjs') : '';
+        if (substr_count($host, $disposes) !== 1) return null;
+        foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($bundled, \FilesystemIterator::SKIP_DOTS)) as $file) {
+            $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($bundled) + 1));
+            // Node runs it: the runner binaries stay behind.
+            if (str_starts_with($relative, 'bin/')) continue;
+            if (!is_dir(dirname($copy . '/' . $relative))) mkdir(dirname($copy . '/' . $relative), 0700, true);
+            copy($file->getPathname(), $copy . '/' . $relative);
+        }
+        file_put_contents($copy . '/wasm-host.mjs', str_replace($disposes, $disposes . ' if (context?.formlogic?.payment?.status === "paid" && request?.body?.failAfter === "dispose") throw new Error("engine dispose failed");', $host));
+        return $copy;
+    }
+
+    /**
+     * Under Node the runtime's `request_integration` stage lasts through the handler and what follows
+     * its COMMIT. A run that fails there after the app committed the sale is answered 503 with that
+     * stage's line on the error channel: that is not the runtime's word that nothing was committed,
+     * so the charge stands, and the retry is served what was bought.
+     */
+    public function testARunThatFailsAfterItsCommitKeepsItsCharge(): void
+    {
+        $runtime = $this->runtimeThatFailsAfterTheCommit();
+        if ($runtime === null) $this->markTestSkipped('The bundled wasm-host.mjs disposes of its engine another way now: read it again.');
+        $this->boot('node', true, $runtime);
+        $app = $this->app();
+        $cookie = [];
+        $this->call($app, '/api/whoami', [], $cookie, 'GET');
+        $holder = $this->visitorOf($cookie, $app['id']);
+        $this->topUp($app, $holder, 200);
+        $late = $this->call($app, '/api/download', ['design' => 'd-late', 'failAfter' => 'dispose'], $cookie);
+        $this->assertSame([503, 'backend_unavailable', 'request_integration'], [$late['status'], $late['body']['code'] ?? null, $late['body']['diagnostic'] ?? null], json_encode($late));
+        $this->assertFalse($this->native->lastRunRolledBack(), 'request_integration says nothing about what was committed');
+        $this->assertSame(1, (int) $this->native->withDatabase($app['id'], static fn(PDO $db) => $db->query("SELECT COUNT(*) FROM purchases WHERE design = 'd-late'")->fetchColumn()), 'the app committed the sale');
+        $this->assertSame([195, 'settled'], [(int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents'], self::$pdo->query("SELECT state FROM app_wallet_charges WHERE charge_id = 'download:d-late' AND app_id = " . self::$pdo->quote($app['id']))->fetchColumn()], 'so the charge stands');
+        $this->assertNotContains('refund', array_column($this->ledger($app), 'kind'));
+        $retry = $this->call($app, '/api/download', ['design' => 'd-late'], $cookie);
+        $this->assertSame([200, true, 195], [$retry['status'], $retry['body']['already'] ?? null, (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents']], 'the retry is served what was bought, and pays nothing more');
+        // The runtime's own rollback is still given back by the same runtime: a handler that threw.
+        $thrown = $this->call($app, '/api/download', ['design' => 'd-thrown', 'failAfter' => 'throw'], $cookie);
+        $this->assertSame([500, 'host_error', true, 195], [$thrown['status'], $thrown['body']['code'] ?? null, $this->native->lastRunRolledBack(), (int) $this->wallets->wallet($app['id'], $holder, false)['balance_cents']]);
     }
 
     /** M1: a second run that throws is given back only when it never started; a timeout may have committed, and keeps it. */

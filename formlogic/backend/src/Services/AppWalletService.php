@@ -663,41 +663,61 @@ class AppWalletService
         if ($guess->rowCount() !== 1) throw $wrong;
         if (!preg_match('/^\d{6}$/D', trim($code)) || !hash_equals((string) $row['code_hash'], $this->codeHash($hash, trim($code)))) throw $wrong;
         $this->wallet($appId, $holder, true);
-        $pdo->beginTransaction();
-        try {
-            // Spent once, in the same transaction as what it does.
-            $spend = $pdo->prepare('UPDATE app_wallet_codes SET used_at = UTC_TIMESTAMP() WHERE id = ? AND used_at IS NULL');
-            $spend->execute([$row['id']]);
-            if ($spend->rowCount() !== 1) throw $wrong;
-            $mine = $this->lockedWallet($appId, $holder);
-            if ($purpose === 'save') {
-                $other = $this->walletByEmail($appId, $hash);
-                if ($other !== null && $other['id'] !== $mine['id']) {
-                    // Saved already under this email: this browser joins that wallet instead.
-                    $this->join($appId, $holder, $mine, $this->lockWallet((string) $other['id']));
-                } else {
-                    $pdo->prepare('UPDATE app_wallets SET email_hash = ?, email_verified_at = UTC_TIMESTAMP() WHERE id = ?')->execute([$hash, $mine['id']]);
+        // The guess is counted, once, above. What the code does is tried again when MySQL ends it to
+        // break a deadlock or a lock wait: the code is unspent again (its spending went with the
+        // rest), so a right code is never left with a guess used and nothing done.
+        for ($attempt = 1; ; $attempt++) {
+            // The wallet saved under the email, read before the transaction: a move locks its two
+            // wallets in the order of their ids (join), so both ids are known before either lock,
+            // and inside the transaction every read still comes after the locks.
+            $saved = $this->walletByEmail($appId, $hash);
+            $pdo->beginTransaction();
+            try {
+                // Spent once, in the same transaction as what it does.
+                $spend = $pdo->prepare('UPDATE app_wallet_codes SET used_at = UTC_TIMESTAMP() WHERE id = ? AND used_at IS NULL');
+                $spend->execute([$row['id']]);
+                if ($spend->rowCount() !== 1) throw $wrong;
+                $mine = $this->lockHolder($appId, $holder);
+                if ($saved !== null && $saved['id'] !== $mine) {
+                    // Saved under this email already ('save'), or the balance asked for ('restore'):
+                    // this browser joins that wallet. Saved under another email since it was read
+                    // (join answers false, nothing done): read again.
+                    if (!$this->join($appId, $holder, $mine, (string) $saved['id'], $hash)) {
+                        $pdo->rollBack();
+                        if ($attempt >= 3) throw new \RuntimeException('A saved balance kept changing while a browser was joined to it.');
+                        continue;
+                    }
+                } elseif ($purpose === 'save') {
+                    $this->lockWallet($mine);
+                    $pdo->prepare('UPDATE app_wallets SET email_hash = ?, email_verified_at = UTC_TIMESTAMP() WHERE id = ?')->execute([$hash, $mine]);
+                } elseif ($saved === null) {
+                    throw $wrong;
                 }
-            } else {
-                $saved = $this->walletByEmail($appId, $hash);
-                if ($saved === null) throw $wrong;
-                if ($saved['id'] !== $mine['id']) $this->join($appId, $holder, $mine, $this->lockWallet((string) $saved['id']));
+                $pdo->commit();
+                break;
+            } catch (\Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                if ($attempt >= 3 || !self::lockLost($e)) throw $e;
             }
-            $pdo->commit();
-        } catch (\Throwable $e) {
-            if ($pdo->inTransaction()) $pdo->rollBack();
-            throw $e;
         }
         return ['balanceCents' => (int) ($this->wallet($appId, $holder, false)['balance_cents'] ?? 0)];
     }
 
     /**
-     * Move $holder from $from to $to, with whatever $from held (a transfer, both sides on the ledger).
-     * A held balance (disputed, or below zero) is not moved until that is settled; a blocked balance
-     * the move brings back to zero or more is open again.
+     * Move $holder from their wallet $fromId to the wallet $toId saved under $emailHash, with whatever
+     * the first held (a transfer, both sides on the ledger). The caller holds the holder's lock
+     * (lockHolder); the two wallets are locked here, the lower id first whichever way the move goes,
+     * then the top-ups: two moves between the same two wallets in opposite directions wait for each
+     * other in turn, never in a circle for MySQL to break (1213). A held balance (disputed, or below
+     * zero) is not moved until that is settled; a blocked balance the move brings back to zero or
+     * more is open again. False, with nothing done, when $toId is no longer saved under $emailHash.
      */
-    private function join(string $appId, array $holder, array $from, array $to): void
+    private function join(string $appId, array $holder, string $fromId, string $toId, string $emailHash): bool
     {
+        $locked = [];
+        foreach (strcmp($fromId, $toId) < 0 ? [$fromId, $toId] : [$toId, $fromId] as $id) $locked[$id] = $this->lockWallet($id);
+        [$from, $to] = [$locked[$fromId], $locked[$toId]];
+        if ($to['email_hash'] !== $emailHash) return false;
         if ($from['status'] !== 'active') throw new WalletRefusal('This balance is held while a payment is checked. It can be saved or moved once that is settled.', 'wallet_held', 409);
         $pdo = $this->pdo();
         $moved = (int) $from['balance_cents'];
@@ -713,6 +733,7 @@ class AppWalletService
         $left = $pdo->prepare('SELECT COUNT(*) FROM app_wallet_holders WHERE wallet_id = ?');
         $left->execute([$from['id']]);
         if ((int) $left->fetchColumn() === 0) $pdo->prepare('UPDATE app_wallet_topups SET wallet_id = ? WHERE wallet_id = ?')->execute([$to['id'], $from['id']]);
+        return true;
     }
 
     // ------------------------------------------------------------------ the owner's and the administrator's view
@@ -800,11 +821,17 @@ class AppWalletService
      */
     private function lockedWallet(string $appId, array $holder): array
     {
+        return $this->lockWallet($this->lockHolder($appId, $holder));
+    }
+
+    /** The id of the holder's wallet, their row locked for this transaction: it is theirs until it ends. */
+    private function lockHolder(string $appId, array $holder): string
+    {
         $find = $this->pdo()->prepare('SELECT wallet_id FROM app_wallet_holders WHERE app_id = ? AND holder_kind = ? AND holder_id = ? FOR UPDATE');
         $find->execute([$appId, $holder['kind'], $holder['id']]);
         $id = $find->fetchColumn();
         if (!is_string($id)) throw new \RuntimeException('No wallet');
-        return $this->lockWallet($id);
+        return $id;
     }
 
     private function lockWallet(string $walletId): array
