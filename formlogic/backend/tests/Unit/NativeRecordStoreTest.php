@@ -33,6 +33,20 @@ final class NativeRecordStoreTest extends TestCase
         $this->assertSame(0, (int) $this->db->query('SELECT count(*) FROM notes')->fetchColumn());
     }
 
+    public function testKeyDigestsAndApiKeysStayHiddenLikeTokens(): void
+    {
+        // PIT FMS keeps each operator's access-key digest in key_hash; it is a credential like a token.
+        $this->db->exec("CREATE TABLE operators(id INTEGER PRIMARY KEY, display_name TEXT NOT NULL, key_hash TEXT NOT NULL DEFAULT 'digest', api_key TEXT, access_key TEXT, private_key TEXT, request_key TEXT)");
+        $names = array_column($this->store->schema('operators')['fields'], 'name');
+        $this->assertSame(['id', 'display_name', 'request_key'], $names);
+        $this->store->operate(['action' => 'create', 'table' => 'operators', 'values' => ['display_name' => 'Night dispatcher']]);
+        $values = (array) $this->store->operate(['action' => 'read', 'table' => 'operators', 'key' => ['id' => '1']])['record']['values'];
+        $this->assertSame(['id', 'display_name', 'request_key'], array_keys($values));
+        $this->assertSame('digest', $this->db->query('SELECT key_hash FROM operators')->fetchColumn());
+        foreach (['key_hash', 'api_key', 'ACCESS_KEY', 'ssh_private_key', 'session_token', 'password_hash'] as $name) $this->assertMatchesRegularExpression(NativeRecordStore::HIDDEN_COLUMNS, $name);
+        foreach (['request_key', 'primary_key', 'keyboard', 'hash'] as $name) $this->assertDoesNotMatchRegularExpression(NativeRecordStore::HIDDEN_COLUMNS, $name);
+    }
+
     public function testConcurrentChangeCannotBeOverwritten(): void
     {
         $this->store->operate(['action' => 'create', 'table' => 'notes', 'values' => ['title' => 'First']]);

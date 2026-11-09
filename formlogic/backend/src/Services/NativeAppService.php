@@ -2387,7 +2387,7 @@ class NativeAppService
         if (!in_array($table, $tables, true)) throw new RuntimeException('Table not found', 404);
         $quoted = '"' . str_replace('"', '""', $table) . '"';
         $columns = $db->query('PRAGMA table_info(' . $quoted . ')')->fetchAll();
-        $hidden = '/password|token|secret|code_hash|challenge|encrypted|sealed/i';
+        $hidden = NativeRecordStore::HIDDEN_COLUMNS;
         $visible = array_slice(array_values(array_filter(array_column($columns, 'name'), static fn($name) => !preg_match($hidden, $name))), 0, 100);
         // Paging contract (FL-S06): the response says which offset it actually used and why it
         // stops. A requested offset past the window is clamped to it and reported, never

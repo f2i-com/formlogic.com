@@ -483,7 +483,9 @@ named-action editor described above.
 5. **Records** lets the owner browse, create, edit, and delete records in the app's SQLite tables.
    The list paginates 50 rows and previews 400 characters per text cell. **View → Edit record**
    loads full values (up to 100 KB per field); primary keys, generated fields, and binary values
-   stay read-only. Common authentication secrets and host metadata remain hidden. Tables need
+   stay read-only. Common authentication secrets (columns named for passwords, tokens, secrets,
+   sign-in code digests, key digests such as `key_hash`, and API, access or private keys) and host
+   metadata remain hidden. Tables need
    a visible primary key for editing/deletion; creation requiring private or binary fields goes
    through the app. Defaults and NULL are separate from empty text. Stale edits are rejected.
    These owner controls apply database constraints and connected record automations, but do
