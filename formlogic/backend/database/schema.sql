@@ -847,6 +847,109 @@ CREATE TABLE `app_ai_counters` (
   PRIMARY KEY (`app_id`,`scope`,`subject`,`period`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- App payments (AppWalletService): each app's owner's choice, its prices and whether it takes payments. A table of its own, so packs, backups and the MCP merge never carry it.
+CREATE TABLE `app_payment_settings` (
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `prices` text COLLATE utf8mb4_unicode_ci,
+  `updated_by` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`app_id`),
+  CONSTRAINT `fk_app_payment_settings_app` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- A visitor's or member's prepaid balance with an app, in US cents. Money records never cascade: they outlive the app and the accounts they were for.
+CREATE TABLE `app_wallets` (
+  `id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `balance_cents` int NOT NULL DEFAULT '0',
+  `status` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `email_hash` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `email_verified_at` datetime DEFAULT NULL,
+  `created_at` datetime(3) NOT NULL,
+  `updated_at` datetime(3) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_app_wallets_email` (`app_id`,`email_hash`),
+  KEY `idx_app_wallets_app` (`app_id`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Who holds each wallet: a visitor id or a member, for one app. Several browsers, and an account, can share one wallet (email restore).
+CREATE TABLE `app_wallet_holders` (
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `holder_kind` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `holder_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `wallet_id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime(3) NOT NULL,
+  PRIMARY KEY (`app_id`,`holder_kind`,`holder_id`),
+  KEY `idx_app_wallet_holders_wallet` (`wallet_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Every change to a balance, written with it in one transaction. A line's (wallet, kind, ref) is unique, so a charge, a top-up or a refund counts once.
+CREATE TABLE `app_wallet_ledger` (
+  `id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `wallet_id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kind` varchar(12) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `amount_cents` int NOT NULL,
+  `balance_after` int NOT NULL,
+  `ref` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `item` varchar(40) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `charge_id` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `actor` varchar(80) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `note` varchar(200) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime(3) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_app_wallet_ledger_ref` (`wallet_id`,`kind`,`ref`),
+  KEY `idx_app_wallet_ledger_wallet` (`wallet_id`,`created_at`),
+  KEY `idx_app_wallet_ledger_charge` (`wallet_id`,`charge_id`),
+  KEY `idx_app_wallet_ledger_app` (`app_id`,`kind`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Top-ups through the site's PayPal: the order and capture ids, the amount the server set, and what was given back.
+CREATE TABLE `app_wallet_topups` (
+  `id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `wallet_id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `order_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `capture_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `amount_cents` int NOT NULL,
+  `currency` char(3) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `package_cents` int NOT NULL,
+  `status` varchar(12) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `refunded_cents` int NOT NULL DEFAULT '0',
+  `holder_kind` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `holder_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ip_key` char(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime(3) NOT NULL,
+  `updated_at` datetime(3) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_app_wallet_topups_order` (`order_id`),
+  UNIQUE KEY `uq_app_wallet_topups_capture` (`capture_id`),
+  KEY `idx_app_wallet_topups_wallet` (`wallet_id`,`created_at`),
+  KEY `idx_app_wallet_topups_ip` (`ip_key`,`created_at`),
+  KEY `idx_app_wallet_topups_holder` (`holder_kind`,`holder_id`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Email codes to save or restore a balance: only keyed hashes of the email and the code, ten minutes and five tries.
+CREATE TABLE `app_wallet_codes` (
+  `id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `purpose` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `email_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `code_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `holder_kind` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `holder_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ip_key` char(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `attempts` tinyint unsigned NOT NULL DEFAULT '0',
+  `expires_at` datetime NOT NULL,
+  `used_at` datetime DEFAULT NULL,
+  `created_at` datetime(3) NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_app_wallet_codes_email` (`app_id`,`email_hash`,`created_at`),
+  KEY `idx_app_wallet_codes_ip` (`ip_key`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Linking an OAIY server with a one-time code (DesktopLinkCodeService): the code's keyed hash, ten minutes and one use.
 CREATE TABLE `desktop_link_codes` (
   `id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,

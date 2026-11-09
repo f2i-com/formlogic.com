@@ -4,7 +4,7 @@
 // Screens step, a collapsed "Hosting & app tools" section and the native hosting dialog.
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, Lock, MessageSquare, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wand2 } from 'lucide-react';
+import { Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, Lock, MessageSquare, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wallet, Wand2 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Textarea } from '../../components/ui/Textarea';
@@ -14,6 +14,7 @@ import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
 import { SoftnLookPanel } from '../../components/apps/SoftnLookPanel';
 import { PhoneSignInPanel } from '../../components/apps/PhoneSignInPanel';
 import { AppAiPanel } from '../../components/apps/AppAiPanel';
+import { AppPaymentsPanel } from '../../components/apps/AppPaymentsPanel';
 import { BringDataPanel } from '../../components/apps/BringDataPanel';
 import { AddBackendPanel } from '../../components/apps/AddBackendPanel';
 import { RequirementsSetting } from '../../components/apps/RequirementsSetting';
@@ -28,7 +29,7 @@ import { DRAFT_KEEPING, useNativeProjectDraft } from '../../components/studio/us
 import { useAiReady } from '../../hooks/useAiReady';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { api } from '../../lib/api';
-import { declaresFormlogicAi, exportNativeProject, importNativeProject, type NativeProject } from '../../lib/nativeHosting';
+import { declaresFormlogicAi, declaresFormlogicPayments, exportNativeProject, importNativeProject, type NativeProject } from '../../lib/nativeHosting';
 import { isSoftnApp, projectFromUpload, projectHasBackend } from '../../lib/softnApps';
 import { cn, copyToClipboard } from '../../lib/utils';
 import { useAppStore } from '../../stores/appStore';
@@ -392,6 +393,9 @@ function Workspace({ app }: { app: App }) {
           {app.ownerId === userId && backend && declaresFormlogicAi(project) && <div className="min-w-0 lg:col-span-2"><Panel title="AI for this app" icon={<Sparkles className="h-4 w-4" />}>
             <AppAiPanel appId={app.id} />
           </Panel></div>}
+          {app.ownerId === userId && backend && declaresFormlogicPayments(project) && <Panel title="Payments" icon={<Wallet className="h-4 w-4" />}>
+            <AppPaymentsPanel appId={app.id} />
+          </Panel>}
           {app.ownerId === userId && <Panel title="Look and sharing" icon={<Palette className="h-4 w-4" />}>
 
             <SoftnLookPanel project={project} look={app.settings?.softnLook} themeColor={app.settings?.pwaThemeColor} disabled={readOnly} onSave={changeLook} />

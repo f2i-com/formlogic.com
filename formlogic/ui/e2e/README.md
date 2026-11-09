@@ -29,6 +29,10 @@ Failures capture a screenshot + trace (open with `npx playwright show-trace <tra
   **onSubmit** reject + computed write. Each test creates and deletes its own form.
 - `script-editor.spec.ts` — the ScriptEditor "Run Test" success + rejection flows.
 - `storage-mode.spec.ts` — login auto-enables cloud (API) storage.
+- `app-ai-payments.spec.ts` — App AI and app payments: a visitor's picture drawn by the site's AI and
+  delivered to the app, then a 5¢ download paid from a balance topped up in FormLogic's wallet. Needs
+  the App AI worker, the stand-ins for Studio's gateway and for PayPal, and an administrator
+  (`E2E_APP_AI_EMAIL`, `E2E_APP_AI_PASSWORD`); the spec's header says how. Skipped otherwise.
 
 ## Notes / follow-ups
 

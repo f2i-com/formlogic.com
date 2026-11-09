@@ -3,7 +3,7 @@
 // workspace and App Studio show the same thing in place as their preview. They used to frame that
 // page instead, and a FormLogic page may not be framed (the web root sends frame-ancestors 'none'
 // for every page of the app shell), so on a real server the preview was refused by the browser.
-import { useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { DomainSignInContext, isAnotherAddress } from '../../lib/domainSignIn';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
@@ -13,6 +13,7 @@ import { isNativeStorageScope } from '../../lib/nativeAppStorage';
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from '../../lib/sessionGeneration';
 import { HostedAppFrame } from './HostedAppFrame';
 import { AppSplash } from './AppSplash';
+import { WalletSheet } from '../apps/WalletSheet';
 import { applyAppHead, rememberedLook, rememberLook, type NativeLook } from '../../lib/appLook';
 import { passAction, unmetRequirement } from '../../lib/passes';
 
@@ -148,6 +149,21 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     window.addEventListener('online', again);
     return () => window.removeEventListener('online', again);
   }, [retryable]);
+  // FormLogic's wallet over the app (an app that takes payments asks for it: HostedAppFrame's
+  // `formlogicWallet`), answered when the person closes it. One at a time: a second ask while it is
+  // open is answered when that one closes.
+  const [walletOpen, setWalletOpen] = useState(false);
+  const walletWaiting = useRef<Array<(closed: { closed: true; balanceCents: number }) => void>>([]);
+  const onWallet = useCallback(() => new Promise<{ closed: true; balanceCents: number }>((resolve) => {
+    walletWaiting.current.push(resolve);
+    setWalletOpen(true);
+  }), []);
+  const closeWallet = useCallback((balanceCents: number) => {
+    setWalletOpen(false);
+    const waiting = walletWaiting.current;
+    walletWaiting.current = [];
+    for (const resolve of waiting) resolve({ closed: true, balanceCents });
+  }, []);
   const verify = current?.pass?.verifyPath ? `${current.pass.verifyPath}&return=` : null;
   const linkClass = 'mt-4 inline-flex min-h-11 items-center text-indigo-600 dark:text-indigo-300';
   if (project && filesAppId && answer === null) {
@@ -164,7 +180,8 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       </section>
     </div>;
   }
-  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} /></div> : !error ? <AppSplash look={look} label={name ? `Opening ${name}` : 'Opening the app'} /> : <div className="p-6">
+  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} onWallet={native?.wallet ? onWallet : undefined} />
+    {walletOpen && <WalletSheet slug={slug} appName={name || 'this app'} visitor={!!native?.visitor} onClose={closeWallet} />}</div> : !error ? <AppSplash look={look} label={name ? `Opening ${name}` : 'Opening the app'} /> : <div className="p-6">
     {/* On a card of its own: the page around it may wear the app's loading colours, dark or light. */}
     <div className="mx-auto max-w-md rounded-2xl bg-white/95 p-5 shadow-sm dark:bg-slate-900/95">
       <p role="alert" className="text-sm text-slate-800 dark:text-slate-200">{error}</p>

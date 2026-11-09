@@ -47,7 +47,7 @@ class BillingController
         'PAYMENT.CAPTURE.DENIED',
     ];
 
-    public function __construct(PayPalService $paypal, MySQLConnection $db, ?AuditService $auditService = null, ?LoggerInterface $logger = null, ?PlanService $planService = null, bool $betaMode = false, private ?\FormLogic\Services\PlatformPlansService $platformPlans = null)
+    public function __construct(PayPalService $paypal, MySQLConnection $db, ?AuditService $auditService = null, ?LoggerInterface $logger = null, ?PlanService $planService = null, bool $betaMode = false, private ?\FormLogic\Services\PlatformPlansService $platformPlans = null, private ?\FormLogic\Services\AppWalletService $wallets = null)
     {
         $this->paypal = $paypal;
         $this->db = $db;
@@ -228,6 +228,17 @@ class BillingController
 
         $type = (string) $event['event_type'];
         $resource = is_array($event['resource'] ?? null) ? $event['resource'] : [];
+        // An app top-up's event (AppWalletService): its own ledger, never the cloud months below.
+        if ($this->wallets !== null) {
+            try {
+                if ($this->wallets->webhook($type, $resource)) {
+                    return $response->withStatus(200);
+                }
+            } catch (\Throwable $e) {
+                $this->logger->error('Webhook for an app top-up failed', ['type' => $type, 'error' => $e->getMessage()]);
+                return $response->withStatus(500);
+            }
+        }
         $captureId = is_string($resource['id'] ?? null) ? $resource['id'] : '';
         // The capture's parent order id (custom_id was set to "userId:months" on create).
         $pdo = $this->db->getConnection();

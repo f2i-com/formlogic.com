@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
-use FormLogic\Services\{AccessGateService, AppAiService, AppFormlogicManifest, AppService, AppUserService, AppVisitors, NativeAppService, NativePhoneVerification, NativeRecordEventRouter, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService};
+use FormLogic\Services\{AccessGateService, AppAiService, AppFormlogicManifest, AppService, AppUserService, AppVisitors, AppWalletService, NativeAppCharges, NativeAppService, NativePhoneVerification, NativeRecordEventRouter, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService, WalletRefusal};
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -19,7 +19,7 @@ class NativeAppController
     // $engines is required, not optional-with-a-default: this controller is autowired, and PHP-DI's
     // reflection autowiring SKIPS optional parameters (ReflectionBasedAutowiring), so an `= null`
     // here would silently hand production a controller that decides no app's engine.
-    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null, private ?AppLookService $look = null, private ?NativePhoneVerification $verification = null, private ?NativeRecordEventRouter $records = null, private ?AppVisitors $visitors = null, private ?AppAiService $ai = null)
+    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null, private ?AppLookService $look = null, private ?NativePhoneVerification $verification = null, private ?NativeRecordEventRouter $records = null, private ?AppVisitors $visitors = null, private ?AppAiService $ai = null, private ?AppWalletService $wallets = null, private ?NativeAppCharges $charges = null)
     {
         // Every dispatch goes through the one router, so App AI's jobs are never acknowledged unread.
         $this->records ??= new NativeRecordEventRouter($this->flows, $this->ai);
@@ -361,13 +361,20 @@ class NativeAppController
                 'client_ip' => \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request), 'photos' => false,
             ];
             $subscriptions = $this->flows->nativeRecordSubscriptions($app['id']);
-            if ($asks !== null) [$identity, $subscriptions, $setCookie] = $this->formlogicRequest($request, $app, $project, $asks, $identity, $subscriptions, (string) $nativeRequest['client_ip'], $user);
+            $requester = null;
+            if ($asks !== null) [$identity, $subscriptions, $setCookie, $requester] = $this->formlogicRequest($request, $app, $project, $asks, $identity, $subscriptions, (string) $nativeRequest['client_ip'], $user);
             // The app's own page (not a plugin's): photos are redrawn here, and the body held to its route.
-            // $context is the host's word to the backend, added to who is asking (never the caller's).
-            $run = fn(array $context = []) => $this->native->request($app['id'], $nativeRequest, $identity + $context, $subscriptions, (int) ($project['version'] ?? 0), true, $plugin === null ? 'app' : 'plugin');
-            $result = $plugin === null && $this->verification !== null && $this->verification->applies($app['id'], $nativeRequest)
-                ? $this->verification->handle($app['id'], $nativeRequest, $run)
-                : $run();
+            // $context is the host's word to the backend, added to who is asking (never the caller's);
+            // $who replaces who is asking, for a charge's second run (NativeAppCharges).
+            $run = fn(array $context = [], ?array $who = null) => $this->native->request($app['id'], $nativeRequest, ($who ?? $identity) + $context, $subscriptions, (int) ($project['version'] ?? 0), true, $plugin === null ? 'app' : 'plugin');
+            if ($plugin === null && $this->charges !== null && ($asks['payments'] ?? null) !== null && NativeAppCharges::applies($asks['payments'], $nativeRequest)) {
+                // A route that may ask for a charge: run once, and again with the outcome.
+                $result = $this->charges->handle($app, $asks['payments'], $requester, $identity, static fn(array $who) => $run([], $who));
+            } else {
+                $result = $plugin === null && $this->verification !== null && $this->verification->applies($app['id'], $nativeRequest)
+                    ? $this->verification->handle($app['id'], $nativeRequest, $run)
+                    : $run();
+            }
             if ($plugin !== null) {
                 if ($this->gate === null) throw new \RuntimeException('Plugins are not available', 503);
                 $result = $this->gate->recordFromPluginAnswer($plugin, (string) $user, $input['method'], $input['path'], $result);
@@ -384,6 +391,67 @@ class NativeAppController
         return $setCookie !== null ? $answer->withAddedHeader('Set-Cookie', $setCookie) : $answer;
     }
 
+    /**
+     * The app's wallet for whoever is asking (AppWalletService), from FormLogic's own wallet sheet,
+     * never the app's frame: GET the sheet; POST `orders` {cents} to start a top-up and
+     * `orders/{orderId}` once PayPal approved it, to capture it; POST `email` {purpose: save|restore,
+     * email} for a code, and `confirm` {purpose, email, code}. Admitted as the app's own requests are:
+     * a members' app's member, or a visitor's browser on a request FormLogic's page marked.
+     */
+    public function wallet(Request $request, Response $response, array $args): Response
+    {
+        if ($this->wallets === null) return $this->jsonError($response, 'Not found', 404);
+        $app = $this->apps->getAppBySlug((string) ($args['slug'] ?? ''));
+        $user = $request->getAttribute('userId');
+        $owner = $app && $user && $app['ownerId'] === $user;
+        if (!$app || !$this->apps->isRuntimeVisible($app, (string) ($user ?? ''))) return $this->jsonError($response, 'App not found or access denied', 404);
+        if ($blocked = $this->blockIfDemo($request, $response, 'Payments are unavailable in the shared demo.')) return $blocked;
+        if ($this->plugins?->forApp($app) !== null) return $this->jsonError($response, 'Not found', 404);
+        $project = $this->native->runtimeProject($app['id'])['project'] ?? null;
+        $declared = is_array($project) ? AppFormlogicManifest::payments(AppFormlogicManifest::decode($project['files']['manifest.json'] ?? null)) : null;
+        if ($declared === null) return $this->jsonError($response, 'This app takes no payments', 404);
+        $setCookie = null;
+        if ($project['access'] === 'members') {
+            $membership = $user && !$owner ? $this->users->getAppUser($app['id'], (string) $user) : null;
+            if (!$owner && (!$user || ($membership['status'] ?? '') !== 'active')) return $this->jsonError($response, 'Sign in with an active app membership to continue', 403);
+            $holder = ['kind' => 'user', 'id' => (string) $user];
+        } else {
+            $visitor = $this->visitors?->resolve($request, (string) $app['id'], $this->visitors->marked($request));
+            if ($visitor === null) return $this->jsonError($response, 'Open the app in your browser to use its wallet.', 403, 'visitor_required');
+            $holder = ['kind' => 'visitor', 'id' => $visitor['id']];
+            $setCookie = $visitor['setCookie'];
+        }
+        $operation = (string) ($args['operation'] ?? '');
+        $body = $request->getParsedBody();
+        $body = is_array($body) ? $body : [];
+        $ip = \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request);
+        $ipKey = $this->visitors?->ipKey($ip) ?? substr(hash('sha256', $ip), 0, 16);
+        $status = 200;
+        try {
+            if ($request->getMethod() === 'GET') {
+                $data = $this->wallets->sheet($app, $declared, $holder);
+            } elseif ($operation === 'orders' && isset($args['orderId'])) {
+                $data = $this->wallets->captureTopup($app, $holder, (string) $args['orderId']);
+            } elseif ($operation === 'orders') {
+                $data = $this->wallets->createTopup($app, $holder, is_int($body['cents'] ?? null) ? $body['cents'] : 0, $ipKey);
+            } elseif ($operation === 'email') {
+                $this->wallets->sendCode($app, $holder, ($body['purpose'] ?? '') === 'restore' ? 'restore' : 'save', (string) ($body['email'] ?? ''), $ipKey);
+                [$data, $status] = [['sent' => true], 202];
+            } elseif ($operation === 'confirm') {
+                $data = $this->wallets->confirmCode($app, $holder, ($body['purpose'] ?? '') === 'restore' ? 'restore' : 'save', (string) ($body['email'] ?? ''), (string) ($body['code'] ?? ''));
+            } else {
+                return $this->jsonError($response, 'Not found', 404);
+            }
+        } catch (WalletRefusal $e) {
+            return $this->jsonError($response, $e->getMessage(), $e->status, $e->reason);
+        } catch (\Throwable $e) {
+            error_log('App wallet ' . $operation . ' failed for app ' . $app['id'] . ': ' . $e->getMessage());
+            return $this->jsonError($response, 'Your balance could not be reached. Try again.', 503);
+        }
+        $answer = $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), ['data' => $data], $status);
+        return $setCookie !== null ? $answer->withAddedHeader('Set-Cookie', $setCookie) : $answer;
+    }
+
     /** The FormLogic sections an app's manifest declares: ['ai' => ?array, 'payments' => ?array], or null for neither. */
     private static function formlogicAsks(array $project): ?array
     {
@@ -396,7 +464,8 @@ class NativeAppController
     /**
      * One request of an app that asks for FormLogic's visitors, AI or payments: who is asking (the
      * member, or the browser's visitor when FormLogic's page marked the request), their context, and
-     * App AI's subscription for its jobs table. Answers [identity, subscriptions, Set-Cookie or null].
+     * App AI's subscription for its jobs table, and the wallet of an app that takes payments.
+     * Answers [identity, subscriptions, Set-Cookie or null, the requester or null].
      * The requester is FormLogic's word alone: nothing in the request's body or headers names one.
      */
     private function formlogicRequest(Request $request, array $app, array $project, array $asks, array $identity, array $subscriptions, string $ip, mixed $user): array
@@ -429,8 +498,11 @@ class NativeAppController
                 }
             }
         }
+        if ($asks['payments'] !== null && $this->wallets !== null) {
+            $formlogic['wallet'] = $this->wallets->context($app, $asks['payments'], $requester === null ? null : ['kind' => $requester['kind'], 'id' => $requester['id']]);
+        }
         $identity['formlogic'] = $formlogic;
-        return [$identity, $subscriptions, $setCookie];
+        return [$identity, $subscriptions, $setCookie, $requester === null ? null : ['kind' => $requester['kind'], 'id' => $requester['id']]];
     }
 
     /**

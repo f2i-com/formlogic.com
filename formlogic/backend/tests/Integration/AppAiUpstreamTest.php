@@ -124,6 +124,18 @@ final class AppAiUpstreamTest extends TestCase
         sleep(2); // the stub finishes its sleep before the next test asks it anything
     }
 
+    /** A worker that runs for hours follows the administrator: the upstream is asked for each time. */
+    public function testAnUpstreamTurnedOnWhileTheWorkerRunsIsUsed(): void
+    {
+        $on = null;
+        $upstream = new AppAiUpstream(static function () use (&$on): ?array { return $on; });
+        $this->assertFalse($upstream->configured());
+        $on = ['url' => self::$stub->url(), 'key' => '', 'model' => 'stub-chat'];
+        $this->assertTrue($upstream->configured());
+        $done = self::answers($upstream, ['c' => ['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => 'Hi']]]]);
+        $this->assertSame('Hello from the stub.', $done['c']['text'] ?? null);
+    }
+
     public function testASiteWithNoUpstreamIsNeverAsked(): void
     {
         $upstream = new AppAiUpstream(null);

@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = 'cb96e1c597ba4fd5d031f65af665966a';
+    public const SCHEMA_STAMP = '719fe7e2de0c0ae0cb91fda61a5175f2';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -2898,6 +2898,7 @@ class MySQLConnection
 
         // App AI, visitors and payments (AppAiService, docs/HOSTED_APPS.md).
         $this->createAppAiTables($pdo);
+        $this->createAppPaymentTables($pdo);
 
         // Linking an OAIY server with a one-time code (DesktopLinkCodeService): only the code's keyed
         // hash is kept, for ten minutes and one use.
@@ -3020,6 +3021,115 @@ class MySQLConnection
                 period CHAR(13) NOT NULL,
                 used INT UNSIGNED NOT NULL DEFAULT 0,
                 PRIMARY KEY (app_id, scope, subject, period)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+    }
+
+
+    /**
+     * App payments (AppWalletService): each app's owner's choice, and the visitors' and members'
+     * prepaid balances with it. Money records never cascade: a wallet, its ledger and its top-ups
+     * outlive the app and the accounts they were for. A ledger line's (wallet, kind, ref) is unique,
+     * so a charge, a top-up or a refund is counted once whatever retries.
+     */
+    private function createAppPaymentTables(PDO $pdo): void
+    {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_payment_settings (
+                app_id VARCHAR(36) NOT NULL PRIMARY KEY,
+                enabled TINYINT(1) NOT NULL DEFAULT 0,
+                prices TEXT NULL,
+                updated_by VARCHAR(36) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CONSTRAINT fk_app_payment_settings_app FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_wallets (
+                id CHAR(32) NOT NULL PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                balance_cents INT NOT NULL DEFAULT 0,
+                status VARCHAR(10) NOT NULL DEFAULT 'active',
+                email_hash CHAR(64) NULL,
+                email_verified_at DATETIME NULL,
+                created_at DATETIME(3) NOT NULL,
+                updated_at DATETIME(3) NOT NULL,
+                KEY idx_app_wallets_app (app_id, status),
+                UNIQUE KEY uq_app_wallets_email (app_id, email_hash)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_wallet_holders (
+                app_id VARCHAR(36) NOT NULL,
+                holder_kind VARCHAR(8) NOT NULL,
+                holder_id VARCHAR(64) NOT NULL,
+                wallet_id CHAR(32) NOT NULL,
+                created_at DATETIME(3) NOT NULL,
+                PRIMARY KEY (app_id, holder_kind, holder_id),
+                KEY idx_app_wallet_holders_wallet (wallet_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_wallet_ledger (
+                id CHAR(32) NOT NULL PRIMARY KEY,
+                wallet_id CHAR(32) NOT NULL,
+                app_id VARCHAR(36) NOT NULL,
+                kind VARCHAR(12) NOT NULL,
+                amount_cents INT NOT NULL,
+                balance_after INT NOT NULL,
+                ref VARCHAR(120) NOT NULL,
+                item VARCHAR(40) NULL,
+                charge_id VARCHAR(100) NULL,
+                actor VARCHAR(80) NULL,
+                note VARCHAR(200) NULL,
+                created_at DATETIME(3) NOT NULL,
+                UNIQUE KEY uq_app_wallet_ledger_ref (wallet_id, kind, ref),
+                KEY idx_app_wallet_ledger_wallet (wallet_id, created_at),
+                KEY idx_app_wallet_ledger_charge (wallet_id, charge_id),
+                KEY idx_app_wallet_ledger_app (app_id, kind, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_wallet_topups (
+                id CHAR(32) NOT NULL PRIMARY KEY,
+                wallet_id CHAR(32) NOT NULL,
+                app_id VARCHAR(36) NOT NULL,
+                order_id VARCHAR(64) NOT NULL,
+                capture_id VARCHAR(64) NULL,
+                amount_cents INT NOT NULL,
+                currency CHAR(3) NOT NULL,
+                package_cents INT NOT NULL,
+                status VARCHAR(12) NOT NULL,
+                refunded_cents INT NOT NULL DEFAULT 0,
+                holder_kind VARCHAR(8) NOT NULL,
+                holder_id VARCHAR(64) NOT NULL,
+                ip_key CHAR(16) NULL,
+                created_at DATETIME(3) NOT NULL,
+                updated_at DATETIME(3) NOT NULL,
+                UNIQUE KEY uq_app_wallet_topups_order (order_id),
+                UNIQUE KEY uq_app_wallet_topups_capture (capture_id),
+                KEY idx_app_wallet_topups_wallet (wallet_id, created_at),
+                KEY idx_app_wallet_topups_ip (ip_key, created_at),
+                KEY idx_app_wallet_topups_holder (holder_kind, holder_id, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_wallet_codes (
+                id CHAR(32) NOT NULL PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                purpose VARCHAR(8) NOT NULL,
+                email_hash CHAR(64) NOT NULL,
+                code_hash CHAR(64) NOT NULL,
+                holder_kind VARCHAR(8) NOT NULL,
+                holder_id VARCHAR(64) NOT NULL,
+                ip_key CHAR(16) NULL,
+                attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+                expires_at DATETIME NOT NULL,
+                used_at DATETIME NULL,
+                created_at DATETIME(3) NOT NULL,
+                KEY idx_app_wallet_codes_email (app_id, email_hash, created_at),
+                KEY idx_app_wallet_codes_ip (ip_key, created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
     }

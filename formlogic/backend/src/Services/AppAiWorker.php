@@ -95,7 +95,7 @@ final class AppAiWorker
         $ai = AppAiService::standalone($mysql, $native);
         return new self(
             $mysql, $ai, new AppAiSiteSettings(), $native, new NativeRecordEventRouter(new FlowService($mysql), $ai),
-            $desktop, $computers, new AppAiUpstream($site->envUpstream()), self::resultsPath(), DataEncryption::fromEnvironment(),
+            $desktop, $computers, new AppAiUpstream(static fn(): ?array => $site->envUpstream()), self::resultsPath(), DataEncryption::fromEnvironment(),
         );
     }
 

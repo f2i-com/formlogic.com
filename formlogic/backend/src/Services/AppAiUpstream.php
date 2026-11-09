@@ -27,15 +27,25 @@ final class AppAiUpstream
     private array $running = [];
 
     /**
-     * @param ?array{url: string, key: string, model: string} $config the upstream (AIService::envUpstream()), or null when the site has none
+     * $config is the upstream (AIService::envUpstream()), or null when the site has none; a closure is
+     * asked each time, so a worker that runs for hours (--watch) follows the administrator's switches.
+     *
+     * @param (\Closure(): (array{url: string, key: string, model: string}|null))|array{url: string, key: string, model: string}|null $config
      */
-    public function __construct(private ?array $config, private int $pictureTimeout = 240, private int $chatTimeout = 120)
+    public function __construct(private \Closure|array|null $config, private int $pictureTimeout = 240, private int $chatTimeout = 120)
     {
+    }
+
+    /** @return ?array{url: string, key: string, model: string} */
+    private function config(): ?array
+    {
+        return $this->config instanceof \Closure ? ($this->config)() : $this->config;
     }
 
     public function configured(): bool
     {
-        return $this->config !== null && $this->config['url'] !== '';
+        $config = $this->config();
+        return $config !== null && $config['url'] !== '';
     }
 
     /** Requests in flight, of a kind ('picture' for pictures and edits, 'chat'), or all. */
@@ -56,10 +66,11 @@ final class AppAiUpstream
      */
     public function start(string $jobId, array $job): void
     {
-        if (!$this->configured()) throw new \RuntimeException('The site has no AI upstream');
-        $base = rtrim($this->config['url'], '/');
+        $config = $this->config();
+        if ($config === null || $config['url'] === '') throw new \RuntimeException('The site has no AI upstream');
+        $base = rtrim($config['url'], '/');
         $chat = $job['kind'] === 'chat';
-        $model = (string) ($job['model'] ?? '') !== '' ? (string) $job['model'] : $this->config['model'];
+        $model = (string) ($job['model'] ?? '') !== '' ? (string) $job['model'] : $config['model'];
         if ($chat) {
             $path = '/chat/completions';
             $body = ['model' => $model, 'messages' => $job['messages'], 'stream' => false];
@@ -70,7 +81,7 @@ final class AppAiUpstream
             if ($job['kind'] === 'edit') $body['images'] = [(string) $job['reference']];
         }
         $headers = ['Content-Type: application/json', 'Accept: application/json'];
-        if ($this->config['key'] !== '') $headers[] = 'Authorization: Bearer ' . $this->config['key'];
+        if ($config['key'] !== '') $headers[] = 'Authorization: Bearer ' . $config['key'];
         if (!$chat) $headers[] = 'X-OAIY-Incognito: 1';
         $handle = curl_init($base . $path);
         curl_setopt_array($handle, [

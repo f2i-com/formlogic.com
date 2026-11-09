@@ -10,6 +10,7 @@ vi.mock('./AdminPluginsCard', () => ({ AdminPluginsCard: () => <div>Plugins</div
 vi.mock('./AdminSoftnDirectoryCard', () => ({ AdminSoftnDirectoryCard: () => <div>SoftN directory</div> }));
 vi.mock('./AdminEnginePolicyCard', () => ({ AdminEnginePolicyCard: () => <div>App engine</div> }));
 vi.mock('./AdminAppAiCard', () => ({ AdminAppAiCard: () => <div>AI for apps</div> }));
+vi.mock('./AdminAppPaymentsCard', () => ({ AdminAppPaymentsCard: () => <div>App payments</div> }));
 vi.mock('../../lib/timezone', () => ({ useAdminTimezone: () => 'UTC', formatDateTimeInZone: (date: string) => date }));
 vi.mock('../../stores/toastStore', () => ({ toast: { error: mocks.error, success: mocks.success } }));
 import { AdminPlatform } from './AdminPlatform';

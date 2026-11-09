@@ -55,7 +55,14 @@ export function HostedAppFrame({
   bare = false,
   domain = false,
   plugin,
+  onWallet,
 }: {
+  /**
+   * FormLogic's wallet for an app that takes payments (`native.wallet`): the app's
+   * `formlogicWallet` action opens it over the frame, which can have no PayPal of its own, and is
+   * answered when it closes, with the balance then. The app learns nothing else of it.
+   */
+  onWallet?: () => Promise<{ closed: true; balanceCents: number }>;
   /** The app IS the page: no card around it, and no minimum height to overflow a short screen. */
   bare?: boolean;
   /**
@@ -86,6 +93,9 @@ export function HostedAppFrame({
   engine?: FrameEngine;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
+  // The wallet's opener, read when the frame asks: a new callback from the page never remounts the app.
+  const onWalletRef = useRef(onWallet);
+  useLayoutEffect(() => { onWalletRef.current = onWallet; }, [onWallet]);
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
   const hosted = useMemo(() => {
     const actor = copyHostedActor(hostedAdmission?.actor);
@@ -451,6 +461,15 @@ export function HostedAppFrame({
           if (mountNative && plugin?.onCamera && action === "pluginCamera") {
             plugin.onCamera();
             reply({ result: { opened: true } });
+            return;
+          }
+          // FormLogic's wallet, for an app that takes payments: opened by this page over the frame,
+          // and answered when the person closes it. The frame hears the balance, never the sheet.
+          const openWallet = onWalletRef.current;
+          if (mountNative && !plugin && mountNative.wallet && openWallet && action === "formlogicWallet") {
+            if (input.op !== "open") throw new Error("Unknown wallet action.");
+            const closed = await openWallet();
+            if (isCurrentMount()) reply({ result: closed });
             return;
           }
           // Not for a plugin's page: a plugin is anyone's code, and workspaceOpen moves this page.

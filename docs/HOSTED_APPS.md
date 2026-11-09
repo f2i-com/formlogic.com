@@ -258,6 +258,9 @@ What the app's backend sees (`req.context.formlogic`):
 | `userId`, `roleId` | a members-only app, as before |
 | `visitor: {id}` | an application-access app, on a request FormLogic's page marked |
 | `ai: {enabled, source, label, uses, perDay, usedToday, ipPerDay, ipUsedToday, jobs, reason?}` | an app that declares `formlogicAi` |
+| `ai: {delivery: true}` | FormLogic delivering a result to the app's deliver route |
+| `wallet: {available, balanceCents, currency, items, reason?}` | an app that declares `formlogicPayments` |
+| `payment: {chargeId, item, amountCents, status, code?, balanceCents, alreadyPaid}` | a charge's second run (see [App payments](#app-payments-a-prepaid-balance-and-a-charge-in-two-runs)) |
 
 **Decide "FormLogic member" by `userId`, not by `formlogic`.** An app that declares these sections
 gets `req.context.formlogic` without a `userId` for its visitors. Coffee.Dating, which declares
@@ -372,6 +375,62 @@ header, so the app can tell a retry from a second result.
 **What is kept.** A job's prompt (and an edit's picture) 30 days, the job 90, the day's counts three
 days, a result until it is delivered (a test's an hour): `bin/privacy-sweep.php` and the worker clear
 them.
+
+### App payments: a prepaid balance, and a charge in two runs
+
+An app that declares `formlogicPayments` can charge its visitors (or members) a few cents from a
+balance they top up through **this site's PayPal**. The money is the site's, so in this version only an
+**administrator's app** takes payments, and only while the administrator's **App payments** switch,
+the Plans payments switch and PayPal are all on and `BETA_MODE` is off. The owner confirms (or lowers)
+each item's price and turns payments on in the app's **Payments** settings; the price charged is the
+owner's, never a number the app sends.
+
+**What the app sees** on every request (`req.context.formlogic.wallet`):
+`{available, balanceCents, currency: "USD", items: {<item>: <cents>}, reason?}`. `reason` says why
+payments are off (`beta`, `payments_disabled`, `app_payments_off`, `paypal_unconfigured`,
+`owner_not_admin`, `app_off`, `visitor_required`, `wallet_blocked`, `wallet_disputed`).
+
+**A charge** happens on one of the POST routes the manifest lists under `routes`, in two runs of
+that route within one request:
+
+1. **The ask.** The route answers `402` with `{formlogicCharge: {id, item}}` and `rollback: true`,
+   writing nothing. `id` names what is bought (`download:<designId>`), 1 to 100 of
+   `A-Z a-z 0-9 _ . : -`; `item` is one of the manifest's items. A route that needs no charge (the
+   visitor bought it already, by the app's own records) just answers, and that answer goes back.
+2. **FormLogic decides**: the payer is whoever made this request, the price the owner's for the item.
+   It debits the balance atomically, once per charge id: the same id again is `alreadyPaid` and not
+   charged twice.
+3. **The second run** carries `req.context.formlogic.payment`
+   `{chargeId, item, amountCents, status: "paid" | "declined", code?, balanceCents, alreadyPaid}`.
+   Its answer is the one the page gets. `code` on a decline: `insufficient_funds`, `limit_reached` (the
+   wallet's day), `wallet_blocked`, `payments_off`, `unknown_item`, `bad_charge`, `price_too_high`,
+   `visitor_required`.
+
+**Rules for the app's author:**
+- Make the charge id the thing being bought, so a retry completes the purchase (`alreadyPaid`) and
+  never pays twice.
+- In the second run, answer **2xx when you have delivered what was bought**. A paid charge whose
+  second run answers anything else, throws or times out is **given back at once**.
+- Ask once per request: a second ask in the second run is never charged, and the page is told the
+  request failed.
+- On a decline the page opens FormLogic's wallet: `softn.backend.call("formlogicWallet", {op: "open"})`.
+  It opens over the app (a frame can have no PayPal of its own) and answers when the person closes it:
+  `{closed: true, balanceCents}`. The app never sees the wallet itself.
+
+**The wallet sheet** shows the balance and its latest lines, the top-ups the administrator offers
+($2 at least), PayPal's buttons, and, where the site can send email, **Save my balance with an email**
+and **Restore a saved balance**: a six-digit code sent to the address joins this browser to the
+balance saved under it. Only a keyed hash of the email is kept. Its routes, for FormLogic's own page:
+`GET /api/app/{slug}/wallet`, `POST …/wallet/orders {cents}`, `POST …/wallet/orders/{orderId}` (capture),
+`POST …/wallet/email {purpose: save|restore, email}`, `POST …/wallet/confirm {purpose, email, code}`;
+a visitor's carry `X-FormLogic-Visitor: 1`, as the app's own requests do.
+
+**The ledger.** Every top-up, charge, refund, transfer and correction is a ledger line written with
+the balance, in one transaction. A top-up is credited once (the capture call and PayPal's webhook,
+whichever comes first). A refund or reversal in PayPal takes the money back, below zero if it was
+spent, and the wallet is then held until a top-up settles it; a dispute holds it until it is
+resolved. Five top-ups an hour per visitor and per address; five email codes an hour per address and
+a day per email. Money records never cascade: they outlive the app and its visitors' accounts.
 
 ### Connecting an OAIY server
 

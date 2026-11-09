@@ -10,6 +10,7 @@ import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
 import { APP_LOGIC_LANGUAGES } from '../types/customAppLogic';
 import type { ClientEngineId } from './clientEngines';
 import type { AppAiAdminView, AppAiLimits, AppAiMode, AppAiSiteSettings, AppAiTestResult, AppAiView } from './appAi';
+import type { AppPaymentsAdminView, AppPaymentsSiteSettings, AppPaymentsView, WalletSheetData } from './appPayments';
 
 export type { ClientEngineId };
 import type {
@@ -812,6 +813,11 @@ function seg(value: string | number): string {
   const text = String(value);
   if (text === '.' || text === '..') throw new Error('Invalid id in an API path');
   return encodeURIComponent(text);
+}
+
+/** A wallet request's headers: FormLogic's visitor marker for an app open to anyone (AppVisitors). */
+function walletHeaders(visitor: boolean): Record<string, string> {
+  return visitor ? { 'X-FormLogic-Visitor': '1' } : {};
 }
 
 /** An answer of the form `{data: …}` as its `data`; an error as it came. */
@@ -3033,6 +3039,43 @@ class ApiClient {
   }
   async adminBlockAppAi(appId: string, blocked: boolean, reason?: string): Promise<ApiResponse<AppAiAdminView>> {
     return unwrapData(await this.request<{ data: AppAiAdminView }>(`/admin/app-ai/apps/${seg(appId)}`, { method: 'PUT', body: JSON.stringify({ blocked, ...(reason ? { reason } : {}) }) }));
+  }
+  /**
+   * App payments (docs/HOSTED_APPS.md): the person's wallet with an app, from FormLogic's own sheet.
+   * `visitor`: an app open to anyone, whose visitors are known by their browser's cookie, so the
+   * request carries FormLogic's marker as the app's own requests do.
+   */
+  async getAppWallet(slug: string, visitor: boolean): Promise<ApiResponse<WalletSheetData>> {
+    return unwrapData(await this.request<{ data: WalletSheetData }>(`/app/${seg(slug)}/wallet`, { headers: walletHeaders(visitor) }));
+  }
+  async createAppWalletOrder(slug: string, cents: number, visitor: boolean): Promise<ApiResponse<{ orderId: string }>> {
+    return unwrapData(await this.request<{ data: { orderId: string } }>(`/app/${seg(slug)}/wallet/orders`, { method: 'POST', headers: walletHeaders(visitor), body: JSON.stringify({ cents }) }));
+  }
+  async captureAppWalletOrder(slug: string, orderId: string, visitor: boolean): Promise<ApiResponse<{ status: 'completed' | 'processing'; balanceCents: number; alreadyProcessed?: boolean }>> {
+    return unwrapData(await this.request<{ data: { status: 'completed' | 'processing'; balanceCents: number; alreadyProcessed?: boolean } }>(`/app/${seg(slug)}/wallet/orders/${seg(orderId)}`, { method: 'POST', headers: walletHeaders(visitor), body: '{}' }));
+  }
+  async sendAppWalletCode(slug: string, purpose: 'save' | 'restore', email: string, visitor: boolean): Promise<ApiResponse<{ sent: true }>> {
+    return unwrapData(await this.request<{ data: { sent: true } }>(`/app/${seg(slug)}/wallet/email`, { method: 'POST', headers: walletHeaders(visitor), body: JSON.stringify({ purpose, email }) }));
+  }
+  async confirmAppWalletCode(slug: string, purpose: 'save' | 'restore', email: string, code: string, visitor: boolean): Promise<ApiResponse<{ balanceCents: number }>> {
+    return unwrapData(await this.request<{ data: { balanceCents: number } }>(`/app/${seg(slug)}/wallet/confirm`, { method: 'POST', headers: walletHeaders(visitor), body: JSON.stringify({ purpose, email, code }) }));
+  }
+  /** The owner's "Payments" for an app. */
+  async getAppPayments(appId: string): Promise<ApiResponse<AppPaymentsView>> {
+    return unwrapData(await this.request<{ data: AppPaymentsView }>(`/apps/${seg(appId)}/payments`));
+  }
+  async putAppPayments(appId: string, settings: { enabled: boolean; prices: Record<string, number> }): Promise<ApiResponse<AppPaymentsView>> {
+    return unwrapData(await this.request<{ data: AppPaymentsView }>(`/apps/${seg(appId)}/payments`, { method: 'PUT', body: JSON.stringify(settings) }));
+  }
+  /** Admin: "App payments". */
+  async adminGetAppPayments(): Promise<ApiResponse<AppPaymentsAdminView>> {
+    return unwrapData(await this.request<{ data: AppPaymentsAdminView }>('/admin/app-payments'));
+  }
+  async adminPutAppPayments(settings: AppPaymentsSiteSettings): Promise<ApiResponse<AppPaymentsAdminView>> {
+    return unwrapData(await this.request<{ data: AppPaymentsAdminView }>('/admin/app-payments', { method: 'PUT', body: JSON.stringify(settings) }));
+  }
+  async adminAdjustAppWallet(walletId: string, cents: number, note: string): Promise<ApiResponse<{ walletId: string; balanceCents: number }>> {
+    return unwrapData(await this.request<{ data: { walletId: string; balanceCents: number } }>(`/admin/app-payments/wallets/${seg(walletId)}/adjust`, { method: 'POST', body: JSON.stringify({ cents, note }) }));
   }
   async adminPutCameraCheck(choice: { connectionId: string; providerId: string; model: string | null }): Promise<ApiResponse<{ saved: boolean }>> {
     return this.request('/admin/camera-check', { method: 'PUT', body: JSON.stringify(choice) });

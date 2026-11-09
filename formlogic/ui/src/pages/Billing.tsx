@@ -6,23 +6,7 @@ import { parseServerDate } from '../lib/utils';
 import { toast } from '../stores/toastStore';
 import { logger } from '../lib/logger';
 import { Header } from '../components/layout/Header';
-
-// Minimal typing for the PayPal JS SDK (loaded on demand).
-interface PayPalButtonsInstance { render: (sel: string) => Promise<void>; }
-interface PayPalNamespace { Buttons: (opts: Record<string, unknown>) => PayPalButtonsInstance; }
-declare global { interface Window { paypal?: PayPalNamespace } }
-
-function loadPayPalSdk(clientId: string, currency: string): Promise<PayPalNamespace> {
-  return new Promise((resolve, reject) => {
-    if (window.paypal) { resolve(window.paypal); return; }
-    const s = document.createElement('script');
-    s.id = 'paypal-sdk';
-    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=${encodeURIComponent(currency)}&intent=capture&disable-funding=credit,card`;
-    s.onload = () => (window.paypal ? resolve(window.paypal) : reject(new Error('PayPal SDK unavailable')));
-    s.onerror = () => reject(new Error('PayPal SDK failed to load'));
-    document.head.appendChild(s);
-  });
-}
+import { loadPayPalSdk } from '../lib/paypalSdk';
 
 export function Billing() {
   const [status, setStatus] = useState<BillingStatus | null>(null);

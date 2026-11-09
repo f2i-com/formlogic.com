@@ -130,6 +130,32 @@ picture, though the computer's one GPU is: a chat that reaches it while a pictur
 picture, and its model may take half a minute to load again. See [App AI: where it runs, and what the
 app is delivered](HOSTED_APPS.md#app-ai-where-it-runs-and-what-the-app-is-delivered).
 
+### App payments
+
+SoftN apps can charge their visitors a few cents (5¢ to download a logo, say) from a balance the
+visitors top up through this site's PayPal. Admin → Platform → **App payments** turns it on. The money
+goes to this site's own PayPal account, so in this version only apps owned by an administrator can take
+payments; the app's owner then turns them on for the app and confirms its prices (Settings → Payments).
+
+- **It needs** the Plans payments switch on, PayPal configured (`PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`,
+  and `PAYPAL_WEBHOOK_ID` for refunds and held payments), and `BETA_MODE` off. While any is missing,
+  apps are told payments are off, and no top-up or charge is taken.
+- **Top-ups offered**: $2, $5 and $10 to start; $2 at least, since PayPal's fixed fee makes less poor
+  value.
+- **Most one charge may be** (500¢), whatever an app declares, and **most one wallet may spend a day**
+  (500¢).
+- **The latest top-ups** are listed with PayPal's order and capture ids, to find them in PayPal. A
+  refund you make in PayPal's dashboard takes the money back from the visitor's balance (below zero
+  if it was spent; the balance is then held until a top-up settles it), and a dispute holds the
+  balance until it is resolved. **Correct** adds or takes an amount with a note on the wallet's
+  ledger.
+- Balances do not expire; refund what is left when a visitor asks. A prepaid balance with one merchant
+  is close to a gift card, and local law may have rules for those: check what applies to the site.
+
+The settings are kept in `backend/storage/app-payments.json` (include it in backups); a missing or
+broken file means no app takes payments. See [App payments](HOSTED_APPS.md#app-payments-a-prepaid-balance-and-a-charge-in-two-runs)
+and [Before going live](HOSTED_APPS.md#before-going-live).
+
 ## Verify a local setup
 
 1. Visit `/ai-setup` and `/connect-ai` while signed out; verify the public guide

@@ -48,6 +48,11 @@ export function declaresFormlogicAi(project: Pick<NativeProject, 'files'>): bool
   try { return record(record(JSON.parse(project.files['manifest.json'] ?? '{}'))?.formlogicAi) !== null; } catch { return false; }
 }
 
+/** Whether an app's manifest asks to take payments (formlogicPayments): its owner then confirms the prices. */
+export function declaresFormlogicPayments(project: Pick<NativeProject, 'files'>): boolean {
+  try { return record(record(JSON.parse(project.files['manifest.json'] ?? '{}'))?.formlogicPayments) !== null; } catch { return false; }
+}
+
 /**
  * What a project may hold, which the server holds an install to as well (NativeAppService's
  * MAX_* constants; nativeHosting.limits.test.ts keeps the two equal). A game's art and sound run

@@ -832,7 +832,8 @@ $container->set(\FormLogic\Controllers\BillingController::class, function (Conta
         $c->get(LoggerInterface::class),
         $c->get(\FormLogic\Services\PlanService::class),
         (bool) ($c->get('settings')['cloud']['betaMode'] ?? false),
-        $c->get(\FormLogic\Services\PlatformPlansService::class)
+        $c->get(\FormLogic\Services\PlatformPlansService::class),
+        $c->get(\FormLogic\Services\AppWalletService::class)
     );
 });
 
@@ -914,7 +915,9 @@ $container->set(\FormLogic\Controllers\NativeAppController::class, function (Con
         $c->get(\FormLogic\Services\NativePhoneVerification::class),
         $c->get(\FormLogic\Services\NativeRecordEventRouter::class),
         $c->get(\FormLogic\Services\AppVisitors::class),
-        $c->get(\FormLogic\Services\AppAiService::class)
+        $c->get(\FormLogic\Services\AppAiService::class),
+        $c->get(\FormLogic\Services\AppWalletService::class),
+        $c->get(\FormLogic\Services\NativeAppCharges::class)
     );
 });
 // App AI, visitors and payments (docs/HOSTED_APPS.md, "App AI, visitors and payments").
@@ -942,6 +945,31 @@ $container->set(\FormLogic\Services\AppAiService::class, function (Container $c)
 });
 $container->set(\FormLogic\Services\NativeRecordEventRouter::class, function (Container $c) {
     return new \FormLogic\Services\NativeRecordEventRouter($c->get(\FormLogic\Services\FlowService::class), $c->get(\FormLogic\Services\AppAiService::class));
+});
+// App payments (AppWalletService): visitors' and members' prepaid balances with an app, topped up
+// through the site's own PayPal, for administrators' apps only in this version.
+$container->set(\FormLogic\Services\AppPaymentsSiteSettings::class, fn () => new \FormLogic\Services\AppPaymentsSiteSettings());
+$container->set(\FormLogic\Services\AppWalletService::class, function (Container $c) {
+    return new \FormLogic\Services\AppWalletService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\AppPaymentsSiteSettings::class),
+        $c->get(\FormLogic\Services\PayPalService::class),
+        $c->get(\FormLogic\Services\PlatformPlansService::class),
+        $c->get(\FormLogic\Services\AppVisitors::class),
+        (bool) ($c->get('settings')['cloud']['betaMode'] ?? false),
+        $c->get(\FormLogic\Services\EmailService::class),
+        $c->get(LoggerInterface::class)
+    );
+});
+$container->set(\FormLogic\Services\NativeAppCharges::class, fn (Container $c) => new \FormLogic\Services\NativeAppCharges($c->get(\FormLogic\Services\AppWalletService::class)));
+$container->set(\FormLogic\Controllers\AppPaymentsController::class, function (Container $c) {
+    return new \FormLogic\Controllers\AppPaymentsController(
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class),
+        $c->get(\FormLogic\Services\AppWalletService::class),
+        $c->get(\FormLogic\Services\AppPaymentsSiteSettings::class),
+        $c->get(AuditService::class)
+    );
 });
 $container->set(\FormLogic\Controllers\AppAiController::class, function (Container $c) {
     return new \FormLogic\Controllers\AppAiController(
@@ -1828,6 +1856,18 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     });
     $group->put('/app-ai/apps/{id}', function ($request, $response) use ($appAi, $adminArgs) {
         return $appAi()->adminBlock($request, $response, $adminArgs($request));
+    });
+    // App payments (AppPaymentsController): the switch, the top-ups offered and the limits; the latest
+    // top-ups with PayPal's ids; a correction to one wallet, on its ledger.
+    $appPayments = fn () => $container->get(\FormLogic\Controllers\AppPaymentsController::class);
+    $group->get('/app-payments', function ($request, $response) use ($appPayments) {
+        return $appPayments()->adminGet($request, $response);
+    });
+    $group->put('/app-payments', function ($request, $response) use ($appPayments) {
+        return $appPayments()->adminPut($request, $response);
+    });
+    $group->post('/app-payments/wallets/{id:[a-f0-9]{32}}/adjust', function ($request, $response) use ($appPayments, $adminArgs) {
+        return $appPayments()->adminAdjust($request, $response, $adminArgs($request));
     });
 })->add(new \FormLogic\Middleware\PluginAccountGuardMiddleware($container->get(AppService::class)))
   ->add($adminWritesConfirmed)->add($adminRateLimiter)->add($adminGate)->add($authRequired);
@@ -3517,6 +3557,13 @@ $app->post('/api/apps/{id}/ai/test', function ($request, $response) use ($contai
 $app->get('/api/apps/{id}/ai/test/{job:[a-f0-9]{32}}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\AppAiController::class)->ownerTestResult($request, $response, $getArgs($request));
 })->add($hostingReadLimiter)->add($authRequired);
+// The owner's "Payments" (AppPaymentsController): what the app sells, at the owner's prices.
+$app->get('/api/apps/{id}/payments', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppPaymentsController::class)->ownerGet($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
+$app->put('/api/apps/{id}/payments', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppPaymentsController::class)->ownerPut($request, $response, $getArgs($request));
+})->add($hostingLimiter)->add($authRequired);
 // The app's data from where it ran before: its database, and the key it was kept under.
 $app->post('/api/apps/{id}/native/{operation:import}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
@@ -3535,6 +3582,18 @@ $app->get('/api/app/{slug}/native/media', function ($request, $response) use ($c
 $app->post('/api/app/{slug}/native/request', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->runtime($request, $response, $getArgs($request));
 })->add($appAccessGate)->add($nativeLimiter)->add($authOptional);
+// FormLogic's wallet for an app that takes payments (NativeAppController::wallet), from the site's own
+// sheet, admitted as the app's requests are; its own budget, besides the top-up and code limits it keeps.
+$walletLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'app_wallet', true, true, null, true);
+$app->get('/api/app/{slug}/wallet', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->wallet($request, $response, $getArgs($request));
+})->add($appAccessGate)->add($walletLimiter)->add($authOptional);
+$app->post('/api/app/{slug}/wallet/{operation:orders|email|confirm}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->wallet($request, $response, $getArgs($request));
+})->add($appAccessGate)->add($walletLimiter)->add($authOptional);
+$app->post('/api/app/{slug}/wallet/{operation:orders}/{orderId:[A-Za-z0-9-]{1,64}}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->wallet($request, $response, $getArgs($request));
+})->add($appAccessGate)->add($walletLimiter)->add($authOptional);
 
 // Plugins' pages and the passes they issue, on the main site (PluginController); a domain's
 // session never reaches these. The pass itself is recorded on the plugin's own native route.

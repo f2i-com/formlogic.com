@@ -28,6 +28,20 @@ class PayPalService
         $this->baseUrl = $env === 'live'
             ? 'https://api-m.paypal.com'
             : 'https://api-m.sandbox.paypal.com';
+        // A stand-in for PayPal (tests/Support/stub-paypal-server.php): named by the code, or by
+        // PAYPAL_BASE_URL outside production only, where it is ignored and said so.
+        $override = $config['baseUrl'] ?? null;
+        $fromEnv = $_ENV['PAYPAL_BASE_URL'] ?? null;
+        if ($override === null && is_string($fromEnv) && $fromEnv !== '') {
+            if (($_ENV['APP_ENV'] ?? 'production') === 'production') {
+                error_log('FormLogic PayPalService: PAYPAL_BASE_URL is ignored in production.');
+            } else {
+                $override = $fromEnv;
+            }
+        }
+        if (is_string($override) && preg_match('~^https?://[^\s/?#:]+(?::\d+)?$~D', rtrim($override, '/'))) {
+            $this->baseUrl = rtrim($override, '/');
+        }
     }
 
     public function isConfigured(): bool
