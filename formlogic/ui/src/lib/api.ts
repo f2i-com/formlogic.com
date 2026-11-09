@@ -190,6 +190,8 @@ export interface DesktopLinkStatus { id: string; scope: 'ai' | 'all'; expiresAt:
 
 export interface SiteAiDesktopState {
   current: { connectionId: string; deviceName: string; fingerprint: string; chosenAt: string | null; providerId?: string; model?: string | null; yours: boolean } | null;
+  /** The computer chosen that no longer stands (unlinked, given a new key, or its administrator's rights gone): nothing is sent to it. */
+  gone?: { deviceName: string; fingerprint: string } | null;
   candidates: { connectionId: string; instanceId: string; deviceName: string; fingerprint: string; online: boolean; lastSeenAt: string | null }[];
   /** OAIY's own engine's provider id: it answers with the model chosen in OAIY. */
   engineProvider?: string;

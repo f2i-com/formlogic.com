@@ -67,6 +67,15 @@ export function AdminSiteAiDesktop() {
           <Button size="sm" variant="outline" isLoading={busy} onClick={() => void apply(() => api.adminDeleteSiteAiDesktop())}>Stop</Button>
         </div>
       ) : null}
+      {!current && state.gone ? (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm dark:bg-amber-500/10">
+          <span className="text-amber-900 dark:text-amber-200">
+            <strong>{state.gone.deviceName || 'The computer you chose'}</strong> (key {state.gone.fingerprint}) was unlinked, has a new key, or
+            is no longer an administrator&apos;s, so nothing is sent to it and apps are not offered it. Choose a computer again.
+          </span>
+          <Button size="sm" variant="outline" isLoading={busy} onClick={() => void apply(() => api.adminDeleteSiteAiDesktop())}>Forget it</Button>
+        </div>
+      ) : null}
       {state.candidates.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-slate-400">
           None of your linked computers has published its chat key. Link OAIY on your computer in Settings → AI &amp; devices, open it, and come back.

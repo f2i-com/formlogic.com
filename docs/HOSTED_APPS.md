@@ -283,11 +283,28 @@ rolls back (an exception, or an answer with `rollback: true`) asks for nothing. 
 | `seed` | optional, 0 to 9007199254740991 (2^53 − 1); without one, the AI picks one and the delivery reports it |
 | `reference` | an edit's picture: a PNG, JPEG or WebP data URL of at most 2 MB |
 | `messages` | a chat job's JSON list of 1 to 24 `{role: system/user/assistant, content}`, up to 16,000 characters |
+| `status` | optional and the app's own, but setting it to `cancelled` cancels the job (below) |
 
 Other columns are the app's own. The model is never the app's choice: the owner or the
 administrator pins it. FormLogic reads the whole row after the commit, once per event, checks it,
-counts it and queues it. A job it cannot take (the limits, AI off, a word the site does not allow, a
-malformed row) is refused, and the app is told why.
+counts it and queues it.
+
+**Always an answer.** Every request of an app that declares AI carries the subscription, whatever its
+AI can do at that moment, so no row waits forever. A job FormLogic cannot take is still taken,
+refused, and answered at once with a `failed` delivery carrying its code: `ai_off`, `ai_paused` (the
+site's pause, or the app's AI resting after five failures), `ai_unavailable` (no AI set up for it,
+its computer gone, or a request no FormLogic page marked, so nobody is known to have asked),
+`limit_reached`, `busy` (too many waiting), `prompt_refused` (a word the site does not allow) or
+`bad_request` (a malformed row). A refused job is not counted.
+
+**Cancelling a job.** The app cancels a job by setting its row's `status` to `cancelled`, or by
+deleting the row, in a request from its page: FormLogic captures the jobs table's
+`app.record.updated` and `app.record.deleted` events through the same subscription. A job still
+waiting is dropped; one already sent is let go (a request the computer has not taken is withdrawn,
+and one being drawn finishes unheard, its result thrown away); one whose result is back but not yet
+delivered is not delivered. Each gives its use back. A row set to `cancelled` is told so once,
+`{jobId, status: "cancelled"}`; a deleted row hears nothing. A job already answered stands. Any
+other change to a row is not a cancel.
 
 Every dispatcher (the runtime request, the owner's records API, `bin/native-record-dispatch.php`)
 hands an event to NativeRecordEventRouter, which gives App AI its `fl-ai-…` bindings and the flows
@@ -330,6 +347,11 @@ supervisor with `--watch`:
   Platform → Plans & AI → Serve it from your OAIY), the owner's own (**Use my OAIY**), or the `.env` upstream
   (`AI_BASE_URL`, in Studio's gateway form: `POST /images/generations`, an edit's picture as
   `images: ["data:…"]`, `incognito: true` and `X-OAIY-Incognito: 1`).
+- **A computer that is gone is not chosen.** The site's computer, once it is unlinked, gets a new key
+  (OAIY reinstalled) or its administrator loses the role, reads as unmade: members' Site AI and apps
+  are not sent to it (the site's AI falls back to the `.env` upstream where one is set), the
+  administrator's card says which computer it was, and jobs waiting for it are answered
+  `ai_unavailable` with their uses given back. An owner's own computer is the same (`own_changed`).
 - **One picture at a time on a computer, and a chat beside it.** The desktop AI lane gives pictures
   (`kind: "image"`) a claim of their own, so a computer holds one picture and one request of any other
   kind; a picture never takes one of the members' three chat places. App AI's own requests are queued
@@ -368,6 +390,7 @@ header, so the app can tell a retry from a second result.
   "seed": 1873465, "model": "flux-3-image-klein" }
 { "jobId": "<the row's id>", "status": "done", "text": "…", "model": "…" }
 { "jobId": "<the row's id>", "status": "failed", "code": "model_disabled", "message": "…" }
+{ "jobId": "<the row's id>", "status": "cancelled" }
 ```
 
 - **The picture** is redrawn by FormLogic (GD) and is at most 1,500,000 bytes as a data URL, so the app
@@ -376,13 +399,19 @@ header, so the app can tell a retry from a second result.
   baseline JPEG at 1024 px. Never WebP, never progressive.
 - **`code`** on a failure: `model_disabled` (switched off, or its files are missing: the
   administrator is warned), `model_unknown`, `busy`, `bad_request`, `too_large`, `engine_failed`,
-  `timeout`, `expired`, `ai_unavailable`, and for a job refused when it was asked for, `limit_reached`
-  or `prompt_refused`. A job that fails without a result gives its use back.
+  `timeout`, `expired`, `ai_off`, `ai_paused`, `ai_unavailable`, and for a job refused when it was asked
+  for, `limit_reached`, `busy`, `bad_request` or `prompt_refused` ([Always an answer](#app-ai-asking-for-a-job)).
+  A job that fails without a result gives its use back. `status: "cancelled"` answers the app's own
+  cancel, once.
 - **Retries.** An answer of 2xx takes the delivery. A busy app (409, 429, 503, or no answer) is asked
   again after 5 s, 15 s, 1, 5, 10 and 15 minutes; any other answer is tried three times. A result
   never taken is dropped (`undelivered`).
 - **Queue positions** are not delivered: every request of the app sees its requester's open jobs in
-  `req.context.formlogic.ai.jobs` (`{status: "queued", position}` or `{status: "running"}`).
+  `req.context.formlogic.ai.jobs`, by the row's id: `{status: "queued", lane, position, waiting}` or
+  `{status: "running", lane}`. `lane` is `picture` (pictures and edits) or `chat`; `position` counts
+  the jobs ahead of it in that lane on the same computer (or the `.env` upstream); `waiting` is
+  `queue` (its turn has not come) or `computer_offline` (the computer it waits for has not been heard
+  from in 90 seconds). Members see this for their own jobs, as visitors do.
 
 **What is kept.** A job's prompt (and an edit's picture) 30 days, the job 90, the day's counts three
 days, a result until it is delivered (a test's an hour): `bin/privacy-sweep.php` and the worker clear

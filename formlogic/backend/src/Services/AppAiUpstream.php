@@ -61,6 +61,16 @@ final class AppAiUpstream
     }
 
     /**
+     * The jobs asked for and not yet answered, by id.
+     *
+     * @return list<string>
+     */
+    public function ids(): array
+    {
+        return array_map('strval', array_keys($this->running));
+    }
+
+    /**
      * Start job $jobId: ['kind' => picture|edit|chat, 'model' => ?string, 'prompt' => string, 'size' => string,
      * 'seed' => ?int, 'reference' => ?data URL, 'messages' => ?list]. A null or empty model is the upstream's own.
      */

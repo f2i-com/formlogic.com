@@ -122,6 +122,7 @@ final class AppAiWorker
         if ($this->passes % 10 === 1 && (is_dir($this->results) || @mkdir($this->results, 0700, true))) @touch($this->results . '/.alive');
         return [
             'expired' => $this->expire(),
+            'cancelled' => $this->cancelled(),
             'caughtUp' => $takeNew ? $this->catchUp() : 0,
             'sent' => $takeNew ? $this->send() : 0,
             'collected' => $this->collect(),
@@ -164,6 +165,30 @@ final class AppAiWorker
         return $count;
     }
 
+    // ------------------------------------------------------------------ 1b. cancelled
+
+    /**
+     * Jobs the app cancelled once they were sent or back (AppAiService::cancel): what the AI is still
+     * asked is let go (a request not yet taken is withdrawn; one being drawn finishes unheard), and a
+     * result already back is thrown away.
+     */
+    private function cancelled(): int
+    {
+        $count = 0;
+        foreach ($this->env->ids() as $id) {
+            $job = $this->job($id);
+            if ($job !== null && $job['status'] === 'cancelled') { $this->env->abandon($id); $count++; }
+        }
+        $rows = $this->pdo()->query("SELECT * FROM app_ai_jobs WHERE status = 'cancelled' AND (relay_id IS NOT NULL OR result_path IS NOT NULL OR channel IS NOT NULL)")->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $job) {
+            if ($job['relay_id'] !== null) $this->desktop?->abandon((string) $job['relay_id'], (string) $job['relay_owner']);
+            $this->removeResult($job);
+            $this->pdo()->prepare('UPDATE app_ai_jobs SET relay_id = NULL, relay_owner = NULL, channel = NULL, result_path = NULL WHERE id = ?')->execute([$job['id']]);
+            $count++;
+        }
+        return $count;
+    }
+
     /** A moment ago, as MySQL's clock reads it: due now, whatever the two clocks' milliseconds. */
     private static function due(): string
     {
@@ -177,7 +202,8 @@ final class AppAiWorker
         if (microtime(true) - $this->lastCatchUp < self::CATCH_UP_SECONDS) return 0;
         $this->lastCatchUp = microtime(true);
         $count = 0;
-        foreach ($this->pdo()->query("SELECT app_id FROM app_ai_settings WHERE mode <> 'off' AND blocked_by_admin = 0")->fetchAll(PDO::FETCH_COLUMN) as $appId) {
+        // Every app with AI settings, its AI on or off: a job written while it is off is answered too.
+        foreach ($this->pdo()->query('SELECT app_id FROM app_ai_settings')->fetchAll(PDO::FETCH_COLUMN) as $appId) {
             try {
                 $count += $this->native->dispatchRecordEvents((string) $appId, $this->records->for((string) $appId));
             } catch (\Throwable $e) {
@@ -209,9 +235,11 @@ final class AppAiWorker
                 $this->fail((string) $job['id'], 'ai_unavailable', AppAiService::REASONS['ai_off']);
                 continue;
             }
+            // The app's AI cannot take it now (turned off, paused, or its computer unlinked or given a new
+            // key since it was asked for): answered at once with the code, and its use given back.
             if (!$route['availability']['enabled'] || !in_array($job['kind'], $route['availability']['kinds'], true)) {
                 $reason = $route['availability']['enabled'] ? 'not_offered' : (string) $route['availability']['reason'];
-                $this->fail((string) $job['id'], 'ai_unavailable', AppAiService::REASONS[$reason] ?? AppAiService::REASONS['not_offered']);
+                $this->fail((string) $job['id'], AppAiService::code($reason), AppAiService::REASONS[$reason] ?? AppAiService::REASONS['not_offered']);
                 continue;
             }
             $groups[$route['key'] . '|' . ($job['kind'] === 'chat' ? 'chat' : 'picture')][] = $job + ['_route' => $route];
@@ -270,6 +298,8 @@ final class AppAiWorker
         $base = ['availability' => $availability, 'ownerId' => (string) $app['ownerId']];
         if (!$availability['enabled']) return $off + $base;
         if ($availability['target'] === 'env') {
+            // The site's AI is its .env upstream, yet this worker has none to ask: nothing can take the job.
+            if (!$this->env->configured()) return $off + ['availability' => ['enabled' => false, 'reason' => 'site_ai_unavailable'] + $availability] + $base;
             return ['key' => 'env', 'kind' => 'env', 'target' => null, 'pictureModel' => $site['pictureModel'], 'chatModel' => $site['chatModel']] + $base;
         }
         if ($availability['source'] === 'own') {
@@ -402,8 +432,14 @@ final class AppAiWorker
     private function started(array $job, string $target, string $source, string $model, ?string $relayId, ?string $relayOwner, ?string $channel): void
     {
         $now = AppAiService::stamp(microtime(true));
-        $this->pdo()->prepare("UPDATE app_ai_jobs SET status = 'running', target = ?, source = ?, model = ?, relay_id = ?, relay_owner = ?, channel = ?, started_at = ?, attempts = attempts + 1, next_attempt_at = NULL WHERE id = ?")
-            ->execute([$target, $source, $model !== '' ? $model : null, $relayId, $relayOwner, $channel, $now, $job['id']]);
+        $running = $this->pdo()->prepare("UPDATE app_ai_jobs SET status = 'running', target = ?, source = ?, model = ?, relay_id = ?, relay_owner = ?, channel = ?, started_at = ?, attempts = attempts + 1, next_attempt_at = NULL WHERE id = ? AND status = 'sending'");
+        $running->execute([$target, $source, $model !== '' ? $model : null, $relayId, $relayOwner, $channel, $now, $job['id']]);
+        if ($running->rowCount() === 0) {
+            // Cancelled by the app while it was being sent: what was just asked for is let go.
+            if ($relayId !== null) $this->desktop?->abandon($relayId, (string) $relayOwner);
+            else $this->env->abandon((string) $job['id']);
+            return;
+        }
         $this->pdo()->prepare('UPDATE app_ai_settings SET last_served_at = ? WHERE app_id = ?')->execute([$now, $job['app_id']]);
     }
 
@@ -480,7 +516,7 @@ final class AppAiWorker
         if (!$answer['ok']) {
             $code = in_array($answer['code'], self::CODES, true) ? (string) $answer['code'] : 'engine_failed';
             if ($code === 'busy' && (int) $job['attempts'] < self::BUSY_ATTEMPTS) {
-                $this->pdo()->prepare("UPDATE app_ai_jobs SET status = 'queued', relay_id = NULL, relay_owner = NULL, channel = NULL, started_at = NULL, next_attempt_at = ? WHERE id = ?")
+                $this->pdo()->prepare("UPDATE app_ai_jobs SET status = 'queued', relay_id = NULL, relay_owner = NULL, channel = NULL, started_at = NULL, next_attempt_at = ? WHERE id = ? AND status = 'running'")
                     ->execute([AppAiService::stamp(time() + 30), $id]);
                 return;
             }
@@ -512,8 +548,13 @@ final class AppAiWorker
         $meta = array_diff_key($result, ['picture' => true, 'text' => true]);
         $now = AppAiService::stamp(microtime(true));
         // Ready: delivered to the app as the next pass looks; a test's result waits for its owner instead.
-        $this->pdo()->prepare("UPDATE app_ai_jobs SET status = ?, result_path = ?, result_meta = ?, code = NULL, message = NULL, channel = NULL, reference = NULL, finished_at = ?, next_attempt_at = ?, model = COALESCE(?, model) WHERE id = ?")
-            ->execute([$test ? 'done' : 'delivering', $file, json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), $now, $test ? null : self::due(), $result['model'] ?? null, $id]);
+        $ready = $this->pdo()->prepare("UPDATE app_ai_jobs SET status = ?, result_path = ?, result_meta = ?, code = NULL, message = NULL, channel = NULL, reference = NULL, finished_at = ?, next_attempt_at = ?, model = COALESCE(?, model) WHERE id = ? AND status = 'running'");
+        $ready->execute([$test ? 'done' : 'delivering', $file, json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), $now, $test ? null : self::due(), $result['model'] ?? null, $id]);
+        if ($ready->rowCount() === 0) {
+            // Cancelled by the app while the AI worked on it: what came back is thrown away.
+            @unlink($this->results . '/' . $file);
+            return;
+        }
         $this->breaker((string) $job['app_id'], false);
     }
 
@@ -545,7 +586,7 @@ final class AppAiWorker
     /** Fail a job: the app is told as the delivery next runs, and its use is given back. */
     private function fail(string $id, string $code, string $message): void
     {
-        $this->pdo()->prepare("UPDATE app_ai_jobs SET status = 'failed', code = ?, message = ?, channel = NULL, reference = NULL, finished_at = ?, next_attempt_at = ? WHERE id = ? AND status NOT IN ('done', 'failed', 'refused')")
+        $this->pdo()->prepare("UPDATE app_ai_jobs SET status = 'failed', code = ?, message = ?, channel = NULL, reference = NULL, finished_at = ?, next_attempt_at = ? WHERE id = ? AND status NOT IN ('done', 'failed', 'refused', 'cancelled')")
             ->execute([$code, mb_substr($message, 0, 300), AppAiService::stamp(microtime(true)), self::due(), $id]);
         $this->ai->refund($id);
     }
@@ -555,7 +596,7 @@ final class AppAiWorker
     private function deliver(): int
     {
         $due = $this->pdo()->prepare(
-            "SELECT * FROM app_ai_jobs WHERE status IN ('delivering','failed','refused') AND delivered_at IS NULL AND requester_kind <> ?
+            "SELECT * FROM app_ai_jobs WHERE status IN ('delivering','failed','refused','cancelled') AND delivered_at IS NULL AND requester_kind <> ?
              AND next_attempt_at IS NOT NULL AND next_attempt_at <= UTC_TIMESTAMP(3) ORDER BY next_attempt_at LIMIT 20"
         );
         $due->execute([AppAiService::TEST_REQUESTER]);
@@ -584,6 +625,9 @@ final class AppAiWorker
                 return false;
             }
             $body += ['status' => 'done'] + $result;
+        } elseif ($job['status'] === 'cancelled') {
+            // The app's own cancel, told once (contract §0.11).
+            $body += ['status' => 'cancelled'];
         } else {
             $body += ['status' => 'failed', 'code' => (string) ($job['code'] ?? 'engine_failed'), 'message' => (string) ($job['message'] ?? '')];
         }
@@ -612,7 +656,7 @@ final class AppAiWorker
             $this->logger?->warning('App AI: job ' . $id . ' could not be delivered to app ' . $job['app_id'] . ' (HTTP ' . $status . ')');
             $now = AppAiService::stamp(microtime(true));
             if ($job['status'] === 'delivering') {
-                $pdo->prepare("UPDATE app_ai_jobs SET status = 'failed', code = 'undelivered', message = 'The app did not take the result.', delivered_at = ?, delivery_attempts = delivery_attempts + 1 WHERE id = ?")->execute([$now, $id]);
+                $pdo->prepare("UPDATE app_ai_jobs SET status = 'failed', code = 'undelivered', message = 'The app did not take the result.', delivered_at = ?, delivery_attempts = delivery_attempts + 1 WHERE id = ? AND status = 'delivering'")->execute([$now, $id]);
                 $this->removeResult($job);
             } else {
                 $pdo->prepare('UPDATE app_ai_jobs SET delivered_at = ?, delivery_attempts = delivery_attempts + 1 WHERE id = ?')->execute([$now, $id]);

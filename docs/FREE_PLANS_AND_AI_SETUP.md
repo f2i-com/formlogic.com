@@ -99,6 +99,10 @@ and nothing else: it is given no connector or plugin commands, runs no flows and
 node. Choose **Everything a linked desktop can do** only for a computer you also want to run those.
 See [Connecting an OAIY server](HOSTED_APPS.md#connecting-an-oaiy-server).
 
+A computer you chose that is later unlinked, gets a new key (OAIY reinstalled) or whose account is no
+longer an administrator's is no longer chosen: nothing is sent to it, apps' requests waiting for it
+are answered that the AI is unavailable, and the card names it until you choose again or forget it.
+
 ### AI for apps
 
 SoftN apps can ask for AI from their own server: pictures, picture edits and chat (a logo maker that

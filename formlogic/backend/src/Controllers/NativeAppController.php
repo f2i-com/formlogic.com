@@ -486,16 +486,14 @@ class NativeAppController
         if ($asks['ai'] !== null && $this->ai !== null) {
             $plan = $this->ai->forRequest($app, $asks['ai'], $requester, $ip);
             $formlogic['ai'] = $plan['context'];
-            if ($plan['binding'] !== null) {
-                $with = AppAiService::withBinding($subscriptions, $asks['ai']['table'], $plan['binding']);
-                if ($with !== null) {
-                    $subscriptions = $with;
-                } else {
-                    // No room for its subscription (the runner takes 100): this request's jobs would
-                    // not be seen, so the app is told its AI is not available rather than wait for them.
-                    $formlogic['ai']['enabled'] = false;
-                    $formlogic['ai']['reason'] = 'subscriptions_full';
-                }
+            $with = AppAiService::withBinding($subscriptions, $asks['ai']['table'], $plan['binding']);
+            if ($with !== null) {
+                $subscriptions = $with;
+            } else {
+                // No room for its subscriptions (the runner takes 100): this request's jobs would not be
+                // seen, so the app is told its AI is not available rather than wait for them.
+                $formlogic['ai']['enabled'] = false;
+                $formlogic['ai']['reason'] = 'subscriptions_full';
             }
         }
         if ($asks['payments'] !== null && $this->wallets !== null) {

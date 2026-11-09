@@ -104,7 +104,14 @@ export function aiStatusWords(status: string, code: string | null): string {
   if (status === 'delivering') return 'Ready, being delivered';
   if (status === 'queued') return 'Waiting';
   if (status === 'sending' || status === 'running') return 'Working';
-  if (status === 'refused') return code === 'limit_reached' ? 'Over a limit' : code === 'busy' ? 'Too many waiting' : 'Refused';
+  if (status === 'cancelled') return 'Cancelled by the app';
+  if (status === 'refused') {
+    if (code === 'limit_reached') return 'Over a limit';
+    if (code === 'busy') return 'Too many waiting';
+    if (code === 'ai_off') return 'Refused: AI was off';
+    if (code === 'ai_paused') return 'Refused: AI was paused';
+    return 'Refused';
+  }
   if (code === 'expired') return 'Ran out of time';
   return code === 'undelivered' ? 'Not taken by the app' : 'Failed';
 }

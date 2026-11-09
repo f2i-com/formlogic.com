@@ -122,16 +122,24 @@ final class AppVisitorsTest extends TestCase
         $this->assertSame(['kind' => 'user', 'id' => '0f8e8f2a-1c2d-4e5f-8a9b-0c1d2e3f4a5b', 'ipKey' => str_repeat('c', 16)], AppAiService::parseBinding($member));
         $this->assertNull(AppAiService::parseBinding('42'), 'a flow binding');
         $this->assertNull(AppAiService::parseBinding('fl-ai-v-short-' . str_repeat('b', 16)));
+        // A request nobody is known for still carries one, so its jobs are taken and answered.
+        $nobody = AppAiService::binding(null, str_repeat('d', 16));
+        $this->assertSame('fl-ai-n-' . str_repeat('d', 16), $nobody);
+        $this->assertSame(['kind' => AppAiService::NOBODY, 'id' => '', 'ipKey' => str_repeat('d', 16)], AppAiService::parseBinding($nobody));
     }
 
     public function testTheBindingJoinsAFlowsEntryOrAddsOneAndGivesUpAtTheRunnersLimits(): void
     {
         $flow = [['event' => 'app.record.created.ai_jobs', 'bindings' => ['17']], ['event' => 'app.record.updated.users', 'bindings' => ['18']]];
-        $this->assertSame([['event' => 'app.record.created.ai_jobs', 'bindings' => ['17', 'fl-ai-x']], $flow[1]], AppAiService::withBinding($flow, 'ai_jobs', 'fl-ai-x'), 'one entry: a second would capture the insert twice');
-        $this->assertSame([['event' => 'app.record.created.ai_jobs', 'bindings' => ['fl-ai-x']]], AppAiService::withBinding([], 'ai_jobs', 'fl-ai-x'));
-        $full = array_map(static fn(int $i) => ['event' => 'app.record.created.t' . $i, 'bindings' => ['b' . $i]], range(1, 100));
+        $this->assertSame([
+            ['event' => 'app.record.created.ai_jobs', 'bindings' => ['17', 'fl-ai-x']], $flow[1],
+            ['event' => 'app.record.updated.ai_jobs', 'bindings' => ['fl-ai-x']], ['event' => 'app.record.deleted.ai_jobs', 'bindings' => ['fl-ai-x']],
+        ], AppAiService::withBinding($flow, 'ai_jobs', 'fl-ai-x'), 'a flow\'s entry is joined: a second would capture the write twice');
+        $this->assertSame(array_map(static fn(string $operation) => ['event' => "app.record.{$operation}.ai_jobs", 'bindings' => ['fl-ai-x']], ['created', 'updated', 'deleted']),
+            AppAiService::withBinding([], 'ai_jobs', 'fl-ai-x'), 'a job asked for, and one cancelled by its status or by deleting its row');
+        $full = array_map(static fn(int $i) => ['event' => 'app.record.created.t' . $i, 'bindings' => ['b' . $i]], range(1, 98));
         $this->assertNull(AppAiService::withBinding($full, 'ai_jobs', 'fl-ai-x'), 'a 101st entry would fail the request in the runner');
-        $crowded = [['event' => 'app.record.created.ai_jobs', 'bindings' => array_map('strval', range(1, 100))]];
+        $crowded = [['event' => 'app.record.deleted.ai_jobs', 'bindings' => array_map('strval', range(1, 100))]];
         $this->assertNull(AppAiService::withBinding($crowded, 'ai_jobs', 'fl-ai-x'));
     }
 }

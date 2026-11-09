@@ -447,6 +447,7 @@ class AdminController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Not available'], 503);
         }
         $current = $this->siteAiDesktop->current();
+        $gone = $current === null ? $this->siteAiDesktop->gone() : null;
         return $this->jsonResponse($response, [
             'current' => $current === null ? null : [
                 'connectionId' => $current['connectionId'],
@@ -456,6 +457,11 @@ class AdminController
                 'providerId' => $current['providerId'],
                 'model' => $current['model'],
                 'yours' => $current['ownerUserId'] === $request->getAttribute('userId'),
+            ],
+            // The computer chosen that no longer stands: unlinked, given a new key, or its administrator's rights gone.
+            'gone' => $gone === null ? null : [
+                'deviceName' => (string) ($gone['deviceName'] ?? ''),
+                'fingerprint' => \FormLogic\Services\SiteAiDesktopSettings::fingerprint($gone['publicKey']),
             ],
             'candidates' => $this->siteAiDesktop->candidates((string) $request->getAttribute('userId')),
             'engineProvider' => \FormLogic\Services\SiteDesktopAi::PROVIDER,

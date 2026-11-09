@@ -23,8 +23,40 @@ final class SiteAiDesktopSettings
         $this->path ??= dirname(__DIR__, 2) . '/storage/site-ai-desktop.json';
     }
 
-    /** {ownerUserId, connectionId, instanceId, publicKey, providerId, model, deviceName, chosenAt}, or null. */
+    /**
+     * {ownerUserId, connectionId, instanceId, publicKey, providerId, model, deviceName, chosenAt}, or
+     * null. A choice whose computer was unlinked, whose key changed, or whose administrator is one no
+     * longer reads as unmade (contract §0.11): nothing is sent to it, and apps are not offered it.
+     */
     public function current(): ?array
+    {
+        $data = $this->stored();
+        return $data !== null && $this->stands($data) ? $data : null;
+    }
+
+    /**
+     * The computer chosen that no longer stands (unlinked, given a new key, or its administrator's
+     * rights gone), for the administrator's card to say so; null when it stands or none was chosen.
+     */
+    public function gone(): ?array
+    {
+        $data = $this->stored();
+        return $data !== null && !$this->stands($data) ? $data : null;
+    }
+
+    /** Whether a choice stands: its account an administrator still, its computer linked, with the key it was pinned to. */
+    private function stands(array $data): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT c.e2e_public_key FROM desktop_connections c JOIN users u ON u.id = c.owner_user_id AND u.is_admin = 1 WHERE c.id = ? AND c.owner_user_id = ?'
+        );
+        $stmt->execute([$data['connectionId'], $data['ownerUserId']]);
+        $key = $stmt->fetchColumn();
+        return is_string($key) && hash_equals($key, $data['publicKey']);
+    }
+
+    /** The choice as saved, whether or not it still stands. */
+    private function stored(): ?array
     {
         $raw = @file_get_contents($this->path);
         if ($raw === false) {
@@ -40,7 +72,7 @@ final class SiteAiDesktopSettings
             }
         }
         $data['model'] = is_string($data['model'] ?? null) && $data['model'] !== '' && $data['providerId'] !== SiteDesktopAi::PROVIDER ? $data['model'] : null;
-        return $this->ownerIsAdmin($data['ownerUserId']) ? $data : null;
+        return $data;
     }
 
     /**

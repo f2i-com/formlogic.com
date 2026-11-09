@@ -122,7 +122,10 @@ final class AppAiCaptureTest extends TestCase
             self::$pdo->prepare('DELETE FROM apps WHERE id = ?')->execute([$appId]);
         }
         self::$pdo->exec("DELETE FROM app_ai_counters WHERE app_id = ''");
-        if ($this->ownerId !== '') self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$this->ownerId]);
+        if ($this->ownerId !== '') {
+            self::$pdo->prepare('DELETE FROM desktop_connections WHERE owner_user_id = ?')->execute([$this->ownerId]);
+            self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$this->ownerId]);
+        }
         $this->appIds = [];
     }
 
@@ -150,6 +153,9 @@ function createBad(req) { var id = insertJob(req, "video", "bad"); return { stat
 function createJobThrow(req) { insertJob(req, "picture", "throw"); throw new Error("failing after the insert"); }
 function createJobRollback(req) { insertJob(req, "picture", "rollback"); return { status: 400, body: { error: "rolled back" }, rollback: true }; }
 function showContext(req) { return { status: 200, body: echo(req, {}) }; }
+function cancelJob(req) { softn.sql.execute("UPDATE ai_jobs SET status = 'cancelled' WHERE id = ?", [String((req.body || {}).id)]); return { status: 200, body: {} }; }
+function touchJob(req) { softn.sql.execute("UPDATE ai_jobs SET note = 'seen' WHERE id = ?", [String((req.body || {}).id)]); return { status: 200, body: {} }; }
+function forgetJob(req) { softn.sql.execute("DELETE FROM ai_jobs WHERE id = ?", [String((req.body || {}).id)]); return { status: 200, body: {} }; }
 function deliver(req) { return { status: 200, body: { delivered: true } }; }
 JS;
 
@@ -168,6 +174,9 @@ JS;
                     ['path' => '/api/jobs-throw', 'method' => 'POST', 'handler' => 'createJobThrow', 'transaction' => 'write', 'authorization' => 'anonymous'],
                     ['path' => '/api/jobs-rollback', 'method' => 'POST', 'handler' => 'createJobRollback', 'transaction' => 'write', 'authorization' => 'anonymous'],
                     ['path' => '/api/context', 'method' => 'GET', 'handler' => 'showContext', 'transaction' => 'read', 'authorization' => 'anonymous'],
+                    ['path' => '/api/cancel', 'method' => 'POST', 'handler' => 'cancelJob', 'transaction' => 'write', 'authorization' => 'anonymous'],
+                    ['path' => '/api/touch', 'method' => 'POST', 'handler' => 'touchJob', 'transaction' => 'write', 'authorization' => 'anonymous'],
+                    ['path' => '/api/forget', 'method' => 'POST', 'handler' => 'forgetJob', 'transaction' => 'write', 'authorization' => 'anonymous'],
                     ['path' => '/api/site/ai/deliver', 'method' => 'POST', 'handler' => 'deliver', 'transaction' => 'write', 'authorization' => 'anonymous'],
                 ],
             ],
@@ -177,7 +186,7 @@ JS;
             'manifest.json' => json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
             'ui/main.ui' => '<Stack><Text>Logos</Text></Stack>',
             'server/main.logic' => self::SERVER,
-            'server/migrations/001.sql' => 'CREATE TABLE ai_jobs(id TEXT PRIMARY KEY, kind TEXT NOT NULL, prompt TEXT, size TEXT, seed INTEGER, reference TEXT, messages TEXT, note TEXT);',
+            'server/migrations/001.sql' => 'CREATE TABLE ai_jobs(id TEXT PRIMARY KEY, kind TEXT NOT NULL, prompt TEXT, size TEXT, seed INTEGER, reference TEXT, messages TEXT, note TEXT, status TEXT);',
         ]];
     }
 
@@ -193,9 +202,9 @@ JS;
     }
 
     /** One request from the app's page, as the parent sends it. */
-    private function call(array $app, string $path, array $headers = [], array $cookies = [], ?string $user = null, string $method = 'POST'): array
+    private function call(array $app, string $path, array $headers = [], array $cookies = [], ?string $user = null, string $method = 'POST', array $body = []): array
     {
-        $payload = ['method' => $method, 'path' => $path, 'query' => [], 'headers' => [], 'body' => new \stdClass()];
+        $payload = ['method' => $method, 'path' => $path, 'query' => [], 'headers' => [], 'body' => $body === [] ? new \stdClass() : $body];
         $request = (new ServerRequestFactory())->createServerRequest('POST', self::ORIGIN . '/api/app/' . $app['slug'] . '/native/request', ['REMOTE_ADDR' => self::IP])
             ->withHeader('Host', '127.0.0.1:8300')->withHeader('Content-Type', 'application/json')->withCookieParams($cookies)->withParsedBody(json_decode(json_encode($payload), true));
         $request->getBody()->write(json_encode($payload));
@@ -261,7 +270,7 @@ JS;
         $this->assertSame($visitor, $second['body']['context']['formlogic']['visitor']['id']);
         $this->assertSame('', $second['cookie'], 'a known browser keeps its cookie');
         $this->assertSame(1, $second['body']['context']['formlogic']['ai']['usedToday']);
-        $this->assertSame(['status' => 'queued', 'position' => 1], $second['body']['context']['formlogic']['ai']['jobs'][$first['body']['id']]);
+        $this->assertSame(['status' => 'queued', 'lane' => 'picture', 'position' => 1, 'waiting' => 'queue'], $second['body']['context']['formlogic']['ai']['jobs'][$first['body']['id']]);
         // A third while two wait: refused, told why, and not counted.
         $third = $this->call($app, '/api/jobs', self::MARKED, self::cookieValue($first['cookie']));
         $this->assertSame(201, $third['status']);
@@ -321,7 +330,10 @@ JS;
             $this->assertSame('visitor_required', $formlogic['ai']['reason']);
             $this->assertSame('', $answer['cookie']);
         }
-        $this->assertSame([], $this->jobs($app['id']), 'no subscription, so the writes asked for nothing');
+        // Their writes are still taken, so the app is answered: refused, as nobody known asked.
+        $this->assertSame([['refused', AppAiService::NOBODY, 'ai_unavailable'], ['refused', AppAiService::NOBODY, 'ai_unavailable']],
+            array_map(static fn(array $job) => [$job['status'], $job['requester_kind'], $job['code']], $this->jobs($app['id'])));
+        $this->assertSame(0, $this->counter($app['id'], 'app', ''));
     }
 
     public function testTheLimitsRefuseAndSayWhy(): void
@@ -343,14 +355,86 @@ JS;
         $this->assertNotSame($first['body']['context']['formlogic']['visitor']['id'], $other['body']['context']['formlogic']['visitor']['id']);
     }
 
-    public function testAiTurnedOffTakesNothing(): void
+    /** No row waits forever (contract §0.11): a job the AI cannot take is still taken, and answered at once with its code. */
+    public function testAJobAskedForWhileItsAiCannotTakeItIsAnsweredWithItsCode(): void
     {
         $this->boot();
-        $app = $this->app('application', true, 'off');
-        $answer = $this->call($app, '/api/jobs', self::MARKED);
+        $off = $this->app('application', true, 'off');
+        $answer = $this->call($off, '/api/jobs', self::MARKED);
         $this->assertFalse($answer['body']['context']['formlogic']['ai']['enabled']);
         $this->assertSame('ai_off', $answer['body']['context']['formlogic']['ai']['reason']);
-        $this->assertSame([], $this->jobs($app['id']));
+        $job = $this->jobs($off['id'])[0] ?? [];
+        $this->assertSame(['refused', 'ai_off'], [$job['status'] ?? null, $job['code'] ?? null], 'taken all the same');
+        $this->assertNotNull($job['next_attempt_at'], 'and told at once');
+        $this->assertSame(0, $this->counter($off['id'], 'app', ''), 'and not counted');
+
+        $unset = $this->app('application', true, 'own');
+        $this->call($unset, '/api/jobs', self::MARKED);
+        $this->assertSame(['refused', 'ai_unavailable'], [$this->jobs($unset['id'])[0]['status'], $this->jobs($unset['id'])[0]['code']], 'its owner has chosen no computer');
+
+        $this->site->save(['allowApps' => true, 'pictureModel' => 'flux-test', 'paused' => true]);
+        $paused = $this->app();
+        $this->call($paused, '/api/jobs', self::MARKED);
+        $this->assertSame(['refused', 'ai_paused'], [$this->jobs($paused['id'])[0]['status'], $this->jobs($paused['id'])[0]['code']]);
+    }
+
+    /** Cancel (contract §0.11): the row's status set to cancelled, or the row deleted. */
+    #[DataProvider('runners')]
+    public function testAnAppCancelsAJobByItsStatusOrByDeletingItsRow(string $runner): void
+    {
+        $this->boot($runner);
+        $app = $this->app();
+        $first = $this->call($app, '/api/jobs', self::MARKED);
+        $cookie = self::cookieValue($first['cookie']);
+        $visitor = 'v:' . $first['body']['context']['formlogic']['visitor']['id'];
+        $second = $this->call($app, '/api/jobs', self::MARKED, $cookie);
+        $this->assertSame(2, $this->counter($app['id'], 'requester', $visitor));
+
+        // Another write to the row is no cancel.
+        $this->call($app, '/api/touch', self::MARKED, $cookie, null, 'POST', ['id' => $first['body']['id']]);
+        $this->assertSame(['queued', 'queued'], array_column($this->jobs($app['id']), 'status'));
+
+        $this->assertSame(200, $this->call($app, '/api/cancel', self::MARKED, $cookie, null, 'POST', ['id' => $first['body']['id']])['status']);
+        $this->assertSame(200, $this->call($app, '/api/forget', self::MARKED, $cookie, null, 'POST', ['id' => $second['body']['id']])['status']);
+        [$cancelled, $deleted] = $this->jobs($app['id']);
+        $this->assertSame(['cancelled', 'cancelled', 1, 1], [$cancelled['status'], $deleted['status'], (int) $cancelled['refunded'], (int) $deleted['refunded']]);
+        $this->assertNotNull($cancelled['next_attempt_at'], 'a row set to cancelled is told so, once');
+        $this->assertNull($deleted['next_attempt_at'], 'a deleted row hears nothing');
+        $this->assertSame([0, 0], [$this->counter($app['id'], 'requester', $visitor), $this->counter($app['id'], 'app', '')], 'both uses given back');
+
+        // Cancelled again: nothing more given back. And cancelled jobs hold no place.
+        $this->call($app, '/api/cancel', self::MARKED, $cookie, null, 'POST', ['id' => $first['body']['id']]);
+        $this->assertSame(0, $this->counter($app['id'], 'app', ''));
+        $third = $this->call($app, '/api/jobs', self::MARKED, $cookie);
+        $this->assertSame('queued', $this->jobs($app['id'])[2]['status'] ?? null);
+        $this->assertSame(['status' => 'queued', 'lane' => 'picture', 'position' => 1, 'waiting' => 'queue'], $this->call($app, '/api/context', self::MARKED, $cookie, null, 'GET')['body']['context']['formlogic']['ai']['jobs'][$third['body']['id']] ?? null);
+    }
+
+    /** What a requester sees of their open jobs (contract §0.11): each in its own lane, and why it waits. */
+    public function testWaitingJobsAreCountedInTheirOwnLaneAndSayWhyTheyWait(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $this->call($app, '/api/jobs', self::MARKED);
+        $chat = $this->call($app, '/api/chat', self::MARKED);
+        $cookie = self::cookieValue($chat['cookie']);
+        $picture = $this->call($app, '/api/jobs', self::MARKED, $cookie);
+        $jobs = $this->call($app, '/api/context', self::MARKED, $cookie, null, 'GET')['body']['context']['formlogic']['ai']['jobs'];
+        $this->assertSame(['status' => 'queued', 'lane' => 'chat', 'position' => 1, 'waiting' => 'queue'], $jobs[$chat['body']['id']], 'the picture asked for before it is in the other lane');
+        $this->assertSame(['status' => 'queued', 'lane' => 'picture', 'position' => 2, 'waiting' => 'queue'], $jobs[$picture['body']['id']], 'behind another visitor\'s picture');
+
+        // On the owner's own computer, not heard from for ten minutes: it waits for the computer, not its turn.
+        $connection = bin2hex(random_bytes(16));
+        $key = base64_encode(random_bytes(32));
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Home PC', ?, NOW() - INTERVAL 10 MINUTE, ?)")
+            ->execute([$connection, $this->ownerId, 'inst-' . bin2hex(random_bytes(4)), $key]);
+        $own = $this->app('application', true, 'own');
+        self::$pdo->prepare("UPDATE app_ai_settings SET own_connection_id = ?, own_instance_id = 'inst-own', own_public_key = ?, own_provider_id = 'oaiy-engine', own_picture_model = 'flux-test', own_device_name = 'Home PC' WHERE app_id = ?")
+            ->execute([$connection, $key, $own['id']]);
+        $waiting = $this->call($own, '/api/jobs', self::MARKED);
+        $this->assertSame($connection, $this->jobs($own['id'])[0]['target']);
+        $seen = $this->call($own, '/api/context', self::MARKED, self::cookieValue($waiting['cookie']), null, 'GET')['body']['context']['formlogic']['ai'];
+        $this->assertSame(['status' => 'queued', 'lane' => 'picture', 'position' => 1, 'waiting' => 'computer_offline'], $seen['jobs'][$waiting['body']['id']]);
     }
 
     public function testSiteRoutesAreNeverAPagesToCall(): void

@@ -39,6 +39,10 @@ class AppAiService
     public const MAX_OPEN_PER_REQUESTER = 2;
     /** Statuses a job holds the AI in (or waits for it). */
     public const OPEN = ['queued', 'sending', 'running'];
+    /** Statuses an app's cancel still stops: waiting, sent, or back but not yet delivered. */
+    public const CANCELLABLE = ['queued', 'sending', 'running', 'delivering'];
+    /** Who asked, for a request no FormLogic page marked: nobody known. Its jobs are refused. */
+    public const NOBODY = 'nobody';
     /** The largest seed a picture may ask for: 2^53 - 1. */
     public const MAX_SEED = 9007199254740991;
 
@@ -158,11 +162,12 @@ class AppAiService
     // ------------------------------------------------------------------ a request
 
     /**
-     * What one request of an app that declares AI gets: its `ai` context and, when the requester may
-     * ask, the binding id its subscription carries. $requester is ['kind' => user|visitor, 'id' => …],
-     * or null when nobody is known (an application-access request without FormLogic's visitor marker).
+     * What one request of an app that declares AI gets: its `ai` context and the binding id its
+     * subscriptions carry, always: a job written while the AI cannot take it is still taken, refused
+     * and answered (contract §0.11). $requester is ['kind' => user|visitor, 'id' => …], or null when
+     * nobody is known (an application-access request without FormLogic's visitor marker).
      *
-     * @return array{context: array, binding: ?string}
+     * @return array{context: array, binding: string}
      */
     public function forRequest(array $app, array $declared, ?array $requester, string $ip): array
     {
@@ -183,60 +188,88 @@ class AppAiService
         ];
         if (!$context['enabled'] && $requester === null && $available['enabled']) $context['reason'] = 'visitor_required';
         elseif (!$available['enabled']) $context['reason'] = $available['reason'];
-        $binding = $context['enabled'] ? self::binding($requester, $ipKey) : null;
-        return ['context' => $context, 'binding' => $binding];
+        // Every request carries the binding, whatever its AI can do now: a job it writes is always
+        // taken and answered, refused with its code when it cannot run (contract §0.11).
+        return ['context' => $context, 'binding' => self::binding($requester, $ipKey)];
     }
 
-    /** The binding id a requester's subscription carries: who asked, and from where. */
-    public static function binding(array $requester, string $ipKey): string
+    /** The binding id a requester's subscription carries: who asked (`n`: nobody known), and from where. */
+    public static function binding(?array $requester, string $ipKey): string
     {
+        if ($requester === null) return self::BINDING_PREFIX . 'n-' . $ipKey;
         return self::BINDING_PREFIX . ($requester['kind'] === 'user' ? 'u' : 'v') . '-' . $requester['id'] . '-' . $ipKey;
     }
 
-    /** A binding id read back: ['kind' => user|visitor, 'id' => …, 'ipKey' => …], or null when it is not App AI's. */
+    /** A binding id read back: ['kind' => user|visitor|nobody, 'id' => …, 'ipKey' => …], or null when it is not App AI's. */
     public static function parseBinding(mixed $binding): ?array
     {
         if (!is_string($binding) || strlen($binding) > 100) return null;
         if (preg_match('/^fl-ai-u-([A-Za-z0-9-]{1,64})-([0-9a-f]{16})$/D', $binding, $m)) return ['kind' => 'user', 'id' => $m[1], 'ipKey' => $m[2]];
         if (preg_match('/^fl-ai-v-([0-9a-f]{32})-([0-9a-f]{16})$/D', $binding, $m)) return ['kind' => 'visitor', 'id' => $m[1], 'ipKey' => $m[2]];
+        if (preg_match('/^fl-ai-n-([0-9a-f]{16})$/D', $binding, $m)) return ['kind' => self::NOBODY, 'id' => '', 'ipKey' => $m[1]];
         return null;
     }
 
     /**
-     * The request's subscriptions with App AI's binding added for `app.record.created.<table>`: to a
-     * flow's entry for the same event when there is one (a second entry would capture the insert
-     * twice), or as a new entry. Null when the runner's limits (100 entries, 100 bindings an entry)
-     * leave no room: the request then runs without it and its jobs are not taken.
+     * The request's subscriptions with App AI's binding added for the jobs table's
+     * `app.record.created`, `.updated` and `.deleted` events (a job asked for, and a job cancelled:
+     * contract §0.11): to a flow's entry for the same event when there is one (a second entry would
+     * capture the write twice), or as a new entry. Null when the runner's limits (100 entries, 100
+     * bindings an entry) leave no room: the request then runs without them and its jobs are not taken.
      */
     public static function withBinding(array $subscriptions, string $table, string $binding): ?array
     {
-        $event = 'app.record.created.' . $table;
-        foreach ($subscriptions as $index => $subscription) {
-            if (($subscription['event'] ?? null) !== $event) continue;
-            $bindings = is_array($subscription['bindings'] ?? null) ? $subscription['bindings'] : [];
-            if (count($bindings) >= 100) return null;
-            $bindings[] = $binding;
-            $subscriptions[$index]['bindings'] = $bindings;
-            return $subscriptions;
+        foreach (['created', 'updated', 'deleted'] as $operation) {
+            $event = 'app.record.' . $operation . '.' . $table;
+            $joined = false;
+            foreach ($subscriptions as $index => $subscription) {
+                if (($subscription['event'] ?? null) !== $event) continue;
+                $bindings = is_array($subscription['bindings'] ?? null) ? $subscription['bindings'] : [];
+                if (count($bindings) >= 100) return null;
+                $bindings[] = $binding;
+                $subscriptions[$index]['bindings'] = $bindings;
+                $joined = true;
+                break;
+            }
+            if ($joined) continue;
+            if (count($subscriptions) >= 100) return null;
+            $subscriptions[] = ['event' => $event, 'bindings' => [$binding]];
         }
-        if (count($subscriptions) >= 100) return null;
-        $subscriptions[] = ['event' => $event, 'bindings' => [$binding]];
         return $subscriptions;
     }
 
-    /** A requester's waiting and running jobs: app job id → {status: queued|running, position?}. */
+    /**
+     * A requester's waiting and running jobs: app job id → {status: queued|running, lane: picture|chat,
+     * position?, waiting?} (contract §0.11). A waiting job's position counts the open jobs ahead of it
+     * in its own lane (pictures and edits, or chats) on the same computer or the .env upstream, and
+     * `waiting` says why it waits: `queue`, or `computer_offline` while the computer it waits for has
+     * not been heard from in 90 seconds.
+     */
     private function openJobs(string $appId, array $requester): array|object
     {
-        $statement = $this->pdo()->prepare("SELECT app_job_id, status, target, created_at FROM app_ai_jobs WHERE app_id = ? AND requester_kind = ? AND requester_id = ? AND status IN ('queued','sending','running') ORDER BY created_at LIMIT 10");
+        $statement = $this->pdo()->prepare("SELECT app_job_id, kind, status, target, created_at FROM app_ai_jobs WHERE app_id = ? AND requester_kind = ? AND requester_id = ? AND status IN ('queued','sending','running') ORDER BY created_at LIMIT 10");
         $statement->execute([$appId, $requester['kind'], $requester['id']]);
         $jobs = [];
+        $heard = [];
         foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            if ($row['status'] !== 'queued') { $jobs[(string) $row['app_job_id']] = ['status' => 'running']; continue; }
-            $ahead = $this->pdo()->prepare("SELECT COUNT(*) FROM app_ai_jobs WHERE target <=> ? AND status IN ('queued','sending','running') AND created_at < ?");
+            $lane = $row['kind'] === 'chat' ? 'chat' : 'picture';
+            if ($row['status'] !== 'queued') { $jobs[(string) $row['app_job_id']] = ['status' => 'running', 'lane' => $lane]; continue; }
+            $kinds = $lane === 'chat' ? "('chat')" : "('picture','edit')";
+            $ahead = $this->pdo()->prepare("SELECT COUNT(*) FROM app_ai_jobs WHERE target <=> ? AND kind IN {$kinds} AND status IN ('queued','sending','running') AND created_at < ?");
             $ahead->execute([$row['target'], $row['created_at']]);
-            $jobs[(string) $row['app_job_id']] = ['status' => 'queued', 'position' => (int) $ahead->fetchColumn() + 1];
+            $target = (string) $row['target'];
+            $heard[$target] ??= $target === 'env' || $this->heardFrom($target);
+            $jobs[(string) $row['app_job_id']] = ['status' => 'queued', 'lane' => $lane, 'position' => (int) $ahead->fetchColumn() + 1, 'waiting' => $heard[$target] ? 'queue' : 'computer_offline'];
         }
         return $jobs === [] ? (object) [] : $jobs;
+    }
+
+    /** Whether the OAIY computer a job waits for (its connection id) has been heard from in the last 90 seconds. */
+    private function heardFrom(string $connectionId): bool
+    {
+        $statement = $this->pdo()->prepare('SELECT 1 FROM desktop_connections WHERE id = ? AND last_seen_at > (NOW() - INTERVAL 90 SECOND)');
+        $statement->execute([$connectionId]);
+        return $statement->fetchColumn() !== false;
     }
 
     // ------------------------------------------------------------------ capture
@@ -245,7 +278,8 @@ class AppAiService
      * Take the jobs one committed record event asks for. $bindings are the event's App AI bindings;
      * $readRow(table, column, value) reads a whole row from the app's database. Answers the number of
      * jobs taken (queued or refused), 0 when the event is not a job (already taken, or not the jobs
-     * table). Throws only when MySQL cannot record it: the event is then left for the next dispatch.
+     * table). A jobs row updated to `status: cancelled`, or deleted, cancels its job instead (cancel()).
+     * Throws only when MySQL cannot record it: the event is then left for the next dispatch.
      */
     public function capture(string $appId, string $eventId, string $event, array $data, array $bindings, ?callable $readRow): int
     {
@@ -257,7 +291,12 @@ class AppAiService
         if ($requester === null) return 0;
         $app = $this->app($appId);
         $declared = $app === null ? null : AppFormlogicManifest::ai($this->native->installedManifest($appId));
-        if ($app === null || $declared === null || $event !== 'app.record.created.' . $declared['table']) return 0;
+        if ($app === null || $declared === null) return 0;
+        $table = $declared['table'];
+        if ($event === 'app.record.updated.' . $table || $event === 'app.record.deleted.' . $table) {
+            return $this->cancel($appId, $event === 'app.record.deleted.' . $table, $data, $readRow, $table);
+        }
+        if ($event !== 'app.record.created.' . $table) return 0;
 
         $key = $data['record']['id'] ?? null;
         $row = null;
@@ -265,6 +304,8 @@ class AppAiService
             try { $row = $readRow($declared['table'], 'id', $key); } catch (\Throwable) { $row = null; }
         }
         [$job, $refusal] = $this->jobFrom(is_array($row) ? $row : null, $key, $declared);
+        // Nobody known asked (no FormLogic page marked the request): taken, and answered that it cannot run.
+        if ($requester['kind'] === self::NOBODY) $refusal ??= ['code' => 'ai_unavailable', 'message' => self::REASONS['visitor_required']];
 
         $pdo = $this->pdo();
         $now = ($this->now)();
@@ -316,6 +357,67 @@ class AppAiService
     }
 
     /**
+     * An app's cancel (contract §0.11): its jobs row's `status` updated to `cancelled`, or the row
+     * deleted, by a request that carries App AI's binding. A job not yet delivered is cancelled and its
+     * use given back; what the AI is still doing for it is let go, and a result that comes back is
+     * thrown away (AppAiWorker). A row updated to cancelled is told so once, `{jobId, status:
+     * "cancelled"}`; a deleted row, nothing. A job already answered stands. Answers how many it cancelled.
+     */
+    private function cancel(string $appId, bool $deleted, array $data, ?callable $readRow, string $table): int
+    {
+        $record = is_array($data['record'] ?? null) ? $data['record'] : [];
+        $key = $record['id'] ?? null;
+        if (!is_string($key) && !is_int($key)) return 0;
+        if (!$deleted) {
+            // The event carries the row as written; a table whose preview leaves `status` out is read.
+            $status = $record['status'] ?? null;
+            if (!array_key_exists('status', $record) && $readRow !== null) {
+                try { $row = $readRow($table, 'id', $key); } catch (\Throwable) { $row = null; }
+                $status = is_array($row) ? ($row['status'] ?? null) : null;
+            }
+            if ($status !== 'cancelled') return 0;
+        }
+        $clock = $this->realClock ? microtime(true) : (float) ($this->now)();
+        $marks = implode(',', array_fill(0, count(self::CANCELLABLE), '?'));
+        $pdo = $this->pdo();
+        $ids = [];
+        $cancelled = 0;
+        $pdo->beginTransaction();
+        try {
+            // Its open jobs, and any cancelled before whose use a failed refund has not yet given back
+            // (this event is then dispatched again).
+            $open = $pdo->prepare("SELECT id, status FROM app_ai_jobs WHERE app_id = ? AND app_job_id = ? AND requester_kind <> ? AND (status IN ({$marks}) OR (status = 'cancelled' AND refunded = 0)) FOR UPDATE");
+            $open->execute([$appId, mb_substr((string) $key, 0, 100), self::TEST_REQUESTER, ...self::CANCELLABLE]);
+            foreach ($open->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $ids[] = (string) $row['id'];
+                if ($row['status'] === 'cancelled') continue;
+                $pdo->prepare("UPDATE app_ai_jobs SET status = 'cancelled', code = 'cancelled', message = ?, finished_at = ?, next_attempt_at = ?, reference = NULL WHERE id = ?")
+                    ->execute([$deleted ? 'The app deleted the job.' : 'The app cancelled the job.', self::stamp($clock), $deleted ? null : self::stamp($clock - 1), $row['id']]);
+                $cancelled++;
+            }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            throw $e;
+        }
+        foreach ($ids as $id) $this->refund($id);
+        return $cancelled;
+    }
+
+    /**
+     * The code a job carries when the app's AI cannot take it, for $reason as REASONS names it:
+     * `ai_off`, `ai_paused` (the site's pause, or the app's AI resting) or `ai_unavailable`.
+     */
+    public static function code(string $reason): string
+    {
+        return match ($reason) {
+            'ai_off' => 'ai_off',
+            'ai_paused', 'ai_resting' => 'ai_paused',
+            default => 'ai_unavailable',
+        };
+    }
+
+    /**
      * Why this job may not be queued now, or null. Called inside capture's transaction, with the
      * app's settings row locked: counts and queues read here cannot change under it.
      */
@@ -323,7 +425,7 @@ class AppAiService
     {
         if (!$available['enabled'] || !in_array($kind, $available['kinds'], true)) {
             $reason = $available['enabled'] ? 'not_offered' : (string) $available['reason'];
-            return ['code' => 'ai_unavailable', 'message' => self::REASONS[$reason] ?? self::REASONS['ai_off']];
+            return ['code' => self::code($reason), 'message' => self::REASONS[$reason] ?? self::REASONS['ai_off']];
         }
         $pdo = $this->pdo();
         $queued = $pdo->prepare("SELECT COUNT(*) FROM app_ai_jobs WHERE app_id = ? AND status = 'queued'");
@@ -526,6 +628,7 @@ class AppAiService
                 'requester' => match ($row['requester_kind']) {
                     self::TEST_REQUESTER => 'Test',
                     'user' => 'Member ' . substr((string) $row['requester_id'], 0, 8),
+                    self::NOBODY => 'Unknown (not from the app\'s page)',
                     default => 'Visitor ' . substr((string) $row['requester_id'], 0, 6),
                 },
                 'test' => $row['requester_kind'] === self::TEST_REQUESTER,

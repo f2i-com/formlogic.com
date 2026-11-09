@@ -498,7 +498,7 @@ JS;
         $this->assertSame('ai_resting', $this->ai->availability($app, self::DECLARED)['reason']);
         $next = $this->queue($app['id'], 'picture');
         $worker->tick();
-        $this->assertSame(['failed', 'ai_unavailable'], [$this->job($next)['status'], $this->job($next)['code']]);
+        $this->assertSame(['failed', 'ai_paused'], [$this->job($next)['status'], $this->job($next)['code']], 'answered at once: its AI is resting');
     }
 
     /** An app that is busy is asked again with the same key, until it takes the result. */
@@ -589,6 +589,66 @@ JS;
         self::$pdo->prepare('UPDATE app_ai_jobs SET finished_at = ? WHERE id = ?')->execute([AppAiService::stamp(time() - 3700), $id]);
         $this->assertSame(1, $this->ai->sweep($this->results)['filesRemoved']);
         $this->assertSame('failed', $this->ai->testResult($app['id'], $id, $this->results)['status']);
+    }
+
+    /** Cancel (contract §0.11): a job being drawn is let go, its late picture thrown away, and the app told once. */
+    public function testACancelledJobIsLetGoItsLateResultThrownAwayAndTheAppToldOnce(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $visitor = bin2hex(random_bytes(16));
+        $id = $this->queue($app['id'], 'picture', [], $visitor);
+        $worker = $this->worker();
+        $this->assertSame(1, $worker->tick()['sent']);
+        [$relayId, , $pair] = $this->oaiyTakes(DesktopAiRelayService::PICTURE_KIND);
+        $binding = AppAiService::binding(['kind' => 'visitor', 'id' => $visitor], self::IP_KEY);
+        $cancel = ['record' => ['id' => $this->job($id)['app_job_id'], 'status' => 'cancelled']];
+        $this->assertSame(1, $this->ai->capture($app['id'], bin2hex(random_bytes(16)), 'app.record.updated.ai_jobs', $cancel, [$binding], null));
+        $this->assertSame(['cancelled', 1], [$this->job($id)['status'], (int) $this->job($id)['refunded']]);
+        $this->assertSame(0, $this->ai->capture($app['id'], bin2hex(random_bytes(16)), 'app.record.updated.ai_jobs', $cancel, [$binding], null), 'once');
+
+        $this->oaiySends($relayId, $pair, [0 => self::pictureFrame(self::jpeg(512, 512))]);
+        $tick = $worker->tick();
+        $this->assertSame([1, 0, 1], [$tick['cancelled'], $tick['collected'], $tick['delivered']]);
+        $after = $this->job($id);
+        $this->assertSame(['cancelled', null, null], [$after['status'], $after['relay_id'], $after['result_path']], 'the picture that came back was not kept');
+        $this->assertSame([['status' => 'cancelled', 'picture' => null, 'code' => null]], $this->appRows($app['id'], 'SELECT status, picture, code FROM deliveries'));
+        $this->assertSame(0, $worker->tick()['delivered'], 'told once');
+    }
+
+    /** An unlinked or re-keyed site computer is not chosen (contract §0.11): its waiting jobs are answered and given back. */
+    public function testAnUnlinkedOrReKeyedSiteComputerIsNoLongerChosen(): void
+    {
+        $this->boot();
+        // No .env upstream to fall back to: the site's AI goes with its computer.
+        $unconfigured = $this->createMock(AIService::class);
+        $unconfigured->method('isConfigured')->willReturn(false);
+        $this->ai = new AppAiService(self::$mysql, $this->site, $this->visitors, $this->native, $this->computers, $unconfigured);
+        $app = $this->app();
+        $chosen = $this->computers->current();
+        $this->assertNotNull($chosen);
+        $this->assertNull($this->computers->gone());
+        $id = $this->queue($app['id']);
+
+        self::$pdo->prepare('UPDATE desktop_connections SET e2e_public_key = ? WHERE id = ?')->execute([base64_encode(random_bytes(32)), $chosen['connectionId']]);
+        $this->assertNull($this->computers->current(), 'a new key: no longer chosen');
+        $this->assertSame('Studio PC', $this->computers->gone()['deviceName'] ?? null, 'and the administrator is told which');
+        $this->assertSame([false, 'site_ai_unavailable'], [$this->ai->availability($app, self::DECLARED)['enabled'], $this->ai->availability($app, self::DECLARED)['reason']], 'apps are not offered it');
+
+        $tick = $this->worker()->tick();
+        $this->assertSame([0, 1], [$tick['sent'], $tick['delivered']]);
+        $job = $this->job($id);
+        $this->assertSame(['failed', 'ai_unavailable', 1], [$job['status'], $job['code'], (int) $job['refunded']]);
+        $this->assertSame([['status' => 'failed', 'code' => 'ai_unavailable']], $this->appRows($app['id'], 'SELECT status, code FROM deliveries'));
+        $used = self::$pdo->prepare("SELECT COALESCE(SUM(used), 0) FROM app_ai_counters WHERE app_id = ? AND scope = 'app'");
+        $used->execute([$app['id']]);
+        $this->assertSame(0, (int) $used->fetchColumn(), 'its use given back');
+
+        // Its own key again: chosen again. Unlinked: not.
+        self::$pdo->prepare('UPDATE desktop_connections SET e2e_public_key = ? WHERE id = ?')->execute([$chosen['publicKey'], $chosen['connectionId']]);
+        $this->assertNotNull($this->computers->current());
+        self::$pdo->prepare('DELETE FROM desktop_connections WHERE id = ?')->execute([$chosen['connectionId']]);
+        $this->assertNull($this->computers->current());
     }
 
     /** "Use my OAIY": an owner who is no administrator, their own computer, their app's pictures. */
