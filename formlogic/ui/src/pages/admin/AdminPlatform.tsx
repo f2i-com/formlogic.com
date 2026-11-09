@@ -140,6 +140,25 @@ export function AdminPlatform() {
     } finally { setRetracting(null); }
   };
 
+  // A link to one card (/admin/platform#app-ai, from an app's AI settings): the cards are drawn after
+  // the page loads, so the browser's own jump to the fragment finds nothing. Go to the card once the
+  // page has its cards, and again as the cards above it fill in, until the person scrolls themselves.
+  const loaded = status !== null;
+  useEffect(() => {
+    const target = window.location.hash.slice(1);
+    if (!loaded || target === '') return;
+    let stopped = false;
+    const stop = () => { stopped = true; };
+    const go = () => { if (!stopped) document.getElementById(target)?.scrollIntoView?.({ block: 'start' }); };
+    const timers = [0, 300, 900, 1800].map((after) => window.setTimeout(go, after));
+    const inputs = ['wheel', 'touchmove', 'keydown', 'mousedown'] as const;
+    inputs.forEach((name) => window.addEventListener(name, stop, { passive: true }));
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      inputs.forEach((name) => window.removeEventListener(name, stop));
+    };
+  }, [loaded]);
+
   // A silent failure must not render the default "maintenance off" state.
   if (status === null) {
     return loadError

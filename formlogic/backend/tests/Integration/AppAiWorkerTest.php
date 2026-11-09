@@ -152,6 +152,7 @@ final class AppAiWorkerTest extends TestCase
             self::$pdo->prepare('DELETE FROM apps WHERE id = ?')->execute([$appId]);
         }
         self::$pdo->exec("DELETE FROM app_ai_counters WHERE app_id = ''");
+        if ($this->adminId !== '') self::$pdo->prepare('DELETE FROM app_ai_jobs WHERE app_id IS NULL AND requester_id = ?')->execute([$this->adminId]);
         foreach (array_filter([$this->adminId, ...$this->owners]) as $user) {
             self::$pdo->prepare('DELETE FROM desktop_ai_frames WHERE request_id IN (SELECT id FROM desktop_ai_requests WHERE owner_user_id = ?)')->execute([$user]);
             self::$pdo->prepare('DELETE FROM desktop_ai_requests WHERE owner_user_id = ?')->execute([$user]);
@@ -589,6 +590,79 @@ JS;
         self::$pdo->prepare('UPDATE app_ai_jobs SET finished_at = ? WHERE id = ?')->execute([AppAiService::stamp(time() - 3700), $id]);
         $this->assertSame(1, $this->ai->sweep($this->results)['filesRemoved']);
         $this->assertSame('failed', $this->ai->testResult($app['id'], $id, $this->results)['status']);
+    }
+
+    /**
+     * The administrator's own test of the site's AI (the setup checklist): a job that is no app's, run
+     * by the same worker where apps' requests on the site's AI go, with no app allowed yet.
+     */
+    public function testTheAdministratorsSiteTestRunsThroughTheWorkerOnTheSitesComputer(): void
+    {
+        $this->boot();
+        $this->site->save(['allowApps' => false, 'paused' => true, 'pictureModel' => 'flux-3-image-klein']);
+        $counted = fn(): int => (int) self::$pdo->query('SELECT COALESCE(SUM(used), 0) FROM app_ai_counters')->fetchColumn();
+        $before = $counted();
+        $id = $this->ai->queueSiteTest($this->adminId, 'picture');
+        $worker = $this->worker();
+        $this->assertSame(1, $worker->tick()['sent']);
+        $job = $this->job($id);
+        $this->assertSame([null, 'running', 'site-oaiy', 'flux-3-image-klein'], [$job['app_id'], $job['status'], $job['source'], $job['model']]);
+        [$relayId, $turn, $pair] = $this->oaiyTakes(DesktopAiRelayService::PICTURE_KIND);
+        $this->assertSame(['image', 'flux-3-image-klein', AppAiService::TEST_PICTURE, '512x512'], [$turn['kind'], $turn['model'], $turn['prompt'], $turn['size']]);
+        $row = self::$pdo->query('SELECT source, requesting_user_id FROM desktop_ai_requests WHERE id = ' . self::$pdo->quote($relayId))->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame(['app-ai', $this->adminId], [$row['source'], $row['requesting_user_id']], 'queued as the computer\'s own administrator');
+        $this->assertSame('running', $this->ai->testResult(AppAiService::SITE_TEST, $id, $this->results)['status']);
+
+        $this->oaiySends($relayId, $pair, [0 => self::pictureFrame(self::jpeg(512, 512))]);
+        $tick = $worker->tick();
+        $this->assertSame([1, 0], [$tick['collected'], $tick['delivered']], 'kept for the administrator: there is no app to deliver it to');
+        $result = $this->ai->testResult(AppAiService::SITE_TEST, $id, $this->results);
+        $this->assertSame(['done', 'flux-3-image-klein'], [$result['status'], $result['model']]);
+        $this->assertStringStartsWith('data:image/jpeg;base64,', $result['picture']);
+        $this->assertIsFloat($result['seconds']);
+        $this->assertSame($before, $counted(), 'and it counted against nothing');
+        // The checklist still says so when the page is opened again, until the model (or the computer) changes.
+        $last = $this->ai->adminSetup()['lastTest'];
+        $this->assertSame(['done', 'flux-3-image-klein', true], [$last['status'], $last['model'], $last['current']]);
+        $this->assertIsFloat($last['seconds']);
+        $this->assertMatchesRegularExpression('/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/D', $last['at']);
+        $this->site->save(['allowApps' => false, 'paused' => true, 'pictureModel' => 'another-model']);
+        $this->assertFalse($this->ai->adminSetup()['lastTest']['current'], 'a test with another model proves nothing about this one');
+        $this->site->save(['allowApps' => false, 'paused' => true, 'pictureModel' => 'flux-3-image-klein']);
+
+        // What the computer refuses, the administrator is told as it said it.
+        $refused = $this->ai->queueSiteTest($this->adminId, 'picture');
+        $worker->tick();
+        [$relayId, , $pair] = $this->oaiyTakes(DesktopAiRelayService::PICTURE_KIND);
+        $this->oaiySends($relayId, $pair, [0 => ['v' => 1, 'type' => 'final', 'kind' => 'final', 'error' => ['code' => 'model_disabled', 'message' => 'flux-3-image-klein is switched off in Engines.']]]);
+        $worker->tick();
+        $failed = $this->ai->testResult(AppAiService::SITE_TEST, $refused, $this->results);
+        $this->assertSame(['failed', 'model_disabled', 'flux-3-image-klein is switched off in Engines.'], [$failed['status'], $failed['code'], $failed['message']]);
+        $last = $this->ai->adminSetup()['lastTest'];
+        $this->assertSame(['failed', 'model_disabled', 'flux-3-image-klein is switched off in Engines.'], [$last['status'], $last['code'], $last['message']]);
+        $this->assertSame($before, $counted());
+        self::$pdo->prepare('DELETE FROM app_ai_jobs WHERE app_id IS NULL AND requester_id = ?')->execute([$this->adminId]);
+    }
+
+    /** The same test where the site's AI is the provider in the server's settings. */
+    public function testTheAdministratorsSiteTestRunsOnTheServersOwnProvider(): void
+    {
+        $this->boot('auto', false);
+        if (self::$stub === null) $this->markTestSkipped('Needs curl');
+        $this->site->save(['allowApps' => false, 'pictureModel' => 'stub-image']);
+        $picture = $this->ai->queueSiteTest($this->adminId, 'picture');
+        $this->assertSame(['site-env', 'env'], [$this->job($picture)['source'], $this->job($picture)['target']]);
+        $worker = $this->worker();
+        $deadline = microtime(true) + 30;
+        while (microtime(true) < $deadline && $this->job($picture)['status'] !== 'done') $worker->tick();
+        $result = $this->ai->testResult(AppAiService::SITE_TEST, $picture, $this->results);
+        $this->assertSame('done', $result['status'], json_encode($this->job($picture)));
+        $this->assertStringStartsWith('data:image/png;base64,', $result['picture']);
+        $chat = $this->ai->queueSiteTest($this->adminId, 'chat');
+        $deadline = microtime(true) + 30;
+        while (microtime(true) < $deadline && $this->job($chat)['status'] !== 'done') $worker->tick();
+        $this->assertSame('Hello from the stub.', $this->ai->testResult(AppAiService::SITE_TEST, $chat, $this->results)['text'] ?? null);
+        self::$pdo->prepare('DELETE FROM app_ai_jobs WHERE app_id IS NULL AND requester_id = ?')->execute([$this->adminId]);
     }
 
     /** Cancel (contract §0.11): a job being drawn is let go, its late picture thrown away, and the app told once. */

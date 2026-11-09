@@ -4,6 +4,7 @@ import { api, type SiteAiDesktopState } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
 import { OaiyTargetPicker, type OaiyTarget } from '../../components/admin/OaiyTargetPicker';
 import { ConnectOaiyServer } from '../../components/desktop/ConnectOaiyServer';
+import { announceSiteAiChanged, onSiteAiChanged } from '../../lib/siteAiEvents';
 
 /**
  * The site's AI served from the administrator's own OAIY: pick one of your linked computers and a
@@ -27,6 +28,8 @@ export function AdminSiteAiDesktop() {
     });
     return () => { cancelled = true; };
   }, [revision]);
+  // The AI for apps card's checklist chooses the computer too: show what it chose.
+  useEffect(() => onSiteAiChanged(() => setRevision((n) => n + 1)), []);
 
   const apply = async (call: () => ReturnType<typeof api.adminGetSiteAiDesktop>) => {
     setBusy(true);
@@ -37,6 +40,7 @@ export function AdminSiteAiDesktop() {
     setState(result.data);
     setChoice(null);
     setRevision((n) => n + 1);
+    announceSiteAiChanged();
   };
   const onChange = useCallback((target: OaiyTarget | null) => setChoice(target), []);
 

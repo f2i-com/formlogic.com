@@ -48,6 +48,39 @@ it('keeps a failed retraction visible and reports the error', async () => {
   expect(mocks.error).toHaveBeenCalledWith('Could not retract notice', 'Please retry');
   expect(container.textContent).toContain('Scheduled maintenance');
 });
+// "Set up the site's AI", in an app's AI settings, leads to /admin/platform#app-ai.
+it('goes to the card a link names once the cards are drawn, until the person scrolls themselves', async () => {
+  vi.useFakeTimers();
+  const went: string[] = [];
+  const scroll = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = function (this: Element) { went.push(this.id); };
+  window.history.replaceState(null, '', '#app-ai');
+  try {
+    await mount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(went).toEqual(['app-ai']);
+    // Again as the cards above it fill in and push it down.
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    expect(went).toEqual(['app-ai', 'app-ai']);
+    // The person scrolls: the page is theirs from then on.
+    await act(async () => { window.dispatchEvent(new Event('wheel')); await vi.advanceTimersByTimeAsync(2000); });
+    expect(went).toEqual(['app-ai', 'app-ai']);
+  } finally {
+    Element.prototype.scrollIntoView = scroll;
+    window.history.replaceState(null, '', window.location.pathname);
+    vi.useRealTimers();
+  }
+});
+it('stays where it is when the address names no card', async () => {
+  const scroll = Element.prototype.scrollIntoView;
+  const went = vi.fn();
+  Element.prototype.scrollIntoView = went;
+  try {
+    await mount();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    expect(went).not.toHaveBeenCalled();
+  } finally { Element.prototype.scrollIntoView = scroll; }
+});
 it('waits for confirmation before enabling maintenance', async () => {
   await mount(); await click('Close site for maintenance');
   expect(mocks.toggle).not.toHaveBeenCalled();

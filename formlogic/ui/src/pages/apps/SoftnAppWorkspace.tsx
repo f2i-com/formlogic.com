@@ -14,6 +14,7 @@ import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
 import { SoftnLookPanel } from '../../components/apps/SoftnLookPanel';
 import { PhoneSignInPanel } from '../../components/apps/PhoneSignInPanel';
 import { AppAiPanel } from '../../components/apps/AppAiPanel';
+import { AppAiPrompt } from '../../components/apps/AppAiPrompt';
 import { AppPaymentsPanel } from '../../components/apps/AppPaymentsPanel';
 import { BringDataPanel } from '../../components/apps/BringDataPanel';
 import { AddBackendPanel } from '../../components/apps/AddBackendPanel';
@@ -241,6 +242,12 @@ function Workspace({ app }: { app: App }) {
 
   const leave = (to: string) => { if (!dirty || window.confirm(draft.leaveMessage('Leave without publishing?'))) navigate(to); };
 
+  // "This app can use AI. Set it up": the Settings tab, at its AI panel, once the tab has drawn it.
+  const openAiSettings = () => {
+    setTab('settings');
+    window.setTimeout(() => document.getElementById('app-ai-settings')?.scrollIntoView?.({ block: 'start' }), 60);
+  };
+
   if (editor) {
     return <AppEditorDialog kind={editor.kind} name={app.name} bundle={editor.bundle} brief={editor.brief}
       applyLabel={published ? 'Keep changes' : 'Save changes'}
@@ -272,6 +279,8 @@ function Workspace({ app }: { app: App }) {
       {ready && !project && readOnly && <p className="mt-8 text-sm text-slate-500">This app has nothing installed yet.</p>}
 
       {project && <>
+        {/* An app that can use AI, with its AI off: one line for its owner, never for anyone else. */}
+        {app.ownerId === userId && backend && !readOnly && tab !== 'settings' && declaresFormlogicAi(project) && <AppAiPrompt appId={app.id} onSetUp={openAiSettings} />}
         <div role="tablist" aria-label="App sections" onKeyDown={moveTab} className="mt-5 inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
           {TABS.map(([value, label, Icon]) =>
             <button key={value} id={`softn-tab-${value}`} type="button" role="tab" aria-selected={tab === value} aria-controls={`softn-panel-${value}`} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)}
@@ -390,7 +399,7 @@ function Workspace({ app }: { app: App }) {
           {app.ownerId === userId && backend && <Panel title="Phone sign-in codes" icon={<MessageSquare className="h-4 w-4" />}>
             <PhoneSignInPanel appId={app.id} version={version} disabled={readOnly} />
           </Panel>}
-          {app.ownerId === userId && backend && declaresFormlogicAi(project) && <div className="min-w-0 lg:col-span-2"><Panel title="AI for this app" icon={<Sparkles className="h-4 w-4" />}>
+          {app.ownerId === userId && backend && declaresFormlogicAi(project) && <div id="app-ai-settings" className="min-w-0 scroll-mt-24 lg:col-span-2"><Panel title="AI for this app" icon={<Sparkles className="h-4 w-4" />}>
             <AppAiPanel appId={app.id} />
           </Panel></div>}
           {app.ownerId === userId && backend && declaresFormlogicPayments(project) && <Panel title="Payments" icon={<Wallet className="h-4 w-4" />}>

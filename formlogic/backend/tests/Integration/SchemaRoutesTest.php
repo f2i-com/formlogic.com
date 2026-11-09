@@ -148,6 +148,30 @@ class SchemaRoutesTest extends TestCase
         $this->assertSame('SET NULL', $this->pdo->query($rule)->fetchColumn(), 'and nothing changes on the next run');
     }
 
+    /** The administrator's test of the site's AI is a job that is no app's: an older jobs table is let hold one. */
+    public function testAnInstallWhoseAiJobsPredateTheSiteTestLetsAJobBelongToNoApp(): void
+    {
+        $name = $this->createDatabase('aijobs');
+        $this->pdo->exec("USE `{$name}`");
+        $this->mysql->initializeSchema();
+        $this->mysql->runMigrations();
+        $nullable = fn(): string => (string) $this->pdo->query("SHOW COLUMNS FROM app_ai_jobs LIKE 'app_id'")->fetch(PDO::FETCH_ASSOC)['Null'];
+        $cascades = fn(): string => (string) $this->pdo->query(
+            "SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'app_ai_jobs' AND REFERENCED_TABLE_NAME = 'apps'"
+        )->fetchColumn();
+
+        // As every install before the change is.
+        $this->pdo->exec('ALTER TABLE app_ai_jobs MODIFY COLUMN app_id VARCHAR(36) NOT NULL');
+        $this->assertSame('NO', $nullable());
+
+        $this->mysql->runMigrations();
+        $this->assertSame(['YES', 'CASCADE'], [$nullable(), $cascades()], 'no app, or its app: and an app\'s jobs still go with it');
+        $this->pdo->exec("INSERT INTO app_ai_jobs (id, app_id, event_id, app_job_id, requester_kind, requester_id, ip_key, kind, status, created_at) VALUES ('" . str_repeat('a', 32) . "', NULL, '" . str_repeat('b', 32) . "', 'site-test', 'test', 'admin', '0000000000000000', 'chat', 'queued', NOW(3))");
+
+        $this->mysql->runMigrations();
+        $this->assertSame('YES', $nullable(), 'and nothing changes on the next run');
+    }
+
     private function createDatabase(string $label): string
     {
         $name = 'formlogic_schema_' . $label . '_' . bin2hex(random_bytes(4));

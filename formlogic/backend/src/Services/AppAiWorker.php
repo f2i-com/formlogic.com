@@ -228,7 +228,9 @@ final class AppAiWorker
         $where = [];
         $groups = [];
         foreach ($rows as $job) {
+            // A site test belongs to no app (AppAiService::SITE_TEST): its app id reads as ''.
             $appId = (string) $job['app_id'];
+            $job['app_id'] = $appId;
             if (!array_key_exists($appId, $where)) $where[$appId] = $this->route($appId);
             $route = $where[$appId];
             if ($route === null) {
@@ -285,6 +287,8 @@ final class AppAiWorker
      */
     private function route(string $appId): ?array
     {
+        // The administrator's own test of the site's AI: no app's, so no app's settings or switches.
+        if ($appId === AppAiService::SITE_TEST) return $this->siteRoute($this->ai->siteTestAvailability(), null);
         $statement = $this->pdo()->prepare('SELECT id, owner_id AS ownerId, status FROM apps WHERE id = ?');
         $statement->execute([$appId]);
         $app = $statement->fetch(PDO::FETCH_ASSOC);
@@ -293,28 +297,40 @@ final class AppAiWorker
         if ($declared === null) return null;
         $settings = $this->ai->settings($appId);
         $availability = $this->ai->availability($app, $declared, $settings);
+        if ($availability['enabled'] && $availability['source'] === 'own') {
+            $own = $settings['own'];
+            $target = [
+                'ownerUserId' => (string) $app['ownerId'], 'connectionId' => $own['connectionId'], 'instanceId' => $own['instanceId'],
+                'publicKey' => $own['publicKey'], 'providerId' => $own['providerId'] !== '' ? $own['providerId'] : SiteDesktopAi::PROVIDER,
+            ];
+            return ['key' => 'computer:' . $own['connectionId'], 'kind' => 'oaiy', 'target' => $target, 'pictureModel' => $own['pictureModel'], 'chatModel' => $own['chatModel'],
+                'availability' => $availability, 'ownerId' => (string) $app['ownerId']];
+        }
+        return $this->siteRoute($availability, (string) $app['ownerId']);
+    }
+
+    /**
+     * The site's AI as a route, for $availability (an app's on it, or a site test's): its .env
+     * upstream, or the administrator's chosen computer. $ownerId is who its requests are queued as
+     * on a computer: the app's owner, or for a site test (null) the computer's own administrator.
+     */
+    private function siteRoute(array $availability, ?string $ownerId): array
+    {
         $site = $this->site->current();
         $off = ['key' => 'off', 'kind' => 'off', 'target' => null, 'pictureModel' => null, 'chatModel' => null];
-        $base = ['availability' => $availability, 'ownerId' => (string) $app['ownerId']];
+        $base = ['availability' => $availability, 'ownerId' => (string) $ownerId];
         if (!$availability['enabled']) return $off + $base;
         if ($availability['target'] === 'env') {
             // The site's AI is its .env upstream, yet this worker has none to ask: nothing can take the job.
             if (!$this->env->configured()) return $off + ['availability' => ['enabled' => false, 'reason' => 'site_ai_unavailable'] + $availability] + $base;
             return ['key' => 'env', 'kind' => 'env', 'target' => null, 'pictureModel' => $site['pictureModel'], 'chatModel' => $site['chatModel']] + $base;
         }
-        if ($availability['source'] === 'own') {
-            $own = $settings['own'];
-            $target = [
-                'ownerUserId' => (string) $app['ownerId'], 'connectionId' => $own['connectionId'], 'instanceId' => $own['instanceId'],
-                'publicKey' => $own['publicKey'], 'providerId' => $own['providerId'] !== '' ? $own['providerId'] : SiteDesktopAi::PROVIDER,
-            ];
-            return ['key' => 'computer:' . $own['connectionId'], 'kind' => 'oaiy', 'target' => $target, 'pictureModel' => $own['pictureModel'], 'chatModel' => $own['chatModel']] + $base;
-        }
         $computer = $this->computers?->current();
         if ($computer === null) {
             return $off + ['availability' => ['enabled' => false, 'reason' => 'site_ai_unavailable'] + $availability] + $base;
         }
-        return ['key' => 'computer:' . $computer['connectionId'], 'kind' => 'oaiy', 'target' => $computer, 'pictureModel' => $site['pictureModel'], 'chatModel' => $site['chatModel'] ?? $computer['model'] ?? null] + $base;
+        return ['key' => 'computer:' . $computer['connectionId'], 'kind' => 'oaiy', 'target' => $computer, 'pictureModel' => $site['pictureModel'], 'chatModel' => $site['chatModel'] ?? $computer['model'] ?? null,
+            'availability' => $availability, 'ownerId' => $ownerId ?? (string) $computer['ownerUserId']];
     }
 
     /** When each requester of these apps was last served: "app|kind|id" => started_at. */

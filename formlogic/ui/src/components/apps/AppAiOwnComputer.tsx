@@ -1,82 +1,91 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
-import type { AppAiOwnChoice, AppAiOwnComputer, AppAiView } from '../../lib/appAi';
+import { suggestedPictureModel, type AppAiOwnChoice, type AppAiOwnComputer as OwnComputer, type AppAiView } from '../../lib/appAi';
 import { ConnectOaiyServer } from '../desktop/ConnectOaiyServer';
-import { Button } from '../ui/Button';
+import { PictureModelField } from './PictureModelField';
+import { useLinkWatch, useModelList } from './useAiTest';
 
 const ENGINE = 'oaiy-engine';
 
 /**
  * "Use my OAIY" (AppAiPanel): one of the owner's own linked computers, pinned to the key it has
- * published, and the picture model its engines draw with, listed by asking the computer now. Its chat
- * answers with the model chosen in OAIY. A server with no browser links here with a one-time code.
- * `onChange` hears a complete choice, or null while it is not one.
+ * published, and the picture model it draws with, picked from the list the computer gives now. With
+ * no computer linked yet, one links right here with a one-time code. Its chat is answered by the
+ * model chosen in OAIY. `onChange` hears a complete choice, or null while it is not one.
  */
 export function AppAiOwnComputer({ appId, computers, current, wantsPictures, onChange, onLinked }: {
   appId: string;
   computers: NonNullable<AppAiView['computers']>;
-  current: AppAiOwnComputer | null;
+  current: OwnComputer | null;
   wantsPictures: boolean;
   onChange: (choice: AppAiOwnChoice | null) => void;
-  onLinked: () => void;
+  /** Read the app's AI again: a computer was linked, or may have started since. */
+  onLinked: () => void | Promise<void>;
 }) {
-  const [connectionId, setConnectionId] = useState(current?.connectionId ?? '');
-  const [pictureModel, setPictureModel] = useState(current?.pictureModel ?? '');
-  const [models, setModels] = useState<{ id: string; name: string }[] | null>(null);
-  const [listing, setListing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [picked, setPicked] = useState(current?.connectionId ?? '');
+  const [draft, setDraft] = useState<string | null>(null);
+  const { watching, start: linked } = useLinkWatch(computers.length, onLinked);
+
+  // The only computer there is needs no choosing.
+  const connectionId = picked !== '' && computers.some((computer) => computer.connectionId === picked) ? picked : computers.length === 1 ? computers[0].connectionId : picked;
+  const computer = computers.find((candidate) => candidate.connectionId === connectionId) ?? null;
+  const list = useModelList(computer?.online && wantsPictures ? connectionId : null, () => api.getAppAiModels(appId, connectionId, ENGINE));
+  const models = list.models ? list.models.filter((model) => model.type === 'image') : null;
+  const saved = current && current.connectionId === connectionId ? current.pictureModel : null;
+  const suggestion = models ? suggestedPictureModel(models) : null;
+  const pictureModel = draft ?? saved ?? suggestion ?? '';
 
   useEffect(() => {
-    onChange(connectionId !== '' ? { connectionId, providerId: ENGINE, pictureModel: pictureModel.trim() || null } : null);
+    onChange(connectionId !== '' ? { connectionId, providerId: ENGINE, pictureModel: pictureModel || null } : null);
   }, [connectionId, pictureModel, onChange]);
 
-  const list = async () => {
-    if (connectionId === '') return;
-    setListing(true); setError(null);
-    const result = await api.getAppAiModels(appId, connectionId, ENGINE);
-    setListing(false);
-    if (result.error || !result.data) { setError(result.error ?? 'The computer did not list its models.'); return; }
-    setModels(result.data.models.filter((m) => m.type === 'image'));
-  };
-
-  const field = 'mt-1 block min-h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white';
+  const name = computer?.deviceName || 'that computer';
   return (
     <div className="space-y-3 rounded-lg border border-gray-200 p-3 text-sm dark:border-slate-700" data-testid="app-ai-own">
-      {computers.length === 0 ? <p className="text-gray-600 dark:text-slate-300">None of your linked computers has published its chat key yet. Open OAIY on one, or link a server:</p> : (
+      {computers.length === 0 ? (
+        <p className="text-gray-600 dark:text-slate-300">No computer of yours can answer yet. Link the one that runs OAIY:</p>
+      ) : (
         <fieldset className="space-y-2">
           <legend className="font-medium">Your computer</legend>
-          {computers.map((computer) => (
-            <label key={computer.connectionId} className="flex cursor-pointer items-start gap-2">
-              <input type="radio" name="app-ai-own-computer" className="mt-1" checked={connectionId === computer.connectionId} onChange={() => { setConnectionId(computer.connectionId); setModels(null); }} />
+          {computers.map((candidate) => (
+            <label key={candidate.connectionId} className="flex cursor-pointer items-start gap-2">
+              <input type="radio" name="app-ai-own-computer" className="mt-1" checked={connectionId === candidate.connectionId} onChange={() => { setPicked(candidate.connectionId); setDraft(null); }} />
               <span>
-                <span className="font-medium">{computer.deviceName || 'A linked computer'}</span>
-                <span className={computer.online ? 'ml-2 text-xs text-green-700 dark:text-green-300' : 'ml-2 text-xs text-gray-400'}>{computer.online ? 'online' : 'offline'}</span>
-                <span className="block text-xs text-gray-500 dark:text-slate-400">key {computer.fingerprint}</span>
+                <span className="font-medium">{candidate.deviceName || 'A linked computer'}</span>
+                <span className={candidate.online ? 'ml-2 text-xs text-green-700 dark:text-green-300' : 'ml-2 text-xs text-amber-700 dark:text-amber-300'}>{candidate.online ? 'online' : 'offline'}</span>
               </span>
             </label>
           ))}
         </fieldset>
       )}
-      <ConnectOaiyServer compact onLinked={onLinked} />
-      {wantsPictures && connectionId !== '' && (
-        <label className="block">
-          <span className="font-medium">Picture model</span>
-          {models && models.length > 0 ? (
-            <select className={field} value={pictureModel} onChange={(event) => setPictureModel(event.target.value)}>
-              <option value="">None: no pictures</option>
-              {models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
-          ) : (
-            <input className={field} value={pictureModel} placeholder="flux-3-image-klein" onChange={(event) => setPictureModel(event.target.value)} />
-          )}
-          <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-slate-400">
-            An OAIY Engines picture model on that computer, named exactly.
-            <Button size="sm" variant="ghost" isLoading={listing} onClick={() => void list()}>List its picture models</Button>
-            {models && models.length === 0 && 'It lists no picture model that is switched on.'}
-          </span>
-        </label>
+      {wantsPictures && computer && (
+        <div className="space-y-1">
+          <label htmlFor="app-ai-own-picture-model" className="font-medium">Picture model</label>
+          <PictureModelField
+            id="app-ai-own-picture-model"
+            models={models}
+            listing={list.listing}
+            error={list.error}
+            noList={computer.online ? null : 'offline'}
+            value={pictureModel}
+            onChange={setDraft}
+            onRetry={list.retry}
+          />
+          {saved === null && suggestion !== null && pictureModel === suggestion && <p className="text-xs text-gray-500 dark:text-slate-400">Suggested: {suggestion}. Save to use it.</p>}
+        </div>
       )}
-      {error && <p role="alert" className="text-red-600 dark:text-red-400">{error}</p>}
+      {computer && <p className="text-xs text-gray-500 dark:text-slate-400">Chat is answered by the model chosen in OAIY on {name}.</p>}
+      <div className="space-y-2">
+        {computers.length > 0 && <p className="text-xs text-gray-500 dark:text-slate-400">Is it another computer? Link it here:</p>}
+        <ConnectOaiyServer compact onLinked={linked} />
+        {watching && <p className="text-xs text-gray-500 dark:text-slate-400" role="status">Looking for the new computer. It appears here once OAIY has started on it.</p>}
+        {computers.length === 0 && (
+          <p className="text-xs text-gray-500 dark:text-slate-400">
+            Using OAIY on your own desktop? Link it in <Link className="font-medium text-indigo-600 underline underline-offset-2 dark:text-indigo-300" to="/settings#local-runtime">Settings → AI &amp; devices</Link>; it then shows here.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

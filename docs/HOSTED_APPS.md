@@ -332,8 +332,38 @@ off (the start), **this site's AI** (where the administrator offers it, Admin �
 apps), or **their own OAIY** (below). The owner sets the limits above, within the administrator's
 ceiling for apps on the site's AI, and a **Test** button runs a real small job (a 512 px picture, or a
 five-word chat), counted in the app's day, kept for the owner for an hour and never delivered to the
-app. The page shows where the AI comes from now, whether its computer is online, what is waiting, and
-the app's latest 50 jobs. An administrator acting as the owner may look but not change it.
+app; its picture is shown there with the time it took, or the reason it failed and what to try. An
+administrator acting as the owner may look but not change it.
+
+- **How it is doing** is said at the top, and again beside **Save**: ready, busy ("1 being made, 3
+  waiting"), offline since when, paused, stopped, or off. `GET /api/apps/{id}/ai` gives it as `status`
+  (`state`, `running`, `waiting`, and `offlineSince` while the computer has not been heard from).
+- **Why "Use this site's AI" is not there** is said in plain words: the site does not let apps use its
+  AI yet, has no AI set up, lost the computer it ran on, has paused AI for apps, or has no picture
+  model chosen (chat only, for now). The same answer has it as `site`: `{offered, working, reason,
+  kinds, missing}`, `reason` one of `site_ai_closed`, `site_ai_unavailable`, `site_ai_gone`,
+  `ai_paused`, or `model_unset` or `no_pictures` when pictures are all the app asks for; `missing`
+  (`{kinds, reason}`) is what the app asks for that a working site's AI cannot do yet. An
+  administrator gets a link, **Set up the site's AI**, to the card that fixes it; anyone else is told
+  to ask one.
+- **"This app can use AI. Set it up."** While the app declares `formlogicAi` and its AI is off, its
+  owner sees this one line at the top of the app's own page in FormLogic (the workspace), leading to
+  the panel. It can be dismissed, for that app in that browser, and is never shown to a manager, a
+  member or a visitor.
+
+**The administrator sets the site's AI up** with the checklist at the top of Admin → Platform → AI for
+apps ([AI for apps](FREE_PLANS_AND_AI_SETUP.md#ai-for-apps)): a computer, the site's AI on it, apps
+allowed, a picture model from the computer's own list, and a test picture. `GET /api/admin/app-ai`
+carries what it shows as `setup`: `source` (`computer`, `env`, `gone` or `none`), the `computer` (with
+`online` and `lastSeenAt`), `provider` (`named` in the server's settings, and `on`: the Site AI
+switch), `kinds` the site's AI takes now, `ready` (apps can make pictures), `workerIdleSeconds`, and
+`lastTest`. `POST /api/admin/app-ai/test` `{kind: "picture" | "chat"}` queues the administrator's own
+test (202, `{data: {jobId}}`; 20 an hour, one at a time, with the confirmation every administrator's
+change needs), and `GET /api/admin/app-ai/test/{job}` follows it: `queued` (with `waiting: "worker"`
+when nothing runs the worker, `"computer"` while the computer is offline), `running`, `done` with the
+picture or the reply, or `failed` with the code and what the AI said. The test is a job like an app's,
+sent by the same worker to the same place, but it is no app's (`app_ai_jobs.app_id` is null): it is
+never delivered, counts against no allowance, and runs whether or not apps are allowed or paused.
 
 **The worker** (`bin/app-ai-worker.php`, AppAiWorker) sends the jobs and delivers the results. Run it
 every minute from cron (each run works for about 55 seconds and finishes what it started), or under a
@@ -370,9 +400,11 @@ supervisor with `--watch`:
   for 10 minutes (`ai.reason: "ai_resting"`).
 
 **Use my OAIY.** The owner picks one of their own linked computers that has published its chat key
-(an always-on `oaiy-server` links with **Connect an OAIY server**, right there), and the picture model
-its engines draw with, listed by asking the computer now (`GET /api/apps/{id}/ai/models?connectionId=&providerId=oaiy-engine`,
-and `…/ai/providers?connectionId=`). The computer is pinned to the key it published: if it is
+(their only one is picked for them; with none, an always-on `oaiy-server` links with **Connect an OAIY
+server**, right there, and a desktop from Settings → AI & devices), and the picture model its engines
+draw with, listed by asking the computer as soon as it is picked (`GET /api/apps/{id}/ai/models?connectionId=&providerId=oaiy-engine`,
+and `…/ai/providers?connectionId=`), with `flux-3-image-klein` suggested where it has it. While the
+computer is offline the model's name is typed. The computer is pinned to the key it published: if it is
 unlinked or gets a new key, the app's AI is off (`ai.reason: "own_changed"`) until the owner chooses it
 again. Its jobs are queued as the owner, so their own computer serves them whether or not they are an
 administrator, with the same lanes, fair turns, limits and log as the site's AI; the owner's apps share

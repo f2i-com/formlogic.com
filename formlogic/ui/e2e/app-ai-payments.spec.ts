@@ -111,6 +111,8 @@ test('A visitor gets a picture from the site\'s AI and pays 5 cents to download 
   const admin = { 'X-CSRF-Token': csrf, 'X-Admin-Confirmation': (await confirmed.json()).confirmation };
 
   // The site: payments and Site AI on, apps may use its AI (the .env upstream) and take payments.
+  // No computer is chosen for the site's AI: one left chosen would be asked instead, and is not there.
+  expect((await context.request.delete('/api/admin/site-ai-desktop', { headers: admin })).ok()).toBe(true);
   const plansAnswer = await (await context.request.get('/api/admin/plans', { headers: admin })).json();
   const plans = plansAnswer.plans ?? plansAnswer.data ?? plansAnswer;
   expect((await context.request.put('/api/admin/plans', { headers: admin, data: { ...plans, paymentsEnabled: true, siteAiEnabled: true } })).ok()).toBe(true);

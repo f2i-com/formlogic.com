@@ -791,10 +791,10 @@ CREATE TABLE `app_ai_settings` (
   CONSTRAINT `fk_app_ai_settings_app` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- App AI jobs: who asked (a member's or visitor's id and their address's key, never the address), what for, where it went, what came back. Prompts cleared after 30 days, rows removed after 90.
+-- App AI jobs: who asked (a member's or visitor's id and their address's key, never the address), what for, where it went, what came back. Prompts cleared after 30 days, rows removed after 90. A job with no app is the administrator's own test of the site's AI.
 CREATE TABLE `app_ai_jobs` (
   `id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `event_id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
   `app_job_id` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
   `requester_kind` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL,

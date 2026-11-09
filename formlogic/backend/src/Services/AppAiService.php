@@ -147,19 +147,51 @@ class AppAiService
             return ['enabled' => $kinds !== [], 'source' => 'own', 'target' => $own['connectionId'], 'label' => $own['deviceName'] !== '' ? 'OAIY on ' . $own['deviceName'] : 'The owner\'s OAIY', 'kinds' => $kinds, 'reason' => $kinds === [] ? $unset : null];
         }
         if (!$site['allowApps']) return $off('site_ai_closed', 'site');
+        return $this->onSite($declared['kinds'], $site);
+    }
+
+    /**
+     * Where the site's AI runs now: the administrator's chosen computer; `gone` when the one chosen
+     * was unlinked or given a new key (its work goes nowhere else in its place); the provider in the
+     * server's settings when no computer is chosen and the Site AI switch is on; or `none`.
+     *
+     * @return array{kind: string, computer: ?array}
+     */
+    private function siteSource(): array
+    {
         $computer = $this->siteDesktop?->current();
-        if ($computer !== null) {
-            $target = (string) $computer['connectionId'];
-        } elseif ($this->siteDesktop?->gone() !== null) {
-            // The administrator chose a computer and it is gone: its work goes nowhere else in its place.
-            return $off('site_ai_gone', 'site');
-        } elseif ($this->ai !== null && $this->ai->isConfigured()) {
-            $target = 'env';
-        } else {
-            return $off('site_ai_unavailable', 'site');
+        if ($computer !== null) return ['kind' => 'computer', 'computer' => $computer];
+        if ($this->siteDesktop?->gone() !== null) return ['kind' => 'gone', 'computer' => null];
+        if ($this->ai !== null && $this->ai->isConfigured()) return ['kind' => 'env', 'computer' => null];
+        return ['kind' => 'none', 'computer' => null];
+    }
+
+    /**
+     * What the site's AI can take now of $kinds, whoever asks: availability()'s answer for an app on
+     * the site's AI, the administrator's switches for apps (allowApps, paused) aside.
+     */
+    private function onSite(array $kinds, array $site): array
+    {
+        $source = $this->siteSource();
+        if ($source['kind'] === 'gone' || $source['kind'] === 'none') {
+            return ['enabled' => false, 'source' => 'site', 'target' => null, 'label' => '', 'kinds' => [], 'reason' => $source['kind'] === 'gone' ? 'site_ai_gone' : 'site_ai_unavailable'];
         }
-        $kinds = array_values(array_filter($declared['kinds'], static fn(string $kind) => $kind === 'chat' || ($pictures && $site['pictureModel'] !== null)));
-        return ['enabled' => $kinds !== [], 'source' => 'site', 'target' => $target, 'label' => 'This site\'s AI', 'kinds' => $kinds, 'reason' => $kinds === [] ? $unset : null];
+        // Pictures need a model chosen for them, and this server able to redraw what comes back.
+        $pictures = AppAiPictures::available();
+        $kinds = array_values(array_filter($kinds, static fn(string $kind) => $kind === 'chat' || ($pictures && $site['pictureModel'] !== null)));
+        return [
+            'enabled' => $kinds !== [], 'source' => 'site', 'target' => $source['kind'] === 'env' ? 'env' : (string) $source['computer']['connectionId'],
+            'label' => 'This site\'s AI', 'kinds' => $kinds, 'reason' => $kinds === [] ? ($pictures ? 'model_unset' : 'no_pictures') : null,
+        ];
+    }
+
+    /**
+     * What the administrator's own test of the site's AI can ask for now (a picture, a chat), where
+     * apps' requests on the site's AI go: the switches for apps aside, since the test is no app's.
+     */
+    public function siteTestAvailability(): array
+    {
+        return $this->onSite(['picture', 'chat'], $this->site->current());
     }
 
     // ------------------------------------------------------------------ a request
@@ -582,6 +614,8 @@ class AppAiService
     public const TEST_REQUESTER = 'test';
     /** A test's address key: it counts against no address. */
     private const TEST_IP_KEY = '0000000000000000';
+    /** The app a site test belongs to: none. The administrator's own test of the site's AI (queueSiteTest). */
+    public const SITE_TEST = '';
     /** Jobs the owner's page lists. */
     private const LOG_ROWS = 50;
 
@@ -612,6 +646,9 @@ class AppAiService
             'availability' => array_diff_key($available, ['target' => true]),
             'reasonText' => $available['reason'] !== null ? (self::REASONS[$available['reason']] ?? null) : null,
             'siteOffers' => (bool) $this->site->current()['allowApps'],
+            // Whether "Use this site's AI" would work for this app now, whatever it is set to, so its
+            // owner is told why not before they choose it.
+            'site' => $this->siteOffer($declared),
             // The owner's own linked computers that could serve the app ("Use my OAIY"): each with a
             // published chat key, and whether it was heard from in the last 90 seconds.
             'computers' => $this->siteDesktop?->candidates((string) $app['ownerId']) ?? [],
@@ -644,7 +681,42 @@ class AppAiService
         ];
     }
 
-    /** How the app's AI is doing now, in a sentence for its owner. */
+    /**
+     * "Use this site's AI" as an app's owner would find it now, whatever the app is set to:
+     * {offered, working, reason, kinds, missing}. `reason` says why it is not offered or would not
+     * work (site_ai_closed, ai_paused, site_ai_gone, site_ai_unavailable, model_unset, no_pictures);
+     * `missing` names what the app asks for that the site's AI cannot do yet (pictures with no picture
+     * model chosen, say) and why.
+     */
+    private function siteOffer(?array $declared): array
+    {
+        $site = $this->site->current();
+        $wanted = $declared['kinds'] ?? ['picture', 'chat'];
+        $on = $this->onSite($wanted, $site);
+        $reason = !$site['allowApps'] ? 'site_ai_closed' : ($site['paused'] ? 'ai_paused' : $on['reason']);
+        $missing = $on['enabled'] ? array_values(array_diff($wanted, $on['kinds'])) : [];
+        return [
+            'offered' => (bool) $site['allowApps'],
+            'working' => $reason === null,
+            'reason' => $reason,
+            'kinds' => $on['kinds'],
+            'missing' => $missing === [] ? null : ['kinds' => $missing, 'reason' => AppAiPictures::available() ? 'model_unset' : 'no_pictures'],
+        ];
+    }
+
+    /** When an OAIY computer was last heard from, and whether that was in the last 90 seconds. */
+    private function computerSeen(string $connectionId): array
+    {
+        $statement = $this->pdo()->prepare('SELECT last_seen_at, last_seen_at > (NOW() - INTERVAL 90 SECOND) AS fresh FROM desktop_connections WHERE id = ?');
+        $statement->execute([$connectionId]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        return ['online' => is_array($row) && (bool) $row['fresh'], 'lastSeenAt' => is_array($row) ? $row['last_seen_at'] : null];
+    }
+
+    /**
+     * How the app's AI is doing now, in a sentence for its owner: {state, waiting, running, since,
+     * offlineSince, message}. `offlineSince` is when its computer was last heard from, while offline.
+     */
     private function status(string $appId, array $settings, array $available): array
     {
         $statement = $this->pdo()->prepare("SELECT SUM(status = 'queued') AS waiting, SUM(status IN ('sending','running')) AS running, MIN(CASE WHEN status = 'queued' THEN created_at END) AS since FROM app_ai_jobs WHERE app_id = ?");
@@ -652,7 +724,7 @@ class AppAiService
         $row = $statement->fetch(PDO::FETCH_ASSOC) ?: [];
         $waiting = (int) ($row['waiting'] ?? 0);
         $running = (int) ($row['running'] ?? 0);
-        $out = static fn(string $state, string $message) => ['state' => $state, 'waiting' => $waiting, 'running' => $running, 'since' => $row['since'] ?? null, 'message' => $message];
+        $out = static fn(string $state, string $message, ?string $offlineSince = null) => ['state' => $state, 'waiting' => $waiting, 'running' => $running, 'since' => $row['since'] ?? null, 'offlineSince' => $offlineSince, 'message' => $message];
         if ($settings['mode'] === 'off') return $out('off', 'AI is off for this app: it is told so, and nothing is sent anywhere.');
         if ($settings['blocked']) return $out('blocked', 'The site\'s administrator has stopped this app\'s AI' . ($settings['blockedReason'] ? ': ' . $settings['blockedReason'] : '.'));
         if (!$available['enabled']) {
@@ -661,7 +733,7 @@ class AppAiService
             return $out($reason === 'ai_paused' ? 'paused' : 'off', self::REASONS[$reason] ?? self::REASONS['ai_off']);
         }
         if ($available['target'] !== 'env' && !$this->computerOnline($appId, $settings, $available)) {
-            return $out('offline', 'The computer its AI runs on is offline. Requests wait for it, for up to 30 minutes.');
+            return $out('offline', 'The computer its AI runs on is offline. Requests wait for it, for up to 30 minutes.', $this->computerSeen((string) $available['target'])['lastSeenAt']);
         }
         if ($waiting + $running > 0) return $out('busy', "Working on {$running}, with {$waiting} waiting.");
         return $out('idle', 'Ready: ' . $available['label'] . '.');
@@ -806,20 +878,61 @@ class AppAiService
     }
 
     /**
+     * Queue the administrator's own test of the site's AI (the setup checklist's "Make a test
+     * picture"): the same small picture or five-word chat as an owner's test, sent where apps'
+     * requests on the site's AI go, by the same worker, and kept for the administrator to see. It
+     * belongs to no app (SITE_TEST), needs no app to be allowed yet, and counts against no
+     * allowance; one at a time.
+     */
+    public function queueSiteTest(string $adminId, string $kind): string
+    {
+        $kind = $kind === 'chat' ? 'chat' : 'picture';
+        $available = $this->siteTestAvailability();
+        if (!$available['enabled']) throw new \RuntimeException(self::REASONS[$available['reason']] ?? self::REASONS['site_ai_unavailable']);
+        if (!in_array($kind, $available['kinds'], true)) throw new \RuntimeException(self::REASONS[AppAiPictures::available() ? 'model_unset' : 'no_pictures']);
+        $pdo = $this->pdo();
+        // One at a time, whoever asks: no row of its own to lock, so a named lock.
+        $lock = $pdo->prepare('SELECT GET_LOCK(?, 5)');
+        $lock->execute(['formlogic:app-ai-site-test']);
+        if ((int) $lock->fetchColumn() !== 1) throw new \RuntimeException('A test is already running. Wait for it to finish.');
+        try {
+            $open = $pdo->prepare("SELECT COUNT(*) FROM app_ai_jobs WHERE app_id IS NULL AND requester_kind = ? AND status IN ('queued','sending','running')");
+            $open->execute([self::TEST_REQUESTER]);
+            if ((int) $open->fetchColumn() > 0) throw new \RuntimeException('A test is already running. Wait for it to finish.');
+            $id = bin2hex(random_bytes(16));
+            $prompt = $kind === 'chat' ? json_encode(self::TEST_CHAT, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) : self::TEST_PICTURE;
+            $pdo->prepare(
+                'INSERT INTO app_ai_jobs (id, app_id, event_id, app_job_id, requester_kind, requester_id, ip_key, kind, status, source, target, prompt, prompt_sha256, size, created_at)
+                 VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $id, bin2hex(random_bytes(16)), 'site-test-' . substr($id, 0, 8), self::TEST_REQUESTER, mb_substr($adminId, 0, 64), self::TEST_IP_KEY,
+                $kind, 'queued', 'site-' . ($available['target'] === 'env' ? 'env' : 'oaiy'), $available['target'],
+                $prompt, hash('sha256', $prompt), $kind === 'chat' ? null : '512x512', self::stamp($this->realClock ? microtime(true) : ($this->now)()),
+            ]);
+            return $id;
+        } finally {
+            $pdo->prepare('SELECT RELEASE_LOCK(?)')->execute(['formlogic:app-ai-site-test']);
+        }
+    }
+
+    /**
      * How a test is getting on: {status: queued|running|done|failed, picture?, text?, model, seed,
-     * seconds, code?, message?}, or null when $jobId is not a test of this app. $results is where the
-     * worker keeps results (AppAiWorker).
+     * seconds, waitedSeconds?, code?, message?}, or null when $jobId is not a test of this app
+     * (SITE_TEST: of the site's own). $results is where the worker keeps results (AppAiWorker).
      */
     public function testResult(string $appId, string $jobId, string $results): ?array
     {
         if (!preg_match('/^[a-f0-9]{32}$/D', $jobId)) return null;
-        $statement = $this->pdo()->prepare('SELECT * FROM app_ai_jobs WHERE id = ? AND app_id = ? AND requester_kind = ?');
-        $statement->execute([$jobId, $appId, self::TEST_REQUESTER]);
+        // A site test (the administrator's) belongs to no app.
+        $statement = $this->pdo()->prepare('SELECT * FROM app_ai_jobs WHERE id = ? AND ' . ($appId === self::SITE_TEST ? 'app_id IS NULL' : 'app_id = ?') . ' AND requester_kind = ?');
+        $statement->execute($appId === self::SITE_TEST ? [$jobId, self::TEST_REQUESTER] : [$jobId, $appId, self::TEST_REQUESTER]);
         $job = $statement->fetch(PDO::FETCH_ASSOC);
         if (!is_array($job)) return null;
         $seconds = $job['started_at'] !== null && $job['finished_at'] !== null ? round(max(0.0, self::seconds((string) $job['finished_at']) - self::seconds((string) $job['started_at'])), 1) : null;
-        if (in_array($job['status'], ['queued', 'sending'], true)) return ['status' => 'queued'];
-        if ($job['status'] === 'running') return ['status' => 'running'];
+        // While it waits: for how long, so whoever watches can be told what it is waiting for.
+        $waited = (int) max(0, floor(($this->realClock ? microtime(true) : (float) ($this->now)()) - self::seconds((string) $job['created_at'])));
+        if (in_array($job['status'], ['queued', 'sending'], true)) return ['status' => 'queued', 'waitedSeconds' => $waited];
+        if ($job['status'] === 'running') return ['status' => 'running', 'waitedSeconds' => $waited];
         if ($job['status'] === 'done') {
             $result = $job['result_path'] !== null ? json_decode((string) @file_get_contents($results . '/' . basename((string) $job['result_path'])), true) : null;
             if (!is_array($result)) return ['status' => 'failed', 'code' => 'expired', 'message' => 'This test\'s result is no longer kept. Run it again.', 'seconds' => $seconds];
@@ -879,6 +992,74 @@ class AppAiService
                 : 'The AI computer does not know the picture model ' . ($row['model'] ?? '') . ': ') . (string) $row['message']];
         }
         return $warnings;
+    }
+
+    /**
+     * What the administrator's setup checklist shows (AppAiController::adminView): where the site's
+     * AI runs now, and what apps on it would get.
+     *
+     * - `source`: `computer` (one is chosen and stands), `gone` (the one chosen was unlinked or given
+     *   a new key: nothing takes its place), `env` (none chosen, and the server's settings name a
+     *   provider), or `none`.
+     * - `computer`: the chosen one, {connectionId, deviceName, providerId, online, lastSeenAt};
+     *   `gone`: {deviceName} of the one that went.
+     * - `provider`: the server's own: {named, on}: named in its settings, and the Site AI switch,
+     *   without which it is never used.
+     * - `drawing`: this server can redraw the pictures that come back (PHP's GD).
+     * - `kinds`: what the site's AI takes now (picture, chat), and `reason` when it takes nothing.
+     * - `ready`: apps can make pictures now: allowed, not paused, and `kinds` has picture.
+     * - `lastTest`: the administrator's last finished test picture (lastSiteTest), or null.
+     */
+    public function adminSetup(): array
+    {
+        $site = $this->site->current();
+        $source = $this->siteSource();
+        $named = $this->ai !== null && $this->ai->envProvided();
+        $computer = $source['computer'];
+        $gone = $source['kind'] === 'gone' ? $this->siteDesktop?->gone() : null;
+        $on = $this->onSite(['picture', 'chat'], $site);
+        return [
+            'source' => $source['kind'] === 'none' && $named ? 'env' : $source['kind'],
+            'computer' => $computer === null ? null : [
+                'connectionId' => (string) $computer['connectionId'],
+                'deviceName' => (string) ($computer['deviceName'] ?? ''),
+                'providerId' => (string) $computer['providerId'],
+            ] + $this->computerSeen((string) $computer['connectionId']),
+            'gone' => $gone === null ? null : ['deviceName' => (string) ($gone['deviceName'] ?? '')],
+            'provider' => ['named' => $named, 'on' => $this->ai !== null && $this->ai->siteAiSwitch()],
+            'drawing' => AppAiPictures::available(),
+            'kinds' => $on['kinds'],
+            'reason' => $on['reason'],
+            'ready' => $site['allowApps'] && !$site['paused'] && in_array('picture', $on['kinds'], true),
+            'lastTest' => $this->lastSiteTest($on, $site),
+        ];
+    }
+
+    /**
+     * The administrator's last finished test picture, so the checklist still says how it went after
+     * the page is opened again: {status: done|failed, at, seconds, model, code, message, current}.
+     * `current` when it ran where the site's AI runs now ($on), with the picture model chosen now:
+     * a test from before either changed proves nothing about now. Null when none is kept.
+     */
+    private function lastSiteTest(array $on, array $site): ?array
+    {
+        $statement = $this->pdo()->prepare(
+            "SELECT status, code, message, model, target, started_at, finished_at FROM app_ai_jobs
+             WHERE app_id IS NULL AND requester_kind = ? AND kind = 'picture' AND status IN ('done', 'failed') AND finished_at IS NOT NULL
+             ORDER BY finished_at DESC, created_at DESC LIMIT 1"
+        );
+        $statement->execute([self::TEST_REQUESTER]);
+        $job = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($job)) return null;
+        return [
+            'status' => (string) $job['status'],
+            'at' => substr((string) $job['finished_at'], 0, 19),
+            'seconds' => $job['started_at'] !== null ? round(max(0.0, self::seconds((string) $job['finished_at']) - self::seconds((string) $job['started_at'])), 1) : null,
+            'model' => $job['model'],
+            'code' => $job['code'],
+            'message' => $job['message'],
+            'current' => $on['target'] !== null && $job['target'] === $on['target'] && $job['model'] !== null && $job['model'] === $site['pictureModel'],
+        ];
     }
 
     /** Whether any job has waited at least $seconds to be sent or delivered (the worker is not running, if so). */

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type PlatformPlans } from "../../lib/api";
 import { deferEffect } from "../../lib/deferredEffect";
+import { announceSiteAiChanged, onSiteAiChanged } from "../../lib/siteAiEvents";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Card, CardContent } from "../../components/ui/Card";
@@ -30,6 +31,16 @@ export function AdminPlansCard() {
   useEffect(() => deferEffect(() => {
     void load();
   }), []);
+  // The AI for apps card's checklist can turn Site AI on too: show its switch as the server has it,
+  // leaving whatever else is being edited here alone.
+  useEffect(() => onSiteAiChanged(() => {
+    void api.adminGetPlans().then((result) => {
+      if (!result.data) return;
+      const siteAiEnabled = result.data.plans.siteAiEnabled;
+      setPlans((current) => (current ? { ...current, siteAiEnabled } : current));
+      setSavedPlans((current) => (current ? { ...current, siteAiEnabled } : current));
+    });
+  }), []);
   const save = async () => {
     if (!plans) return;
     const cents = Math.round(Number(price) * 100);
@@ -54,6 +65,7 @@ export function AdminPlansCard() {
       setPlans(result.data.plans);
       setSavedPlans(result.data.plans);
       setPrice((result.data.plans.pricePerMonthCents / 100).toFixed(2));
+      announceSiteAiChanged();
       setMessage(
         "Plan settings saved. The landing page and checkout use these settings.",
       );

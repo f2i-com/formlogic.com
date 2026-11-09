@@ -108,25 +108,54 @@ or forget it. Forget it, and the provider in your server settings serves the Sit
 ### AI for apps
 
 SoftN apps can ask for AI from their own server: pictures, picture edits and chat (a logo maker that
-draws for its visitors, "Ask AI" in an app). Admin → Platform → **AI for apps** decides whether they may
-use this site's own AI, and how much. It is off until you turn it on, and each app's owner then turns
-it on for their app (Settings → AI for this app).
+draws for its visitors, "Ask AI" in an app). Admin → Platform → **AI for apps** sets this site's own AI
+up for them, once. It is off until you turn it on, and each app's owner then turns it on for their app
+(Settings → AI for this app).
 
-- **Apps may use this site's AI.** Their requests go where the Site AI goes: your OAIY computer (above),
-  or the provider in your server settings.
-- **Picture model.** The OAIY Engines picture model apps' pictures use, named exactly; **List the
-  computer's picture models** asks your computer for the ones switched on. None chosen: apps can ask
-  for chat only. The chat model is optional; empty, apps chat with the Site AI's own.
-- **Pause every app's AI** is the stop for all of them: apps are told their AI is paused, and nothing
-  is sent. **Stop its AI**, in the list of apps, stops one, with a reason its owner sees.
-- **Limits.** What a new app's owner starts from: per visitor or member a day (10), per address a day
-  (20: an app's free rounds), per address an hour (10), and per app a day (500, also the most an owner
-  may set on the site's AI). **Requests a day, every app together** (2,000) is the site's own ceiling.
-- **Words a prompt may not use**, one a line: a request that uses one is refused, and the app is told.
+**The checklist.** The card starts with five lines and, above them, where you are: "2 steps left
+before apps can make pictures", or "Ready: apps can make pictures with flux-3-image-klein on Studio PC".
+Each line shows how things stand now and has one action, which takes effect at once.
+
+1. **A computer for the site's AI.** The linked computer and whether it is online, or "None yet" with
+   **Connect an OAIY server**, which gives the one-time code right there (see above). A desktop running
+   OAIY links from Settings → AI & devices instead, and then shows here. A server just linked appears by
+   itself once OAIY has started on it.
+2. **This site's AI runs on it.** **Use this computer** makes it the site's AI: the same choice as
+   "Serve it from your OAIY" in Plans & AI, which shows it too. It does not turn on members' own Site AI
+   ("Offer operator-funded Site AI"): apps do not need that switch when a computer is chosen.
+3. **Apps may use the site's AI.** The switch. Each app's owner still turns AI on for their own app.
+4. **Picture model.** The picture models switched on in OAIY on that computer, asked of it as the card
+   opens. `flux-3-image-klein` is suggested where the computer has it, its first picture model
+   otherwise. While the computer is offline, or when it does not answer, type the model's name exactly
+   as OAIY shows it. None chosen: apps can use chat only. Chat is answered by the model chosen in OAIY;
+   a chat model is asked for only when another provider answers.
+5. **Make a test picture.** A real small picture (or **Test chat**), sent where apps' requests go and
+   run by the same worker, shown with the time it took, or with why it failed and what to try. It
+   belongs to no app, counts against nobody's allowance, and works before apps are allowed, so you can
+   test first. While it waits it says what for: its turn, the computer coming online, or the worker
+   (`bin/app-ai-worker.php`) not running on this server. The line stays ticked while the last test
+   worked with the model and the computer chosen now.
+
+When no computer is chosen and your server settings name an AI provider (`AI_API_KEY`, or `AI_BASE_URL`),
+the checklist says so and adapts. Step 2 is **Turn on Site AI**, the same switch as "Offer
+operator-funded Site AI" in Plans & AI: your provider may charge you for each request, and members can
+use it too. The picture and chat models are typed as your provider names them. A linked computer is
+still offered, and takes over once you choose it. A chosen computer that was unlinked or has a new key
+is named in step 1 with **Forget it**; nothing is sent anywhere in its place until you choose again.
+
+**Limits and safety**, below the checklist:
+
+- **Pause every app's AI** is the stop for all of them, at once: apps are told their AI is paused, and
+  nothing is sent. **Stop its AI**, in the list of apps, stops one, with a reason its owner sees.
+- **Requests each new app starts with:** per network address a day (20: an app's free rounds), per
+  person a day (10), per network address an hour (10), and per app a day (500, also the most an owner
+  may set on the site's AI). **Requests a day, all apps together** (2,000) is the site's own ceiling.
+- **Words a request may not use**, one a line: a request that uses one is refused, and the app is told.
+  **Save limits** saves these and the numbers above together.
 - **Warnings.** The card says when a picture model was refused by your computer in the last day
-  (switched off, or its files are missing), when apps may use the site's AI with no picture model, and
-  when this site is reached through Cloudflare with `TRUSTED_PROXIES` unset, which makes every
-  visitor's free rounds one shared allowance (see [Before going live](HOSTED_APPS.md#before-going-live)).
+  (switched off, or its files are missing), and when this site is reached through Cloudflare with
+  `TRUSTED_PROXIES` unset, which makes every visitor's free rounds one shared allowance (see [Before
+  going live](HOSTED_APPS.md#before-going-live)).
 
 An app's owner may instead serve its AI from **their own OAIY** (Settings → AI for this app → Use my
 OAIY): one of their own linked computers draws for it, whether or not this site offers its AI, and

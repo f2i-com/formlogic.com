@@ -3050,6 +3050,13 @@ class ApiClient {
   async adminBlockAppAi(appId: string, blocked: boolean, reason?: string): Promise<ApiResponse<AppAiAdminView>> {
     return unwrapData(await this.request<{ data: AppAiAdminView }>(`/admin/app-ai/apps/${seg(appId)}`, { method: 'PUT', body: JSON.stringify({ blocked, ...(reason ? { reason } : {}) }) }));
   }
+  /** Admin: a test of the site's AI itself (the setup checklist): a real small job, no app's. */
+  async adminTestAppAi(kind: 'picture' | 'chat'): Promise<ApiResponse<{ jobId: string }>> {
+    return unwrapData(await this.request<{ data: { jobId: string } }>('/admin/app-ai/test', { method: 'POST', body: JSON.stringify({ kind }) }));
+  }
+  async adminGetAppAiTest(jobId: string): Promise<ApiResponse<AppAiTestResult>> {
+    return unwrapData(await this.request<{ data: AppAiTestResult }>(`/admin/app-ai/test/${seg(jobId)}`));
+  }
   /**
    * App payments (docs/HOSTED_APPS.md): the person's wallet with an app, from FormLogic's own sheet.
    * `visitor`: an app open to anyone, whose visitors are known by their browser's cookie, so the

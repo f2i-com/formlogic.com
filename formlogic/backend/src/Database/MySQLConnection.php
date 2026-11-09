@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = '2b2dca3afebb052a26a6a7e6ba569014';
+    public const SCHEMA_STAMP = '4414798878770aae71ab069d6a5bcedf';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -2966,11 +2966,12 @@ class MySQLConnection
         // A job: who asked (a member's id or a visitor's, and their address's key, never the address),
         // what for, where it went and what came back. Prompts are cleared after 30 days and rows
         // removed after 90 (bin/privacy-sweep.php). `channel` holds the sealed turn's key, sealed with
-        // the site's data key where one is set, while OAIY works on it.
+        // the site's data key where one is set, while OAIY works on it. A job with no app is the
+        // administrator's own test of the site's AI (AppAiService::queueSiteTest).
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS app_ai_jobs (
                 id CHAR(32) NOT NULL PRIMARY KEY,
-                app_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NULL,
                 event_id CHAR(32) NOT NULL,
                 app_job_id VARCHAR(100) NOT NULL,
                 requester_kind VARCHAR(8) NOT NULL,
@@ -3023,6 +3024,12 @@ class MySQLConnection
                 PRIMARY KEY (app_id, scope, subject, period)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+        // app_ai_jobs.app_id NOT NULL → NULL, for installs whose table predates the administrator's
+        // site test (a job that is no app's). The CREATE above already carries it on a fresh one.
+        $col = $pdo->query("SHOW COLUMNS FROM app_ai_jobs LIKE 'app_id'")->fetch(PDO::FETCH_ASSOC);
+        if ($col && strtoupper((string) ($col['Null'] ?? '')) === 'NO') {
+            $pdo->exec('ALTER TABLE app_ai_jobs MODIFY COLUMN app_id VARCHAR(36) NULL');
+        }
     }
 
 

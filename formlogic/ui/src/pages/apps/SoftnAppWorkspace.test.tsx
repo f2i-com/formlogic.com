@@ -18,12 +18,14 @@ const mocks = vi.hoisted(() => ({
   publishApp: vi.fn(),
   getAppDomains: vi.fn(),
   createAppDomain: vi.fn(),
+  getAppAi: vi.fn(),
   editor: null as null | { kind: string; brief?: unknown; applyLabel?: string; onApply(bytes: Uint8Array): Promise<void>; onClose(): void },
 }));
 vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({ api: {
   getNativeProject: mocks.getNativeProject, saveNativeProject: mocks.saveNativeProject, installNativeStarter: mocks.installNativeStarter, publishApp: mocks.publishApp,
   getAppDomains: mocks.getAppDomains, createAppDomain: mocks.createAppDomain,
+  getAppAi: mocks.getAppAi,
   getPassKinds: async () => ({ data: { passes: [] } }),
   isAdminActing: () => false, isDemoMode: () => false,
 } }));
@@ -31,7 +33,12 @@ vi.mock('../../hooks/useAiReady', () => ({ useAiReady: () => ({ ready: true, rea
 vi.mock('../../lib/nativeHosting', () => ({
   exportNativeProject: () => new Uint8Array([1]),
   importNativeProject: async () => ({ version: 0, files: { 'manifest.json': '{"id":"a"}', 'ui/main.ui': '<Text>Changed</Text>' }, assets: {}, access: 'application' }),
+  declaresFormlogicAi: (project: { files: Record<string, string> }) => 'formlogicAi' in JSON.parse(project.files['manifest.json'] ?? '{}'),
+  declaresFormlogicPayments: () => false,
 }));
+// The settings of an app with a backend, which read the server themselves.
+vi.mock('../../components/apps/PhoneSignInPanel', () => ({ PhoneSignInPanel: () => <p>phone sign-in</p> }));
+vi.mock('../../components/apps/AppAiPanel', () => ({ AppAiPanel: () => <p>ai settings</p> }));
 vi.mock('../../components/studio/AppEditorDialog', () => ({
   AppEditorDialog: (props: NonNullable<typeof mocks.editor>) => { mocks.editor = props; return <p>editor:{props.kind}</p>; },
 }));
@@ -92,6 +99,43 @@ describe('SoftnAppWorkspace', () => {
     await act(async () => (container.querySelector('#softn-tab-settings') as HTMLButtonElement).click());
     expect(container.textContent).not.toContain('Custom domains');
     expect(mocks.getAppDomains).not.toHaveBeenCalled();
+  });
+
+  // An app that asks for AI and has it off: one line for its owner, leading to its AI settings.
+  describe('"This app can use AI"', () => {
+    const asksForAi = (version: number): NativeProject => ({
+      ...installed(version),
+      files: { 'manifest.json': '{"id":"a","server":{"entry":"server/main.logic"},"formlogicAi":{"uses":["pictures"]}}', 'ui/main.ui': '<Text>Hi</Text>' },
+    });
+    const prompt = () => container.querySelector('[data-testid="app-ai-prompt"]');
+    beforeEach(() => {
+      window.localStorage.clear();
+      mocks.getAppAi.mockReset().mockResolvedValue({ data: { declared: { uses: ['pictures'], purpose: 'Draws.', table: 'ai_jobs', deliver: '/deliver' }, settings: { mode: 'off' } } });
+    });
+
+    it('tells the owner, and opens the app\'s AI settings', async () => {
+      await render('published', asksForAi(1));
+      expect(mocks.getAppAi).toHaveBeenCalledWith('app-1');
+      expect(prompt()?.textContent).toBe('This app can use AI. Set it up');
+      await act(async () => button(/^Set it up$/)!.click());
+      expect(container.querySelector('#softn-tab-settings')!.getAttribute('aria-selected')).toBe('true');
+      expect(container.querySelector('#app-ai-settings')!.textContent).toContain('ai settings');
+      // On the settings themselves the line would only repeat the panel below it.
+      expect(prompt()).toBeNull();
+    });
+
+    it('never tells anyone but the owner', async () => {
+      useAuthStore.setState({ user: { id: 'manager', email: 'manager@example.test' } as never });
+      await render('published', asksForAi(1));
+      expect(prompt()).toBeNull();
+      expect(mocks.getAppAi).not.toHaveBeenCalled();
+    });
+
+    it('says nothing for an app that does not ask for AI', async () => {
+      await render('published', installed(1));
+      expect(prompt()).toBeNull();
+      expect(mocks.getAppAi).not.toHaveBeenCalled();
+    });
   });
 
   // navigator.clipboard does not exist on plain HTTP, and the click did nothing at all.

@@ -124,6 +124,23 @@ class AIService
         return ['url' => $this->apiUrl, 'key' => $this->apiKey, 'model' => $this->model];
     }
 
+    /**
+     * Whether the server's own settings name an AI provider at all (a key, or an endpoint of its own),
+     * whatever the Site AI switch says: what App AI's setup checklist can offer to turn on. Never
+     * with AI_ENABLED off, which no switch in the site turns back on.
+     */
+    public function envProvided(): bool
+    {
+        $v = strtolower(trim((string) ($_ENV['AI_ENABLED'] ?? 'true')));
+        return !in_array($v, ['false', '0', 'no', 'off'], true) && ($this->apiKey !== '' || $this->isCustomEndpoint());
+    }
+
+    /** The administrator's Site AI switch (Plans): the server's provider is used only while it is on. */
+    public function siteAiSwitch(): bool
+    {
+        return (bool) ($this->platformPlans ?? new PlatformPlansService())->status()['siteAiEnabled'];
+    }
+
     /** True when pointed at a non-OpenAI (e.g. local / self-hosted) OpenAI-compatible endpoint. */
     private function isCustomEndpoint(): bool
     {

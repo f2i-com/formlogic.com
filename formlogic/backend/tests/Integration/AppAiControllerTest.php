@@ -187,11 +187,50 @@ final class AppAiControllerTest extends TestCase
         $this->assertSame(202, $started['status'], json_encode($started['body']));
         $jobId = $started['body']['data']['jobId'];
         $result = self::read($this->controller->ownerTestResult($this->request('GET', $this->ownerId), new Response(), ['id' => $this->app['id'], 'job' => $jobId]));
-        $this->assertSame(['status' => 'queued'], $result['body']['data']);
+        $this->assertSame('queued', $result['body']['data']['status']);
+        $this->assertLessThan(5, $result['body']['data']['waitedSeconds'], 'and for how long it has waited');
         $this->assertSame(404, $this->controller->ownerTestResult($this->request('GET', $this->otherId), new Response(), ['id' => $this->app['id'], 'job' => $jobId])->getStatusCode());
+        $this->assertSame(404, $this->controller->adminTestResult($this->request('GET', $this->otherId), new Response(), ['job' => $jobId])->getStatusCode(), 'an app\'s test is not the site\'s');
         $view = $this->ai->ownerView($this->app);
         $this->assertSame([true, 'Test', 'chat'], [$view['log'][0]['test'], $view['log'][0]['requester'], $view['log'][0]['kind']]);
         $this->assertSame('busy', $view['status']['state']);
+    }
+
+    /** "Use this site's AI", told to the owner before they choose it: offered or not, working or not, and why. */
+    public function testTheOwnerIsToldWhetherTheSitesAiWouldWorkAndWhyNot(): void
+    {
+        $offer = fn(): array => self::read($this->controller->ownerGet($this->request('GET', $this->ownerId), new Response(), ['id' => $this->app['id']]))['body']['data']['site'];
+        $this->assertSame([true, true, null, ['picture', 'chat'], null], array_values($offer()), 'the app is off, yet its owner sees the site\'s AI would work');
+
+        $this->site->save(['allowApps' => true, 'pictureModel' => null]);
+        $this->assertSame([true, true, null, ['chat'], ['kinds' => ['picture'], 'reason' => 'model_unset']], array_values($offer()), 'chat only: no picture model is chosen yet');
+        $this->site->save(['allowApps' => true, 'pictureModel' => 'flux-test', 'paused' => true]);
+        $this->assertSame([true, false, 'ai_paused'], array_slice(array_values($offer()), 0, 3));
+        $this->site->save(['allowApps' => false, 'pictureModel' => 'flux-test']);
+        $this->assertSame([false, false, 'site_ai_closed'], array_slice(array_values($offer()), 0, 3));
+
+        // No AI behind the site at all: offered, and not working.
+        $none = $this->createMock(AIService::class);
+        $none->method('isConfigured')->willReturn(false);
+        $computers = new SiteAiDesktopSettings(self::$mysql, self::$tmpRoot . '/site-ai-' . bin2hex(random_bytes(3)) . '.json');
+        $ai = new AppAiService(self::$mysql, $this->site, new AppVisitors(self::$mysql, ['secure' => false], new SessionOriginPolicy([])), $this->native, $computers, $none);
+        $this->site->save(['allowApps' => true, 'pictureModel' => 'flux-test']);
+        $this->assertSame([true, false, 'site_ai_unavailable', [], null], array_values($ai->ownerView($this->app)['site']));
+    }
+
+    /** An app on a computer that is offline is told since when. */
+    public function testAnOfflineComputerIsToldSinceWhen(): void
+    {
+        $mine = bin2hex(random_bytes(16));
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Studio', ?, NOW() - INTERVAL 10 MINUTE, ?)")
+            ->execute([$mine, $this->ownerId, 'inst-' . bin2hex(random_bytes(4)), base64_encode(random_bytes(32))]);
+        $this->ai->saveSettings($this->app, ['mode' => 'own', 'own' => ['connectionId' => $mine, 'pictureModel' => 'flux-3-image-klein']], $this->ownerId);
+        $status = $this->ai->ownerView($this->app)['status'];
+        $this->assertSame('offline', $status['state']);
+        $this->assertEqualsWithDelta(time() - 600, strtotime($status['offlineSince'] . ' UTC'), 5);
+        self::$pdo->prepare('UPDATE desktop_connections SET last_seen_at = NOW() WHERE id = ?')->execute([$mine]);
+        $status = $this->ai->ownerView($this->app)['status'];
+        $this->assertSame(['idle', null], [$status['state'], $status['offlineSince']]);
     }
 
     public function testTheAdministratorSeesEveryAppAndCanStopOne(): void

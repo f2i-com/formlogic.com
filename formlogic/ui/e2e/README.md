@@ -33,6 +33,14 @@ Failures capture a screenshot + trace (open with `npx playwright show-trace <tra
   delivered to the app, then a 5¢ download paid from a balance topped up in FormLogic's wallet. Needs
   the App AI worker, the stand-ins for Studio's gateway and for PayPal, and an administrator
   (`E2E_APP_AI_EMAIL`, `E2E_APP_AI_PASSWORD`); the spec's header says how. Skipped otherwise.
+- `app-ai-setup.spec.ts` — setting up AI for apps from nothing with the checklist in Admin → Platform →
+  AI for apps alone: a one-time code links a stand-in OAIY computer
+  (`backend/tests/Support/stub-oaiy-computer.php`), the computer is chosen, apps are allowed, the
+  picture model is picked from the computer's own list, and a test picture comes back through the real
+  worker; then an app's owner follows "This app can use AI. Set it up" and tests a picture there. A
+  second test does the same on the provider in the server's settings. Needs the same stack and
+  administrator as the spec above, and changes the same site settings, so run the two with
+  `--workers=1`. Skipped otherwise.
 
 ## Notes / follow-ups
 

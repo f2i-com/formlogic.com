@@ -22,6 +22,8 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  *   the app's owner. An administrator acting as them may look but not change anything, since these
  *   settings decide whose computer the app's visitors' requests go to and what they cost.
  * - `GET/PUT /api/admin/app-ai`, `PUT /api/admin/app-ai/apps/{id}`: the administrator.
+ * - `POST /api/admin/app-ai/test`, `GET /api/admin/app-ai/test/{job}`: the administrator's own test
+ *   of the site's AI, for the setup checklist.
  */
 final class AppAiController
 {
@@ -145,9 +147,55 @@ final class AppAiController
         return $this->jsonResponse($response, ['data' => $this->adminView($request, $this->site->current())]);
     }
 
+    /**
+     * POST /api/admin/app-ai/test {kind: picture|chat}: the administrator's own test of the site's AI,
+     * a real small job through the worker, where apps' requests on the site's AI go. No app's, and
+     * needing none: it works before apps are allowed.
+     */
+    public function adminTest(Request $request, Response $response): Response
+    {
+        $body = $request->getParsedBody();
+        $kind = is_array($body) && ($body['kind'] ?? null) === 'chat' ? 'chat' : 'picture';
+        try {
+            $jobId = $this->ai->queueSiteTest((string) $request->getAttribute('userId'), $kind);
+        } catch (\RuntimeException $e) {
+            return $this->jsonError($response, $e->getMessage(), 409, 'ai_unavailable');
+        }
+        $this->record($request, 'admin.app_ai.test', null, ['kind' => $kind]);
+        return $this->jsonResponse($response, ['data' => ['jobId' => $jobId]], 202);
+    }
+
+    /**
+     * GET /api/admin/app-ai/test/{job}: how the administrator's test is getting on, its picture or
+     * reply once it is there, and while it waits, what it is waiting for (`waiting`: `worker` when
+     * nothing is running bin/app-ai-worker.php, `computer` when the site's computer is offline).
+     */
+    public function adminTestResult(Request $request, Response $response, array $args): Response
+    {
+        $result = $this->ai->testResult(AppAiService::SITE_TEST, (string) ($args['job'] ?? ''), $this->results);
+        if ($result === null) return $this->jsonError($response, 'Unknown test', 404);
+        if ($result['status'] === 'queued') {
+            $idle = AppAiWorker::idleSeconds($this->results);
+            $setup = $this->ai->adminSetup();
+            if ($idle === null || $idle > self::WORKER_QUIET_SECONDS) $result['waiting'] = 'worker';
+            elseif ($setup['source'] === 'computer' && !$setup['computer']['online']) $result['waiting'] = 'computer';
+        }
+        return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), ['data' => $result]);
+    }
+
+    /** A worker that has made no pass for this long is not running (it touches its file every few passes). */
+    private const WORKER_QUIET_SECONDS = 120;
+
     private function adminView(Request $request, array $settings): array
     {
-        return ['settings' => $settings, 'apps' => $this->ai->adminOverview(), 'warnings' => array_merge(self::proxyWarnings($request), $this->ai->adminWarnings(), $this->workerWarnings())];
+        return [
+            'settings' => $settings,
+            // The setup checklist's facts: where the site's AI runs, what apps would get, and whether
+            // anything is running the worker (seconds since its last pass; null when it never has).
+            'setup' => $this->ai->adminSetup() + ['workerIdleSeconds' => AppAiWorker::idleSeconds($this->results)],
+            'apps' => $this->ai->adminOverview(),
+            'warnings' => array_merge(self::proxyWarnings($request), $this->ai->adminWarnings(), $this->workerWarnings()),
+        ];
     }
 
     /** Apps' jobs waiting for minutes while no worker has run: bin/app-ai-worker.php is not scheduled, or is failing. */

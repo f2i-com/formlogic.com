@@ -1632,7 +1632,9 @@ $adminArgs = function ($request) {
 };
 $adminConfirmation = new \FormLogic\Middleware\AdminConfirmationMiddleware($container->get(AuthService::class));
 $adminWritesConfirmed = new \FormLogic\Middleware\AdminConfirmationMiddleware($container->get(AuthService::class), true);
-$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container, $adminArgs, $adminStepUpRateLimiter, $adminConfirmation) {
+// The administrator's test of the site's AI (App AI's setup checklist): 20 an hour, per administrator.
+$adminAppAiTestLimiter = new RateLimitMiddleware($container->get(\FormLogic\Services\RateLimiter::class), 20, 3600, 'admin_app_ai_tests', true, true);
+$app->group('/api/admin', function (RouteCollectorProxy $group) use ($container, $adminArgs, $adminStepUpRateLimiter, $adminConfirmation, $adminAppAiTestLimiter) {
     $ctrl = fn () => $container->get(\FormLogic\Controllers\AdminController::class);
 
     // Proves who the administrator is, for every write below and for acting as an account.
@@ -1858,6 +1860,14 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     });
     $group->put('/app-ai/apps/{id}', function ($request, $response) use ($appAi, $adminArgs) {
         return $appAi()->adminBlock($request, $response, $adminArgs($request));
+    });
+    // The setup checklist's test: a real small job on the site's AI, so it has a small budget of its
+    // own, as an owner's test has.
+    $group->post('/app-ai/test', function ($request, $response) use ($appAi) {
+        return $appAi()->adminTest($request, $response);
+    })->add($adminAppAiTestLimiter);
+    $group->get('/app-ai/test/{job:[a-f0-9]{32}}', function ($request, $response) use ($appAi, $adminArgs) {
+        return $appAi()->adminTestResult($request, $response, $adminArgs($request));
     });
     // App payments (AppPaymentsController): the switch, the top-ups offered and the limits; the latest
     // top-ups with PayPal's ids; a correction to one wallet, on its ledger.
