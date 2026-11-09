@@ -289,7 +289,7 @@ class DesktopCommandService
     /** True when the owner has at least one linked FormLogic Desktop (any freshness). */
     public function hasLinkedDesktop(string $ownerUserId): bool
     {
-        $stmt = $this->mysql->prepare("SELECT 1 FROM desktop_connections WHERE owner_user_id = :o LIMIT 1");
+        $stmt = $this->mysql->prepare("SELECT 1 FROM desktop_connections dc WHERE owner_user_id = :o AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.id = dc.api_key_id AND k.ai_only = 1) LIMIT 1");
         $stmt->execute(['o' => $ownerUserId]);
         return $stmt->fetchColumn() !== false;
     }
@@ -585,6 +585,7 @@ class DesktopCommandService
             FROM connector_assignments ca
             JOIN desktop_connections dc ON dc.id = ca.desktop_connection_id
             WHERE ca.owner_user_id = :o AND ca.connector_id = :c AND ca.desktop_connection_id IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.id = dc.api_key_id AND k.ai_only = 1)
             LIMIT 1
         ");
         $stmt->execute(['o' => $ownerUserId, 'c' => $connectorId]);
@@ -593,13 +594,16 @@ class DesktopCommandService
             return ['target' => $pinned, 'error' => null, 'desktops' => []];
         }
 
-        // 2-4) Fresh connections decide.
+        // 2-4) Fresh connections decide. An "AI only" link takes no commands, so it is never a
+        // candidate (App AI contract §0.10): an AI server beside the owner's desktop must not make
+        // their routing ambiguous.
         $fresh = self::DESKTOP_FRESH_SECONDS;
         $stmt = $this->mysql->prepare("
             SELECT id, device_name, desktop_instance_id, last_seen_at
-            FROM desktop_connections
+            FROM desktop_connections dc
             WHERE owner_user_id = :o AND last_seen_at IS NOT NULL
               AND last_seen_at > (NOW() - INTERVAL {$fresh} SECOND)
+              AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.id = dc.api_key_id AND k.ai_only = 1)
             ORDER BY last_seen_at DESC
         ");
         $stmt->execute(['o' => $ownerUserId]);
@@ -652,8 +656,9 @@ class DesktopCommandService
         }
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
         $stmt = $this->mysql->prepare(
-            "SELECT desktop_instance_id, device_name FROM desktop_connections
-             WHERE owner_user_id = ? AND desktop_instance_id IN ({$placeholders})"
+            "SELECT desktop_instance_id, device_name FROM desktop_connections dc
+             WHERE owner_user_id = ? AND desktop_instance_id IN ({$placeholders})
+               AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.id = dc.api_key_id AND k.ai_only = 1)"
         );
         $stmt->execute([$ownerUserId, ...$ids]);
         $out = [];

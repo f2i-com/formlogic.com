@@ -18,6 +18,7 @@ import { toast } from '../stores/toastStore';
 import { LocalRuntimePanel } from '../components/desktop/LocalRuntimePanel';
 import { ConnectorRoutingPanel } from '../components/desktop/ConnectorRoutingPanel';
 import { DataNodesPanel } from '../components/desktop/DataNodesPanel';
+import { ConnectOaiyServer } from '../components/desktop/ConnectOaiyServer';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { parseServerDate, formatRelativeTime } from '../lib/utils';
 import {
@@ -862,6 +863,11 @@ export function Settings() {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="text-sm font-medium text-gray-900 dark:text-white">{conn.deviceName}</p>
+                            {conn.aiOnly && (
+                              <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 font-medium" title="Linked for AI only: it answers AI requests and takes no commands, flows or backups">
+                                AI only
+                              </span>
+                            )}
                             {isOnline && (
                               <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-300 font-medium">
                                 <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
@@ -891,6 +897,8 @@ export function Settings() {
                   })}
                 </div>
               )}
+              {/* An always-on OAIY server links with a one-time code (App AI contract §2). */}
+              {!isLoadingDesktops && !desktopLoadError && <ConnectOaiyServer onLinked={() => void loadDesktopConnections(true)} />}
               {/* ROUTE-001: pick which machine services each connector's remote commands. */}
               {!isLoadingDesktops && !desktopLoadError && desktopConnections.length > 0 && (
                 <ConnectorRoutingPanel />
@@ -898,7 +906,7 @@ export function Settings() {
               {/* Encrypted data nodes (docs/FORMLOGIC_DATA_NODES.md §11): enrolment roster +
                   owner approval. Hides itself while the DATA_NODES flag is off. */}
               <DataNodesPanel
-                desktops={desktopConnections.map((conn) => ({
+                desktops={desktopConnections.filter((conn) => !conn.aiOnly).map((conn) => ({
                   id: conn.id,
                   deviceName: conn.deviceName,
                   online: conn.lastSeenAt !== null && now - parseServerDate(conn.lastSeenAt).getTime() < 90_000,

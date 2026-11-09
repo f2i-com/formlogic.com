@@ -58,6 +58,9 @@ final class BackupLinkController
             if ($e->getMessage() === 'backup_link_not_ready') {
                 return $this->jsonError($response, 'That computer is still connecting. Try again in a moment.', 409, 'backup_link_not_ready');
             }
+            if ($e->getMessage() === 'backup_link_ai_only') {
+                return $this->jsonError($response, 'That computer is linked for AI only. Link it with everything a desktop can do to back up to it.', 409, 'backup_link_ai_only');
+            }
             if ($e->getMessage() === 'backup_link_no_room') {
                 return $this->jsonError($response, BackupLinkService::NO_ROOM, 409, 'backup_link_no_room');
             }

@@ -181,6 +181,11 @@ export interface AdminCameraCheckState {
 }
 
 /** The site's AI on the administrator's own OAIY (SiteDesktopAi on the server). */
+/** A one-time code for linking an OAIY server (DesktopLinkCodeService), shown this once. */
+export interface DesktopLinkCode { id: string; code: string; expiresAt: string; scope: 'ai' | 'all'; baseUrl: string; command: string }
+/** How a link code is getting on. */
+export interface DesktopLinkStatus { id: string; scope: 'ai' | 'all'; expiresAt: string; status: 'waiting' | 'linked' | 'expired' | 'failed'; connectionId?: string; deviceName?: string | null; message?: string }
+
 export interface SiteAiDesktopState {
   current: { connectionId: string; deviceName: string; fingerprint: string; chosenAt: string | null; providerId?: string; model?: string | null; yours: boolean } | null;
   candidates: { connectionId: string; instanceId: string; deviceName: string; fingerprint: string; online: boolean; lastSeenAt: string | null }[];
@@ -1735,6 +1740,20 @@ class ApiClient {
   /** POST /api/data-nodes/backup-link — send a linked computer's backup plugin a one-time code. */
   async startBackupLink(connectionId: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
     return this.requestWithMeta('/data-nodes/backup-link', { method: 'POST', body: JSON.stringify({ connectionId }) });
+  }
+
+  /** POST /api/desktop-links/codes: a one-time code to link an OAIY server, AI only unless asked. */
+  async createDesktopLinkCode(input: { scope: 'ai' | 'all'; deviceName?: string }): Promise<ApiResponse<DesktopLinkCode>> {
+    const res = await this.requestWithMeta('/desktop-links/codes', { method: 'POST', body: JSON.stringify(input) });
+    if (!res.ok) return { error: (res.body?.message as string) ?? `Server error (${res.status})`, status: res.status, code: res.body?.code as string | undefined };
+    return { data: res.body?.data as DesktopLinkCode };
+  }
+
+  /** GET /api/desktop-links/codes/{id}: how a link code is getting on. */
+  async getDesktopLinkCode(id: string): Promise<ApiResponse<DesktopLinkStatus>> {
+    const res = await this.requestWithMeta(`/desktop-links/codes/${seg(id)}`);
+    if (!res.ok) return { error: (res.body?.message as string) ?? `Server error (${res.status})`, status: res.status };
+    return { data: res.body?.data as DesktopLinkStatus };
   }
 
   /** GET /api/data-nodes/backup-link/{id} — how that code is getting on. */
@@ -5807,6 +5826,8 @@ interface DesktopConnection {
   lastSeenAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Linked for AI only (an OAIY server's one-time code): no commands, flows or backups. */
+  aiOnly?: boolean;
 }
 
 /** Connector routing (ROUTE-001): assignments + candidates + the machines to pick from. */

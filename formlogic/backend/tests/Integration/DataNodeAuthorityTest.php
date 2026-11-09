@@ -464,4 +464,19 @@ final class DataNodeAuthorityTest extends E2eeTestCase
         self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$stranger]);
         $this->cleanupNodes();
     }
+
+    // ── an "AI only" link (App AI contract §0.10) ──
+
+    public function testAnAiOnlyLinkCannotEnrolAsAStorageNodeThoughItHoldsConnectorRelay(): void
+    {
+        $connection = $this->makeConnection();
+        $request = $this->request($this->userId, $connection['apiKeyId'], ['connector:relay'], ['publicKey' => base64_encode(random_bytes(32)), 'deviceName' => 'AI server'])
+            ->withAttribute('apiKeyAiOnly', true);
+        $response = self::$controller->register($request, $this->response());
+        $this->assertSame(403, $response->getStatusCode());
+        $this->assertSame('insufficient_scope', $this->decode($response)['code'] ?? null);
+        $count = self::$pdo->prepare('SELECT COUNT(*) FROM data_nodes WHERE owner_user_id = ?');
+        $count->execute([$this->userId]);
+        $this->assertSame(0, (int) $count->fetchColumn(), 'nothing offered for approval');
+    }
 }

@@ -3,6 +3,7 @@ import { Monitor } from 'lucide-react';
 import { api, type SiteAiDesktopState } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
 import { OaiyTargetPicker, type OaiyTarget } from '../../components/admin/OaiyTargetPicker';
+import { ConnectOaiyServer } from '../../components/desktop/ConnectOaiyServer';
 
 /**
  * The site's AI served from the administrator's own OAIY: pick one of your linked computers and a
@@ -80,6 +81,8 @@ export function AdminSiteAiDesktop() {
           </Button>
         </div>
       )}
+      {/* An always-on OAIY server, linked with a one-time code (App AI contract §2), serves as well as a desktop. */}
+      <ConnectOaiyServer compact onLinked={() => setRevision((n) => n + 1)} />
       {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p>}
     </div>
   );

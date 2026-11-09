@@ -3669,7 +3669,8 @@ class FlowService
     /** @return array[] */
     public function listDesktopConnections(string $userId): array
     {
-        $stmt = $this->mysql->prepare("SELECT * FROM desktop_connections WHERE owner_user_id = :o ORDER BY last_seen_at DESC, created_at DESC");
+        // With whether each is an "AI only" link (DesktopLinkCodeService), which takes no commands, flows or backups.
+        $stmt = $this->mysql->prepare("SELECT dc.*, COALESCE(k.ai_only, 0) AS ai_only FROM desktop_connections dc LEFT JOIN api_keys k ON k.id = dc.api_key_id WHERE dc.owner_user_id = :o ORDER BY dc.last_seen_at DESC, dc.created_at DESC");
         $stmt->execute(['o' => $userId]);
         return array_map([$this, 'formatDesktopConnection'], $stmt->fetchAll());
     }
@@ -3876,6 +3877,7 @@ class FlowService
             'lastSeenAt' => $row['last_seen_at'],
             'createdAt' => $row['created_at'],
             'updatedAt' => $row['updated_at'],
+            'aiOnly' => (bool) ($row['ai_only'] ?? false),
         ];
     }
 

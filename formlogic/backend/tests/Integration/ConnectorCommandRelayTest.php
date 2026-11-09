@@ -538,4 +538,70 @@ class ConnectorCommandRelayTest extends TestCase
 
         $this->assertSame('expired', $this->read($this->ownerId, $id)['body']['command']['status']);
     }
+
+    // ── an "AI only" link (App AI contract §0.10) ──
+
+    /** A fresh linked computer of the owner's with its own key; $aiOnly makes it an "AI only" link's. */
+    private function linkedComputer(bool $aiOnly): array
+    {
+        $keyId = 'ak-' . bin2hex(random_bytes(8));
+        self::$pdo->prepare("INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash, scopes, ai_only) VALUES (?, ?, 'link', 'flk_test', ?, ?, ?)")
+            ->execute([$keyId, $this->ownerId, hash('sha256', $keyId), json_encode(['connector:relay']), $aiOnly ? 1 : 0]);
+        $instance = 'oaiy-' . bin2hex(random_bytes(16));
+        $connectionId = 'dc-' . bin2hex(random_bytes(8));
+        self::$pdo->prepare('INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, api_key_id, last_seen_at) VALUES (?, ?, ?, ?, ?, NOW())')
+            ->execute([$connectionId, $this->ownerId, $aiOnly ? 'AI server' : 'Desktop', $instance, $keyId]);
+        return ['keyId' => $keyId, 'instance' => $instance, 'connectionId' => $connectionId];
+    }
+
+    /** A desktop-surface request as that computer's key, as ApiKeyMiddleware leaves it. */
+    private function asComputer(array $computer, bool $aiOnly, string $method, string $path, array $body = [], array $query = []): \Psr\Http\Message\ServerRequestInterface
+    {
+        return (new ServerRequestFactory())->createServerRequest($method, self::BASE . $path)
+            ->withParsedBody($body)->withQueryParams($query)
+            ->withAttribute('userId', $this->ownerId)->withAttribute('apiKeyId', $computer['keyId'])
+            ->withAttribute('apiKeyScopes', ['connector:relay'])->withAttribute('apiKeyAiOnly', $aiOnly);
+    }
+
+    public function testAnAiOnlyLinkIsNeverACommandsTargetSoItCannotMakeRoutingAmbiguous(): void
+    {
+        $desktop = $this->linkedComputer(false);
+        $server = $this->linkedComputer(true);
+        $target = self::$commands->resolveTargetInstance($this->ownerId, 'aokie');
+        $this->assertSame([$desktop['instance'], null], [$target['target'], $target['error']], 'one desktop takes commands; the AI server beside it changes nothing');
+        $this->assertSame([], self::$commands->describeInstances($this->ownerId, [$server['instance']]), 'naming the AI server as a target finds nothing');
+        self::$pdo->prepare('UPDATE desktop_connections SET last_seen_at = NOW() - INTERVAL 1 DAY WHERE id = ?')->execute([$desktop['connectionId']]);
+        $alone = self::$commands->resolveTargetInstance($this->ownerId, 'aokie');
+        $this->assertNull($alone['target'], 'with the desktop away, no command goes to the AI server instead');
+    }
+
+    public function testAnAiOnlyLinksPollIsIdleAndItsClaimsAreRefused(): void
+    {
+        $desktop = $this->linkedComputer(false);
+        $server = $this->linkedComputer(true);
+        $enqueued = $this->enqueue($this->ownerId, ['connectorId' => 'aokie', 'command' => 'call']);
+        $id = $enqueued['body']['commandId'];
+        $started = microtime(true);
+        $poll = self::$ctrl->pending($this->asComputer($server, true, 'GET', '/api/v1/connector-commands/pending', [], ['wait' => 1000, 'instanceId' => $server['instance']]), (new ResponseFactory())->createResponse());
+        $this->assertSame(200, $poll->getStatusCode(), 'polling is not an error: OAIY sees an idle relay');
+        $this->assertSame([], self::decode($poll)['commands']);
+        $this->assertGreaterThanOrEqual(0.9, microtime(true) - $started, 'it waits as a long-poll does, so it never spins');
+        $claim = self::$ctrl->claim($this->asComputer($server, true, 'POST', '/api/v1/connector-commands/' . $id . '/claim', ['instanceId' => $server['instance']]), (new ResponseFactory())->createResponse(), ['id' => $id]);
+        $this->assertSame([403, 'ai_only_link'], [$claim->getStatusCode(), self::decode($claim)['code'] ?? null]);
+        $complete = self::$ctrl->complete($this->asComputer($server, true, 'POST', '/api/v1/connector-commands/' . $id . '/complete', ['status' => 'done', 'result' => []]), (new ResponseFactory())->createResponse(), ['id' => $id]);
+        $this->assertSame(403, $complete->getStatusCode());
+        // The desktop, an ordinary link with the same scope, takes it as always.
+        $claimed = self::$ctrl->claim($this->asComputer($desktop, false, 'POST', '/api/v1/connector-commands/' . $id . '/claim', ['instanceId' => $desktop['instance']]), (new ResponseFactory())->createResponse(), ['id' => $id]);
+        $this->assertSame(200, $claimed->getStatusCode(), json_encode(self::decode($claimed)));
+    }
+
+    public function testAKeyWithConnectorRelayAloneThatIsNotAiOnlyKeepsWhatItHad(): void
+    {
+        // Older links whose keys hold connector:relay alone are grandfathered, not AI-only.
+        $legacy = $this->linkedComputer(false);
+        $this->assertSame($legacy['instance'], self::$commands->resolveTargetInstance($this->ownerId, 'aokie')['target']);
+        $id = $this->enqueue($this->ownerId, ['connectorId' => 'aokie', 'command' => 'call'])['body']['commandId'];
+        $poll = self::$ctrl->pending($this->asComputer($legacy, false, 'GET', '/api/v1/connector-commands/pending', [], ['wait' => 0, 'instanceId' => $legacy['instance']]), (new ResponseFactory())->createResponse());
+        $this->assertContains($id, array_map(static fn ($c) => $c['commandId'], self::decode($poll)['commands']));
+    }
 }

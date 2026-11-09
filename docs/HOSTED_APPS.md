@@ -305,6 +305,42 @@ lock, the request leaves its event for the next dispatch.
 Addresses are kept only as a keyed hash. They are only as good as the site's
 `TRUSTED_PROXIES` setting (see [Before going live](#before-going-live)).
 
+### Connecting an OAIY server
+
+An always-on OAIY server (`oaiy-server`) has no browser to approve the usual link, which redirects to
+`127.0.0.1` on the machine itself. It links with a one-time code instead (DesktopLinkCodeService),
+from **Connect an OAIY server**: in Settings → AI & devices → Linked desktops, in the administrator's
+Site AI card, and in an app's AI settings under **Use my OAIY**.
+
+1. Choose what the server may do: **AI only** (the default) or **Everything a linked desktop can do**.
+   Optionally name it. FormLogic shows a code (twelve characters, `K7QM-2WXR-9DFT`) once, good for ten
+   minutes and one use, and the command to run.
+2. On the server: `oaiy-server link --code <code> --base-url <this site> [--name <device>]`.
+3. The page shows it linked. Start (or restart) `oaiy-server`, and it is an ordinary linked computer:
+   it checks in, publishes its chat key and takes the AI lane's requests.
+
+| Request | Who | What |
+|---|---|---|
+| `POST /api/desktop-links/codes` `{scope: "ai"\|"all", deviceName?}` | signed in | `201 {data: {id, code, expiresAt, scope, baseUrl, command}}`; at most 3 waiting codes an account (`409 desktop_link_too_many`) |
+| `GET /api/desktop-links/codes/{id}` | signed in, its maker | `{data: {status: waiting\|linked\|expired\|failed, connectionId?, deviceName?, message?}}` |
+| `POST /api/oauth/oaiy-link` `code`, `device_name?` (a form or JSON) | public, 10 a minute an address | exactly the browser link's token answer: `{access_token, token_type, scope, formlogic_api_key, api_key_id, desktop_connection_id, device_name}`, `Cache-Control: no-store` |
+
+An unknown, expired or spent code answers alike: `400 {error: "invalid_grant", error_description}`.
+Only the code's keyed hash is kept. Both links mint through one issuer (DesktopLinkIssuer), so they
+answer alike byte for byte, and both are revocable as any linked computer is.
+
+**AI only.** Such a link's key holds `connector:relay` and is marked AI-only (`api_keys.ai_only`). It
+answers the AI lane (`/api/v1/desktop-ai/*`) and checks in, and nothing else:
+
+- connector and plugin commands are never routed to it: it is no candidate for a connector, a pin or a
+  Backups link, so an AI server beside your desktop never makes routing ambiguous; its command poll
+  answers an empty list, and a claim is refused;
+- it runs no sealed desktop flows (`/api/v1/desktop-flows/*` answers `403 insufficient_scope`);
+- it cannot enrol as a storage node (`/api/v1/data-node/*` answers `403 insufficient_scope`).
+
+Every link made before this keeps exactly what it had: only a key marked AI-only is held to this, and
+the older keys that hold `connector:relay` alone keep their grandfathered access.
+
 ### Before going live
 
 Three things for the site's owner, before the public uses an app's AI or pays through it:

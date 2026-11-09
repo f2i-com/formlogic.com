@@ -11,6 +11,7 @@ use FormLogic\Services\ApiKeyService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\AuditService;
+use FormLogic\Services\DesktopLinkIssuer;
 use FormLogic\Services\FlowService;
 use FormLogic\Services\McpOAuthService;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -467,31 +468,27 @@ class McpOAuthController
         // reads to decide which desktop to revoke.
         $runtimeName = McpOAuthService::DESKTOP_CLIENTS[(string) ($grant['clientId'] ?? '')]
             ?? 'FormLogic Desktop';
-        $keyName = mb_substr($device !== null ? "{$runtimeName} on {$device}" : $runtimeName, 0, 255);
-        $key = null;
+        // One issuer for the browser link and an OAIY server's one-time code (DesktopLinkCodeService),
+        // so the two answer alike byte for byte.
         try {
-            $key = $this->apiKeys->createKey($userId, $keyName, $scopes);
-            $connection = $this->flows->createOAuthDesktopConnection($userId, $device, $key['id'], $runtimeName);
+            $issued = (new DesktopLinkIssuer($this->apiKeys, $this->flows, $this->logger))->issue(
+                $userId,
+                $device,
+                $scopes,
+                $runtimeName,
+                // Compensation (audit FL-19): a failed link must not leave an active,
+                // never-disclosed key consuming quota — the issuer revokes it; audit the outcome.
+                fn (string $apiKeyId, bool $revoked) => $this->audit($request, 'desktop.oauth.link.compensated', $userId, [
+                    'apiKeyId' => $apiKeyId,
+                    'revoked' => $revoked,
+                ]),
+            );
         } catch (\Throwable $e) {
-            // Compensation (audit FL-19): a failed link must not leave an active,
-            // never-disclosed key consuming quota — revoke it and audit the outcome.
-            if ($key !== null) {
-                try {
-                    $revoked = $this->apiKeys->revokeKey($key['id'], $userId);
-                    $this->audit($request, 'desktop.oauth.link.compensated', $userId, [
-                        'apiKeyId' => $key['id'],
-                        'revoked' => $revoked,
-                    ]);
-                } catch (\Throwable $revokeError) {
-                    $this->logger?->error('Desktop OAuth compensation failed: orphaned key remains active', [
-                        'apiKeyId' => $key['id'],
-                        'reason' => $revokeError->getMessage(),
-                    ]);
-                }
-            }
             $this->logger?->warning('Desktop OAuth key mint failed', ['reason' => $e->getMessage()]);
             return $this->oauthError($response, 'server_error', 'Could not complete desktop linking', 500);
         }
+        $key = $issued['key'];
+        $connection = $issued['connection'];
 
         $this->audit($request, 'desktop.oauth.link', $userId, [
             // The client that ACTUALLY linked, not the first-party default.
@@ -504,17 +501,9 @@ class McpOAuthController
             'scopes' => $scopes,
         ]);
 
-        return $this->tokenResponse($response, [
-            // access_token == formlogic_api_key so a generic OAuth client still finds a bearer, while
-            // the documented field is formlogic_api_key. Long-lived + revocable: no expires_in / refresh.
-            'access_token' => $key['key'],
-            'token_type' => 'Bearer',
-            'scope' => implode(' ', $scopes),
-            'formlogic_api_key' => $key['key'],
-            'api_key_id' => $key['id'],
-            'desktop_connection_id' => $connection['id'],
-            'device_name' => $connection['deviceName'],
-        ]);
+        // access_token == formlogic_api_key so a generic OAuth client still finds a bearer, while the
+        // documented field is formlogic_api_key. Long-lived + revocable: no expires_in / refresh.
+        return $this->tokenResponse($response, DesktopLinkIssuer::tokenBody($key, $connection, $scopes));
     }
 
     /**

@@ -507,8 +507,36 @@ class ConnectorCommandController
         if ($identityError !== null) {
             return $identityError;
         }
+        // An "AI only" link (DesktopLinkCodeService) is routed no connector or plugin command. Its poll
+        // is answered as an idle desktop's is, after the wait it asked for, so it neither spins nor errs.
+        if ($request->getAttribute('apiKeyAiOnly') === true) {
+            $this->idle($wait);
+            return $this->jsonResponse($response, ['commands' => []]);
+        }
         $commands = $this->commands->pollPending((string) $userId, $since, $wait, $limit, $instanceId);
         return $this->jsonResponse($response, ['commands' => $commands]);
+    }
+
+    /** An empty long-poll's wait: up to $waitMs, at most the relay's own ceiling. */
+    private function idle(int $waitMs): void
+    {
+        $until = microtime(true) + min(max(0, $waitMs), DesktopCommandService::MAX_WAIT_MS) / 1000;
+        while (microtime(true) < $until) {
+            usleep(250000);
+        }
+    }
+
+    /** A claim or completion from an "AI only" link: never its command. */
+    private function refuseAiOnly(Request $request, Response $response): ?Response
+    {
+        if ($request->getAttribute('apiKeyAiOnly') !== true) {
+            return null;
+        }
+        return $this->jsonResponse($response, [
+            'error' => true,
+            'code' => 'ai_only_link',
+            'message' => 'This computer is linked for AI only: it takes no connector or plugin commands.',
+        ], 403);
     }
 
     /** POST /api/v1/connector-commands/{id}/claim — pending→claimed exactly-once (409 if taken). */
@@ -517,6 +545,9 @@ class ConnectorCommandController
         $userId = $request->getAttribute('userId');
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if (($refused = $this->refuseAiOnly($request, $response)) !== null) {
+            return $refused;
         }
         $body = $request->getParsedBody() ?? [];
         $claimed = is_array($body) && is_string($body['instanceId'] ?? null) && $body['instanceId'] !== '' ? (string) $body['instanceId'] : null;
@@ -558,6 +589,9 @@ class ConnectorCommandController
         $userId = $request->getAttribute('userId');
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if (($refused = $this->refuseAiOnly($request, $response)) !== null) {
+            return $refused;
         }
         $body = $request->getParsedBody() ?? [];
         $claimed = is_array($body) && is_string($body['instanceId'] ?? null) && $body['instanceId'] !== '' ? (string) $body['instanceId'] : null;

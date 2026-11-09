@@ -88,6 +88,17 @@ screens consume these settings. Public configuration refreshes when a view
 mounts. USD is the supported currency; the optional support plan is not a
 multi-tier entitlement or recurring subscription engine.
 
+### Serving the Site AI from an always-on OAIY server
+
+The Site AI card (Admin → Plans) serves members' Site AI from one of your linked OAIY computers. An
+always-on server running `oaiy-server`, with no browser of its own, links with a one-time code:
+choose **Connect an OAIY server**, keep **AI only** (the default), and run the command it shows on
+the server (`oaiy-server link --code … --base-url …`). Once the server is started and has published its
+chat key, it is listed beside your desktops. An **AI only** link answers AI requests and checks in,
+and nothing else: it is given no connector or plugin commands, runs no flows and cannot be a storage
+node. Choose **Everything a linked desktop can do** only for a computer you also want to run those.
+See [Connecting an OAIY server](HOSTED_APPS.md#connecting-an-oaiy-server).
+
 ## Verify a local setup
 
 1. Visit `/ai-setup` and `/connect-ai` while signed out; verify the public guide

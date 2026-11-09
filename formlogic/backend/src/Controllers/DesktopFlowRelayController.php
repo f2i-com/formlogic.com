@@ -597,6 +597,16 @@ class DesktopFlowRelayController
         }
         $scopes = $request->getAttribute('apiKeyScopes');
         $scopes = is_array($scopes) ? $scopes : [];
+        // An "AI only" link (DesktopLinkCodeService) runs no flows: its connector:relay is not the
+        // grandfathered desktop's (App AI contract §0.10).
+        if ($request->getAttribute('apiKeyAiOnly') === true) {
+            return [null, $this->jsonError(
+                $response,
+                'This computer is linked for AI only: it runs no flows. Link it with everything a desktop can do to run them.',
+                403,
+                'insufficient_scope',
+            )];
+        }
         if (!in_array('flows:relay', $scopes, true) && !in_array('connector:relay', $scopes, true)) {
             return [null, $this->jsonError(
                 $response,

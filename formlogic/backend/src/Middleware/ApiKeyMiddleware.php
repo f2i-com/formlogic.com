@@ -114,6 +114,8 @@ class ApiKeyMiddleware implements MiddlewareInterface
         $request = $request->withAttribute('apiKeyId', $keyData['id']);
         $request = $request->withAttribute('apiKeyScopes', $keyData['scopes']);
         $request = $request->withAttribute('apiKeyFormIds', $keyData['formIds']);
+        // An "AI only" link's key (ApiKeyService::markAiOnly): the surfaces it may not use refuse it.
+        $request = $request->withAttribute('apiKeyAiOnly', (bool) ($keyData['aiOnly'] ?? false));
 
         return $handler->handle($request);
     }

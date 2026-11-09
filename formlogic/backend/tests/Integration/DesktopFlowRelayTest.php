@@ -1116,4 +1116,18 @@ class DesktopFlowRelayTest extends TestCase
         $this->assertSame(409, $refused['status']);
         $this->assertSame('frame_limit', $refused['body']['code']);
     }
+
+    // ── an "AI only" link (App AI contract §0.10) ──
+
+    public function testAnAiOnlyLinkRunsNoSealedFlowsThoughItHoldsConnectorRelay(): void
+    {
+        $request = (new ServerRequestFactory())->createServerRequest('GET', '/api/v1/desktop-flows/pending')
+            ->withAttribute('userId', 'u-ai-only-' . bin2hex(random_bytes(4)))
+            ->withAttribute('apiKeyScopes', ['connector:relay'])
+            ->withAttribute('apiKeyAiOnly', true);
+        $response = self::$ctrl->pendingV1($request, (new \Slim\Psr7\Factory\ResponseFactory())->createResponse());
+        $this->assertSame(403, $response->getStatusCode());
+        $response->getBody()->rewind();
+        $this->assertSame('insufficient_scope', json_decode((string) $response->getBody(), true)['code'] ?? null);
+    }
 }

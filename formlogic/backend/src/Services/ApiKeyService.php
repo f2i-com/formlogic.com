@@ -195,7 +195,7 @@ class ApiKeyService
         $pdo = $this->db->getConnection();
 
         $stmt = $pdo->prepare('
-            SELECT id, user_id, name, key_prefix, scopes, form_ids, expires_at, is_active
+            SELECT id, user_id, name, key_prefix, scopes, form_ids, expires_at, is_active, ai_only
             FROM api_keys
             WHERE key_hash = ?
         ');
@@ -222,7 +222,18 @@ class ApiKeyService
             'keyPrefix' => $row['key_prefix'],
             'scopes' => json_decode($row['scopes'], true) ?: [],
             'formIds' => $row['form_ids'] !== null ? (json_decode($row['form_ids'], true) ?: []) : null,
+            // A key an "AI only" link was given (DesktopLinkCodeService): the AI lane and check-ins, nothing else.
+            'aiOnly' => (bool) ($row['ai_only'] ?? false),
         ];
+    }
+
+    /**
+     * Mark a key as an "AI only" link's (DesktopLinkIssuer): whatever its scopes, which older links
+     * share, it is then given no connector or plugin commands, no sealed flows and no data node.
+     */
+    public function markAiOnly(string $keyId): void
+    {
+        $this->db->getConnection()->prepare('UPDATE api_keys SET ai_only = 1 WHERE id = ?')->execute([$keyId]);
     }
 
     /**

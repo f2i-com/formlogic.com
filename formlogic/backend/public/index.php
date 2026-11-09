@@ -468,6 +468,23 @@ $container->set(\FormLogic\Services\BackupLinkService::class, function (Containe
         $c->get(ApiKeyService::class),
     );
 });
+// Linking an OAIY server with a one-time code (App AI contract §2): the same issuer as the browser link.
+$container->set(\FormLogic\Services\DesktopLinkIssuer::class, function (Container $c) {
+    return new \FormLogic\Services\DesktopLinkIssuer($c->get(ApiKeyService::class), $c->get(\FormLogic\Services\FlowService::class), $c->get(LoggerInterface::class));
+});
+$container->set(\FormLogic\Services\DesktopLinkCodeService::class, function (Container $c) {
+    return new \FormLogic\Services\DesktopLinkCodeService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\DesktopLinkIssuer::class),
+        $c->get(ApiKeyService::class),
+        // The codes' hashes are keyed with a secret of their own, derived from the JWT secret as the CSRF one is.
+        hash('sha256', 'formlogic-desktop-link-codes:' . (string) ($c->get('settings')['jwt']['secret'] ?? ''))
+    );
+});
+$container->set(\FormLogic\Controllers\DesktopLinkController::class, function (Container $c) {
+    return new \FormLogic\Controllers\DesktopLinkController($c->get(\FormLogic\Services\DesktopLinkCodeService::class), $c->get(AuditService::class));
+});
+
 $container->set(\FormLogic\Controllers\BackupLinkController::class, function (Container $c) {
     return new \FormLogic\Controllers\BackupLinkController(
         $c->get(\FormLogic\Services\BackupLinkService::class),
@@ -2133,6 +2150,15 @@ $app->post('/api/data-nodes/backup-link', function ($request, $response) use ($c
 $app->get('/api/data-nodes/backup-link/{id}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\BackupLinkController::class)->status($request, $response, $getArgs($request));
 })->add($authRequired);
+// Connect an OAIY server (DesktopLinkCodeService): a one-time code, made by a signed-in person and
+// followed to linked. Few a minute: each is a new key's worth.
+$desktopLinkCodeLimiter = new RateLimitMiddleware($rateLimiter, 10, 600, 'desktop_link_codes', true, true);
+$app->post('/api/desktop-links/codes', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\DesktopLinkController::class)->start($request, $response);
+})->add($desktopLinkCodeLimiter)->add($authRequired);
+$app->get('/api/desktop-links/codes/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DesktopLinkController::class)->status($request, $response, $getArgs($request));
+})->add($authRequired);
 $app->post('/api/data-nodes/{id}/approve', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DataPlacementController::class)->approveNode($request, $response, $getArgs($request));
 })->add($authRequired);
@@ -2976,6 +3002,13 @@ $backupLinkRedeemLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'backup
 $app->post('/api/oauth/backup-link', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\BackupLinkController::class)->redeem($request, $response);
 })->add($backupLinkRedeemLimiter);
+
+// An OAIY server's half of linking with a one-time code (DesktopLinkCodeService): it has no key yet,
+// and the code is its credential. Public, no CSRF, rate-limited per address and failing closed.
+$oaiyLinkRedeemLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'oaiy_link_redeem', false, true); // fail closed: credential issuance (RATE-001)
+$app->post('/api/oauth/oaiy-link', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\DesktopLinkController::class)->redeem($request, $response);
+})->add($oaiyLinkRedeemLimiter);
 
 // Consent support for the SPA /oauth/authorize page. On a split deployment the canonical API-host
 // authorization endpoint validates the request, then redirects only to APP_URL's fixed SPA route;

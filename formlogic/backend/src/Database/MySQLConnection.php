@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = 'fc5a4e1f9bf829484e26ccc10bac8a7e';
+    public const SCHEMA_STAMP = '6a96b0553db55854aad3680c73216bdd';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -2892,6 +2892,32 @@ class MySQLConnection
 
         // App AI, visitors and payments (AppAiService, docs/HOSTED_APPS.md).
         $this->createAppAiTables($pdo);
+
+        // Linking an OAIY server with a one-time code (DesktopLinkCodeService): only the code's keyed
+        // hash is kept, for ten minutes and one use.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS desktop_link_codes (
+                id CHAR(32) NOT NULL PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                code_hash CHAR(64) NOT NULL,
+                scope VARCHAR(8) NOT NULL,
+                device_name VARCHAR(100) NULL,
+                created_at DATETIME NOT NULL,
+                expires_at DATETIME NOT NULL,
+                redeemed_at DATETIME NULL,
+                connection_id VARCHAR(36) NULL,
+                failure VARCHAR(200) NULL,
+                UNIQUE KEY uq_desktop_link_codes_hash (code_hash),
+                KEY idx_desktop_link_codes_user (user_id, created_at),
+                CONSTRAINT fk_desktop_link_codes_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        // A key minted for an "AI only" link: it answers the AI lane and checks in, and nothing else
+        // (no connector or plugin commands, no sealed flows, no data node), whatever its scopes, which
+        // older links share. Every key made before this is 0, and keeps what it had.
+        if ($pdo->query("SHOW COLUMNS FROM api_keys LIKE 'ai_only'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE api_keys ADD COLUMN ai_only TINYINT(1) NOT NULL DEFAULT 0');
+        }
 
         // Seed the first-party OAuth clients (idempotent) now that mcp_oauth_clients exists.
         $this->seedFirstPartyOAuthClients($pdo);

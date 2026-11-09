@@ -394,6 +394,11 @@ final class DataNodeController
         }
         /** @var list<string> $scopes */
         $scopes = (array) $request->getAttribute('apiKeyScopes', []);
+        // An "AI only" link (DesktopLinkCodeService) is no storage node: its connector:relay is not the
+        // grandfathered desktop's (App AI contract §0.10).
+        if ($request->getAttribute('apiKeyAiOnly') === true) {
+            return $this->jsonError($response, 'This computer is linked for AI only: it cannot be a storage node. Link it with everything a desktop can do.', 403, 'insufficient_scope');
+        }
         if (!in_array('data:snapshot', $scopes, true) && !in_array('connector:relay', $scopes, true)) {
             return $this->jsonError($response, 'This API key lacks the data:snapshot scope', 403, 'insufficient_scope');
         }

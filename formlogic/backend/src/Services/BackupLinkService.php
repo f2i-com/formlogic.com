@@ -48,13 +48,18 @@ final class BackupLinkService
         $pdo = $this->mysql->getConnection();
         $fresh = DesktopCommandService::DESKTOP_FRESH_SECONDS;
         $stmt = $pdo->prepare(
-            "SELECT device_name, desktop_instance_id FROM desktop_connections
-             WHERE id = ? AND owner_user_id = ? AND last_seen_at > (NOW() - INTERVAL {$fresh} SECOND)"
+            "SELECT dc.device_name, dc.desktop_instance_id, COALESCE(k.ai_only, 0) AS ai_only FROM desktop_connections dc
+             LEFT JOIN api_keys k ON k.id = dc.api_key_id
+             WHERE dc.id = ? AND dc.owner_user_id = ? AND dc.last_seen_at > (NOW() - INTERVAL {$fresh} SECOND)"
         );
         $stmt->execute([$connectionId, $userId]);
         $connection = $stmt->fetch(\PDO::FETCH_ASSOC);
         if (!is_array($connection)) {
             throw new \RuntimeException('backup_link_offline');
+        }
+        // An "AI only" link takes no plugin's commands (App AI contract §0.10), the Backups plugin's included.
+        if ((int) $connection['ai_only'] === 1) {
+            throw new \RuntimeException('backup_link_ai_only');
         }
         // Until its first heartbeat a connection has a placeholder for an instance id, and a
         // command aimed at that would reach nobody.

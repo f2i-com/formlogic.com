@@ -270,6 +270,7 @@ CREATE TABLE `api_keys` (
   `expires_at` timestamp NULL DEFAULT NULL,
   `is_active` tinyint(1) DEFAULT '1',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `ai_only` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
   UNIQUE KEY `idx_api_keys_hash` (`key_hash`),
   KEY `idx_api_keys_user` (`user_id`),
@@ -844,6 +845,24 @@ CREATE TABLE `app_ai_counters` (
   `period` char(13) COLLATE utf8mb4_unicode_ci NOT NULL,
   `used` int unsigned NOT NULL DEFAULT '0',
   PRIMARY KEY (`app_id`,`scope`,`subject`,`period`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Linking an OAIY server with a one-time code (DesktopLinkCodeService): the code's keyed hash, ten minutes and one use.
+CREATE TABLE `desktop_link_codes` (
+  `id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `code_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `scope` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `device_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL,
+  `expires_at` datetime NOT NULL,
+  `redeemed_at` datetime DEFAULT NULL,
+  `connection_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `failure` varchar(200) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_desktop_link_codes_hash` (`code_hash`),
+  KEY `idx_desktop_link_codes_user` (`user_id`,`created_at`),
+  CONSTRAINT `fk_desktop_link_codes_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Publishing hosted SoftN apps to a public SoftN directory (SoftnDirectoryService): drafts and what the directory gave back.
