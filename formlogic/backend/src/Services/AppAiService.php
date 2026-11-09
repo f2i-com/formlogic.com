@@ -137,6 +137,8 @@ class AppAiService
         if ($settings['mode'] === 'own') {
             $own = $settings['own'];
             if ($own === null) return $off('own_unset', 'own');
+            // The computer as the owner chose it: still theirs, and still the key it was pinned to.
+            if (!$this->ownStillPinned((string) $app['ownerId'], $own)) return $off('own_changed', 'own');
             $kinds = array_values(array_filter($declared['kinds'], static fn(string $kind) => $kind === 'chat' || ($pictures && ($own['pictureModel'] ?? null) !== null)));
             return ['enabled' => $kinds !== [], 'source' => 'own', 'target' => $own['connectionId'], 'label' => $own['deviceName'] !== '' ? 'OAIY on ' . $own['deviceName'] : 'The owner\'s OAIY', 'kinds' => $kinds, 'reason' => $kinds === [] ? $unset : null];
         }
@@ -300,7 +302,7 @@ class AppAiService
                 $status === 'refused' ? gmdate('Y-m-d H:i:s', $now) : null, self::stamp($this->realClock ? microtime(true) : $now),
             ]);
             if ($status === 'queued') {
-                foreach ($this->counters($appId, $requester, $day, $hour) as [$counterApp, $scope, $subject, $period]) {
+                foreach ($this->counters($appId, $requester, $day, $hour, $available['source'] === 'site') as [$counterApp, $scope, $subject, $period]) {
                     $pdo->prepare('INSERT INTO app_ai_counters (app_id, scope, subject, period, used) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE used = used + 1')
                         ->execute([$counterApp, $scope, $subject, $period]);
                 }
@@ -350,17 +352,19 @@ class AppAiService
 
     /**
      * The counters a queued job adds one to: [app id, scope, subject, period] each. An owner's test
-     * counts in the app's day and the site's, and against nobody's own allowance.
+     * counts in the app's day, and against nobody's own allowance. Only a job for the site's AI
+     * ($siteAi) counts in the site's day: an owner's own OAIY spends none of it.
      */
-    private function counters(string $appId, array $requester, string $day, string $hour): array
+    private function counters(string $appId, array $requester, string $day, string $hour, bool $siteAi): array
     {
-        if ($requester['kind'] === self::TEST_REQUESTER) return [[$appId, 'app', '', $day], ['', 'site', '', $day]];
+        $site = $siteAi ? [['', 'site', '', $day]] : [];
+        if ($requester['kind'] === self::TEST_REQUESTER) return [[$appId, 'app', '', $day], ...$site];
         return [
             [$appId, 'requester', self::subject($requester), $day],
             [$appId, 'ip', $requester['ipKey'], $day],
             [$appId, 'ip-hour', $requester['ipKey'], $hour],
             [$appId, 'app', '', $day],
-            ['', 'site', '', $day],
+            ...$site,
         ];
     }
 
@@ -378,7 +382,9 @@ class AppAiService
             $job = $statement->fetch(PDO::FETCH_ASSOC);
             if (!is_array($job)) { $pdo->commit(); return false; }
             $requester = ['kind' => $job['requester_kind'], 'id' => $job['requester_id'], 'ipKey' => $job['ip_key']];
-            foreach ($this->counters((string) $job['app_id'], $requester, (string) $job['counted_day'], (string) $job['counted_hour']) as [$counterApp, $scope, $subject, $period]) {
+            // Given back where it was counted: the site's day only for a job sent to the site's AI.
+            $siteAi = str_starts_with((string) ($job['source'] ?? ''), 'site-');
+            foreach ($this->counters((string) $job['app_id'], $requester, (string) $job['counted_day'], (string) $job['counted_hour'], $siteAi) as [$counterApp, $scope, $subject, $period]) {
                 $pdo->prepare('UPDATE app_ai_counters SET used = used - 1 WHERE app_id = ? AND scope = ? AND subject = ? AND period = ? AND used > 0')->execute([$counterApp, $scope, $subject, $period]);
             }
             $pdo->prepare('UPDATE app_ai_jobs SET refunded = 1 WHERE id = ?')->execute([$jobId]);
@@ -451,6 +457,7 @@ class AppAiService
         'ai_resting' => 'The AI is having trouble and is resting for a few minutes.',
         'plan_inactive' => 'AI is not available for this app right now.',
         'own_unset' => 'The app\'s owner has not chosen their OAIY yet.',
+        'own_changed' => 'The computer this app\'s AI runs on was unlinked, or has a new key. Its owner can choose it again.',
         'site_ai_closed' => 'The site does not offer its AI to apps.',
         'site_ai_unavailable' => 'The site\'s AI is not set up.',
         'model_unset' => 'No model is chosen for this kind of request yet.',
@@ -492,12 +499,16 @@ class AppAiService
         $log = $pdo->prepare('SELECT id, app_job_id, kind, status, code, message, requester_kind, requester_id, created_at, started_at, finished_at FROM app_ai_jobs WHERE app_id = ? ORDER BY created_at DESC LIMIT ' . self::LOG_ROWS);
         $log->execute([$appId]);
         unset($settings['appId']);
+        if ($settings['own'] !== null) unset($settings['own']['publicKey'], $settings['own']['instanceId']);
         return [
             'declared' => $declared === null ? null : ['uses' => $declared['uses'], 'purpose' => $declared['purpose'], 'table' => $declared['table'], 'deliver' => $declared['deliver']],
             'settings' => $settings,
             'availability' => array_diff_key($available, ['target' => true]),
             'reasonText' => $available['reason'] !== null ? (self::REASONS[$available['reason']] ?? null) : null,
             'siteOffers' => (bool) $this->site->current()['allowApps'],
+            // The owner's own linked computers that could serve the app ("Use my OAIY"): each with a
+            // published chat key, and whether it was heard from in the last 90 seconds.
+            'computers' => $this->siteDesktop?->candidates((string) $app['ownerId']) ?? [],
             'status' => $this->status($appId, $settings, $available),
             'today' => [
                 'jobs' => $this->used($appId, 'app', '', $day),
@@ -549,6 +560,35 @@ class AppAiService
         return $out('idle', 'Ready: ' . $available['label'] . '.');
     }
 
+    /**
+     * One of the owner's own linked computers, pinned to the key it has published now
+     * (SiteAiDesktopSettings::pin), with the provider that chats on it and the models the app's
+     * pictures and chat use: {connectionId, providerId?, pictureModel?, chatModel?}. OAIY's own
+     * engine draws the pictures whatever provider chats.
+     */
+    private function pinOwn(string $ownerId, mixed $choice): array
+    {
+        if (!is_array($choice) || !is_string($choice['connectionId'] ?? null)) throw new \InvalidArgumentException('Choose one of your linked computers.');
+        if ($this->siteDesktop === null) throw new \InvalidArgumentException('OAIY computers are not available on this site.');
+        $pinned = $this->siteDesktop->pin($ownerId, $choice['connectionId']);
+        $provider = SiteAiDesktopSettings::provider(is_string($choice['providerId'] ?? null) && $choice['providerId'] !== '' ? $choice['providerId'] : SiteDesktopAi::PROVIDER);
+        return [
+            'connectionId' => $pinned['connectionId'], 'instanceId' => $pinned['instanceId'], 'publicKey' => $pinned['publicKey'], 'deviceName' => mb_substr($pinned['deviceName'], 0, 255),
+            'providerId' => $provider,
+            'pictureModel' => AppAiSiteSettings::model($choice['pictureModel'] ?? null, 'The picture model'),
+            'chatModel' => $provider === SiteDesktopAi::PROVIDER ? null : SiteAiDesktopSettings::model($provider, is_string($choice['chatModel'] ?? null) ? $choice['chatModel'] : null),
+        ];
+    }
+
+    /** Whether the owner's chosen computer is still theirs, with the key it was pinned to. */
+    private function ownStillPinned(string $ownerId, array $own): bool
+    {
+        $statement = $this->pdo()->prepare('SELECT e2e_public_key FROM desktop_connections WHERE id = ? AND owner_user_id = ?');
+        $statement->execute([$own['connectionId'], $ownerId]);
+        $key = $statement->fetchColumn();
+        return is_string($key) && hash_equals($key, (string) $own['publicKey']);
+    }
+
     /** Whether the OAIY computer the app's AI goes to has been heard from in the last 90 seconds. */
     private function computerOnline(string $appId, array $settings, array $available): bool
     {
@@ -575,7 +615,9 @@ class AppAiService
         $mode = $input['mode'] ?? $current['mode'];
         if (!in_array($mode, ['off', 'site', 'own'], true)) throw new \InvalidArgumentException('Choose off, this site\'s AI, or your own OAIY.');
         if ($mode === 'site' && !$site['allowApps'] && $current['mode'] !== 'site') throw new \InvalidArgumentException(self::REASONS['site_ai_closed']);
-        if ($mode === 'own' && $current['own'] === null) throw new \InvalidArgumentException('Choose one of your linked computers first.');
+        $own = $current['own'];
+        if (array_key_exists('own', $input)) $own = $input['own'] === null ? null : $this->pinOwn((string) $app['ownerId'], $input['own']);
+        if ($mode === 'own' && $own === null) throw new \InvalidArgumentException('Choose one of your linked computers first.');
         $labels = ['perRequesterDay' => 'Requests per visitor or member a day', 'perIpDay' => 'Requests per address a day', 'perIpHour' => 'Requests per address an hour', 'perAppDay' => 'Requests for the whole app a day'];
         $limits = [];
         foreach (AppAiSiteSettings::LIMITS as $key => $range) {
@@ -590,6 +632,10 @@ class AppAiService
              ON DUPLICATE KEY UPDATE mode = VALUES(mode), per_requester_day = VALUES(per_requester_day), per_ip_day = VALUES(per_ip_day),
              per_ip_hour = VALUES(per_ip_hour), per_app_day = VALUES(per_app_day), updated_by = VALUES(updated_by)'
         )->execute([$appId, $mode, $limits['perRequesterDay'], $limits['perIpDay'], $limits['perIpHour'], $limits['perAppDay'], $userId]);
+        if (array_key_exists('own', $input)) {
+            $this->pdo()->prepare('UPDATE app_ai_settings SET own_connection_id = ?, own_instance_id = ?, own_public_key = ?, own_provider_id = ?, own_picture_model = ?, own_chat_model = ?, own_device_name = ? WHERE app_id = ?')
+                ->execute([$own['connectionId'] ?? null, $own['instanceId'] ?? null, $own['publicKey'] ?? null, $own['providerId'] ?? null, $own['pictureModel'] ?? null, $own['chatModel'] ?? null, $own['deviceName'] ?? null, $appId]);
+        }
         // An owner who turns the AI back on gives it a fresh start.
         if ($mode !== 'off') $this->pdo()->prepare('UPDATE app_ai_settings SET paused_until = NULL, failures_in_row = 0 WHERE app_id = ? AND paused_until IS NOT NULL AND ? <> ?')->execute([$appId, $mode, $current['mode']]);
         return $this->ownerView($app);
@@ -640,7 +686,7 @@ class AppAiService
                 $kind, 'queued', $available['source'] . '-' . ($available['target'] === 'env' ? 'env' : 'oaiy'), $available['target'],
                 $prompt, hash('sha256', $prompt), $kind === 'chat' ? null : '512x512', $day, $hour, self::stamp($this->realClock ? microtime(true) : $now),
             ]);
-            foreach ($this->counters($appId, ['kind' => self::TEST_REQUESTER, 'id' => (string) $app['ownerId'], 'ipKey' => self::TEST_IP_KEY], $day, $hour) as [$counterApp, $scope, $subject, $period]) {
+            foreach ($this->counters($appId, ['kind' => self::TEST_REQUESTER, 'id' => (string) $app['ownerId'], 'ipKey' => self::TEST_IP_KEY], $day, $hour, $available['source'] === 'site') as [$counterApp, $scope, $subject, $period]) {
                 $pdo->prepare('INSERT INTO app_ai_counters (app_id, scope, subject, period, used) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE used = used + 1')
                     ->execute([$counterApp, $scope, $subject, $period]);
             }

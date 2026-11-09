@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { api } from '../../lib/api';
-import { AI_KIND_WORDS, aiStatusWords, type AppAiMode, type AppAiTestResult, type AppAiView } from '../../lib/appAi';
+import { AI_KIND_WORDS, aiStatusWords, type AppAiMode, type AppAiOwnChoice, type AppAiTestResult, type AppAiView } from '../../lib/appAi';
 import { Button } from '../ui/Button';
+import { AppAiOwnComputer } from './AppAiOwnComputer';
 
 const USE_WORDS: Record<string, string> = { pictures: 'pictures', 'picture-edits': 'picture edits', chat: 'chat' };
 const LIMITS: { key: 'perRequesterDay' | 'perIpDay' | 'perIpHour' | 'perAppDay'; label: string; hint: string }[] = [
@@ -25,6 +26,7 @@ export function AppAiPanel({ appId }: { appId: string }) {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [test, setTest] = useState<{ kind: 'picture' | 'chat'; id: string; result: AppAiTestResult | null } | null>(null);
+  const [ownChoice, setOwnChoice] = useState<AppAiOwnChoice | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const take = useCallback((next: AppAiView) => {
@@ -45,9 +47,14 @@ export function AppAiPanel({ appId }: { appId: string }) {
 
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
+  const reload = useCallback(async () => {
+    const result = await api.getAppAi(appId);
+    if (result.data) take(result.data);
+  }, [appId, take]);
+
   const save = async () => {
     setBusy(true); setError(null); setSaved(false);
-    const result = await api.putAppAi(appId, { mode, ...limits });
+    const result = await api.putAppAi(appId, { mode, ...limits, ...(mode === 'own' && ownChoice ? { own: ownChoice } : {}) });
     setBusy(false);
     if (result.error || !result.data) { setError(result.error ?? 'It could not be saved.'); return; }
     take(result.data);
@@ -91,10 +98,14 @@ export function AppAiPanel({ appId }: { appId: string }) {
         <label className={`flex gap-2 ${view.siteOffers ? 'cursor-pointer' : 'opacity-60'}`}>
           <input type="radio" name="app-ai-mode" checked={mode === 'site'} disabled={!view.siteOffers && mode !== 'site'} onChange={() => setMode('site')} />
           <span><strong>Use this site&apos;s AI</strong>{view.siteOffers ? ': the site\'s own AI answers, within the limits below.' : ': the site does not offer its AI to apps.'}</span></label>
-        {view.computers !== undefined && <label className={`flex gap-2 ${view.computers.length > 0 ? 'cursor-pointer' : 'opacity-60'}`}>
-          <input type="radio" name="app-ai-mode" checked={mode === 'own'} disabled={view.computers.length === 0 || view.settings.own === null} onChange={() => setMode('own')} />
-          <span><strong>Use my OAIY</strong>: one of your own linked computers answers. {view.computers.length === 0 && 'Link one first (Settings → Linked desktops).'}</span></label>}
+        {view.computers !== undefined && <label className="flex cursor-pointer gap-2">
+          <input type="radio" name="app-ai-mode" checked={mode === 'own'} onChange={() => setMode('own')} />
+          <span><strong>Use my OAIY</strong>: one of your own linked computers answers, its engines draw the pictures.</span></label>}
       </fieldset>
+      {mode === 'own' && view.computers !== undefined && (
+        <AppAiOwnComputer appId={appId} computers={view.computers} current={view.settings.own} wantsPictures={view.declared.uses.some((use) => use !== 'chat')}
+          onChange={setOwnChoice} onLinked={() => void reload()} />
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         {LIMITS.map(({ key, label, hint }) => (

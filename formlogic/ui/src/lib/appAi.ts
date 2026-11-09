@@ -6,7 +6,14 @@ export type AppAiMode = 'off' | 'site' | 'own';
 
 export interface AppAiLimits { perRequesterDay: number; perIpDay: number; perIpHour: number; perAppDay: number }
 
-export interface AppAiOwnComputer { connectionId: string; instanceId: string; deviceName: string; providerId: string; pictureModel: string | null; chatModel: string | null }
+/** The owner's own computer the app's AI runs on ("Use my OAIY"), as the owner chose it. */
+export interface AppAiOwnComputer { connectionId: string; deviceName: string; providerId: string; pictureModel: string | null; chatModel: string | null }
+
+/** What the owner sends to choose their own computer: OAIY's own engine draws the pictures. */
+export interface AppAiOwnChoice { connectionId: string; providerId: string; pictureModel: string | null }
+
+/** One of the owner's linked computers that could serve: it has published its chat key. */
+export interface AppAiComputer { connectionId: string; instanceId: string; deviceName: string; fingerprint: string; online: boolean; lastSeenAt: string | null }
 
 export interface AppAiSettings extends AppAiLimits {
   mode: AppAiMode;
@@ -49,7 +56,7 @@ export interface AppAiView {
   status: AppAiStatus;
   today: { jobs: number; failed: number; refused: number };
   log: AppAiLogEntry[];
-  computers?: { connectionId: string; deviceName: string; online: boolean; fingerprint: string }[];
+  computers?: AppAiComputer[];
 }
 
 export interface AppAiTestResult {

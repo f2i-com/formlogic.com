@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Tests\Integration;
 
 use FormLogic\Controllers\AppAiController;
+use FormLogic\Controllers\OaiyComputerController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AIService;
@@ -13,7 +14,10 @@ use FormLogic\Services\AppAiSiteSettings;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppVisitors;
 use FormLogic\Services\FormService;
+use FormLogic\Services\DesktopAiRelayService;
 use FormLogic\Services\NativeAppService;
+use FormLogic\Services\SiteAiDesktopSettings;
+use FormLogic\Services\SiteDesktopAi;
 use FormLogic\Support\SessionOriginPolicy;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -74,8 +78,10 @@ final class AppAiControllerTest extends TestCase
         $this->site->save(['allowApps' => true, 'pictureModel' => 'flux-test', 'defaults' => ['perAppDay' => 300]]);
         $configured = $this->createMock(AIService::class);
         $configured->method('isConfigured')->willReturn(true);
-        $this->ai = new AppAiService(self::$mysql, $this->site, new AppVisitors(self::$mysql, ['secure' => false], new SessionOriginPolicy([])), $this->native, null, $configured);
-        $this->controller = new AppAiController(self::$apps, $this->ai, $this->site, null, self::$tmpRoot . '/results');
+        $computers = new SiteAiDesktopSettings(self::$mysql, self::$tmpRoot . '/site-ai-' . bin2hex(random_bytes(3)) . '.json');
+        $this->ai = new AppAiService(self::$mysql, $this->site, new AppVisitors(self::$mysql, ['secure' => false], new SessionOriginPolicy([])), $this->native, $computers, $configured);
+        $listings = new OaiyComputerController($computers, new SiteDesktopAi(new DesktopAiRelayService(self::$mysql), $computers));
+        $this->controller = new AppAiController(self::$apps, $this->ai, $this->site, null, self::$tmpRoot . '/results', $listings);
         $manifest = [
             'name' => 'Logos', 'version' => '0.0.1', 'main' => 'ui/main.ui',
             'server' => ['entry' => 'server/main.logic', 'requires' => ['apiVersion' => 1, 'capabilities' => ['sql']], 'database' => ['kind' => 'private-sqlite', 'migrations' => ['server/migrations/001.sql']],
@@ -101,6 +107,7 @@ final class AppAiControllerTest extends TestCase
         self::$pdo->prepare('DELETE FROM app_roles WHERE app_id = ?')->execute([$id]);
         self::$pdo->prepare('DELETE FROM app_versions WHERE app_id = ?')->execute([$id]);
         self::$pdo->prepare('DELETE FROM apps WHERE id = ?')->execute([$id]);
+        self::$pdo->prepare('DELETE FROM desktop_connections WHERE owner_user_id IN (?, ?)')->execute([$this->ownerId, $this->otherId]);
         foreach ([$this->ownerId, $this->otherId] as $user) self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$user]);
         putenv('TRUSTED_PROXIES');
         unset($_ENV['TRUSTED_PROXIES'], $_SERVER['TRUSTED_PROXIES']);
@@ -226,6 +233,80 @@ final class AppAiControllerTest extends TestCase
     }
 
     /** Behind Cloudflare with TRUSTED_PROXIES unset, every visitor reads as Cloudflare: the administrator is told. */
+    /** "Use my OAIY": the owner's own computer, pinned to its key. Another's, or one with no key, is refused; a new key turns it off. */
+    public function testTheOwnerChoosesTheirOwnComputerPinnedToItsKey(): void
+    {
+        $mine = bin2hex(random_bytes(16));
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Studio', ?, NOW(), ?)")
+            ->execute([$mine, $this->ownerId, 'inst-' . bin2hex(random_bytes(4)), base64_encode(random_bytes(32))]);
+        $theirs = bin2hex(random_bytes(16));
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Theirs', ?, NOW(), ?)")
+            ->execute([$theirs, $this->otherId, 'inst-' . bin2hex(random_bytes(4)), base64_encode(random_bytes(32))]);
+        $keyless = bin2hex(random_bytes(16));
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at) VALUES (?, ?, 'New box', ?, NOW())")
+            ->execute([$keyless, $this->ownerId, 'inst-' . bin2hex(random_bytes(4))]);
+
+        $view = self::read($this->controller->ownerGet($this->request('GET', $this->ownerId), new Response(), ['id' => $this->app['id']]))['body']['data'];
+        $this->assertSame([[$mine, 'Studio', true]], array_map(static fn($c) => [$c['connectionId'], $c['deviceName'], $c['online']], $view['computers']), 'only the owner\'s, and only one with a published key');
+
+        foreach ([[$theirs, 'not linked to your account'], [$keyless, 'published its chat key']] as [$connection, $said]) {
+            $refused = self::read($this->controller->ownerPut($this->request('PUT', $this->ownerId, ['mode' => 'own', 'own' => ['connectionId' => $connection]]), new Response(), ['id' => $this->app['id']]));
+            $this->assertSame(400, $refused['status']);
+            $this->assertStringContainsString($said, $refused['body']['message']);
+        }
+        $chosen = self::read($this->controller->ownerPut($this->request('PUT', $this->ownerId, ['mode' => 'own', 'own' => ['connectionId' => $mine, 'pictureModel' => 'flux-3-image-klein']]), new Response(), ['id' => $this->app['id']]));
+        $this->assertSame(200, $chosen['status'], json_encode($chosen['body']));
+        $data = $chosen['body']['data'];
+        $this->assertSame(['own', 'Studio', 'flux-3-image-klein'], [$data['settings']['mode'], $data['settings']['own']['deviceName'], $data['settings']['own']['pictureModel']]);
+        $this->assertSame([true, 'own', 'OAIY on Studio', ['picture', 'chat']], [$data['availability']['enabled'], $data['availability']['source'], $data['availability']['label'], $data['availability']['kinds']]);
+
+        // A new key (OAIY reinstalled, say): its jobs would not open there, so the AI is off until it is chosen again.
+        self::$pdo->prepare('UPDATE desktop_connections SET e2e_public_key = ? WHERE id = ?')->execute([base64_encode(random_bytes(32)), $mine]);
+        $after = self::read($this->controller->ownerGet($this->request('GET', $this->ownerId), new Response(), ['id' => $this->app['id']]))['body']['data'];
+        $this->assertSame([false, 'own_changed'], [$after['availability']['enabled'], $after['availability']['reason']]);
+        $this->assertSame(200, self::read($this->controller->ownerPut($this->request('PUT', $this->ownerId, ['mode' => 'own', 'own' => ['connectionId' => $mine, 'pictureModel' => 'flux-3-image-klein']]), new Response(), ['id' => $this->app['id']]))['status']);
+        $this->assertTrue($this->ai->availability($this->app, ['kinds' => ['picture', 'chat'], 'uses' => ['pictures', 'chat']])['enabled'], 'chosen again');
+        // Their own computer spends the app's day, and none of the site's: queued or given back.
+        $count = static function (string $app, string $scope): int {
+            $row = self::$pdo->prepare('SELECT COALESCE(SUM(used), 0) FROM app_ai_counters WHERE app_id = ? AND scope = ?');
+            $row->execute([$app, $scope]);
+            return (int) $row->fetchColumn();
+        };
+        $site = $count('', 'site');
+        $test = self::read($this->controller->ownerTest($this->request('POST', $this->ownerId, ['kind' => 'picture']), new Response(), ['id' => $this->app['id']]));
+        $this->assertSame(202, $test['status'], json_encode($test['body']));
+        $jobId = (string) $test['body']['data']['jobId'];
+        $this->assertSame(['own-oaiy', 1, $site], [self::$pdo->query('SELECT source FROM app_ai_jobs WHERE id = ' . self::$pdo->quote($jobId))->fetchColumn(), $count($this->app['id'], 'app'), $count('', 'site')]);
+        $this->assertTrue($this->ai->refund($jobId));
+        $this->assertSame([0, $site], [$count($this->app['id'], 'app'), $count('', 'site')]);
+        self::$pdo->prepare('DELETE FROM app_ai_jobs WHERE id = ?')->execute([$jobId]);
+        // And let go.
+        $off = self::read($this->controller->ownerPut($this->request('PUT', $this->ownerId, ['mode' => 'off', 'own' => null]), new Response(), ['id' => $this->app['id']]));
+        $this->assertSame([200, null], [$off['status'], $off['body']['data']['settings']['own']]);
+        self::$pdo->prepare('DELETE FROM desktop_connections WHERE id IN (?, ?, ?)')->execute([$mine, $theirs, $keyless]);
+    }
+
+    /** "Use my OAIY" listings ask the owner's own computer only: never another account's, never while an administrator acts as the owner. */
+    public function testTheListingsAskOnlyTheOwnersOwnComputer(): void
+    {
+        $theirs = bin2hex(random_bytes(16));
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Theirs', ?, NOW(), ?)")
+            ->execute([$theirs, $this->otherId, 'inst-' . bin2hex(random_bytes(4)), base64_encode(random_bytes(32))]);
+        $args = ['id' => $this->app['id']];
+        $query = ['connectionId' => $theirs, 'providerId' => 'oaiy-engine'];
+        $this->assertSame(404, $this->controller->ownerModels($this->request('GET', $this->otherId)->withQueryParams($query), new Response(), $args)->getStatusCode(), 'not their app');
+        $acting = self::read($this->controller->ownerProviders($this->request('GET', $this->ownerId)->withAttribute('adminActorId', $this->otherId)->withQueryParams($query), new Response(), $args));
+        $this->assertSame([403, 'acting_as_denied'], [$acting['status'], $acting['body']['code']]);
+        foreach (['ownerProviders', 'ownerModels'] as $listing) {
+            $refused = self::read($this->controller->{$listing}($this->request('GET', $this->ownerId)->withQueryParams($query), new Response(), $args));
+            $this->assertSame(400, $refused['status'], $listing);
+            $this->assertStringContainsString('not linked to your account', $refused['body']['message']);
+        }
+        $asked = self::$pdo->prepare('SELECT COUNT(*) FROM desktop_ai_requests WHERE owner_user_id = ?');
+        $asked->execute([$this->otherId]);
+        $this->assertSame(0, (int) $asked->fetchColumn(), 'nothing was asked of their computer');
+    }
+
     public function testASiteBehindCloudflareWithoutTrustedProxiesIsWarned(): void
     {
         $codes = fn(array $server = [], array $headers = []) => array_column(AppAiController::proxyWarnings($this->request('GET', $this->otherId, [], $server, $headers)), 'code');

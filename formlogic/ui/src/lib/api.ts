@@ -9,7 +9,7 @@ import type { AccessReceipt, App, AppForm, AppFormUsageApp, AppListItem, AppSett
 import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
 import { APP_LOGIC_LANGUAGES } from '../types/customAppLogic';
 import type { ClientEngineId } from './clientEngines';
-import type { AppAiAdminView, AppAiLimits, AppAiMode, AppAiSiteSettings, AppAiTestResult, AppAiView } from './appAi';
+import type { AppAiAdminView, AppAiLimits, AppAiMode, AppAiOwnChoice, AppAiSiteSettings, AppAiTestResult, AppAiView } from './appAi';
 import type { AppPaymentsAdminView, AppPaymentsSiteSettings, AppPaymentsView, WalletSheetData } from './appPayments';
 
 export type { ClientEngineId };
@@ -3020,8 +3020,16 @@ class ApiClient {
   async getAppAi(appId: string): Promise<ApiResponse<AppAiView>> {
     return unwrapData(await this.request<{ data: AppAiView }>(`/apps/${seg(appId)}/ai`));
   }
-  async putAppAi(appId: string, settings: { mode: AppAiMode } & Partial<AppAiLimits>): Promise<ApiResponse<AppAiView>> {
+  async putAppAi(appId: string, settings: { mode: AppAiMode; own?: AppAiOwnChoice | null } & Partial<AppAiLimits>): Promise<ApiResponse<AppAiView>> {
     return unwrapData(await this.request<{ data: AppAiView }>(`/apps/${seg(appId)}/ai`, { method: 'PUT', body: JSON.stringify(settings) }));
+  }
+  /** "Use my OAIY": what one of the owner's own computers offers, asked of it now. */
+  async getAppAiProviders(appId: string, connectionId: string): Promise<ApiResponse<{ providers: Array<{ id: string; label: string; model: string | null }>; engineProvider: string }>> {
+    return this.request(`/apps/${seg(appId)}/ai/providers?${new URLSearchParams({ connectionId })}`);
+  }
+  /** That provider's models, each with its `type` where OAIY gives one (`image` for a picture model). */
+  async getAppAiModels(appId: string, connectionId: string, providerId: string): Promise<ApiResponse<{ models: Array<{ id: string; name: string; type?: string }> }>> {
+    return this.request(`/apps/${seg(appId)}/ai/models?${new URLSearchParams({ connectionId, providerId })}`);
   }
   /** A real small job, sent where the app's AI goes, kept for the owner and never delivered to the app. */
   async testAppAi(appId: string, kind: 'picture' | 'chat'): Promise<ApiResponse<{ jobId: string }>> {

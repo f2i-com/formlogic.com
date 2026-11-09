@@ -65,6 +65,8 @@ final class AppAiWorkerTest extends TestCase
     private string $results = '';
     /** @var string[] */
     private array $appIds = [];
+    /** @var string[] app owners made beyond the administrator */
+    private array $owners = [];
 
     public static function setUpBeforeClass(): void
     {
@@ -150,13 +152,14 @@ final class AppAiWorkerTest extends TestCase
             self::$pdo->prepare('DELETE FROM apps WHERE id = ?')->execute([$appId]);
         }
         self::$pdo->exec("DELETE FROM app_ai_counters WHERE app_id = ''");
-        if ($this->adminId !== '') {
-            self::$pdo->prepare('DELETE FROM desktop_ai_frames WHERE request_id IN (SELECT id FROM desktop_ai_requests WHERE owner_user_id = ?)')->execute([$this->adminId]);
-            self::$pdo->prepare('DELETE FROM desktop_ai_requests WHERE owner_user_id = ?')->execute([$this->adminId]);
-            self::$pdo->prepare('DELETE FROM desktop_connections WHERE owner_user_id = ?')->execute([$this->adminId]);
-            self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$this->adminId]);
+        foreach (array_filter([$this->adminId, ...$this->owners]) as $user) {
+            self::$pdo->prepare('DELETE FROM desktop_ai_frames WHERE request_id IN (SELECT id FROM desktop_ai_requests WHERE owner_user_id = ?)')->execute([$user]);
+            self::$pdo->prepare('DELETE FROM desktop_ai_requests WHERE owner_user_id = ?')->execute([$user]);
+            self::$pdo->prepare('DELETE FROM desktop_connections WHERE owner_user_id = ?')->execute([$user]);
+            self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$user]);
         }
         $this->appIds = [];
+        $this->owners = [];
         putenv(DataEncryption::KEY_ENV);
         unset($_ENV[DataEncryption::KEY_ENV], $_SERVER[DataEncryption::KEY_ENV]);
     }
@@ -214,10 +217,10 @@ JS;
         ]];
     }
 
-    /** A published app, owned by the administrator, its AI on the site's. */
-    private function app(): array
+    /** A published app, owned by the administrator (or $owner), its AI on the site's. */
+    private function app(?string $owner = null): array
     {
-        $app = self::$apps->createApp(['name' => 'Logos ' . bin2hex(random_bytes(3)), 'settings' => ['softnApp' => true]], $this->adminId);
+        $app = self::$apps->createApp(['name' => 'Logos ' . bin2hex(random_bytes(3)), 'settings' => ['softnApp' => true]], $owner ?? $this->adminId);
         $this->appIds[] = $app['id'];
         $this->native->install($app['id'], $this->project(), 0);
         self::$pdo->prepare("UPDATE apps SET status = 'published' WHERE id = ?")->execute([$app['id']]);
@@ -227,12 +230,12 @@ JS;
     }
 
     /** A job as AppAiService::capture queues one, counted as it counts one. Answers its id. */
-    private function queue(string $appId, string $kind = 'picture', array $fields = [], ?string $visitor = null, ?string $createdAt = null): string
+    private function queue(string $appId, string $kind = 'picture', array $fields = [], ?string $visitor = null, ?string $createdAt = null, ?string $owner = null): string
     {
         $id = bin2hex(random_bytes(16));
         $visitor ??= bin2hex(random_bytes(16));
         $prompt = $kind === 'chat' ? json_encode([['role' => 'user', 'content' => $fields['say'] ?? 'Say hello.']]) : ($fields['prompt'] ?? 'A coffee cup logo, flat colours');
-        $available = $this->ai->availability(['id' => $appId, 'ownerId' => $this->adminId], self::DECLARED);
+        $available = $this->ai->availability(['id' => $appId, 'ownerId' => $owner ?? $this->adminId], self::DECLARED);
         self::$pdo->prepare(
             'INSERT INTO app_ai_jobs (id, app_id, event_id, app_job_id, requester_kind, requester_id, ip_key, kind, status, source, target, prompt, prompt_sha256, size, seed, reference, counted_day, counted_hour, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
@@ -243,7 +246,7 @@ JS;
         foreach ([['requester', 'v:' . $visitor, gmdate('Y-m-d')], ['ip', self::IP_KEY, gmdate('Y-m-d')], ['ip-hour', self::IP_KEY, gmdate('Y-m-d\TH')], ['app', '', gmdate('Y-m-d')]] as [$scope, $subject, $period]) {
             self::$pdo->prepare('INSERT INTO app_ai_counters (app_id, scope, subject, period, used) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE used = used + 1')->execute([$appId, $scope, $subject, $period]);
         }
-        self::$pdo->prepare("INSERT INTO app_ai_counters (app_id, scope, subject, period, used) VALUES ('', 'site', '', ?, 1) ON DUPLICATE KEY UPDATE used = used + 1")->execute([gmdate('Y-m-d')]);
+        if ($available['source'] === 'site') self::$pdo->prepare("INSERT INTO app_ai_counters (app_id, scope, subject, period, used) VALUES ('', 'site', '', ?, 1) ON DUPLICATE KEY UPDATE used = used + 1")->execute([gmdate('Y-m-d')]);
         return $id;
     }
 
@@ -268,11 +271,12 @@ JS;
     }
 
     /** OAIY, played by the test desktop: claims the next turn (of $kind) and opens it. [requestId, turn, pair] */
-    private function oaiyTakes(?string $kind = null): array
+    private function oaiyTakes(?string $kind = null, ?string $owner = null, string $instance = 'inst-site-ai'): array
     {
-        foreach ($this->relay->listPending($this->adminId, null, 10, 'inst-site-ai') as $row) {
+        $owner ??= $this->adminId;
+        foreach ($this->relay->listPending($owner, null, 10, $instance) as $row) {
             if ($kind !== null && $row['kind'] !== $kind) continue;
-            $claimed = $this->relay->claim($row['requestId'], $this->adminId, ['instanceId' => 'inst-site-ai']);
+            $claimed = $this->relay->claim($row['requestId'], $owner, ['instanceId' => $instance]);
             $pair = sodium_crypto_box_keypair_from_secretkey_and_publickey(base64_decode(self::$vectors['desktop']['secretKey'], true), base64_decode($claimed['ephPub'], true));
             return [$claimed['requestId'], SiteDesktopAi::open($claimed['envelope'], 0, 0, $pair), $pair];
         }
@@ -280,10 +284,11 @@ JS;
     }
 
     /** OAIY sends frames (by counter), then completes the turn as $status (null: not yet). */
-    private function oaiySends(string $id, string $pair, array $frames, ?string $status = 'done'): void
+    private function oaiySends(string $id, string $pair, array $frames, ?string $status = 'done', ?string $owner = null, string $instance = 'inst-site-ai'): void
     {
-        foreach ($frames as $counter => $frame) $this->relay->appendFrame($id, $this->adminId, SiteDesktopAi::seal($frame, 1, $counter, $pair), 'inst-site-ai');
-        if ($status !== null) $this->relay->complete($id, $this->adminId, ['status' => $status, 'instanceId' => 'inst-site-ai']);
+        $owner ??= $this->adminId;
+        foreach ($frames as $counter => $frame) $this->relay->appendFrame($id, $owner, SiteDesktopAi::seal($frame, 1, $counter, $pair), $instance);
+        if ($status !== null) $this->relay->complete($id, $owner, ['status' => $status, 'instanceId' => $instance]);
     }
 
     private static function jpeg(int $width, int $height, bool $progressive = false): string
@@ -584,6 +589,33 @@ JS;
         self::$pdo->prepare('UPDATE app_ai_jobs SET finished_at = ? WHERE id = ?')->execute([AppAiService::stamp(time() - 3700), $id]);
         $this->assertSame(1, $this->ai->sweep($this->results)['filesRemoved']);
         $this->assertSame('failed', $this->ai->testResult($app['id'], $id, $this->results)['status']);
+    }
+
+    /** "Use my OAIY": an owner who is no administrator, their own computer, their app's pictures. */
+    public function testAnOwnersOwnComputerDrawsForTheirAppWithoutBeingAnAdministrator(): void
+    {
+        $this->boot('auto', false);
+        $owner = 'u-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'Owner')")->execute([$owner, $owner . '@test.local']);
+        $this->owners[] = $owner;
+        $connection = bin2hex(random_bytes(16));
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Home PC', 'inst-own', NOW(), ?)")
+            ->execute([$connection, $owner, self::$vectors['desktop']['publicKey']]);
+        $app = $this->app($owner);
+        self::$pdo->prepare("UPDATE app_ai_settings SET mode = 'own', own_connection_id = ?, own_instance_id = 'inst-own', own_public_key = ?, own_provider_id = 'oaiy-engine', own_picture_model = 'flux-3-image-klein', own_device_name = 'Home PC' WHERE app_id = ?")
+            ->execute([$connection, self::$vectors['desktop']['publicKey'], $app['id']]);
+        $id = $this->queue($app['id'], 'picture', [], null, null, $owner);
+        $this->assertSame(['own-oaiy', $connection], [$this->job($id)['source'], $this->job($id)['target']]);
+        $worker = $this->worker();
+        $this->assertSame(1, $worker->tick()['sent']);
+        [$relayId, $turn, $pair] = $this->oaiyTakes(DesktopAiRelayService::PICTURE_KIND, $owner, 'inst-own');
+        $this->assertSame(['flux-3-image-klein', '1024x1024'], [$turn['model'], $turn['size']]);
+        $row = self::$pdo->query('SELECT owner_user_id, requesting_user_id, source FROM desktop_ai_requests WHERE id = ' . self::$pdo->quote($relayId))->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame([$owner, $owner, 'app-ai'], [$row['owner_user_id'], $row['requesting_user_id'], $row['source']], 'their own computer serves their own app, administrator or not');
+        $this->oaiySends($relayId, $pair, [0 => self::pictureFrame(self::jpeg(512, 512))], 'done', $owner, 'inst-own');
+        $this->assertSame(1, $worker->tick()['delivered']);
+        $this->assertSame('done', $this->job($id)['status']);
+        $this->assertSame('done', $this->appRows($app['id'], 'SELECT status FROM deliveries')[0]['status']);
     }
 
     /** Turns are fair: an app that has been served waits behind one that has not, whatever came first. */

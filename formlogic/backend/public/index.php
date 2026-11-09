@@ -976,7 +976,9 @@ $container->set(\FormLogic\Controllers\AppAiController::class, function (Contain
         $c->get(AppService::class),
         $c->get(\FormLogic\Services\AppAiService::class),
         $c->get(\FormLogic\Services\AppAiSiteSettings::class),
-        $c->get(AuditService::class)
+        $c->get(AuditService::class),
+        null,
+        $c->get(\FormLogic\Controllers\OaiyComputerController::class)
     );
 });
 $container->set(\FormLogic\Services\NativePhoneVerification::class, function (Container $c) {
@@ -3554,6 +3556,14 @@ $appAiTestLimiter = new RateLimitMiddleware($rateLimiter, 10, 3600, 'app_ai_test
 $app->post('/api/apps/{id}/ai/test', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\AppAiController::class)->ownerTest($request, $response, $getArgs($request));
 })->add($appAiTestLimiter)->add($authRequired);
+// "Use my OAIY": what one of the owner's own computers offers, asked of it now (each listing waits
+// on the computer, so it has a budget of its own).
+$appAiListingLimiter = new RateLimitMiddleware($rateLimiter, 60, 3600, 'app_ai_listings', true, true);
+$app->get('/api/apps/{id}/ai/{listing:providers|models}', function ($request, $response) use ($container, $getArgs) {
+    $args = $getArgs($request);
+    $controller = $container->get(\FormLogic\Controllers\AppAiController::class);
+    return $args['listing'] === 'providers' ? $controller->ownerProviders($request, $response, $args) : $controller->ownerModels($request, $response, $args);
+})->add($appAiListingLimiter)->add($authRequired);
 $app->get('/api/apps/{id}/ai/test/{job:[a-f0-9]{32}}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\AppAiController::class)->ownerTestResult($request, $response, $getArgs($request));
 })->add($hostingReadLimiter)->add($authRequired);

@@ -122,6 +122,11 @@ it on for their app (Settings → AI for this app).
   when this site is reached through Cloudflare with `TRUSTED_PROXIES` unset, which makes every
   visitor's free rounds one shared allowance (see [Before going live](HOSTED_APPS.md#before-going-live)).
 
+An app's owner may instead serve its AI from **their own OAIY** (Settings → AI for this app → Use my
+OAIY): one of their own linked computers draws for it, whether or not this site offers its AI, and
+spends none of the site's day. Your pause, a stop for one app and the words a prompt may not use
+still apply to it.
+
 The settings are kept in `backend/storage/app-ai.json` (include it in backups); a missing or broken file
 means apps may not use the site's AI. Requests are sent and delivered by `bin/app-ai-worker.php`, which
 must run every minute from cron or under a supervisor with `--watch`; without it, apps' requests wait and

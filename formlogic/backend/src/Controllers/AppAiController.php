@@ -35,8 +35,30 @@ final class AppAiController
         private AppAiSiteSettings $site,
         private ?AuditService $audit = null,
         ?string $results = null,
+        private ?OaiyComputerController $computers = null,
     ) {
         $this->results = $results ?? AppAiWorker::resultsPath();
+    }
+
+    /**
+     * GET /api/apps/{id}/ai/providers?connectionId=: what one of the owner's own computers offers
+     * ("Use my OAIY"), asked of it now, as OaiyComputerController asks the administrator's. Only the
+     * owner's own computers can be asked (SiteAiDesktopSettings::pin), and not by an administrator
+     * acting as the owner: listing is part of choosing where the app's AI goes.
+     */
+    public function ownerProviders(Request $request, Response $response, array $args): Response
+    {
+        if ($this->ownedApp($request, $args) === null || $this->computers === null) return $this->jsonError($response, 'App not found or access denied', 404);
+        if ($refused = $this->refuseActingAs($request, $response)) return $refused;
+        return $this->computers->providers($request, $response);
+    }
+
+    /** GET /api/apps/{id}/ai/models?connectionId=&providerId=: that provider's models, each with its `type` (`image` for pictures). */
+    public function ownerModels(Request $request, Response $response, array $args): Response
+    {
+        if ($this->ownedApp($request, $args) === null || $this->computers === null) return $this->jsonError($response, 'App not found or access denied', 404);
+        if ($refused = $this->refuseActingAs($request, $response)) return $refused;
+        return $this->computers->models($request, $response);
     }
 
     /** GET /api/apps/{id}/ai */
@@ -47,7 +69,7 @@ final class AppAiController
         return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), ['data' => $this->ai->ownerView($app)]);
     }
 
-    /** PUT /api/apps/{id}/ai {mode, perRequesterDay, perIpDay, perIpHour, perAppDay} */
+    /** PUT /api/apps/{id}/ai {mode, perRequesterDay, perIpDay, perIpHour, perAppDay, own?: {connectionId, providerId?, pictureModel?, chatModel?} | null} */
     public function ownerPut(Request $request, Response $response, array $args): Response
     {
         $app = $this->ownedApp($request, $args);

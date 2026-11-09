@@ -312,7 +312,7 @@ Addresses are kept only as a keyed hash. They are only as good as the site's
 
 **The owner chooses.** An app that declares `formlogicAi` has **AI for this app** in its Settings tab:
 off (the start), **this site's AI** (where the administrator offers it, Admin → Platform → AI for
-apps), or later **their own OAIY**. The owner sets the limits above, within the administrator's
+apps), or **their own OAIY** (below). The owner sets the limits above, within the administrator's
 ceiling for apps on the site's AI, and a **Test** button runs a real small job (a 512 px picture, or a
 five-word chat), counted in the app's day, kept for the owner for an hour and never delivered to the
 app. The page shows where the AI comes from now, whether its computer is online, what is waiting, and
@@ -327,7 +327,7 @@ supervisor with `--watch`:
 ```
 
 - **Where a job goes.** The app's choice when the job is sent: the site's OAIY computer (Admin →
-  Platform → Plans & AI → Serve it from your OAIY), the owner's own, or the `.env` upstream
+  Platform → Plans & AI → Serve it from your OAIY), the owner's own (**Use my OAIY**), or the `.env` upstream
   (`AI_BASE_URL`, in Studio's gateway form: `POST /images/generations`, an edit's picture as
   `images: ["data:…"]`, `incognito: true` and `X-OAIY-Incognito: 1`).
 - **One picture at a time on a computer, and a chat beside it.** The desktop AI lane gives pictures
@@ -344,6 +344,18 @@ supervisor with `--watch`:
   `DATA_ENCRYPTION_KEY` where one is set), is sent once more. OAIY's `busy` (Studio's own queue full)
   is tried again up to four times, 30 seconds apart. Five failures of the AI in a row rest the app's AI
   for 10 minutes (`ai.reason: "ai_resting"`).
+
+**Use my OAIY.** The owner picks one of their own linked computers that has published its chat key
+(an always-on `oaiy-server` links with **Connect an OAIY server**, right there), and the picture model
+its engines draw with, listed by asking the computer now (`GET /api/apps/{id}/ai/models?connectionId=&providerId=oaiy-engine`,
+and `…/ai/providers?connectionId=`). The computer is pinned to the key it published: if it is
+unlinked or gets a new key, the app's AI is off (`ai.reason: "own_changed"`) until the owner chooses it
+again. Its jobs are queued as the owner, so their own computer serves them whether or not they are an
+administrator, with the same lanes, fair turns, limits and log as the site's AI; the owner's apps share
+the computer fairly. Its chat answers with the model chosen in OAIY. It spends none of the site's day
+(**Requests a day, every app together**), and the app's limits are the owner's to set, with no
+ceiling from the site's AI; the administrator's pause, a stop for one app and the words a prompt may
+not use still apply.
 
 **The delivery.** FormLogic posts each result, as the site, to the app's `jobs.deliver` route, with
 `req.context.formlogic.ai.delivery === true` and no subscription (a delivery's own writes never ask
@@ -471,7 +483,7 @@ the older keys that hold `connector:relay` alone keep their grandfathered access
 
 ### Before going live
 
-Three things for the site's owner, before the public uses an app's AI or pays through it:
+Five things for the site's owner, before the public uses an app's AI or pays through it:
 
 1. **The picture model's licence.** A model's terms decide whether its pictures may be sold. FLUX 3
    Image Klein, for one, is under the FLUX Kommunity License: non-commercial, with commercial use of
@@ -487,6 +499,14 @@ Three things for the site's owner, before the public uses an app's AI or pays th
 3. **One real PayPal sandbox run.** The tests use a stub PayPal. Before payments are switched on, top
    up with a PayPal sandbox account once (`PAYPAL_ENV=sandbox`), pay for something, refund it in the
    sandbox dashboard and see the wallet follow (the webhook needs `PAYPAL_WEBHOOK_ID`).
+4. **The webhook's events.** Subscribe the site's PayPal webhook to `PAYMENT.CAPTURE.COMPLETED`,
+   `PAYMENT.CAPTURE.REFUNDED`, `PAYMENT.CAPTURE.REVERSED`, `PAYMENT.CAPTURE.DECLINED`,
+   `PAYMENT.CAPTURE.DENIED`, `CUSTOMER.DISPUTE.CREATED`, `CUSTOMER.DISPUTE.UPDATED` and
+   `CUSTOMER.DISPUTE.RESOLVED`. Without them a refund, reversal or dispute in PayPal never reaches the
+   wallet, and a top-up whose capture answer was lost is never credited.
+5. **The worker.** App AI's jobs wait until `bin/app-ai-worker.php` runs: from cron every minute, or
+   with `--watch` under a supervisor ([the worker](#app-ai-where-it-runs-and-what-the-app-is-delivered)).
+   Admin → Platform → AI for apps warns when jobs are waiting and no worker has run lately.
 
 ## Choose the right starting point
 

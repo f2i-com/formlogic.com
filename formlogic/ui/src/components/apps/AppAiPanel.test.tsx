@@ -100,3 +100,21 @@ it('says why it cannot be read', async () => {
   await mount();
   expect(container.querySelector('[role="alert"]')?.textContent).toBe('App not found or access denied');
 });
+
+it('uses the owner\'s own OAIY: a computer of theirs, and a picture model listed from it', async () => {
+  const computers = [{ connectionId: 'dc-1', instanceId: 'inst-1', deviceName: 'Home PC', fingerprint: 'AAAA BBBB', online: true, lastSeenAt: null }];
+  vi.spyOn(api, 'getAppAi').mockResolvedValue({ data: view({ computers }) });
+  const models = vi.spyOn(api, 'getAppAiModels').mockResolvedValue({ data: { models: [{ id: 'nanbeige', name: 'nanbeige' }, { id: 'flux-3-image-klein', name: 'flux-3-image-klein', type: 'image' }] } });
+  const put = vi.spyOn(api, 'putAppAi').mockResolvedValue({ data: view({ computers, settings: { ...view().settings, mode: 'own', own: { connectionId: 'dc-1', deviceName: 'Home PC', providerId: 'oaiy-engine', pictureModel: 'flux-3-image-klein', chatModel: null } } }) });
+  await mount();
+  await act(async () => [...container.querySelectorAll<HTMLInputElement>('input[name="app-ai-mode"]')][2].click());
+  expect(container.textContent).toContain('Home PC');
+  await act(async () => container.querySelector<HTMLInputElement>('input[name="app-ai-own-computer"]')!.click());
+  await act(async () => button('List its picture models')!.click());
+  expect(models).toHaveBeenCalledWith('app-1', 'dc-1', 'oaiy-engine');
+  const select = container.querySelector<HTMLSelectElement>('[data-testid="app-ai-own"] select')!;
+  expect([...select.options].map((o) => o.value)).toEqual(['', 'flux-3-image-klein']);
+  await act(async () => { select.value = 'flux-3-image-klein'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  await act(async () => button('Save')!.click());
+  expect(put).toHaveBeenCalledWith('app-1', { mode: 'own', perRequesterDay: 10, perIpDay: 20, perIpHour: 10, perAppDay: 500, own: { connectionId: 'dc-1', providerId: 'oaiy-engine', pictureModel: 'flux-3-image-klein' } });
+});
