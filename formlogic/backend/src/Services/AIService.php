@@ -36,7 +36,9 @@ class AIService
     /** True when the site's AI goes to the administrator's OAIY (SiteDesktopAi). */
     public function servedByOaiy(): bool
     {
-        return $this->siteDesktop?->active() !== null;
+        // Chosen, even when that computer is gone: the site's AI then refuses (siteAiUnavailable()),
+        // and never sends to the .env upstream what was meant for the administrator's OAIY.
+        return $this->siteDesktop?->chosen() ?? false;
     }
 
     /** Why the site's OAIY cannot take a turn now (offline, or full), or null. */

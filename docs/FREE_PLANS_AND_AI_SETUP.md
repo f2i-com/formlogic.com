@@ -100,8 +100,10 @@ node. Choose **Everything a linked desktop can do** only for a computer you also
 See [Connecting an OAIY server](HOSTED_APPS.md#connecting-an-oaiy-server).
 
 A computer you chose that is later unlinked, gets a new key (OAIY reinstalled) or whose account is no
-longer an administrator's is no longer chosen: nothing is sent to it, apps' requests waiting for it
-are answered that the AI is unavailable, and the card names it until you choose again or forget it.
+longer an administrator's is no longer chosen: nothing is sent to it, nor to the provider in your
+server settings in its place (members and apps are told the site's AI is unavailable), apps' requests
+waiting for it are answered that the AI is unavailable, and the card names it until you choose again
+or forget it. Forget it, and the provider in your server settings serves the Site AI again.
 
 ### AI for apps
 

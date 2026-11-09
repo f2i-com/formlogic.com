@@ -616,14 +616,13 @@ JS;
         $this->assertSame(0, $worker->tick()['delivered'], 'told once');
     }
 
-    /** An unlinked or re-keyed site computer is not chosen (contract §0.11): its waiting jobs are answered and given back. */
-    public function testAnUnlinkedOrReKeyedSiteComputerIsNoLongerChosen(): void
+    /**
+     * An unlinked or re-keyed site computer is not chosen (contract §0.11): its waiting jobs are
+     * answered and given back, and never sent to the .env upstream in its place, though one is set.
+     */
+    public function testAnUnlinkedOrReKeyedSiteComputerIsNoLongerChosenNorReplaced(): void
     {
         $this->boot();
-        // No .env upstream to fall back to: the site's AI goes with its computer.
-        $unconfigured = $this->createMock(AIService::class);
-        $unconfigured->method('isConfigured')->willReturn(false);
-        $this->ai = new AppAiService(self::$mysql, $this->site, $this->visitors, $this->native, $this->computers, $unconfigured);
         $app = $this->app();
         $chosen = $this->computers->current();
         $this->assertNotNull($chosen);
@@ -633,10 +632,12 @@ JS;
         self::$pdo->prepare('UPDATE desktop_connections SET e2e_public_key = ? WHERE id = ?')->execute([base64_encode(random_bytes(32)), $chosen['connectionId']]);
         $this->assertNull($this->computers->current(), 'a new key: no longer chosen');
         $this->assertSame('Studio PC', $this->computers->gone()['deviceName'] ?? null, 'and the administrator is told which');
-        $this->assertSame([false, 'site_ai_unavailable'], [$this->ai->availability($app, self::DECLARED)['enabled'], $this->ai->availability($app, self::DECLARED)['reason']], 'apps are not offered it');
+        $this->assertSame([false, 'site_ai_gone'], [$this->ai->availability($app, self::DECLARED)['enabled'], $this->ai->availability($app, self::DECLARED)['reason']], 'apps are not offered it, nor the .env upstream instead');
 
+        self::$stub?->clear();
         $tick = $this->worker()->tick();
         $this->assertSame([0, 1], [$tick['sent'], $tick['delivered']]);
+        if (self::$stub !== null) $this->assertSame([], self::$stub->requests(), 'nothing went to the .env upstream');
         $job = $this->job($id);
         $this->assertSame(['failed', 'ai_unavailable', 1], [$job['status'], $job['code'], (int) $job['refunded']]);
         $this->assertSame([['status' => 'failed', 'code' => 'ai_unavailable']], $this->appRows($app['id'], 'SELECT status, code FROM deliveries'));
@@ -644,11 +645,15 @@ JS;
         $used->execute([$app['id']]);
         $this->assertSame(0, (int) $used->fetchColumn(), 'its use given back');
 
-        // Its own key again: chosen again. Unlinked: not.
+        // Its own key again: chosen again. Unlinked: not, and still not replaced.
         self::$pdo->prepare('UPDATE desktop_connections SET e2e_public_key = ? WHERE id = ?')->execute([$chosen['publicKey'], $chosen['connectionId']]);
         $this->assertNotNull($this->computers->current());
         self::$pdo->prepare('DELETE FROM desktop_connections WHERE id = ?')->execute([$chosen['connectionId']]);
         $this->assertNull($this->computers->current());
+        $this->assertSame('site_ai_gone', $this->ai->availability($app, self::DECLARED)['reason']);
+        // Only once the administrator lets the choice go is the .env upstream the site's AI.
+        $this->computers->clear();
+        $this->assertSame([true, 'env'], [$this->ai->availability($app, self::DECLARED)['enabled'], $this->ai->availability($app, self::DECLARED)['target']]);
     }
 
     /** "Use my OAIY": an owner who is no administrator, their own computer, their app's pictures. */

@@ -49,10 +49,21 @@ final class SiteDesktopAi
         };
     }
 
-    /** The administrator's OAIY this site's AI goes to, or null when it uses the .env upstream. */
+    /** The administrator's OAIY this site's AI goes to, or null when it uses the .env upstream or its computer is gone. */
     public function active(): ?array
     {
         return $this->settings->current();
+    }
+
+    /**
+     * Whether the administrator chose to serve the site's AI from OAIY, whether or not that computer
+     * still stands. A computer that was unlinked, given a new key or whose administrator lost the role
+     * is not replaced by the .env upstream: work nobody chose to send there is refused instead
+     * (unavailable()). The .env upstream serves only when no computer was chosen.
+     */
+    public function chosen(): bool
+    {
+        return $this->settings->current() !== null || $this->settings->gone() !== null;
     }
 
     /**
@@ -249,7 +260,12 @@ final class SiteDesktopAi
     public function unavailable(): ?SiteAiBusyException
     {
         $site = $this->active();
-        return $site === null ? null : $this->unavailableFor($site);
+        if ($site === null) {
+            return $this->settings->gone() !== null
+                ? new SiteAiBusyException('The computer this site\'s AI runs on was unlinked or has a new key. An administrator can choose it again.', 'site_ai_gone')
+                : null;
+        }
+        return $this->unavailableFor($site);
     }
 
     /** The sealed frames of one turn, opened in order, to its final frame. */

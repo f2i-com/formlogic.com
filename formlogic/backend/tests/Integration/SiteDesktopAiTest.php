@@ -303,6 +303,26 @@ final class SiteDesktopAiTest extends TestCase
         self::assertSame(['expired', null], [$status['status'], $status['envelope']]);
     }
 
+    /** A chosen computer unlinked or given a new key: members' Site AI is refused, never sent to the .env upstream instead. */
+    public function testAGoneComputerIsRefusedNotReplacedByTheEnvUpstream(): void
+    {
+        $this->chooseTheTestDesktop();
+        $desktop = new SiteDesktopAi($this->relay, $this->settings);
+        $ai = new \FormLogic\Services\AIService();
+        $ai->useSiteDesktop($desktop);
+        self::assertTrue($ai->servedByOaiy());
+        self::$pdo->prepare("UPDATE desktop_connections SET e2e_public_key = ? WHERE desktop_instance_id = 'inst-site-ai' AND owner_user_id = ?")->execute([base64_encode(random_bytes(32)), $this->adminId]);
+        self::assertNull($desktop->active());
+        self::assertTrue($ai->servedByOaiy(), 'still the site\'s choice, so the .env upstream is not asked in its place');
+        self::assertSame('site_ai_gone', $ai->siteAiUnavailable()?->reason);
+        self::$pdo->prepare("DELETE FROM desktop_connections WHERE desktop_instance_id = 'inst-site-ai' AND owner_user_id = ?")->execute([$this->adminId]);
+        self::assertSame('site_ai_gone', $ai->siteAiUnavailable()?->reason, 'unlinked: the same');
+        // The administrator lets it go: now the site's AI is the .env upstream, as chosen.
+        $this->settings->clear();
+        self::assertFalse($ai->servedByOaiy());
+        self::assertNull($ai->siteAiUnavailable());
+    }
+
     public function testOnlyTheAdministratorsOwnComputerWithAPublishedKeyCanBeChosen(): void
     {
         $this->connection($this->memberId, 'inst-members', self::$vectors['desktop']['publicKey']);

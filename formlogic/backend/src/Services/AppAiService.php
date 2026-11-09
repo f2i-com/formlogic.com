@@ -150,6 +150,9 @@ class AppAiService
         $computer = $this->siteDesktop?->current();
         if ($computer !== null) {
             $target = (string) $computer['connectionId'];
+        } elseif ($this->siteDesktop?->gone() !== null) {
+            // The administrator chose a computer and it is gone: its work goes nowhere else in its place.
+            return $off('site_ai_gone', 'site');
         } elseif ($this->ai !== null && $this->ai->isConfigured()) {
             $target = 'env';
         } else {
@@ -562,6 +565,7 @@ class AppAiService
         'own_changed' => 'The computer this app\'s AI runs on was unlinked, or has a new key. Its owner can choose it again.',
         'site_ai_closed' => 'The site does not offer its AI to apps.',
         'site_ai_unavailable' => 'The site\'s AI is not set up.',
+        'site_ai_gone' => 'The computer this site\'s AI runs on was unlinked or has a new key. An administrator can choose it again.',
         'model_unset' => 'No model is chosen for this kind of request yet.',
         'no_pictures' => 'This server cannot draw pictures for apps: it needs PHP\'s GD extension.',
         'not_offered' => 'This kind of AI request is not available for this app right now.',

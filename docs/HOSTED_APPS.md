@@ -349,9 +349,11 @@ supervisor with `--watch`:
   `images: ["data:…"]`, `incognito: true` and `X-OAIY-Incognito: 1`).
 - **A computer that is gone is not chosen.** The site's computer, once it is unlinked, gets a new key
   (OAIY reinstalled) or its administrator loses the role, reads as unmade: members' Site AI and apps
-  are not sent to it (the site's AI falls back to the `.env` upstream where one is set), the
-  administrator's card says which computer it was, and jobs waiting for it are answered
-  `ai_unavailable` with their uses given back. An owner's own computer is the same (`own_changed`).
+  are not sent to it, and **nothing is sent to the `.env` upstream in its place** (members are told
+  `site_ai_gone`; apps' `ai.reason` is `site_ai_gone`), the administrator's card says which computer it
+  was, and jobs waiting for it are answered `ai_unavailable` with their uses given back. The `.env`
+  upstream serves only when no computer is chosen: an administrator who wants it presses **Forget it**
+  (or Stop). An owner's own computer is the same (`own_changed`).
 - **One picture at a time on a computer, and a chat beside it.** The desktop AI lane gives pictures
   (`kind: "image"`) a claim of their own, so a computer holds one picture and one request of any other
   kind; a picture never takes one of the members' three chat places. App AI's own requests are queued
