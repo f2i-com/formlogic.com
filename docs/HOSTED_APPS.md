@@ -390,7 +390,7 @@ Site AI card, and in an app's AI settings under **Use my OAIY**.
 | Request | Who | What |
 |---|---|---|
 | `POST /api/desktop-links/codes` `{scope: "ai"\|"all", deviceName?}` | signed in | `201 {data: {id, code, expiresAt, scope, baseUrl, command}}`; at most 3 waiting codes an account (`409 desktop_link_too_many`) |
-| `GET /api/desktop-links/codes/{id}` | signed in, its maker | `{data: {status: waiting\|linked\|expired\|failed, connectionId?, deviceName?, message?}}` |
+| `GET /api/desktop-links/codes/{id}` | signed in, its maker | `{data: {status: waiting\|linked\|unlinked\|expired\|failed, connectionId?, deviceName?, message?}}`; `unlinked`: the computer it linked has been unlinked since |
 | `POST /api/oauth/oaiy-link` `code`, `device_name?` (a form or JSON) | public, 10 a minute an address | exactly the browser link's token answer: `{access_token, token_type, scope, formlogic_api_key, api_key_id, desktop_connection_id, device_name}`, `Cache-Control: no-store` |
 
 An unknown, expired or spent code answers alike: `400 {error: "invalid_grant", error_description}`.
@@ -402,7 +402,8 @@ answers the AI lane (`/api/v1/desktop-ai/*`) and checks in, and nothing else:
 
 - connector and plugin commands are never routed to it: it is no candidate for a connector, a pin or a
   Backups link, so an AI server beside your desktop never makes routing ambiguous; its command poll
-  answers an empty list, and a claim is refused;
+  is refused at once (`403 insufficient_scope`, never a held long poll), and so are its claims
+  (`403 ai_only_link`);
 - it runs no sealed desktop flows (`/api/v1/desktop-flows/*` answers `403 insufficient_scope`);
 - it cannot enrol as a storage node (`/api/v1/data-node/*` answers `403 insufficient_scope`).
 

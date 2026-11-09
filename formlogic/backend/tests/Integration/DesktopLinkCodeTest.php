@@ -137,6 +137,11 @@ final class DesktopLinkCodeTest extends TestCase
         $this->assertTrue($this->middlewareSees($body['formlogic_api_key'])['apiKeyAiOnly'], 'ApiKeyMiddleware hands the mark on');
         $status = $this->codeStatus($user, $data['id'])['body']['data'];
         $this->assertSame(['linked', $body['desktop_connection_id'], 'OAIY server on rack-2'], [$status['status'], $status['connectionId'], $status['deviceName']]);
+        // Unlinked since: the code says so, rather than linked to a computer that is gone.
+        self::$pdo->prepare('DELETE FROM desktop_connections WHERE id = ?')->execute([$body['desktop_connection_id']]);
+        $gone = $this->codeStatus($user, $data['id'])['body']['data'];
+        $this->assertSame(['unlinked', $body['desktop_connection_id']], [$gone['status'], $gone['connectionId']]);
+        $this->assertStringContainsString('unlinked', $gone['message']);
         $audit = self::$pdo->prepare("SELECT action FROM audit_log WHERE user_id = ? AND action LIKE 'desktop.link_code.%' ORDER BY sequence_number");
         $audit->execute([$user]);
         $this->assertSame(['desktop.link_code.create', 'desktop.link_code.redeem'], $audit->fetchAll(PDO::FETCH_COLUMN));

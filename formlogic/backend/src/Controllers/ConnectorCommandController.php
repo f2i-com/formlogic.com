@@ -507,23 +507,14 @@ class ConnectorCommandController
         if ($identityError !== null) {
             return $identityError;
         }
-        // An "AI only" link (DesktopLinkCodeService) is routed no connector or plugin command. Its poll
-        // is answered as an idle desktop's is, after the wait it asked for, so it neither spins nor errs.
+        // An "AI only" link (DesktopLinkCodeService) is routed no connector or plugin command: its poll
+        // is refused at once, as the flows and data-node lanes refuse such a link, rather than holding a
+        // worker for an empty answer every 25 seconds.
         if ($request->getAttribute('apiKeyAiOnly') === true) {
-            $this->idle($wait);
-            return $this->jsonResponse($response, ['commands' => []]);
+            return $this->jsonError($response, 'This computer is linked for AI only: it takes no connector or plugin commands.', 403, 'insufficient_scope');
         }
         $commands = $this->commands->pollPending((string) $userId, $since, $wait, $limit, $instanceId);
         return $this->jsonResponse($response, ['commands' => $commands]);
-    }
-
-    /** An empty long-poll's wait: up to $waitMs, at most the relay's own ceiling. */
-    private function idle(int $waitMs): void
-    {
-        $until = microtime(true) + min(max(0, $waitMs), DesktopCommandService::MAX_WAIT_MS) / 1000;
-        while (microtime(true) < $until) {
-            usleep(250000);
-        }
     }
 
     /** A claim or completion from an "AI only" link: never its command. */

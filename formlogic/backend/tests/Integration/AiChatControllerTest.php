@@ -260,6 +260,29 @@ class AiChatControllerTest extends TestCase
             ->withParsedBody(['messages' => [['role' => 'user', 'content' => 'Hello']]]);
         $this->assertSame(401, $ctrl->chat($req4, (new ResponseFactory())->createResponse())->getStatusCode());
     }
+
+    /** Site AI switched off by the operator is said as that, never as an AI_BASE_URL to set. */
+    public function testSiteAiSwitchedOffSaysSoAndChargesNothing(): void
+    {
+        $off = new class extends AIService {
+            public function __construct()
+            {
+                parent::__construct(new class extends \FormLogic\Services\PlatformPlansService {
+                    public function status(): array
+                    {
+                        return array_replace(self::defaults(), ['siteAiEnabled' => false]);
+                    }
+                });
+            }
+        };
+        foreach ([['messages' => [['role' => 'user', 'content' => 'Hello']]], ['messages' => [['role' => 'user', 'content' => 'Hello']], 'tools' => [['type' => 'function', 'function' => ['name' => 'look', 'parameters' => ['type' => 'object']]]]]] as $body) {
+            $out = $this->chat($this->controller(true, $off), $body);
+            $this->assertSame(503, $out['status']);
+            $this->assertStringContainsString('Site AI is disabled', (string) ($out['body']['message'] ?? ''), json_encode($out['body']));
+            $this->assertStringNotContainsString('AI_BASE_URL', (string) ($out['body']['message'] ?? ''));
+        }
+        $this->assertNull($this->meter(), 'nothing is counted for a request that cannot run');
+    }
 }
 
 /** AIService stub: configured, and its transport returns a fixed answer with usage. */

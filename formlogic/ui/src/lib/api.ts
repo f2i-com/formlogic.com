@@ -185,7 +185,7 @@ export interface AdminCameraCheckState {
 /** A one-time code for linking an OAIY server (DesktopLinkCodeService), shown this once. */
 export interface DesktopLinkCode { id: string; code: string; expiresAt: string; scope: 'ai' | 'all'; baseUrl: string; command: string }
 /** How a link code is getting on. */
-export interface DesktopLinkStatus { id: string; scope: 'ai' | 'all'; expiresAt: string; status: 'waiting' | 'linked' | 'expired' | 'failed'; connectionId?: string; deviceName?: string | null; message?: string }
+export interface DesktopLinkStatus { id: string; scope: 'ai' | 'all'; expiresAt: string; status: 'waiting' | 'linked' | 'unlinked' | 'expired' | 'failed'; connectionId?: string; deviceName?: string | null; message?: string }
 
 export interface SiteAiDesktopState {
   current: { connectionId: string; deviceName: string; fingerprint: string; chosenAt: string | null; providerId?: string; model?: string | null; yours: boolean } | null;

@@ -34,7 +34,7 @@ export function ConnectOaiyServer({ onLinked, compact = false }: { onLinked?: (c
       if (result.data) {
         setStatus(result.data);
         if (result.data.status === 'linked') { if (result.data.connectionId) linkedRef.current?.(result.data.connectionId); return; }
-        if (result.data.status === 'expired' || result.data.status === 'failed') return;
+        if (result.data.status === 'expired' || result.data.status === 'failed' || result.data.status === 'unlinked') return;
       }
       timer = setTimeout(() => void ask(), 3000);
     };
@@ -73,7 +73,7 @@ export function ConnectOaiyServer({ onLinked, compact = false }: { onLinked?: (c
           You get a code to type on it, good for ten minutes and one use.
         </p>
       </div>
-      {!code || state === 'expired' || state === 'failed' ? (
+      {!code || state === 'expired' || state === 'failed' || state === 'unlinked' ? (
         <div className="space-y-3">
           <fieldset className="space-y-2 text-sm">
             <legend className="font-medium">What may it do?</legend>
@@ -89,6 +89,7 @@ export function ConnectOaiyServer({ onLinked, compact = false }: { onLinked?: (c
           </label>
           {state === 'expired' && <p className="text-sm text-amber-700 dark:text-amber-300">That code ran out. Make a new one.</p>}
           {state === 'failed' && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{status?.message ?? 'That code could not link the server.'}</p>}
+          {state === 'unlinked' && <p className="text-sm text-amber-700 dark:text-amber-300">{status?.message ?? 'That server has been unlinked since. Make a new code to link it again.'}</p>}
           <div className="flex gap-2">
             <Button size="sm" isLoading={busy} onClick={() => void make()}>Make a code</Button>
             <Button size="sm" variant="outline" onClick={() => { setOpen(false); setCode(null); setStatus(null); }}>Cancel</Button>

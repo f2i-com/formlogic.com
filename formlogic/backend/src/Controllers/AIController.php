@@ -593,9 +593,10 @@ class AIController
             }
         }
 
-        // Refuse before charging an allowance unit for a request that can never run.
-        if (!$this->aiService->isEnabled() || !$this->aiService->isConfigured()) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).'], 503);
+        // Refuse before charging an allowance unit for a request that can never run, saying why:
+        // switched off by the operator, or not set up.
+        if (($missing = $this->siteAiMissing()) !== null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $missing], 503);
         }
 
         // Allowance gate: one hosted message = one unit — including a tool turn, no matter
@@ -681,8 +682,8 @@ class AIController
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
-        if (!$this->aiService->isEnabled() || !$this->aiService->isConfigured()) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).'], 503);
+        if (($missing = $this->siteAiMissing()) !== null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $missing], 503);
         }
         // The site's AI on the administrator's OAIY takes messages only. Said before anything is
         // charged, in the code the editor reads as "ask in words" (its text protocol, `editor: 1`).

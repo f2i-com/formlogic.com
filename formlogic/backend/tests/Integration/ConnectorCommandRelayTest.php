@@ -575,17 +575,17 @@ class ConnectorCommandRelayTest extends TestCase
         $this->assertNull($alone['target'], 'with the desktop away, no command goes to the AI server instead');
     }
 
-    public function testAnAiOnlyLinksPollIsIdleAndItsClaimsAreRefused(): void
+    public function testAnAiOnlyLinksPollAndClaimsAreRefusedAtOnce(): void
     {
         $desktop = $this->linkedComputer(false);
         $server = $this->linkedComputer(true);
         $enqueued = $this->enqueue($this->ownerId, ['connectorId' => 'aokie', 'command' => 'call']);
         $id = $enqueued['body']['commandId'];
         $started = microtime(true);
-        $poll = self::$ctrl->pending($this->asComputer($server, true, 'GET', '/api/v1/connector-commands/pending', [], ['wait' => 1000, 'instanceId' => $server['instance']]), (new ResponseFactory())->createResponse());
-        $this->assertSame(200, $poll->getStatusCode(), 'polling is not an error: OAIY sees an idle relay');
-        $this->assertSame([], self::decode($poll)['commands']);
-        $this->assertGreaterThanOrEqual(0.9, microtime(true) - $started, 'it waits as a long-poll does, so it never spins');
+        $poll = self::$ctrl->pending($this->asComputer($server, true, 'GET', '/api/v1/connector-commands/pending', [], ['wait' => 25000, 'instanceId' => $server['instance']]), (new ResponseFactory())->createResponse());
+        $this->assertSame([403, 'insufficient_scope'], [$poll->getStatusCode(), self::decode($poll)['code'] ?? null], 'refused, as the flows and data-node lanes refuse such a link');
+        $this->assertArrayNotHasKey('commands', self::decode($poll));
+        $this->assertLessThan(1.0, microtime(true) - $started, 'at once: no worker is held for an empty answer');
         $claim = self::$ctrl->claim($this->asComputer($server, true, 'POST', '/api/v1/connector-commands/' . $id . '/claim', ['instanceId' => $server['instance']]), (new ResponseFactory())->createResponse(), ['id' => $id]);
         $this->assertSame([403, 'ai_only_link'], [$claim->getStatusCode(), self::decode($claim)['code'] ?? null]);
         $complete = self::$ctrl->complete($this->asComputer($server, true, 'POST', '/api/v1/connector-commands/' . $id . '/complete', ['status' => 'done', 'result' => []]), (new ResponseFactory())->createResponse(), ['id' => $id]);

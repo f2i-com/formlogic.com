@@ -86,7 +86,9 @@ final class DesktopLinkCodeService
             $connection = $this->mysql->getConnection()->prepare('SELECT id, device_name FROM desktop_connections WHERE id = ? AND owner_user_id = ?');
             $connection->execute([$row['connection_id'], $userId]);
             $linked = $connection->fetch(\PDO::FETCH_ASSOC);
-            return $base + ['status' => 'linked', 'connectionId' => $row['connection_id'], 'deviceName' => is_array($linked) ? (string) $linked['device_name'] : null];
+            // Linked once, and unlinked since: the code's computer is gone from the account.
+            if (!is_array($linked)) return $base + ['status' => 'unlinked', 'connectionId' => $row['connection_id'], 'message' => 'This server was linked with this code and has been unlinked since. Make a new code to link it again.'];
+            return $base + ['status' => 'linked', 'connectionId' => $row['connection_id'], 'deviceName' => (string) $linked['device_name']];
         }
         if ($row['failure'] !== null) return $base + ['status' => 'failed', 'message' => (string) $row['failure']];
         // Spent, and the key being made this moment.

@@ -78,3 +78,15 @@ it('says why a code could not be made', async () => {
   await act(async () => button('Make a code')!.click());
   expect(container.querySelector('[role="alert"]')?.textContent).toContain('3 codes waiting');
 });
+
+it('says so when the server it linked has been unlinked since, and offers a new code', async () => {
+  vi.spyOn(api, 'createDesktopLinkCode').mockResolvedValue({ data: code });
+  vi.spyOn(api, 'getDesktopLinkCode').mockResolvedValue({ data: { id: 'c1', scope: 'ai', expiresAt: code.expiresAt, status: 'unlinked', connectionId: 'dc-1', message: 'This server was linked with this code and has been unlinked since. Make a new code to link it again.' } });
+  const linked = vi.fn();
+  await mount(linked);
+  await act(async () => button('Make a code')!.click());
+  await act(async () => { vi.advanceTimersByTime(3000); });
+  expect(container.textContent).toContain('has been unlinked since');
+  expect(button('Make a code')).toBeTruthy();
+  expect(linked).not.toHaveBeenCalled();
+});
