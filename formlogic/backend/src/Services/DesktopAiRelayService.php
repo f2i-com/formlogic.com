@@ -25,8 +25,10 @@ use PDO;
  *   - TTL 5 min for a pending request; a claimed/streaming request is reaped after
  *     CLAIMED_STALE_SECONDS of SILENCE (claimed_at doubles as the activity anchor — it is
  *     refreshed on every frame append, since an LLM stream can legitimately run for minutes);
- *   - single-flight per target: claim() is ONE atomic UPDATE guarded by NOT EXISTS
- *     (claimed|streaming sibling for the same target);
+ *   - single-flight per target and lane: claim() is ONE atomic UPDATE guarded by NOT EXISTS
+ *     (claimed|streaming sibling for the same target in the same lane). A picture (`image`)
+ *     has a lane of its own, so a desktop holds one picture and one request of any other kind;
+ *   - App AI's turns (SOURCE_APP_AI) keep their own limits and take none of the requester's;
  *   - queue position is computed at read time, never stored.
  *
  * Target resolution (assignment pin → implicit single fresh desktop → 409 ambiguous_desktop)
@@ -41,6 +43,23 @@ class DesktopAiRelayService
     public const CLAIMED_STALE_SECONDS = 300;
     /** A request its own desktop has left silent this long is let go when it claims the next. */
     public const ABANDONED_SECONDS = 30;
+    /**
+     * A picture is let go after this much silence instead (App AI, docs/HOSTED_APPS.md): drawing one
+     * takes a minute or more, OAIY sends a progress frame about every 15 seconds, and gives up on its
+     * own after 240.
+     */
+    public const ABANDONED_PICTURE_SECONDS = 300;
+    /**
+     * The kind of a picture request. A desktop holds one of these beside one request of any other
+     * kind: the claim's single flight is per target AND per lane, so a chat is never held up by a
+     * picture being drawn.
+     */
+    public const PICTURE_KIND = 'image';
+    /**
+     * A request queued by App AI's worker (AppAiWorker) rather than by a person: it keeps its own
+     * limits, so it takes none of the requester's two places. Only the server sets it.
+     */
+    public const SOURCE_APP_AI = 'app-ai';
 
     /** Sealed OUT frames of a terminal request survive this long so the reply stream can drain. */
     public const FRAME_GRACE_SECONDS = 60;
@@ -95,9 +114,15 @@ class DesktopAiRelayService
      * @return array{request: array, created: bool}
      * @throws \InvalidArgumentException on invalid payload / foreign idempotency-key reuse
      * @throws \RuntimeException 'queue_full_user'|'queue_full_desktop' on a tripped lane cap
+     *
+     * $source: SOURCE_APP_AI for App AI's worker, which is not held to the requester's own cap; null
+     * for everything else. A separate argument, never read from $data, which a browser writes.
      */
-    public function enqueue(string $ownerUserId, string $requestingUserId, array $data): array
+    public function enqueue(string $ownerUserId, string $requestingUserId, array $data, ?string $source = null): array
     {
+        if ($source !== null && $source !== self::SOURCE_APP_AI) {
+            throw new \InvalidArgumentException('Unknown request source');
+        }
         $kind = $data['kind'] ?? null;
         if (!is_string($kind) || !preg_match('/^[a-z0-9][a-z0-9._-]{0,31}$/', $kind)) {
             throw new \InvalidArgumentException('kind is required (lowercase token, max ' . self::MAX_KIND . ' chars)');
@@ -158,7 +183,7 @@ class DesktopAiRelayService
         try {
             $lock = $this->mysql->prepare('SELECT id FROM users WHERE id = :o FOR UPDATE');
             $lock->execute(['o' => $ownerUserId]);
-            if ($this->countInFlightForUser($ownerUserId, $requestingUserId) >= self::MAX_IN_FLIGHT_PER_USER) {
+            if ($source !== self::SOURCE_APP_AI && $this->countInFlightForUser($ownerUserId, $requestingUserId) >= self::MAX_IN_FLIGHT_PER_USER) {
                 throw new \RuntimeException('queue_full_user');
             }
             if ($this->countInFlightForTarget($ownerUserId, $targetInstanceId) >= self::MAX_IN_FLIGHT_PER_TARGET) {
@@ -168,9 +193,9 @@ class DesktopAiRelayService
             $stmt = $this->mysql->prepare("
                 INSERT INTO desktop_ai_requests
                     (id, owner_user_id, requesting_user_id, target_instance_id, provider_id, kind,
-                     eph_pub, envelope, status, idempotency_key, expires_at)
+                     eph_pub, envelope, status, idempotency_key, expires_at, source)
                 VALUES
-                    (:id, :owner, :req, :target, :provider, :kind, :eph, :env, 'pending', :key, :exp)
+                    (:id, :owner, :req, :target, :provider, :kind, :eph, :env, 'pending', :key, :exp, :source)
             ");
             $stmt->execute([
                 'id' => $id,
@@ -179,6 +204,7 @@ class DesktopAiRelayService
                 'target' => $targetInstanceId,
                 'provider' => $providerId,
                 'kind' => $kind,
+                'source' => $source,
                 'eph' => $ephPub,
                 'env' => $envelopeBytes,
                 'key' => $idempotencyKey,
@@ -374,7 +400,8 @@ class DesktopAiRelayService
 
         // Only a still-pending, non-expired request can be claimed — and only by its TARGET
         // when it has one. The NOT EXISTS guard is the single-flight rule: no claimed or
-        // streaming sibling for the same target (NULL-safe compare groups untargeted rows).
+        // streaming sibling for the same target (NULL-safe compare groups untargeted rows) in
+        // the same lane: a picture's lane is its own, beside every other kind's (PICTURE_KIND).
         // The sibling probe reads through a derived table because MySQL forbids selecting
         // from the UPDATE target directly.
         $targetSql = $instanceId !== null
@@ -392,11 +419,11 @@ class DesktopAiRelayService
               AND {$served}
               AND NOT EXISTS (
                   SELECT 1 FROM (
-                      SELECT s.target_instance_id AS busy_target
+                      SELECT s.target_instance_id AS busy_target, (s.kind = 'image') AS busy_picture
                       FROM desktop_ai_requests s
                       WHERE s.owner_user_id = :o2 AND s.status IN ('claimed', 'streaming')
                   ) AS busy
-                  WHERE busy.busy_target <=> r.target_instance_id
+                  WHERE busy.busy_target <=> r.target_instance_id AND busy.busy_picture = (r.kind = 'image')
               )
         ");
         $stmt->execute($params);
@@ -405,7 +432,7 @@ class DesktopAiRelayService
             // Expiry is computed in SQL (expires_at > NOW()), never by comparing a MySQL
             // timestamp against PHP's clock — the two timezones need not agree.
             $check = $this->mysql->prepare("
-                SELECT r.status, r.target_instance_id, (r.expires_at > NOW()) AS still_valid, {$served} AS served
+                SELECT r.status, r.kind, r.target_instance_id, (r.expires_at > NOW()) AS still_valid, {$served} AS served
                 FROM desktop_ai_requests r WHERE r.id = :id AND r.owner_user_id = :o
             ");
             $check->execute(['id' => $id, 'o' => $ownerUserId]);
@@ -432,7 +459,7 @@ class DesktopAiRelayService
                 // Still pending and target-matched: the NOT EXISTS guard refused → the lane
                 // is occupied by a claimed/streaming sibling. (An expired pending row reads
                 // as already_claimed, matching DesktopCommandService's 409 wording.)
-                if ($instanceId !== null && $this->releaseAbandoned($ownerUserId, $instanceId)) {
+                if ($instanceId !== null && $this->releaseAbandoned($ownerUserId, $instanceId, ($existing['kind'] ?? null) === self::PICTURE_KIND)) {
                     return $this->claim($id, $ownerUserId, $data);
                 }
                 throw new \RuntimeException('lane_busy');
@@ -761,17 +788,21 @@ class DesktopAiRelayService
      * A desktop runs one turn at a time, so a desktop asking for the next has let go of any it
      * still holds: it was closed or crashed mid-turn, or never heard the reply to its claim. That
      * turn would otherwise hold the lane, and one of the person's two places, until
-     * CLAIMED_STALE_SECONDS had passed. Only the same desktop, and only after a silence: a
-     * desktop that did serve two at once is told lane_busy as it always was.
+     * CLAIMED_STALE_SECONDS had passed. Only the same desktop, only in the lane it asks for
+     * ($picture: the picture lane), and only after a silence: ABANDONED_SECONDS, or for a picture
+     * ABANDONED_PICTURE_SECONDS. A desktop that did serve two at once is told lane_busy as it
+     * always was.
      */
-    private function releaseAbandoned(string $ownerUserId, string $instanceId): bool
+    private function releaseAbandoned(string $ownerUserId, string $instanceId, bool $picture): bool
     {
-        $quiet = self::ABANDONED_SECONDS; // int class constant, safe to interpolate
+        // int class constants, safe to interpolate
+        $quiet = $picture ? self::ABANDONED_PICTURE_SECONDS : self::ABANDONED_SECONDS;
+        $lane = $picture ? "kind = 'image'" : "kind <> 'image'";
         $this->mysql->beginTransaction();
         try {
             $select = $this->mysql->prepare("
                 SELECT id FROM desktop_ai_requests
-                WHERE owner_user_id = :o AND claimed_by = :i AND status IN ('claimed', 'streaming')
+                WHERE owner_user_id = :o AND claimed_by = :i AND status IN ('claimed', 'streaming') AND {$lane}
                   AND claimed_at < (NOW() - INTERVAL {$quiet} SECOND)
                 FOR UPDATE
             ");
@@ -817,23 +848,26 @@ class DesktopAiRelayService
 
     // ── Internals ──
 
-    /** Non-terminal lane occupancy for one requesting user (any target). */
+    /** Non-terminal lane occupancy for one requesting user (any target), App AI's own turns aside. */
     private function countInFlightForUser(string $ownerUserId, string $requestingUserId): int
     {
         $stmt = $this->mysql->prepare("
             SELECT COUNT(*) FROM desktop_ai_requests
             WHERE owner_user_id = :o AND requesting_user_id = :u AND status IN ('pending', 'claimed', 'streaming')
+              AND NOT (source <=> 'app-ai')
         ");
         $stmt->execute(['o' => $ownerUserId, 'u' => $requestingUserId]);
         return (int) $stmt->fetchColumn();
     }
 
-    /** Non-terminal lane occupancy for one target desktop (NULL = the untargeted pool). */
-    /** Turns waiting for or being served by one desktop (SiteDesktopAi keeps its own, smaller cap). */
-    public function inFlightForTarget(string $ownerUserId, string $targetInstanceId): int
+    /**
+     * Turns waiting for or being served by one desktop (SiteDesktopAi keeps its own, smaller caps):
+     * every kind, or with $picture only the picture lane (true) or only the other (false).
+     */
+    public function inFlightForTarget(string $ownerUserId, string $targetInstanceId, ?bool $picture = null): int
     {
         $this->expireStale($ownerUserId);
-        return $this->countInFlightForTarget($ownerUserId, $targetInstanceId);
+        return $this->countInFlightForTarget($ownerUserId, $targetInstanceId, $picture);
     }
 
     /**
@@ -850,12 +884,14 @@ class DesktopAiRelayService
         return $stmt->rowCount() === 1;
     }
 
-    private function countInFlightForTarget(string $ownerUserId, ?string $targetInstanceId): int
+    /** Non-terminal lane occupancy for one target desktop (NULL = the untargeted pool), of one lane or both. */
+    private function countInFlightForTarget(string $ownerUserId, ?string $targetInstanceId, ?bool $picture = null): int
     {
+        $lane = $picture === null ? '' : ($picture ? " AND kind = 'image'" : " AND kind <> 'image'");
         $stmt = $this->mysql->prepare("
             SELECT COUNT(*) FROM desktop_ai_requests
             WHERE owner_user_id = :o AND status IN ('pending', 'claimed', 'streaming')
-              AND target_instance_id <=> :t
+              AND target_instance_id <=> :t{$lane}
         ");
         $stmt->execute(['o' => $ownerUserId, 't' => $targetInstanceId]);
         return (int) $stmt->fetchColumn();

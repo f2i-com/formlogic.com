@@ -45,6 +45,8 @@ Back up `backend/storage/native-apps/`, including private configuration and SQLi
 database snapshots. These records are not included in ordinary form exports. Schedule
 `php bin/native-record-dispatch.php` from the backend directory to retry committed database
 events after interrupted delivery. An execution runtime must still process the queued flows.
+Apps that ask for AI need `php bin/app-ai-worker.php` every minute as well: it sends their requests
+and delivers the results (see [App AI](docs/HOSTED_APPS.md#app-ai-where-it-runs-and-what-the-app-is-delivered)).
 See [native hosting operations](docs/HOSTED_APPS.md#preparing-the-optional-native-runtime).
 
 ## 1. Production launch checklist
@@ -219,6 +221,7 @@ after one started from the admin panel they wait for the next night.
 ```cron
 * * * * *      php /path/to/backend/bin/webhook-worker.php >> /path/to/backend/logs/formlogic-webhooks.log 2>&1
 * * * * *      php /path/to/backend/bin/native-record-dispatch.php >> /path/to/backend/logs/formlogic-native-records.log 2>&1
+* * * * *      php /path/to/backend/bin/app-ai-worker.php >> /path/to/backend/logs/formlogic-app-ai.log 2>&1
 0-59/5 * * * * php /path/to/backend/bin/flow-runs-reclaim.php >> /path/to/backend/logs/formlogic-flow-runs-reclaim.log 2>&1
 0-59/5 * * * * php /path/to/backend/bin/flow-outcome-dispatch.php >> /path/to/backend/logs/formlogic-flow-outcomes.log 2>&1
 11 * * * *     php /path/to/backend/bin/artifact-sweep.php >> /path/to/backend/logs/formlogic-artifacts.log 2>&1

@@ -43,6 +43,11 @@ export function formlogicAsks(project: Pick<NativeProject, 'files'>): string[] {
   return asks;
 }
 
+/** Whether an app's manifest asks for FormLogic's AI (formlogicAi): its owner then chooses where that AI comes from. */
+export function declaresFormlogicAi(project: Pick<NativeProject, 'files'>): boolean {
+  try { return record(record(JSON.parse(project.files['manifest.json'] ?? '{}'))?.formlogicAi) !== null; } catch { return false; }
+}
+
 /**
  * What a project may hold, which the server holds an install to as well (NativeAppService's
  * MAX_* constants; nativeHosting.limits.test.ts keeps the two equal). A game's art and sound run

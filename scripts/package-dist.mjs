@@ -308,6 +308,8 @@ to the crontab of the web server user: a job whose log it can't open never start
   * * * * *  php <web-root>/api/bin/webhook-worker.php >> <web-root>/api/logs/formlogic-webhooks.log 2>&1
   # retry record events after an interrupted delivery
   * * * * *  php <web-root>/api/bin/native-record-dispatch.php >> <web-root>/api/logs/formlogic-native-records.log 2>&1
+  # apps' AI requests: sends them and delivers the results (each run works for about a minute)
+  * * * * *  php <web-root>/api/bin/app-ai-worker.php >> <web-root>/api/logs/formlogic-app-ai.log 2>&1
   # every 5 min: revert flow runs stuck 'running' >10min (crashed claimant) to 'error'
   0-59/5 * * * * php <web-root>/api/bin/flow-runs-reclaim.php >> <web-root>/api/logs/formlogic-flow-runs-reclaim.log 2>&1
   # every 5 min: finish flow outcome events a crash left pending

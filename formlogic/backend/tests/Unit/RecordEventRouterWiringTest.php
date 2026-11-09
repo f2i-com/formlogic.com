@@ -20,6 +20,8 @@ final class RecordEventRouterWiringTest extends TestCase
     private const DISPATCHERS = [
         'src/Controllers/NativeAppController.php' => 2,
         'bin/native-record-dispatch.php' => 1,
+        // App AI's worker catches up on the events of apps with AI on, every few seconds.
+        'src/Services/AppAiWorker.php' => 1,
     ];
 
     public function testEveryDispatcherGoesThroughTheRouter(): void

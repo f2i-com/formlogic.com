@@ -63,7 +63,8 @@ export function OaiyTargetPicker({ candidates, name, onChange, disabled, engineH
     const result = await api.adminOaiyModels(connectionId, id);
     setBusy(null);
     if (result.error || !result.data) { setError(result.error ?? 'That provider did not list its models.'); return; }
-    setModels(result.data.models);
+    // Chat and reading pictures need a language model: a picture or video model cannot answer.
+    setModels(result.data.models.filter((m) => m.type !== 'image' && m.type !== 'video'));
   };
 
   const select = 'block min-h-10 rounded-lg border border-gray-300 bg-white px-2.5 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white';

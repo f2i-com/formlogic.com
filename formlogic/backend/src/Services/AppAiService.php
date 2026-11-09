@@ -39,6 +39,8 @@ class AppAiService
     public const MAX_OPEN_PER_REQUESTER = 2;
     /** Statuses a job holds the AI in (or waits for it). */
     public const OPEN = ['queued', 'sending', 'running'];
+    /** The largest seed a picture may ask for: 2^53 - 1. */
+    public const MAX_SEED = 9007199254740991;
 
     /** @var \Closure(): int */
     private \Closure $now;
@@ -129,11 +131,14 @@ class AppAiService
         if ($settings['blocked']) return $off('ai_blocked', $settings['mode']);
         if ($settings['pausedUntil'] !== null && strtotime((string) $settings['pausedUntil'] . ' UTC') > ($this->now)()) return $off('ai_resting', $settings['mode']);
         if ($this->plans !== null && $this->plans->isEnforced() && !$this->plans->isCloudActive((string) $app['ownerId'])) return $off('plan_inactive', $settings['mode']);
+        // Pictures need a model chosen for them, and this server able to redraw what comes back.
+        $pictures = AppAiPictures::available();
+        $unset = $pictures ? 'model_unset' : 'no_pictures';
         if ($settings['mode'] === 'own') {
             $own = $settings['own'];
             if ($own === null) return $off('own_unset', 'own');
-            $kinds = array_values(array_filter($declared['kinds'], static fn(string $kind) => $kind === 'chat' || ($own['pictureModel'] ?? null) !== null));
-            return ['enabled' => $kinds !== [], 'source' => 'own', 'target' => $own['connectionId'], 'label' => $own['deviceName'] !== '' ? 'OAIY on ' . $own['deviceName'] : 'The owner\'s OAIY', 'kinds' => $kinds, 'reason' => $kinds === [] ? 'model_unset' : null];
+            $kinds = array_values(array_filter($declared['kinds'], static fn(string $kind) => $kind === 'chat' || ($pictures && ($own['pictureModel'] ?? null) !== null)));
+            return ['enabled' => $kinds !== [], 'source' => 'own', 'target' => $own['connectionId'], 'label' => $own['deviceName'] !== '' ? 'OAIY on ' . $own['deviceName'] : 'The owner\'s OAIY', 'kinds' => $kinds, 'reason' => $kinds === [] ? $unset : null];
         }
         if (!$site['allowApps']) return $off('site_ai_closed', 'site');
         $computer = $this->siteDesktop?->current();
@@ -144,8 +149,8 @@ class AppAiService
         } else {
             return $off('site_ai_unavailable', 'site');
         }
-        $kinds = array_values(array_filter($declared['kinds'], static fn(string $kind) => $kind === 'chat' || $site['pictureModel'] !== null));
-        return ['enabled' => $kinds !== [], 'source' => 'site', 'target' => $target, 'label' => 'This site\'s AI', 'kinds' => $kinds, 'reason' => $kinds === [] ? 'model_unset' : null];
+        $kinds = array_values(array_filter($declared['kinds'], static fn(string $kind) => $kind === 'chat' || ($pictures && $site['pictureModel'] !== null)));
+        return ['enabled' => $kinds !== [], 'source' => 'site', 'target' => $target, 'label' => 'This site\'s AI', 'kinds' => $kinds, 'reason' => $kinds === [] ? $unset : null];
     }
 
     // ------------------------------------------------------------------ a request
@@ -343,9 +348,13 @@ class AppAiService
         return null;
     }
 
-    /** The counters a queued job adds one to: [app id, scope, subject, period] each. */
+    /**
+     * The counters a queued job adds one to: [app id, scope, subject, period] each. An owner's test
+     * counts in the app's day and the site's, and against nobody's own allowance.
+     */
     private function counters(string $appId, array $requester, string $day, string $hour): array
     {
+        if ($requester['kind'] === self::TEST_REQUESTER) return [[$appId, 'app', '', $day], ['', 'site', '', $day]];
         return [
             [$appId, 'requester', self::subject($requester), $day],
             [$appId, 'ip', $requester['ipKey'], $day],
@@ -418,8 +427,10 @@ class AppAiService
         if (!is_string($size) || !in_array($size, self::SIZES, true)) return $bad('A picture\'s size is one of ' . implode(', ', self::SIZES) . '.', ['kind' => $kind]);
         $seed = $row['seed'] ?? null;
         if ($seed !== null && $seed !== '') {
-            if (is_string($seed) && preg_match('/^\d{1,10}$/D', $seed)) $seed = (int) $seed;
-            if (!is_int($seed) || $seed < 0 || $seed > 4294967295) return $bad('A seed is a whole number from 0 to 4294967295.', ['kind' => $kind]);
+            // OAIY takes 0 to 2^53 - 1, the whole numbers JavaScript holds exactly (contract §0.9).
+            if (is_string($seed) && preg_match('/^\d{1,16}$/D', $seed)) $seed = (int) $seed;
+            if (is_float($seed) && floor($seed) === $seed && $seed >= 0 && $seed <= self::MAX_SEED) $seed = (int) $seed;
+            if (!is_int($seed) || $seed < 0 || $seed > self::MAX_SEED) return $bad('A seed is a whole number from 0 to ' . self::MAX_SEED . '.', ['kind' => $kind]);
         } else {
             $seed = null;
         }
@@ -443,10 +454,351 @@ class AppAiService
         'site_ai_closed' => 'The site does not offer its AI to apps.',
         'site_ai_unavailable' => 'The site\'s AI is not set up.',
         'model_unset' => 'No model is chosen for this kind of request yet.',
+        'no_pictures' => 'This server cannot draw pictures for apps: it needs PHP\'s GD extension.',
         'not_offered' => 'This kind of AI request is not available for this app right now.',
         'visitor_required' => 'Open the app in your browser to use its AI.',
         'subscriptions_full' => 'This app watches too many of its tables for its AI requests to be seen. Its owner can remove a database automation.',
     ];
+
+    // ------------------------------------------------------------------ the owner's "AI for this app"
+
+    /** A test's picture and chat: small, and the same every time. */
+    public const TEST_PICTURE = 'A small round badge with a coffee cup, flat colours, on a white background';
+    public const TEST_CHAT = [['role' => 'user', 'content' => 'Say hello in five words.']];
+    /** The requester a test job is recorded under: never a member or a visitor, so never delivered to the app. */
+    public const TEST_REQUESTER = 'test';
+    /** A test's address key: it counts against no address. */
+    private const TEST_IP_KEY = '0000000000000000';
+    /** Jobs the owner's page lists. */
+    private const LOG_ROWS = 50;
+
+    /**
+     * The owner's "AI for this app" (AppAiController): what the app declares, its settings, where its
+     * AI comes from now, how its queue is doing, today's numbers and its latest requests.
+     */
+    public function ownerView(array $app): array
+    {
+        $appId = (string) $app['id'];
+        $declared = AppFormlogicManifest::ai($this->native->installedManifest($appId));
+        $settings = $this->settings($appId);
+        $available = $declared === null
+            ? ['enabled' => false, 'source' => 'off', 'target' => null, 'label' => '', 'kinds' => [], 'reason' => 'ai_off']
+            : $this->availability($app, $declared, $settings);
+        $day = $this->day();
+        $pdo = $this->pdo();
+        $today = $pdo->prepare("SELECT SUM(status = 'failed' AND code <> 'undelivered') AS failed, SUM(status = 'refused') AS refused FROM app_ai_jobs WHERE app_id = ? AND counted_day = ? AND requester_kind <> ?");
+        $today->execute([$appId, $day, self::TEST_REQUESTER]);
+        $counts = $today->fetch(PDO::FETCH_ASSOC) ?: [];
+        $log = $pdo->prepare('SELECT id, app_job_id, kind, status, code, message, requester_kind, requester_id, created_at, started_at, finished_at FROM app_ai_jobs WHERE app_id = ? ORDER BY created_at DESC LIMIT ' . self::LOG_ROWS);
+        $log->execute([$appId]);
+        unset($settings['appId']);
+        return [
+            'declared' => $declared === null ? null : ['uses' => $declared['uses'], 'purpose' => $declared['purpose'], 'table' => $declared['table'], 'deliver' => $declared['deliver']],
+            'settings' => $settings,
+            'availability' => array_diff_key($available, ['target' => true]),
+            'reasonText' => $available['reason'] !== null ? (self::REASONS[$available['reason']] ?? null) : null,
+            'siteOffers' => (bool) $this->site->current()['allowApps'],
+            'status' => $this->status($appId, $settings, $available),
+            'today' => [
+                'jobs' => $this->used($appId, 'app', '', $day),
+                'failed' => (int) ($counts['failed'] ?? 0),
+                'refused' => (int) ($counts['refused'] ?? 0),
+            ],
+            'log' => array_map(static fn(array $row): array => [
+                'id' => (string) $row['id'],
+                'appJobId' => (string) $row['app_job_id'],
+                'kind' => (string) $row['kind'],
+                'status' => (string) $row['status'],
+                'code' => $row['code'],
+                'message' => $row['message'],
+                // Who asked, as far as the owner needs: never a visitor's whole id or an address.
+                'requester' => match ($row['requester_kind']) {
+                    self::TEST_REQUESTER => 'Test',
+                    'user' => 'Member ' . substr((string) $row['requester_id'], 0, 8),
+                    default => 'Visitor ' . substr((string) $row['requester_id'], 0, 6),
+                },
+                'test' => $row['requester_kind'] === self::TEST_REQUESTER,
+                'createdAt' => (string) $row['created_at'],
+                'finishedAt' => $row['finished_at'],
+                'seconds' => $row['started_at'] !== null && $row['finished_at'] !== null
+                    ? round(max(0.0, self::seconds((string) $row['finished_at']) - self::seconds((string) $row['started_at'])), 1) : null,
+            ], $log->fetchAll(PDO::FETCH_ASSOC)),
+        ];
+    }
+
+    /** How the app's AI is doing now, in a sentence for its owner. */
+    private function status(string $appId, array $settings, array $available): array
+    {
+        $statement = $this->pdo()->prepare("SELECT SUM(status = 'queued') AS waiting, SUM(status IN ('sending','running')) AS running, MIN(CASE WHEN status = 'queued' THEN created_at END) AS since FROM app_ai_jobs WHERE app_id = ?");
+        $statement->execute([$appId]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC) ?: [];
+        $waiting = (int) ($row['waiting'] ?? 0);
+        $running = (int) ($row['running'] ?? 0);
+        $out = static fn(string $state, string $message) => ['state' => $state, 'waiting' => $waiting, 'running' => $running, 'since' => $row['since'] ?? null, 'message' => $message];
+        if ($settings['mode'] === 'off') return $out('off', 'AI is off for this app: it is told so, and nothing is sent anywhere.');
+        if ($settings['blocked']) return $out('blocked', 'The site\'s administrator has stopped this app\'s AI' . ($settings['blockedReason'] ? ': ' . $settings['blockedReason'] : '.'));
+        if (!$available['enabled']) {
+            $reason = (string) $available['reason'];
+            if ($reason === 'ai_resting') return $out('paused', 'Its AI failed five times in a row, so it is resting until ' . gmdate('H:i', (int) strtotime((string) $settings['pausedUntil'] . ' UTC')) . ' UTC.');
+            return $out($reason === 'ai_paused' ? 'paused' : 'off', self::REASONS[$reason] ?? self::REASONS['ai_off']);
+        }
+        if ($available['target'] !== 'env' && !$this->computerOnline($appId, $settings, $available)) {
+            return $out('offline', 'The computer its AI runs on is offline. Requests wait for it, for up to 30 minutes.');
+        }
+        if ($waiting + $running > 0) return $out('busy', "Working on {$running}, with {$waiting} waiting.");
+        return $out('idle', 'Ready: ' . $available['label'] . '.');
+    }
+
+    /** Whether the OAIY computer the app's AI goes to has been heard from in the last 90 seconds. */
+    private function computerOnline(string $appId, array $settings, array $available): bool
+    {
+        if ($this->siteDesktop === null) return false;
+        if ($available['source'] === 'own') {
+            $own = $settings['own'];
+            return $own !== null && $this->siteDesktop->online(['connectionId' => $own['connectionId'], 'ownerUserId' => (string) ($this->app($appId)['ownerId'] ?? '')]);
+        }
+        $computer = $this->siteDesktop->current();
+        return $computer !== null && $this->siteDesktop->online($computer);
+    }
+
+    /**
+     * Save the owner's settings: {mode: off|site|own, perRequesterDay, perIpDay, perIpHour, perAppDay}.
+     * On the site's AI an app may make at most the site's default requests a day (the administrator's
+     * ceiling for every app). Answers the owner's view.
+     */
+    public function saveSettings(array $app, array $input, string $userId): array
+    {
+        $appId = (string) $app['id'];
+        if (AppFormlogicManifest::ai($this->native->installedManifest($appId)) === null) throw new \InvalidArgumentException('This app does not ask for AI: its manifest has no formlogicAi section.');
+        $current = $this->settings($appId);
+        $site = $this->site->current();
+        $mode = $input['mode'] ?? $current['mode'];
+        if (!in_array($mode, ['off', 'site', 'own'], true)) throw new \InvalidArgumentException('Choose off, this site\'s AI, or your own OAIY.');
+        if ($mode === 'site' && !$site['allowApps'] && $current['mode'] !== 'site') throw new \InvalidArgumentException(self::REASONS['site_ai_closed']);
+        if ($mode === 'own' && $current['own'] === null) throw new \InvalidArgumentException('Choose one of your linked computers first.');
+        $labels = ['perRequesterDay' => 'Requests per visitor or member a day', 'perIpDay' => 'Requests per address a day', 'perIpHour' => 'Requests per address an hour', 'perAppDay' => 'Requests for the whole app a day'];
+        $limits = [];
+        foreach (AppAiSiteSettings::LIMITS as $key => $range) {
+            $value = array_key_exists($key, $input) ? $input[$key] : $current[$key];
+            $limits[$key] = AppAiSiteSettings::limit($value, $labels[$key], $range);
+        }
+        if ($mode === 'site' && $limits['perAppDay'] > $site['defaults']['perAppDay']) {
+            throw new \InvalidArgumentException("On this site's AI, an app may make at most {$site['defaults']['perAppDay']} requests a day.");
+        }
+        $this->pdo()->prepare(
+            'INSERT INTO app_ai_settings (app_id, mode, per_requester_day, per_ip_day, per_ip_hour, per_app_day, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE mode = VALUES(mode), per_requester_day = VALUES(per_requester_day), per_ip_day = VALUES(per_ip_day),
+             per_ip_hour = VALUES(per_ip_hour), per_app_day = VALUES(per_app_day), updated_by = VALUES(updated_by)'
+        )->execute([$appId, $mode, $limits['perRequesterDay'], $limits['perIpDay'], $limits['perIpHour'], $limits['perAppDay'], $userId]);
+        // An owner who turns the AI back on gives it a fresh start.
+        if ($mode !== 'off') $this->pdo()->prepare('UPDATE app_ai_settings SET paused_until = NULL, failures_in_row = 0 WHERE app_id = ? AND paused_until IS NOT NULL AND ? <> ?')->execute([$appId, $mode, $current['mode']]);
+        return $this->ownerView($app);
+    }
+
+    /**
+     * Queue a test for the owner: a small picture (512 px) or a five-word chat, sent where the app's
+     * visitors' requests go, and kept for the owner to see, never delivered to the app. It counts in
+     * the app's day and the site's, like any job; one test at a time per app.
+     */
+    public function queueTest(array $app, string $kind): string
+    {
+        $appId = (string) $app['id'];
+        $declared = AppFormlogicManifest::ai($this->native->installedManifest($appId)) ?? throw new \RuntimeException('This app does not ask for AI.');
+        $kind = $kind === 'chat' ? 'chat' : 'picture';
+        $pdo = $this->pdo();
+        $now = ($this->now)();
+        $day = gmdate('Y-m-d', $now);
+        $hour = gmdate('Y-m-d\TH', $now);
+        $site = $this->site->current();
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare('INSERT IGNORE INTO app_ai_settings (app_id, per_requester_day, per_ip_day, per_ip_hour, per_app_day) VALUES (?, ?, ?, ?, ?)')
+                ->execute([$appId, $site['defaults']['perRequesterDay'], $site['defaults']['perIpDay'], $site['defaults']['perIpHour'], $site['defaults']['perAppDay']]);
+            $lock = $pdo->prepare('SELECT * FROM app_ai_settings WHERE app_id = ? FOR UPDATE');
+            $lock->execute([$appId]);
+            $settings = self::shape($lock->fetch(PDO::FETCH_ASSOC));
+            $available = $this->availability($app, $declared, $settings);
+            if (!$available['enabled']) throw new \RuntimeException(self::REASONS[$available['reason']] ?? self::REASONS['ai_off']);
+            if (!in_array($kind, $available['kinds'], true)) throw new \RuntimeException($kind === 'chat' ? 'This app does not use chat.' : self::REASONS['model_unset']);
+            $open = $pdo->prepare("SELECT COUNT(*) FROM app_ai_jobs WHERE app_id = ? AND requester_kind = ? AND status IN ('queued','sending','running')");
+            $open->execute([$appId, self::TEST_REQUESTER]);
+            if ((int) $open->fetchColumn() > 0) throw new \RuntimeException('A test is already running. Wait for it to finish.');
+            if ($this->used($appId, 'app', '', $day) >= $settings['perAppDay']) throw new \RuntimeException('This app has used its AI for today.');
+            if ($available['source'] === 'site') {
+                $pdo->prepare("INSERT IGNORE INTO app_ai_counters (app_id, scope, subject, period, used) VALUES ('', 'site', '', ?, 0)")->execute([$day]);
+                $siteRow = $pdo->prepare("SELECT used FROM app_ai_counters WHERE app_id = '' AND scope = 'site' AND subject = '' AND period = ? FOR UPDATE");
+                $siteRow->execute([$day]);
+                if ((int) $siteRow->fetchColumn() >= (int) $site['siteDay']) throw new \RuntimeException('The site\'s AI has done all it can for apps today.');
+            }
+            $id = bin2hex(random_bytes(16));
+            $prompt = $kind === 'chat' ? json_encode(self::TEST_CHAT, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) : self::TEST_PICTURE;
+            $pdo->prepare(
+                'INSERT INTO app_ai_jobs (id, app_id, event_id, app_job_id, requester_kind, requester_id, ip_key, kind, status, source, target, prompt, prompt_sha256, size, counted_day, counted_hour, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $id, $appId, bin2hex(random_bytes(16)), 'test-' . substr($id, 0, 8), self::TEST_REQUESTER, (string) $app['ownerId'], self::TEST_IP_KEY,
+                $kind, 'queued', $available['source'] . '-' . ($available['target'] === 'env' ? 'env' : 'oaiy'), $available['target'],
+                $prompt, hash('sha256', $prompt), $kind === 'chat' ? null : '512x512', $day, $hour, self::stamp($this->realClock ? microtime(true) : $now),
+            ]);
+            foreach ($this->counters($appId, ['kind' => self::TEST_REQUESTER, 'id' => (string) $app['ownerId'], 'ipKey' => self::TEST_IP_KEY], $day, $hour) as [$counterApp, $scope, $subject, $period]) {
+                $pdo->prepare('INSERT INTO app_ai_counters (app_id, scope, subject, period, used) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE used = used + 1')
+                    ->execute([$counterApp, $scope, $subject, $period]);
+            }
+            $pdo->commit();
+            return $id;
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    /**
+     * How a test is getting on: {status: queued|running|done|failed, picture?, text?, model, seed,
+     * seconds, code?, message?}, or null when $jobId is not a test of this app. $results is where the
+     * worker keeps results (AppAiWorker).
+     */
+    public function testResult(string $appId, string $jobId, string $results): ?array
+    {
+        if (!preg_match('/^[a-f0-9]{32}$/D', $jobId)) return null;
+        $statement = $this->pdo()->prepare('SELECT * FROM app_ai_jobs WHERE id = ? AND app_id = ? AND requester_kind = ?');
+        $statement->execute([$jobId, $appId, self::TEST_REQUESTER]);
+        $job = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($job)) return null;
+        $seconds = $job['started_at'] !== null && $job['finished_at'] !== null ? round(max(0.0, self::seconds((string) $job['finished_at']) - self::seconds((string) $job['started_at'])), 1) : null;
+        if (in_array($job['status'], ['queued', 'sending'], true)) return ['status' => 'queued'];
+        if ($job['status'] === 'running') return ['status' => 'running'];
+        if ($job['status'] === 'done') {
+            $result = $job['result_path'] !== null ? json_decode((string) @file_get_contents($results . '/' . basename((string) $job['result_path'])), true) : null;
+            if (!is_array($result)) return ['status' => 'failed', 'code' => 'expired', 'message' => 'This test\'s result is no longer kept. Run it again.', 'seconds' => $seconds];
+            return ['status' => 'done', 'seconds' => $seconds] + array_intersect_key($result, array_flip(['picture', 'text', 'model', 'seed', 'mimeType', 'width', 'height']));
+        }
+        return ['status' => 'failed', 'code' => $job['code'], 'message' => $job['message'], 'seconds' => $seconds];
+    }
+
+    // ------------------------------------------------------------------ the administrator's "AI for apps"
+
+    /** Every app that has used or set up AI: its settings and today's numbers, busiest first. */
+    public function adminOverview(): array
+    {
+        $day = $this->day();
+        $statement = $this->pdo()->prepare(
+            "SELECT s.app_id, s.mode, s.blocked_by_admin, s.blocked_reason, s.paused_until, a.name, u.email AS owner_email,
+                    COALESCE(c.used, 0) AS jobs_today,
+                    (SELECT COUNT(*) FROM app_ai_jobs j WHERE j.app_id = s.app_id AND j.counted_day = ? AND j.status = 'failed') AS failed_today
+             FROM app_ai_settings s
+             JOIN apps a ON a.id = s.app_id
+             LEFT JOIN users u ON u.id = a.owner_id
+             LEFT JOIN app_ai_counters c ON c.app_id = s.app_id AND c.scope = 'app' AND c.subject = '' AND c.period = ?
+             ORDER BY jobs_today DESC, a.name LIMIT 200"
+        );
+        $statement->execute([$day, $day]);
+        return array_map(static fn(array $row): array => [
+            'appId' => (string) $row['app_id'],
+            'name' => (string) $row['name'],
+            'ownerEmail' => (string) ($row['owner_email'] ?? ''),
+            'mode' => (string) $row['mode'],
+            'jobsToday' => (int) $row['jobs_today'],
+            'failedToday' => (int) $row['failed_today'],
+            'blocked' => (bool) $row['blocked_by_admin'],
+            'blockedReason' => $row['blocked_reason'],
+            'pausedUntil' => $row['paused_until'],
+        ], $statement->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    /**
+     * What the administrator should know about App AI now: a picture model the computer refused in the
+     * last day (switched off, or its files missing), or none chosen while apps may use the site's AI.
+     *
+     * @return list<array{code: string, message: string}>
+     */
+    public function adminWarnings(): array
+    {
+        $warnings = [];
+        $site = $this->site->current();
+        if ($site['allowApps'] && $site['pictureModel'] === null) {
+            $warnings[] = ['code' => 'picture_model_unset', 'message' => 'Apps may use this site\'s AI, but no picture model is chosen, so they can ask for chat only.'];
+        }
+        $statement = $this->pdo()->prepare("SELECT code, message, model, MAX(finished_at) AS last_at FROM app_ai_jobs WHERE code IN ('model_disabled', 'model_unknown') AND finished_at > ? GROUP BY code, message, model ORDER BY last_at DESC LIMIT 3");
+        $statement->execute([self::stamp(($this->now)() - 86400)]);
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $warnings[] = ['code' => (string) $row['code'], 'message' => ($row['code'] === 'model_disabled'
+                ? 'The picture model ' . ($row['model'] ?? '') . ' is switched off or missing its files on the AI computer: '
+                : 'The AI computer does not know the picture model ' . ($row['model'] ?? '') . ': ') . (string) $row['message']];
+        }
+        return $warnings;
+    }
+
+    /** Whether any job has waited at least $seconds to be sent or delivered (the worker is not running, if so). */
+    public function jobsWaitingFor(int $seconds): bool
+    {
+        $statement = $this->pdo()->prepare("SELECT 1 FROM app_ai_jobs WHERE status IN ('queued', 'delivering') AND (next_attempt_at IS NULL OR next_attempt_at < ?) AND created_at < ? LIMIT 1");
+        $statement->execute([self::stamp(($this->now)() - $seconds), self::stamp(($this->now)() - $seconds)]);
+        return $statement->fetchColumn() !== false;
+    }
+
+    /** Stop (or let again) one app's AI. Its waiting jobs are told so as the worker next looks. */
+    public function block(string $appId, bool $blocked, ?string $reason, string $adminId): void
+    {
+        $defaults = $this->site->current()['defaults'];
+        $this->pdo()->prepare(
+            'INSERT INTO app_ai_settings (app_id, per_requester_day, per_ip_day, per_ip_hour, per_app_day, blocked_by_admin, blocked_reason, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE blocked_by_admin = VALUES(blocked_by_admin), blocked_reason = VALUES(blocked_reason), updated_by = VALUES(updated_by)'
+        )->execute([$appId, $defaults['perRequesterDay'], $defaults['perIpDay'], $defaults['perIpHour'], $defaults['perAppDay'], $blocked ? 1 : 0, $blocked ? $reason : null, $adminId]);
+    }
+
+    // ------------------------------------------------------------------ keeping
+
+    /**
+     * What App AI keeps, kept no longer than it needs (bin/privacy-sweep.php, and the worker now and
+     * then): prompts and pictures to edit are cleared after $promptDays, rows removed after $rowDays,
+     * counters after three days, and results the worker no longer needs (a test's after an hour)
+     * deleted from $results. Answers what it did.
+     */
+    public function sweep(string $results, int $promptDays = 30, int $rowDays = 90): array
+    {
+        $pdo = $this->pdo();
+        $now = ($this->now)();
+        $cleared = $pdo->prepare('UPDATE app_ai_jobs SET prompt = NULL, reference = NULL WHERE created_at < ? AND (prompt IS NOT NULL OR reference IS NOT NULL)');
+        $cleared->execute([self::stamp($now - $promptDays * 86400)]);
+        $old = $pdo->prepare('SELECT id, result_path FROM app_ai_jobs WHERE created_at < ?');
+        $old->execute([self::stamp($now - $rowDays * 86400)]);
+        $removed = 0;
+        foreach (array_chunk($old->fetchAll(PDO::FETCH_ASSOC), 500) as $chunk) {
+            foreach ($chunk as $row) {
+                if ($row['result_path'] !== null) @unlink($results . '/' . basename((string) $row['result_path']));
+            }
+            $marks = implode(',', array_fill(0, count($chunk), '?'));
+            $delete = $pdo->prepare("DELETE FROM app_ai_jobs WHERE id IN ({$marks})");
+            $delete->execute(array_column($chunk, 'id'));
+            $removed += $delete->rowCount();
+        }
+        $counters = $pdo->prepare('DELETE FROM app_ai_counters WHERE period < ?');
+        $counters->execute([gmdate('Y-m-d', $now - 3 * 86400)]);
+        // A test's result once the owner has had an hour to look at it.
+        $tests = $pdo->prepare("SELECT id, result_path FROM app_ai_jobs WHERE requester_kind = ? AND result_path IS NOT NULL AND finished_at < ?");
+        $tests->execute([self::TEST_REQUESTER, self::stamp($now - 3600)]);
+        $files = 0;
+        foreach ($tests->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            if (@unlink($results . '/' . basename((string) $row['result_path']))) $files++;
+            $pdo->prepare('UPDATE app_ai_jobs SET result_path = NULL WHERE id = ?')->execute([$row['id']]);
+        }
+        // Anything left behind by a worker that stopped mid-delivery, a day on.
+        foreach (glob($results . '/*.json') ?: [] as $file) {
+            if (filemtime($file) < $now - 86400) {
+                $job = $pdo->prepare("SELECT 1 FROM app_ai_jobs WHERE result_path = ? AND status = 'delivering'");
+                $job->execute([basename($file)]);
+                if ($job->fetchColumn() === false && @unlink($file)) $files++;
+            }
+        }
+        return ['promptsCleared' => $cleared->rowCount(), 'rowsRemoved' => $removed, 'countersRemoved' => $counters->rowCount(), 'filesRemoved' => $files];
+    }
+
+    /** A DATETIME(3) value read as seconds since the epoch. */
+    private static function seconds(string $stamp): float
+    {
+        $whole = strtotime(substr($stamp, 0, 19) . ' UTC');
+        return (float) $whole + (strlen($stamp) > 20 ? (float) ('0' . substr($stamp, 19)) : 0.0);
+    }
 
     // ------------------------------------------------------------------ helpers
 

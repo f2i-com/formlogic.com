@@ -107,6 +107,21 @@ class AIService
         return !in_array($v, ['false', '0', 'no', 'off'], true);
     }
 
+    /**
+     * The .env upstream as App AI's worker asks it directly (AppAiUpstream): {url, key, model}, or
+     * null when the in-app AI is off or no upstream is set. The key is already cleared where
+     * keyBlockedOverHttp() says it must be.
+     *
+     * @return ?array{url: string, key: string, model: string}
+     */
+    public function envUpstream(): ?array
+    {
+        if (!$this->isEnabled() || ($this->apiKey === '' && !$this->isCustomEndpoint())) {
+            return null;
+        }
+        return ['url' => $this->apiUrl, 'key' => $this->apiKey, 'model' => $this->model];
+    }
+
     /** True when pointed at a non-OpenAI (e.g. local / self-hosted) OpenAI-compatible endpoint. */
     private function isCustomEndpoint(): bool
     {

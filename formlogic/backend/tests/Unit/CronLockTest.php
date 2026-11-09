@@ -51,7 +51,7 @@ final class CronLockTest extends TestCase
 
     public function testEveryScheduledScriptTakesItsLockFromThisInstall(): void
     {
-        foreach (['webhook-worker', 'privacy-sweep', 'idempotency-cleanup', 'flow-runs-reclaim', 'flow-outcome-dispatch', 'desktop-commands-cleanup'] as $job) {
+        foreach (['webhook-worker', 'privacy-sweep', 'idempotency-cleanup', 'flow-runs-reclaim', 'flow-outcome-dispatch', 'desktop-commands-cleanup', 'app-ai-worker'] as $job) {
             $source = (string) file_get_contents(dirname(__DIR__, 2) . "/bin/{$job}.php");
             $this->assertStringContainsString("CronLock::take('{$job}')", $source);
             $this->assertStringNotContainsString('sys_get_temp_dir', $source);

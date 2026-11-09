@@ -943,6 +943,14 @@ $container->set(\FormLogic\Services\AppAiService::class, function (Container $c)
 $container->set(\FormLogic\Services\NativeRecordEventRouter::class, function (Container $c) {
     return new \FormLogic\Services\NativeRecordEventRouter($c->get(\FormLogic\Services\FlowService::class), $c->get(\FormLogic\Services\AppAiService::class));
 });
+$container->set(\FormLogic\Controllers\AppAiController::class, function (Container $c) {
+    return new \FormLogic\Controllers\AppAiController(
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\AppAiService::class),
+        $c->get(\FormLogic\Services\AppAiSiteSettings::class),
+        $c->get(AuditService::class)
+    );
+});
 $container->set(\FormLogic\Services\NativePhoneVerification::class, function (Container $c) {
     return new \FormLogic\Services\NativePhoneVerification($c->get(\FormLogic\Services\NativeAppService::class));
 
@@ -1808,6 +1816,18 @@ $app->group('/api/admin', function (RouteCollectorProxy $group) use ($container,
     });
     $group->post('/camera-check/trial', function ($request, $response) use ($cameraChecks) {
         return $cameraChecks()->adminTrial($request, $response);
+    });
+    // AI for apps (AppAiController): whether apps may use the site's AI, its models and limits, every
+    // app's use of it, and a stop for one app.
+    $appAi = fn () => $container->get(\FormLogic\Controllers\AppAiController::class);
+    $group->get('/app-ai', function ($request, $response) use ($appAi) {
+        return $appAi()->adminGet($request, $response);
+    });
+    $group->put('/app-ai', function ($request, $response) use ($appAi) {
+        return $appAi()->adminPut($request, $response);
+    });
+    $group->put('/app-ai/apps/{id}', function ($request, $response) use ($appAi, $adminArgs) {
+        return $appAi()->adminBlock($request, $response, $adminArgs($request));
     });
 })->add(new \FormLogic\Middleware\PluginAccountGuardMiddleware($container->get(AppService::class)))
   ->add($adminWritesConfirmed)->add($adminRateLimiter)->add($adminGate)->add($authRequired);
@@ -3482,6 +3502,21 @@ $app->get('/api/apps/{id}/native/{operation:verification}', function ($request, 
 $app->map(['PUT', 'DELETE'], '/api/apps/{id}/native/{operation:verification}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($hostingLimiter)->add($authRequired);
+// The owner's "AI for this app" (AppAiController): where its AI comes from and its limits, read as the
+// rest of its settings are; a test runs a real job, so it has a small budget of its own.
+$app->get('/api/apps/{id}/ai', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppAiController::class)->ownerGet($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
+$app->put('/api/apps/{id}/ai', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppAiController::class)->ownerPut($request, $response, $getArgs($request));
+})->add($hostingLimiter)->add($authRequired);
+$appAiTestLimiter = new RateLimitMiddleware($rateLimiter, 10, 3600, 'app_ai_tests', true, true);
+$app->post('/api/apps/{id}/ai/test', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppAiController::class)->ownerTest($request, $response, $getArgs($request));
+})->add($appAiTestLimiter)->add($authRequired);
+$app->get('/api/apps/{id}/ai/test/{job:[a-f0-9]{32}}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppAiController::class)->ownerTestResult($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
 // The app's data from where it ran before: its database, and the key it was kept under.
 $app->post('/api/apps/{id}/native/{operation:import}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));

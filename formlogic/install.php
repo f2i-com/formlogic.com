@@ -1725,6 +1725,10 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
           <code>* * * * * php <?= $backendAbsHtml ?>/bin/native-record-dispatch.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-native-records.log 2&gt;&amp;1</code>
         </li>
         <li style="margin-bottom:10px;">
+          <strong>App AI</strong> — sends apps' AI requests (pictures, chat) and delivers the results; each run works for about a minute:<br>
+          <code>* * * * * php <?= $backendAbsHtml ?>/bin/app-ai-worker.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-app-ai.log 2&gt;&amp;1</code>
+        </li>
+        <li style="margin-bottom:10px;">
           <strong>Offline-sync ledger cleanup</strong> — nightly prune of idempotency rows older than
           30 days (replayed offline submissions no longer need them):<br>
           <code>17 3 * * * php <?= $backendAbsHtml ?>/bin/idempotency-cleanup.php &gt;&gt; <?= $backendAbsHtml ?>/logs/formlogic-idempotency.log 2&gt;&amp;1</code>

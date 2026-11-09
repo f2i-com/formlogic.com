@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = '6a96b0553db55854aad3680c73216bdd';
+    public const SCHEMA_STAMP = 'cb96e1c597ba4fd5d031f65af665966a';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -1161,6 +1161,7 @@ class MySQLConnection
                 claimed_at TIMESTAMP NULL,
                 finished_at TIMESTAMP NULL,
                 expires_at TIMESTAMP NOT NULL,
+                source VARCHAR(16) NULL,
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (requesting_user_id) REFERENCES users(id) ON DELETE CASCADE,
                 UNIQUE KEY uniq_desktop_ai_idem (owner_user_id, idempotency_key),
@@ -1168,6 +1169,11 @@ class MySQLConnection
                 INDEX idx_desktop_ai_target (owner_user_id, target_instance_id, status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+        // Who queued a turn, when the server did (DesktopAiRelayService::SOURCE_APP_AI): App AI's turns
+        // keep their own limits. Every row before this is NULL, a person's own, as it was.
+        if ($pdo->query("SHOW COLUMNS FROM desktop_ai_requests LIKE 'source'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE desktop_ai_requests ADD COLUMN source VARCHAR(16) NULL');
+        }
 
         // Sealed stream frames for the AI lane: AUTO_INCREMENT seq is the delivery cursor
         // (SSE/out = desktop reply deltas, in = browser confirm-mode input), purged with

@@ -13,6 +13,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
 import { SoftnLookPanel } from '../../components/apps/SoftnLookPanel';
 import { PhoneSignInPanel } from '../../components/apps/PhoneSignInPanel';
+import { AppAiPanel } from '../../components/apps/AppAiPanel';
 import { BringDataPanel } from '../../components/apps/BringDataPanel';
 import { AddBackendPanel } from '../../components/apps/AddBackendPanel';
 import { RequirementsSetting } from '../../components/apps/RequirementsSetting';
@@ -27,7 +28,7 @@ import { DRAFT_KEEPING, useNativeProjectDraft } from '../../components/studio/us
 import { useAiReady } from '../../hooks/useAiReady';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { api } from '../../lib/api';
-import { exportNativeProject, importNativeProject, type NativeProject } from '../../lib/nativeHosting';
+import { declaresFormlogicAi, exportNativeProject, importNativeProject, type NativeProject } from '../../lib/nativeHosting';
 import { isSoftnApp, projectFromUpload, projectHasBackend } from '../../lib/softnApps';
 import { cn, copyToClipboard } from '../../lib/utils';
 import { useAppStore } from '../../stores/appStore';
@@ -388,6 +389,9 @@ function Workspace({ app }: { app: App }) {
           {app.ownerId === userId && backend && <Panel title="Phone sign-in codes" icon={<MessageSquare className="h-4 w-4" />}>
             <PhoneSignInPanel appId={app.id} version={version} disabled={readOnly} />
           </Panel>}
+          {app.ownerId === userId && backend && declaresFormlogicAi(project) && <div className="min-w-0 lg:col-span-2"><Panel title="AI for this app" icon={<Sparkles className="h-4 w-4" />}>
+            <AppAiPanel appId={app.id} />
+          </Panel></div>}
           {app.ownerId === userId && <Panel title="Look and sharing" icon={<Palette className="h-4 w-4" />}>
 
             <SoftnLookPanel project={project} look={app.settings?.softnLook} themeColor={app.settings?.pwaThemeColor} disabled={readOnly} onSave={changeLook} />

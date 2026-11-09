@@ -277,7 +277,7 @@ rolls back (an exception, or an answer with `rollback: true`) asks for nothing. 
 | `kind` | `picture`, `edit` or `chat`; it must be one of the app's `uses` |
 | `prompt` | a picture or edit's prompt, up to 4,000 characters |
 | `size` | `512x512`, `768x768`, `1024x1024` (the default), `1024x768` or `768x1024` |
-| `seed` | optional, 0 to 4294967295 |
+| `seed` | optional, 0 to 9007199254740991 (2^53 − 1); without one, the AI picks one and the delivery reports it |
 | `reference` | an edit's picture: a PNG, JPEG or WebP data URL of at most 2 MB |
 | `messages` | a chat job's JSON list of 1 to 24 `{role: system/user/assistant, content}`, up to 16,000 characters |
 
@@ -304,6 +304,74 @@ lock, the request leaves its event for the next dispatch.
 
 Addresses are kept only as a keyed hash. They are only as good as the site's
 `TRUSTED_PROXIES` setting (see [Before going live](#before-going-live)).
+
+### App AI: where it runs, and what the app is delivered
+
+**The owner chooses.** An app that declares `formlogicAi` has **AI for this app** in its Settings tab:
+off (the start), **this site's AI** (where the administrator offers it, Admin → Platform → AI for
+apps), or later **their own OAIY**. The owner sets the limits above, within the administrator's
+ceiling for apps on the site's AI, and a **Test** button runs a real small job (a 512 px picture, or a
+five-word chat), counted in the app's day, kept for the owner for an hour and never delivered to the
+app. The page shows where the AI comes from now, whether its computer is online, what is waiting, and
+the app's latest 50 jobs. An administrator acting as the owner may look but not change it.
+
+**The worker** (`bin/app-ai-worker.php`, AppAiWorker) sends the jobs and delivers the results. Run it
+every minute from cron (each run works for about 55 seconds and finishes what it started), or under a
+supervisor with `--watch`:
+
+```
+* * * * * cd /path/to/formlogic/backend && php bin/app-ai-worker.php >> logs/app-ai-worker.log 2>&1
+```
+
+- **Where a job goes.** The app's choice when the job is sent: the site's OAIY computer (Admin →
+  Platform → Plans & AI → Serve it from your OAIY), the owner's own, or the `.env` upstream
+  (`AI_BASE_URL`, in Studio's gateway form: `POST /images/generations`, an edit's picture as
+  `images: ["data:…"]`, `incognito: true` and `X-OAIY-Incognito: 1`).
+- **One picture at a time on a computer, and a chat beside it.** The desktop AI lane gives pictures
+  (`kind: "image"`) a claim of their own, so a computer holds one picture and one request of any other
+  kind; a picture never takes one of the members' three chat places. App AI's own requests are queued
+  as the app's owner but never take the owner's own two places (`desktop_ai_requests.source =
+  'app-ai'`). The `.env` upstream takes one picture and two chats at once.
+- **Fair turns.** On each computer the app served least recently goes first, then within it the
+  requester served least recently, then the oldest job. A job waiting 30 minutes runs out
+  (`expired`).
+- **A picture being drawn is kept alive** by OAIY's progress frames, about every 15 seconds; one silent
+  for 5 minutes is let go. A job that never reached the AI, or whose answer was lost (a restarted
+  worker carries on from the job's row: the turn's key is kept there, sealed with
+  `DATA_ENCRYPTION_KEY` where one is set), is sent once more. OAIY's `busy` (Studio's own queue full)
+  is tried again up to four times, 30 seconds apart. Five failures of the AI in a row rest the app's AI
+  for 10 minutes (`ai.reason: "ai_resting"`).
+
+**The delivery.** FormLogic posts each result, as the site, to the app's `jobs.deliver` route, with
+`req.context.formlogic.ai.delivery === true` and no subscription (a delivery's own writes never ask
+for AI). Every try of one delivery carries the same `idempotency-key: fl-ai-<FormLogic's job id>`
+header, so the app can tell a retry from a second result.
+
+```json
+{ "jobId": "<the row's id>", "status": "done",
+  "picture": "data:image/jpeg;base64,…", "mimeType": "image/jpeg", "width": 1024, "height": 1024,
+  "seed": 1873465, "model": "flux-3-image-klein" }
+{ "jobId": "<the row's id>", "status": "done", "text": "…", "model": "…" }
+{ "jobId": "<the row's id>", "status": "failed", "code": "model_disabled", "message": "…" }
+```
+
+- **The picture** is redrawn by FormLogic (GD) and is at most 1,500,000 bytes as a data URL, so the app
+  can keep it in one SQL call and send it to its page in one answer. A JPEG comes back a *baseline*
+  JPEG of at most 1024 px; a PNG stays a PNG while it fits (1024, 896, then 768 px) and is otherwise a
+  baseline JPEG at 1024 px. Never WebP, never progressive.
+- **`code`** on a failure: `model_disabled` (switched off, or its files are missing: the
+  administrator is warned), `model_unknown`, `busy`, `bad_request`, `too_large`, `engine_failed`,
+  `timeout`, `expired`, `ai_unavailable`, and for a job refused when it was asked for, `limit_reached`
+  or `prompt_refused`. A job that fails without a result gives its use back.
+- **Retries.** An answer of 2xx takes the delivery. A busy app (409, 429, 503, or no answer) is asked
+  again after 5 s, 15 s, 1, 5, 10 and 15 minutes; any other answer is tried three times. A result
+  never taken is dropped (`undelivered`).
+- **Queue positions** are not delivered: every request of the app sees its requester's open jobs in
+  `req.context.formlogic.ai.jobs` (`{status: "queued", position}` or `{status: "running"}`).
+
+**What is kept.** A job's prompt (and an edit's picture) 30 days, the job 90, the day's counts three
+days, a result until it is delivered (a test's an hour): `bin/privacy-sweep.php` and the worker clear
+them.
 
 ### Connecting an OAIY server
 
@@ -350,10 +418,12 @@ Three things for the site's owner, before the public uses an app's AI or pays th
    its outputs for qualifying users. Check that the site qualifies before downloads are charged for.
 2. **The address behind a proxy.** Per-address limits (an app's free rounds) are only as good as the
    address FormLogic reads. Behind Cloudflare, or any proxy, set `TRUSTED_PROXIES` to the proxy's
-   ranges and `TRUSTED_PROXY_HEADER` to the header it sends (`CF-Connecting-IP` for Cloudflare).
-   Without them every visitor reads as a handful of proxy addresses, and their free rounds become one
-   shared allowance. Admin → Platform → AI for apps warns when requests arrive from Cloudflare's
-   ranges while `TRUSTED_PROXIES` is unset.
+   ranges ([Cloudflare's](https://www.cloudflare.com/ips/), plus any proxy of your own in front of
+   PHP) and `TRUSTED_PROXY_HEADER` to `X-Forwarded-For`: Cloudflare adds the visitor's address to it,
+   and FormLogic reads the last address that is not a trusted proxy. Without them every visitor reads
+   as a handful of proxy addresses, and their free rounds become one shared allowance. Admin →
+   Platform → AI for apps warns when the administrator's own request arrives from Cloudflare's ranges
+   (or with Cloudflare's `CF-Connecting-IP` header) while `TRUSTED_PROXIES` is unset.
 3. **One real PayPal sandbox run.** The tests use a stub PayPal. Before payments are switched on, top
    up with a PayPal sandbox account once (`PAYPAL_ENV=sandbox`), pay for something, refund it in the
    sandbox dashboard and see the wallet follow (the webhook needs `PAYPAL_WEBHOOK_ID`).

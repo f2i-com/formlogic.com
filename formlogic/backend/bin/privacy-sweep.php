@@ -108,6 +108,19 @@ try {
         $count,
         $days
     ));
+    // App AI keeps a job's prompt (and an edit's picture) 30 days, the job 90, and its day's counts
+    // three (docs/HOSTED_APPS.md, "App AI, visitors and payments"). Not on a dry run.
+    if (!$dryRun) {
+        $kept = \FormLogic\Services\AppAiService::standalone($mysql)->sweep(\FormLogic\Services\AppAiWorker::resultsPath());
+        fwrite(STDOUT, sprintf(
+            "[%s] App AI: cleared %d prompt(s), removed %d job(s), %d counter(s) and %d result file(s).\n",
+            date('c'),
+            $kept['promptsCleared'],
+            $kept['rowsRemoved'],
+            $kept['countersRemoved'],
+            $kept['filesRemoved']
+        ));
+    }
     exit(0);
 } catch (\Throwable $e) {
     fwrite(STDERR, sprintf("[%s] privacy sweep error: %s\n", date('c'), $e->getMessage()));

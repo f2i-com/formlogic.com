@@ -43,7 +43,11 @@ final class OaiyComputerController
         });
     }
 
-    /** GET /api/admin/oaiy/models?connectionId=&providerId=: that provider's models. */
+    /**
+     * GET /api/admin/oaiy/models?connectionId=&providerId=: that provider's models, each with its
+     * `type` where OAIY gives one (`image` for a picture model, as App AI's settings list them; a
+     * language model has none).
+     */
     public function models(Request $request, Response $response): Response
     {
         $query = $request->getQueryParams();
@@ -53,7 +57,8 @@ final class OaiyComputerController
             $models = [];
             foreach (is_array($final['models'] ?? null) ? $final['models'] : [] as $model) {
                 if (is_array($model) && is_string($model['id'] ?? null)) {
-                    $models[] = ['id' => $model['id'], 'name' => is_string($model['name'] ?? null) ? $model['name'] : $model['id']];
+                    $models[] = ['id' => $model['id'], 'name' => is_string($model['name'] ?? null) ? $model['name'] : $model['id']]
+                        + (is_string($model['type'] ?? null) && preg_match('/^[a-z0-9_-]{1,32}$/D', $model['type']) ? ['type' => $model['type']] : []);
                 }
             }
             return ['models' => $models];

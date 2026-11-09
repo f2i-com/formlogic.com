@@ -381,4 +381,47 @@ final class SiteDesktopAiTest extends TestCase
     {
         return (int) self::$pdo->query('SELECT COUNT(*) FROM desktop_ai_requests WHERE owner_user_id = ' . self::$pdo->quote($this->adminId))->fetchColumn();
     }
+
+    /** A picture as App AI sends it (contract §1, OAIY-LANE.md): the fields OAIY reads, and no chat thread. */
+    public function testAPictureTurnCarriesThePictureFieldsAndNothingElse(): void
+    {
+        $this->chooseTheTestDesktop();
+        $site = $this->settings->current();
+        $desktop = new SiteDesktopAi($this->relay, $this->settings);
+        [$id, $pair] = $desktop->send($site, ['kind' => 'image', 'requestId' => 'fl-ai-job-1', 'providerId' => 'oaiy-engine', 'model' => 'flux-3-image-klein', 'prompt' => 'A red kite', 'size' => '512x512', 'seed' => 9007199254740991, 'reference' => null, 'incognito' => true, 'toolGrant' => ['x']], $this->adminId, DesktopAiRelayService::SOURCE_APP_AI);
+        $claimed = $this->relay->claim($id, $this->adminId, ['instanceId' => 'inst-site-ai']);
+        $desktopPair = sodium_crypto_box_keypair_from_secretkey_and_publickey(base64_decode(self::$vectors['desktop']['secretKey'], true), base64_decode($claimed['ephPub'], true));
+        $turn = SiteDesktopAi::open($claimed['envelope'], 0, 0, $desktopPair);
+        self::assertSame(['v', 'kind', 'providerId', 'requestId', 'model', 'prompt', 'size', 'seed', 'reference', 'incognito'], array_keys($turn));
+        self::assertSame(['image', 'oaiy-engine', 9007199254740991, true], [$turn['kind'], $turn['providerId'], $turn['seed'], $turn['incognito']]);
+        $row = self::$pdo->query('SELECT kind, source, provider_id FROM desktop_ai_requests WHERE id = ' . self::$pdo->quote($id))->fetch(PDO::FETCH_ASSOC);
+        self::assertSame(['image', 'app-ai', 'oaiy-engine'], [$row['kind'], $row['source'], $row['provider_id']]);
+        sodium_memzero($pair);
+    }
+
+    /** A picture being drawn takes none of the members' chat places, and a second picture waits its turn. */
+    public function testAPictureHasAPlaceOfItsOwnBesideTheMembersChats(): void
+    {
+        $this->chooseTheTestDesktop();
+        $site = $this->settings->current();
+        $desktop = new SiteDesktopAi($this->relay, $this->settings);
+        $picture = ['kind' => 'image', 'providerId' => 'oaiy-engine', 'model' => 'flux-3-image-klein', 'prompt' => 'A kite', 'size' => '512x512', 'incognito' => true];
+        $desktop->send($site, $picture, $this->adminId, DesktopAiRelayService::SOURCE_APP_AI);
+        for ($i = 0; $i < SiteDesktopAi::MAX_WAITING; $i++) {
+            $desktop->send($site, ['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => 'hi']]], $this->makeUser());
+        }
+        self::assertSame(SiteDesktopAi::MAX_WAITING + 1, $this->rows(), 'every member\'s chat was queued beside the picture');
+        try {
+            $desktop->send($site, $picture, $this->adminId, DesktopAiRelayService::SOURCE_APP_AI);
+            self::fail('a second picture');
+        } catch (SiteAiBusyException $e) {
+            self::assertSame('site_ai_busy', $e->reason);
+        }
+        try {
+            $desktop->send($site, ['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => 'hi']]], $this->makeUser());
+            self::fail('a fourth chat');
+        } catch (SiteAiBusyException) {
+        }
+        self::assertSame(SiteDesktopAi::MAX_WAITING + 1, $this->rows());
+    }
 }

@@ -26,6 +26,12 @@ final class SiteDesktopAi
      * cap, 8 a desktop, would drain a small pool first).
      */
     public const MAX_WAITING = 3;
+    /**
+     * Pictures a computer may have waiting or being drawn at once (App AI). They have a lane of their
+     * own (DesktopAiRelayService::PICTURE_KIND), so a picture never takes one of the chat places, and
+     * OAIY draws one at a time: a second would wait unclaimed, and could run out of time waiting.
+     */
+    public const MAX_PICTURES_WAITING = 1;
     private const NONCE_BYTES = 24;
     private const POLL_MICROSECONDS = 250000;
     private const HEARTBEAT_SECONDS = 15;
@@ -79,36 +85,33 @@ final class SiteDesktopAi
     /**
      * Seal one turn to $target (a pinned computer: ownerUserId, connectionId, instanceId, publicKey,
      * providerId) and queue it, the member $requester asking (null: the computer's owner). $body is
-     * the turn's own part: `kind` (chat, models or providers), and `messages` and `model` for a chat.
-     * Never a tool grant. Returns [requestId, the turn's key pair]: the frames back open with it.
-     * Refused at once when the computer is offline or already has MAX_WAITING turns.
+     * the turn's own part: `kind` (chat, models, providers, or image for App AI's pictures), and
+     * `messages` and `model` for a chat, or a picture's fields (OAIY-LANE: model, prompt, size,
+     * seed, reference, incognito; a picture has no chat thread). Never a tool grant. $source is
+     * DesktopAiRelayService::SOURCE_APP_AI for App AI's worker, which keeps its own limits. Returns
+     * [requestId, the turn's key pair]: the frames back open with it. Refused at once when the
+     * computer is offline, or already has MAX_WAITING turns (MAX_PICTURES_WAITING pictures).
      *
      * @return array{0: string, 1: string}
      */
-    public function send(array $target, array $body, ?string $requester): array
+    public function send(array $target, array $body, ?string $requester, ?string $source = null): array
     {
         $desktopKey = base64_decode((string) ($target['publicKey'] ?? ''), true);
         if ($desktopKey === false || strlen($desktopKey) !== SODIUM_CRYPTO_BOX_PUBLICKEYBYTES) {
             throw new \RuntimeException('The pinned OAIY key is unreadable. Choose the computer again in Admin.');
         }
-        $kind = (string) ($body['kind'] ?? 'chat');
-        unset($body['kind'], $body['toolGrant'], $body['toolMode']);
+        $turn = self::turn($target, $body);
+        $kind = (string) $turn['kind'];
+        $picture = $kind === DesktopAiRelayService::PICTURE_KIND;
         $ephemeral = sodium_crypto_box_keypair();
         $pair = sodium_crypto_box_keypair_from_secretkey_and_publickey(sodium_crypto_box_secretkey($ephemeral), $desktopKey);
-        $turn = [
-            'v' => 1,
-            'kind' => $kind,
-            'providerId' => $target['providerId'],
-            'threadId' => 'site-' . bin2hex(random_bytes(12)),
-            'clientSeq' => 1,
-        ] + $body;
         $envelope = self::seal($turn, 0, 0, $pair);
         if (strlen((string) base64_decode($envelope, true)) > DesktopAiRelayService::MAX_ENVELOPE_BYTES) {
             sodium_memzero($ephemeral);
             sodium_memzero($pair);
             throw new SiteAiTooLargeException('This is too large for the site\'s AI on OAIY, which takes about 250 KB a request. Use a smaller picture or fewer of them.');
         }
-        if (($refusal = $this->unavailableFor($target)) !== null) {
+        if (($refusal = $this->unavailableFor($target, $picture)) !== null) {
             sodium_memzero($ephemeral);
             sodium_memzero($pair);
             throw $refusal;
@@ -121,7 +124,7 @@ final class SiteDesktopAi
                 'targetInstanceId' => $target['instanceId'],
                 'ephPub' => base64_encode(sodium_crypto_box_publickey($ephemeral)),
                 'envelope' => $envelope,
-            ]);
+            ], $source);
         } catch (\RuntimeException $e) {
             sodium_memzero($pair);
             if (in_array($e->getMessage(), ['queue_full_user', 'queue_full_desktop'], true)) {
@@ -134,6 +137,33 @@ final class SiteDesktopAi
             sodium_memzero($ephemeral);
         }
         return [(string) $queued['request']['requestId'], $pair];
+    }
+
+    /**
+     * The turn as it is sealed for $target: `v`, `kind` and `providerId`, a chat's thread of its own
+     * (a picture, DesktopAiRelayService::PICTURE_KIND, has none), then $body's own fields. Never a
+     * tool grant or a tool mode.
+     */
+    private static function turn(array $target, array $body): array
+    {
+        $kind = (string) ($body['kind'] ?? 'chat');
+        unset($body['kind'], $body['toolGrant'], $body['toolMode']);
+        $head = ['v' => 1, 'kind' => $kind, 'providerId' => $target['providerId']];
+        if ($kind !== DesktopAiRelayService::PICTURE_KIND) {
+            $head += ['threadId' => 'site-' . bin2hex(random_bytes(12)), 'clientSeq' => 1];
+        }
+        return $head + $body;
+    }
+
+    /**
+     * How many more bytes a turn to $target with $body could carry and still be sealed within the
+     * lane's request limit (DesktopAiRelayService::MAX_ENVELOPE_BYTES): App AI fits the picture an
+     * edit sends to it, whatever the prompt's characters take once written as JSON.
+     */
+    public static function room(array $target, array $body): int
+    {
+        $plain = strlen(json_encode(self::turn($target, $body), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+        return DesktopAiRelayService::MAX_ENVELOPE_BYTES - self::NONCE_BYTES - SODIUM_CRYPTO_BOX_MACBYTES - $plain;
     }
 
     /**
@@ -163,6 +193,9 @@ final class SiteDesktopAi
      */
     public function collect(string $id, string $owner, string $pair): array
     {
+        // The status first: a computer sends its frames before it completes a turn, so a turn read as
+        // done here has every frame it will ever have below, and its final frame is never missed.
+        $status = $this->relay->getStatus($id, $owner);
         $content = '';
         $final = null;
         $error = null;
@@ -186,7 +219,7 @@ final class SiteDesktopAi
                 }
             }
         } while (count($rows) >= 200);
-        return ['status' => $this->relay->getStatus($id, $owner), 'content' => $content, 'final' => $final, 'error' => $error];
+        return ['status' => $status, 'content' => $content, 'final' => $final, 'error' => $error];
     }
 
     /** Give up on a queued turn: if the computer has not taken it, it never will. */
@@ -195,14 +228,16 @@ final class SiteDesktopAi
         $this->relay->abandon($id, $owner);
     }
 
-    /** Why $target cannot take a turn now, or null. */
-    public function unavailableFor(array $target): ?SiteAiBusyException
+    /** Why $target cannot take a turn now ($picture: a picture), or null. */
+    public function unavailableFor(array $target, bool $picture = false): ?SiteAiBusyException
     {
         if (!$this->settings->online($target)) {
             return new SiteAiBusyException('The computer the site\'s AI runs on is offline. Try again later.', 'site_ai_offline');
         }
-        if ($this->relay->inFlightForTarget($target['ownerUserId'], $target['instanceId']) >= self::MAX_WAITING) {
-            return new SiteAiBusyException('The site\'s AI is busy with other people\'s requests. Try again in a moment.');
+        if ($this->relay->inFlightForTarget($target['ownerUserId'], $target['instanceId'], $picture) >= ($picture ? self::MAX_PICTURES_WAITING : self::MAX_WAITING)) {
+            return new SiteAiBusyException($picture
+                ? 'The computer is drawing another picture. This one waits its turn.'
+                : 'The site\'s AI is busy with other people\'s requests. Try again in a moment.');
         }
         return null;
     }

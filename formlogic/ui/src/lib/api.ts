@@ -9,6 +9,7 @@ import type { AccessReceipt, App, AppForm, AppFormUsageApp, AppListItem, AppSett
 import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
 import { APP_LOGIC_LANGUAGES } from '../types/customAppLogic';
 import type { ClientEngineId } from './clientEngines';
+import type { AppAiAdminView, AppAiLimits, AppAiMode, AppAiSiteSettings, AppAiTestResult, AppAiView } from './appAi';
 
 export type { ClientEngineId };
 import type {
@@ -811,6 +812,13 @@ function seg(value: string | number): string {
   const text = String(value);
   if (text === '.' || text === '..') throw new Error('Invalid id in an API path');
   return encodeURIComponent(text);
+}
+
+/** An answer of the form `{data: …}` as its `data`; an error as it came. */
+function unwrapData<T>(result: ApiResponse<{ data: T }>): ApiResponse<T> {
+  if (result.data === undefined) return { ...result, data: undefined };
+  if (result.data === null || typeof result.data !== 'object' || !('data' in result.data)) return { error: 'Invalid response from server', unreadable: true };
+  return { data: result.data.data };
 }
 
 class ApiClient {
@@ -2998,8 +3006,33 @@ class ApiClient {
   async adminOaiyProviders(connectionId: string): Promise<ApiResponse<{ providers: Array<{ id: string; label: string; model: string | null }>; engineProvider: string }>> {
     return this.request(`/admin/oaiy/providers?${new URLSearchParams({ connectionId })}`);
   }
-  async adminOaiyModels(connectionId: string, providerId: string): Promise<ApiResponse<{ models: Array<{ id: string; name: string }> }>> {
+  /** Each model with its `type` where OAIY gives one: `image` for a picture model; a language model has none. */
+  async adminOaiyModels(connectionId: string, providerId: string): Promise<ApiResponse<{ models: Array<{ id: string; name: string; type?: string }> }>> {
     return this.request(`/admin/oaiy/models?${new URLSearchParams({ connectionId, providerId })}`);
+  }
+  /** App AI (docs/HOSTED_APPS.md): the owner's "AI for this app". */
+  async getAppAi(appId: string): Promise<ApiResponse<AppAiView>> {
+    return unwrapData(await this.request<{ data: AppAiView }>(`/apps/${seg(appId)}/ai`));
+  }
+  async putAppAi(appId: string, settings: { mode: AppAiMode } & Partial<AppAiLimits>): Promise<ApiResponse<AppAiView>> {
+    return unwrapData(await this.request<{ data: AppAiView }>(`/apps/${seg(appId)}/ai`, { method: 'PUT', body: JSON.stringify(settings) }));
+  }
+  /** A real small job, sent where the app's AI goes, kept for the owner and never delivered to the app. */
+  async testAppAi(appId: string, kind: 'picture' | 'chat'): Promise<ApiResponse<{ jobId: string }>> {
+    return unwrapData(await this.request<{ data: { jobId: string } }>(`/apps/${seg(appId)}/ai/test`, { method: 'POST', body: JSON.stringify({ kind }) }));
+  }
+  async getAppAiTest(appId: string, jobId: string): Promise<ApiResponse<AppAiTestResult>> {
+    return unwrapData(await this.request<{ data: AppAiTestResult }>(`/apps/${seg(appId)}/ai/test/${seg(jobId)}`));
+  }
+  /** Admin: "AI for apps": whether apps may use the site's AI, its models and limits, and every app's use. */
+  async adminGetAppAi(): Promise<ApiResponse<AppAiAdminView>> {
+    return unwrapData(await this.request<{ data: AppAiAdminView }>('/admin/app-ai'));
+  }
+  async adminPutAppAi(settings: AppAiSiteSettings): Promise<ApiResponse<AppAiAdminView>> {
+    return unwrapData(await this.request<{ data: AppAiAdminView }>('/admin/app-ai', { method: 'PUT', body: JSON.stringify(settings) }));
+  }
+  async adminBlockAppAi(appId: string, blocked: boolean, reason?: string): Promise<ApiResponse<AppAiAdminView>> {
+    return unwrapData(await this.request<{ data: AppAiAdminView }>(`/admin/app-ai/apps/${seg(appId)}`, { method: 'PUT', body: JSON.stringify({ blocked, ...(reason ? { reason } : {}) }) }));
   }
   async adminPutCameraCheck(choice: { connectionId: string; providerId: string; model: string | null }): Promise<ApiResponse<{ saved: boolean }>> {
     return this.request('/admin/camera-check', { method: 'PUT', body: JSON.stringify(choice) });

@@ -99,6 +99,37 @@ and nothing else: it is given no connector or plugin commands, runs no flows and
 node. Choose **Everything a linked desktop can do** only for a computer you also want to run those.
 See [Connecting an OAIY server](HOSTED_APPS.md#connecting-an-oaiy-server).
 
+### AI for apps
+
+SoftN apps can ask for AI from their own server: pictures, picture edits and chat (a logo maker that
+draws for its visitors, "Ask AI" in an app). Admin → Platform → **AI for apps** decides whether they may
+use this site's own AI, and how much. It is off until you turn it on, and each app's owner then turns
+it on for their app (Settings → AI for this app).
+
+- **Apps may use this site's AI.** Their requests go where the Site AI goes: your OAIY computer (above),
+  or the provider in your server settings.
+- **Picture model.** The OAIY Engines picture model apps' pictures use, named exactly; **List the
+  computer's picture models** asks your computer for the ones switched on. None chosen: apps can ask
+  for chat only. The chat model is optional; empty, apps chat with the Site AI's own.
+- **Pause every app's AI** is the stop for all of them: apps are told their AI is paused, and nothing
+  is sent. **Stop its AI**, in the list of apps, stops one, with a reason its owner sees.
+- **Limits.** What a new app's owner starts from: per visitor or member a day (10), per address a day
+  (20: an app's free rounds), per address an hour (10), and per app a day (500, also the most an owner
+  may set on the site's AI). **Requests a day, every app together** (2,000) is the site's own ceiling.
+- **Words a prompt may not use**, one a line: a request that uses one is refused, and the app is told.
+- **Warnings.** The card says when a picture model was refused by your computer in the last day
+  (switched off, or its files are missing), when apps may use the site's AI with no picture model, and
+  when this site is reached through Cloudflare with `TRUSTED_PROXIES` unset, which makes every
+  visitor's free rounds one shared allowance (see [Before going live](HOSTED_APPS.md#before-going-live)).
+
+The settings are kept in `backend/storage/app-ai.json` (include it in backups); a missing or broken file
+means apps may not use the site's AI. Requests are sent and delivered by `bin/app-ai-worker.php`, which
+must run every minute from cron or under a supervisor with `--watch`; without it, apps' requests wait and
+then run out. Your OAIY computer draws one picture at a time, and a member's chat is never held up by a
+picture, though the computer's one GPU is: a chat that reaches it while a picture is drawn waits for the
+picture, and its model may take half a minute to load again. See [App AI: where it runs, and what the
+app is delivered](HOSTED_APPS.md#app-ai-where-it-runs-and-what-the-app-is-delivered).
+
 ## Verify a local setup
 
 1. Visit `/ai-setup` and `/connect-ai` while signed out; verify the public guide

@@ -1003,6 +1003,7 @@ CREATE TABLE `desktop_ai_requests` (
   `claimed_at` timestamp NULL DEFAULT NULL,
   `finished_at` timestamp NULL DEFAULT NULL,
   `expires_at` timestamp NOT NULL,
+  `source` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uniq_desktop_ai_idem` (`owner_user_id`,`idempotency_key`),
   KEY `requesting_user_id` (`requesting_user_id`),

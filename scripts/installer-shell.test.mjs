@@ -64,7 +64,7 @@ test('the wizard, INSTALL.txt and the deployment guide list the same scheduled j
     .filter((line) => /(?:\*|[\d/-]+)(?: (?:\*|\d+)){4}\s+php\b/.test(line))
     .map((line) => line.match(/bin\/([a-z-]+)\.php/)[1]))].sort();
   const expected = [
-    'artifact-sweep', 'backup-accounts', 'desktop-commands-cleanup', 'flow-outcome-dispatch', 'flow-runs-reclaim',
+    'app-ai-worker', 'artifact-sweep', 'backup-accounts', 'desktop-commands-cleanup', 'flow-outcome-dispatch', 'flow-runs-reclaim',
     'idempotency-cleanup', 'native-record-dispatch', 'privacy-sweep', 'reconcile', 'webhook-worker',
   ];
   for (const file of ['formlogic/install.php', 'scripts/package-dist.mjs']) assert.deepEqual(jobs(file), expected, file);

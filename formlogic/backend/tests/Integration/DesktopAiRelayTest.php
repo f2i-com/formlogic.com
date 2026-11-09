@@ -743,4 +743,86 @@ class DesktopAiRelayTest extends TestCase
         }
         $this->assertSame('streaming', $relay->appendFrame($id, $this->ownerId, base64_encode('12'), 'desk-x')['status'], 'what still fits goes in');
     }
+
+    // ── the picture lane (App AI, contract §0.1) ──
+
+    /** A queued picture: App AI's worker queues it as the app's owner, outside their own two places. */
+    private function enqueuePicture(): string
+    {
+        return self::$relay->enqueue($this->ownerId, $this->ownerId, $this->sealedBody(['kind' => DesktopAiRelayService::PICTURE_KIND, 'providerId' => 'oaiy-engine']), DesktopAiRelayService::SOURCE_APP_AI)['request']['requestId'];
+    }
+
+    public function testAComputerHoldsOnePictureAndOneOtherTurnAtOnce(): void
+    {
+        $picture = $this->enqueuePicture();
+        $chat = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $second = $this->enqueuePicture();
+        $this->assertSame(200, $this->v1Claim($picture, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $this->assertSame(200, $this->v1Claim($chat, ['ai:relay'], ['instanceId' => 'desk-1'])['status'], 'a chat is never held up by a picture');
+        $busy = $this->v1Claim($second, ['ai:relay'], ['instanceId' => 'desk-1']);
+        $this->assertSame('lane_busy', $busy['body']['code'] ?? null, 'one picture at a time on a computer');
+
+        $this->assertSame(200, $this->v1Complete($picture, ['ai:relay'], ['instanceId' => 'desk-1', 'status' => 'done'])['status']);
+        $this->assertSame(200, $this->v1Claim($second, ['ai:relay'], ['instanceId' => 'desk-1'])['status'], 'the next picture once the first is done');
+        $another = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame('lane_busy', $this->v1Claim($another, ['ai:relay'], ['instanceId' => 'desk-1'])['body']['code'] ?? null, 'and still one other turn');
+    }
+
+    /** A picture takes minutes: its computer lets go of one only after 300 s of silence, not 30. */
+    public function testASilentPictureIsKeptForFiveMinutesAndAChatForThirtySeconds(): void
+    {
+        $picture = $this->enqueuePicture();
+        $chat = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($picture, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $this->assertSame(200, $this->v1Claim($chat, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $quiet = DesktopAiRelayService::ABANDONED_SECONDS + 5;
+        self::$pdo->prepare("UPDATE desktop_ai_requests SET claimed_at = DATE_SUB(NOW(), INTERVAL {$quiet} SECOND) WHERE id IN (?, ?)")->execute([$picture, $chat]);
+
+        $nextPicture = $this->enqueuePicture();
+        $this->assertSame('lane_busy', $this->v1Claim($nextPicture, ['ai:relay'], ['instanceId' => 'desk-1'])['body']['code'] ?? null, 'a picture silent for 35 s is still being drawn');
+        $nextChat = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($nextChat, ['ai:relay'], ['instanceId' => 'desk-1'])['status'], 'a chat silent for 35 s is let go');
+        $this->assertSame('expired', $this->rawRequestRow($chat)['status']);
+        $this->assertSame('claimed', $this->rawRequestRow($picture)['status'], 'letting go of a chat leaves the picture');
+
+        $long = DesktopAiRelayService::ABANDONED_PICTURE_SECONDS + 5;
+        self::$pdo->prepare("UPDATE desktop_ai_requests SET claimed_at = DATE_SUB(NOW(), INTERVAL {$long} SECOND) WHERE id = ?")->execute([$picture]);
+        $this->assertSame(200, $this->v1Claim($nextPicture, ['ai:relay'], ['instanceId' => 'desk-1'])['status'], 'after 300 s of silence it is let go');
+        $this->assertSame('expired', $this->rawRequestRow($picture)['status']);
+        $this->assertSame('claimed', $this->rawRequestRow($nextChat)['status']);
+    }
+
+    /** App AI's turns keep their own limits (AppAiWorker): the owner's own two places stay theirs. */
+    public function testAppAiTurnsLeaveTheOwnersOwnPlacesFree(): void
+    {
+        $this->enqueuePicture();
+        self::$relay->enqueue($this->ownerId, $this->ownerId, $this->sealedBody(['providerId' => 'oaiy-engine']), DesktopAiRelayService::SOURCE_APP_AI);
+        $this->assertSame(201, $this->webEnqueue($this->ownerId, $this->sealedBody())['status']);
+        $this->assertSame(201, $this->webEnqueue($this->ownerId, $this->sealedBody())['status']);
+        $third = $this->webEnqueue($this->ownerId, $this->sealedBody());
+        $this->assertSame('queue_full_user', $third['body']['code'] ?? null);
+        $this->assertSame(4, (int) self::$pdo->query('SELECT COUNT(*) FROM desktop_ai_requests WHERE owner_user_id = ' . self::$pdo->quote($this->ownerId))->fetchColumn());
+    }
+
+    /** Where a turn comes from is the server's to say: a browser that says "app-ai" is still held to its two. */
+    public function testABrowserCannotSayItsTurnIsAppAis(): void
+    {
+        for ($i = 0; $i < DesktopAiRelayService::MAX_IN_FLIGHT_PER_USER; $i++) {
+            $made = $this->webEnqueue($this->ownerId, $this->sealedBody(['source' => DesktopAiRelayService::SOURCE_APP_AI]));
+            $this->assertSame(201, $made['status']);
+            $this->assertNull($this->rawRequestRow($made['body']['requestId'])['source']);
+        }
+        $this->assertSame('queue_full_user', $this->webEnqueue($this->ownerId, $this->sealedBody(['source' => DesktopAiRelayService::SOURCE_APP_AI]))['body']['code'] ?? null);
+    }
+
+    public function testInFlightCountsByLane(): void
+    {
+        $this->addConnection('desk-1');
+        self::$relay->enqueue($this->ownerId, $this->ownerId, $this->sealedBody(['kind' => DesktopAiRelayService::PICTURE_KIND, 'providerId' => 'oaiy-engine', 'targetInstanceId' => 'desk-1']), DesktopAiRelayService::SOURCE_APP_AI);
+        $this->webEnqueue($this->ownerId, $this->sealedBody(['targetInstanceId' => 'desk-1']));
+        $this->webEnqueue($this->ownerId, $this->sealedBody(['targetInstanceId' => 'desk-1']));
+        $this->assertSame(3, self::$relay->inFlightForTarget($this->ownerId, 'desk-1'));
+        $this->assertSame(1, self::$relay->inFlightForTarget($this->ownerId, 'desk-1', true));
+        $this->assertSame(2, self::$relay->inFlightForTarget($this->ownerId, 'desk-1', false));
+    }
 }
