@@ -20,7 +20,9 @@ const NATIVE_REQUEST_INPUT = 6 * 1024 * 1024;
 /** The server's decision for one mount: the engine to run, and the revision actions send back. */
 type FrameEngine = { id: string; revision: string };
 /** `files`: the app may open the files the person picks and save files they ask for, as its owner chose and, where asked, the person agreed (NativeAppView). Settled before the frame opens. */
-type NativeFrame = { assets: Record<string, string>; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope; files?: boolean; look?: NativeLook | null };
+// `visitor`: the app asks for FormLogic's visitors (NativeFormlogic), so its requests carry the marker;
+// `wallet`: it takes payments, so it may open FormLogic's wallet.
+type NativeFrame = { assets: Record<string, string>; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope; files?: boolean; look?: NativeLook | null; visitor?: boolean; wallet?: boolean };
 const scopeAllowed = (native: NativeFrame) => isNativeStorageScope(native.storageScope) &&
   native.access === native.storageScope.access &&
   (native.storageScope.access === 'application' || native.storageScope.userId === currentSessionOwner());
@@ -208,6 +210,7 @@ export function HostedAppFrame({
         // the owner asks, the person's answer stands across a new engine: they were asked about the app.
         files: data.project.files === 'allow' || (data.project.files === 'ask' && !!mountNative?.files),
         look: ("look" in data ? readLook(data.look) : null) ?? mountNative?.look,
+        visitor: !!data.project.formlogic?.visitors, wallet: !!data.project.formlogic?.payments,
       } : undefined;
       if (mountNative && (!nextNative || !scopeAllowed(nextNative))) {
         setError("This app could not verify its browser storage access. Please reload or sign in again.");
@@ -429,7 +432,7 @@ export function HostedAppFrame({
             if (url.origin !== window.location.origin && !mountNative.origins?.includes(url.origin)) throw new Error("This URL is not part of the app backend");
             const options = input.options as Record<string, unknown>;
             // Upper-cased as a browser's fetch sends it: `post` from a frame before SoftN v0.0.28 was refused.
-            const result = await api.runNativeRequest(slug, { path: url.pathname, query: Object.fromEntries(url.searchParams), method: String(options.method || "GET").toUpperCase(), headers: options.headers || {}, body: options.body || {} }, controller.signal, clientEngine);
+            const result = await api.runNativeRequest(slug, { path: url.pathname, query: Object.fromEntries(url.searchParams), method: String(options.method || "GET").toUpperCase(), headers: options.headers || {}, body: options.body || {} }, controller.signal, clientEngine, !!mountNative.visitor);
             if (isCurrentMount() && engineChanged(result)) void remountOnNewEngine();
             reply(result.error ? nativeRefusal(result) : result.data);
             return;

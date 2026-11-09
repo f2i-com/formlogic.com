@@ -22,10 +22,12 @@ do {
     $failed = false;
     try {
         $flows = new \FormLogic\Services\FlowService($mysql);
+        // Flows and App AI's jobs alike (NativeRecordEventRouter): an event is acknowledged once delivered.
+        $records = new \FormLogic\Services\NativeRecordEventRouter($flows, \FormLogic\Services\AppAiService::standalone($mysql, $native));
         $apps = $mysql->getConnection()->query('SELECT id FROM apps')->fetchAll(PDO::FETCH_COLUMN);
         foreach ($apps as $appId) {
             try {
-                $count = $native->dispatchRecordEvents($appId, fn($id, $event, $data, $bindings) => $flows->enqueueNativeRecordEvent($appId, $id, $event, $data, $bindings));
+                $count = $native->dispatchRecordEvents($appId, $records->for($appId));
                 if ($count) fwrite(STDOUT, date('c') . " Delivered $count record event(s) for app $appId\n");
             } catch (Throwable $error) {
                 $failed = true;

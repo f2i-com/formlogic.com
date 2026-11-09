@@ -8,7 +8,40 @@ export interface NativeProject { home?: boolean; version: number; updatedAt?: st
  * whole and unpacked into `assets` before the frame is given them (readMediaPack); a server before
  * it sends `assets` in the JSON itself.
  */
-export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: Record<string,string>; media?: { url: string; sha256: string; size: number; count: number }; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[]; files?: 'ask' | 'allow' }
+export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: Record<string,string>; media?: { url: string; sha256: string; size: number; count: number }; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[]; files?: 'ask' | 'allow'; formlogic?: NativeFormlogic }
+
+/**
+ * What an app asks of FormLogic itself (its manifest's formlogicAi and formlogicPayments), as the
+ * runtime GET says: `visitors` has this page mark the app's requests (X-FormLogic-Visitor), so its
+ * visitors are known by their browser's cookie; `payments` lets it open FormLogic's wallet.
+ */
+export interface NativeFormlogic { visitors?: boolean; ai?: boolean; payments?: boolean }
+
+const AI_USE_WORDS: Record<string, string> = { pictures: 'pictures', 'picture-edits': 'picture edits', chat: 'chat' };
+
+/**
+ * What an app's manifest asks of FormLogic itself, in the owner's words, for the review before it
+ * is installed: its AI (formlogicAi) and its payments (formlogicPayments). The server holds an
+ * install to their rules (AppFormlogicManifest); this only says what they ask.
+ */
+export function formlogicAsks(project: Pick<NativeProject, 'files'>): string[] {
+  let manifest: Record<string, unknown>;
+  try { manifest = record(JSON.parse(project.files['manifest.json'] ?? '{}')) ?? {}; } catch { return []; }
+  const asks: string[] = [];
+  const ai = record(manifest.formlogicAi);
+  if (ai) {
+    const uses = Array.isArray(ai.uses) ? ai.uses.map(use => AI_USE_WORDS[String(use)] ?? String(use)) : [];
+    const list = uses.length > 1 ? `${uses.slice(0, -1).join(', ')} and ${uses[uses.length - 1]}` : uses.join('');
+    asks.push(`Uses AI for ${list || 'its requests'}, once you choose where its AI comes from${typeof ai.purpose === 'string' ? `: ${ai.purpose}` : '.'}`);
+  }
+  const payments = record(manifest.formlogicPayments);
+  if (payments) {
+    const items = Array.isArray(payments.items) ? payments.items.map(record).filter((item): item is Record<string, unknown> => !!item)
+      .map(item => `${String(item.label ?? item.id)} (${typeof item.priceCents === 'number' ? `${item.priceCents}¢` : '?'})`) : [];
+    asks.push(`Takes payments from its visitors' prepaid balance${items.length ? `: ${items.join(', ')}` : ''}${typeof payments.purpose === 'string' ? `. ${payments.purpose}` : ''}`);
+  }
+  return asks;
+}
 
 /**
  * What a project may hold, which the server holds an install to as well (NativeAppService's

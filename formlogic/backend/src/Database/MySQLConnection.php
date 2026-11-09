@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = 'ec45f2cf41d30e3b78e89ce8879fd748';
+    public const SCHEMA_STAMP = 'fc5a4e1f9bf829484e26ccc10bac8a7e';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -2890,8 +2890,106 @@ class MySQLConnection
             $pdo->exec('ALTER TABLE api_keys DROP INDEX idx_api_keys_hash, ADD UNIQUE INDEX idx_api_keys_hash (key_hash)');
         }
 
+        // App AI, visitors and payments (AppAiService, docs/HOSTED_APPS.md).
+        $this->createAppAiTables($pdo);
+
         // Seed the first-party OAuth clients (idempotent) now that mcp_oauth_clients exists.
         $this->seedFirstPartyOAuthClients($pdo);
+    }
+
+    /**
+     * App AI (AppAiService): each app's AI choice and allowances, the jobs its server asked for, and
+     * the day's counts. The settings are a table of their own, like apps.client_engine: packs,
+     * backups and the MCP merge never carry them, so none of them can turn on someone's AI.
+     */
+    private function createAppAiTables(PDO $pdo): void
+    {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_ai_settings (
+                app_id VARCHAR(36) NOT NULL PRIMARY KEY,
+                mode VARCHAR(8) NOT NULL DEFAULT 'off',
+                own_connection_id VARCHAR(36) NULL,
+                own_instance_id VARCHAR(128) NULL,
+                own_public_key VARCHAR(64) NULL,
+                own_provider_id VARCHAR(128) NULL,
+                own_picture_model VARCHAR(256) NULL,
+                own_chat_model VARCHAR(256) NULL,
+                own_device_name VARCHAR(255) NULL,
+                per_requester_day SMALLINT UNSIGNED NOT NULL DEFAULT 10,
+                per_ip_day SMALLINT UNSIGNED NOT NULL DEFAULT 20,
+                per_ip_hour SMALLINT UNSIGNED NOT NULL DEFAULT 10,
+                per_app_day INT UNSIGNED NOT NULL DEFAULT 500,
+                blocked_by_admin TINYINT(1) NOT NULL DEFAULT 0,
+                blocked_reason VARCHAR(200) NULL,
+                paused_until DATETIME NULL,
+                failures_in_row SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+                last_served_at DATETIME(3) NULL,
+                updated_by VARCHAR(36) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CONSTRAINT fk_app_ai_settings_app FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        // A job: who asked (a member's id or a visitor's, and their address's key, never the address),
+        // what for, where it went and what came back. Prompts are cleared after 30 days and rows
+        // removed after 90 (bin/privacy-sweep.php). `channel` holds the sealed turn's key, sealed with
+        // the site's data key where one is set, while OAIY works on it.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_ai_jobs (
+                id CHAR(32) NOT NULL PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                event_id CHAR(32) NOT NULL,
+                app_job_id VARCHAR(100) NOT NULL,
+                requester_kind VARCHAR(8) NOT NULL,
+                requester_id VARCHAR(64) NOT NULL,
+                ip_key CHAR(16) NOT NULL,
+                kind VARCHAR(8) NOT NULL,
+                status VARCHAR(12) NOT NULL,
+                source VARCHAR(10) NULL,
+                target VARCHAR(64) NULL,
+                relay_id VARCHAR(36) NULL,
+                relay_owner VARCHAR(36) NULL,
+                channel TEXT NULL,
+                prompt MEDIUMTEXT NULL,
+                prompt_sha256 CHAR(64) NULL,
+                size VARCHAR(9) NULL,
+                seed BIGINT NULL,
+                reference MEDIUMTEXT NULL,
+                model VARCHAR(256) NULL,
+                result_path VARCHAR(255) NULL,
+                result_meta TEXT NULL,
+                code VARCHAR(32) NULL,
+                message VARCHAR(300) NULL,
+                counted_day CHAR(10) NULL,
+                counted_hour CHAR(13) NULL,
+                refunded TINYINT(1) NOT NULL DEFAULT 0,
+                attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+                delivery_attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+                next_attempt_at DATETIME(3) NULL,
+                running_noticed TINYINT(1) NOT NULL DEFAULT 0,
+                created_at DATETIME(3) NOT NULL,
+                started_at DATETIME(3) NULL,
+                finished_at DATETIME(3) NULL,
+                delivered_at DATETIME(3) NULL,
+                UNIQUE KEY uq_app_ai_jobs_event (app_id, event_id),
+                KEY idx_app_ai_jobs_status (status, next_attempt_at),
+                KEY idx_app_ai_jobs_app (app_id, status, created_at),
+                KEY idx_app_ai_jobs_requester (app_id, requester_kind, requester_id, status),
+                KEY idx_app_ai_jobs_target (target, status, created_at),
+                CONSTRAINT fk_app_ai_jobs_app FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        // The day's (and hour's) uses: per requester, per address key, per app, and the site's ('').
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_ai_counters (
+                app_id VARCHAR(36) NOT NULL,
+                scope VARCHAR(12) NOT NULL,
+                subject VARCHAR(80) NOT NULL,
+                period CHAR(13) NOT NULL,
+                used INT UNSIGNED NOT NULL DEFAULT 0,
+                PRIMARY KEY (app_id, scope, subject, period)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
     }
 
     /** Fresh installs and upgrades share the exact same durable Companion control-plane schema. */

@@ -194,6 +194,134 @@ beside connecting their own; the Visual Builder and uploads never need AI. The e
 button takes FormLogic's name for it (**Save changes**, or **Keep changes** once the app is live),
 so the two buttons agree.
 
+## App AI, visitors and payments
+
+A SoftN app's server can ask FormLogic's AI for pictures, picture edits and chat replies, and charge
+its visitors small amounts from a prepaid balance. Visitors need no account. Nothing changes for an
+app that does not ask: no cookie, no header, and `req.context` exactly as before.
+
+### What an app declares
+
+Two FormLogic-only sections of `manifest.json`, like a plugin's `formlogicPlugin`. FormLogic shows
+them before the app is installed, holds them to these rules at install (AppFormlogicManifest), and
+takes them out of the page's copy of the manifest.
+
+```json
+"formlogicAi": {
+  "uses": ["pictures", "picture-edits", "chat"],
+  "purpose": "Draws logos from a short brief, and talks them through.",
+  "jobs": { "table": "ai_jobs", "deliver": "/api/site/ai/deliver" }
+},
+"formlogicPayments": {
+  "purpose": "Pay 5¢ to download a logo.",
+  "items": [ { "id": "download", "label": "Download a logo", "priceCents": 5 } ],
+  "routes": [ "/api/download" ]
+}
+```
+
+- `uses`: any of `pictures`, `picture-edits` and `chat`. `purpose`: one sentence (up to 200
+  characters) that the owner and the app's visitors are shown.
+- `jobs.table`: the table the app's server writes its AI jobs into. `jobs.deliver`: the route
+  FormLogic posts results to. It must be under `/api/site/` and declared as a POST route of the server.
+- `items`: up to 20 things the app charges for, each with an id (lower-case letters, digits, `-` and
+  `_`), a label and a price of 1 to 500 cents. `routes`: the POST routes that may ask for a charge.
+- Both need the app's own backend (a `server` block).
+
+**`/api/site/` is FormLogic's.** A page never calls a route under `/api/site/`, for any app: the
+runtime answers 404 before the app's backend is asked. FormLogic itself calls them (App AI's
+deliveries, a plugin's camera check).
+
+### Visitors
+
+An app that declares either section is given FormLogic's **visitors**: people with no account, known
+by their browser.
+
+- **The cookie.** The browser holds a secret in an HttpOnly cookie the server sets
+  (`formlogic_visitor`: `HttpOnly; SameSite=Lax; Path=/api/`, 400 days, `Secure` where the site's
+  cookies are, host-only). Script cannot read it, and Safari's seven-day sweep of script-written
+  storage does not touch it. The runtime GET sets it, or renews its age, once a page load.
+- **The marker.** It counts only on a request FormLogic's own page marked with
+  `X-FormLogic-Visitor: 1`, from the site's origin or the app's own domain. A custom header needs
+  CORS's preflight, so no other site can send it. FormLogic's CSRF check covers only requests with the
+  sign-in cookie; this is the check for visitors.
+- **The id.** Each app sees its own id for a browser (32 hex characters): the same browser cannot be
+  followed from one app to another. The key that signs the cookie is the site's, kept in the database
+  (`system_meta`), and is not derived from `JWT_SECRET`.
+- **One browser, one origin.** The app at `/app/<slug>` and on its own domain are two visitors.
+  Clearing cookies starts a new one.
+
+What the app's backend sees (`req.context.formlogic`):
+
+| Field | When |
+|---|---|
+| `appId` | always, for an app that declares either section |
+| `userId`, `roleId` | a members-only app, as before |
+| `visitor: {id}` | an application-access app, on a request FormLogic's page marked |
+| `ai: {enabled, source, label, uses, perDay, usedToday, ipPerDay, ipUsedToday, jobs, reason?}` | an app that declares `formlogicAi` |
+
+**Decide "FormLogic member" by `userId`, not by `formlogic`.** An app that declares these sections
+gets `req.context.formlogic` without a `userId` for its visitors. Coffee.Dating, which declares
+neither, reads any `formlogic` it is given as a member, and so it is given none: its context stays
+`{}`.
+
+### App AI: asking for a job
+
+The app's server inserts a row into its jobs table. FormLogic gives that one request a record-event
+subscription for the table, so the insert is captured in the write's own transaction: a write that
+rolls back (an exception, or an answer with `rollback: true`) asks for nothing. An answer of 400 or
+500 **without** `rollback: true` still commits, and its job is taken.
+
+| Column | Meaning |
+|---|---|
+| `id` | TEXT PRIMARY KEY, up to 100 characters: the job's id in deliveries |
+| `kind` | `picture`, `edit` or `chat`; it must be one of the app's `uses` |
+| `prompt` | a picture or edit's prompt, up to 4,000 characters |
+| `size` | `512x512`, `768x768`, `1024x1024` (the default), `1024x768` or `768x1024` |
+| `seed` | optional, 0 to 4294967295 |
+| `reference` | an edit's picture: a PNG, JPEG or WebP data URL of at most 2 MB |
+| `messages` | a chat job's JSON list of 1 to 24 `{role: system/user/assistant, content}`, up to 16,000 characters |
+
+Other columns are the app's own. The model is never the app's choice: the owner or the
+administrator pins it. FormLogic reads the whole row after the commit, once per event, checks it,
+counts it and queues it. A job it cannot take (the limits, AI off, a word the site does not allow, a
+malformed row) is refused, and the app is told why.
+
+Every dispatcher (the runtime request, the owner's records API, `bin/native-record-dispatch.php`)
+hands an event to NativeRecordEventRouter, which gives App AI its `fl-ai-…` bindings and the flows
+the rest; RecordEventRouterWiringTest holds them to it. When another process holds an app's events
+lock, the request leaves its event for the next dispatch.
+
+**Limits**, counted when a job is taken and given back when it fails without a result:
+
+| Limit | Default |
+|---|---|
+| Per requester (a visitor or member) per day | 10 |
+| Per address per day (an IPv6 address by its /64): the "free rounds" | 20 |
+| Per address per hour | 10 |
+| Per app per day | 500 |
+| All apps on the site's AI per day | 2,000 |
+| Waiting per app; waiting or running per requester | 20; 2 |
+
+Addresses are kept only as a keyed hash. They are only as good as the site's
+`TRUSTED_PROXIES` setting (see [Before going live](#before-going-live)).
+
+### Before going live
+
+Three things for the site's owner, before the public uses an app's AI or pays through it:
+
+1. **The picture model's licence.** A model's terms decide whether its pictures may be sold. FLUX 3
+   Image Klein, for one, is under the FLUX Kommunity License: non-commercial, with commercial use of
+   its outputs for qualifying users. Check that the site qualifies before downloads are charged for.
+2. **The address behind a proxy.** Per-address limits (an app's free rounds) are only as good as the
+   address FormLogic reads. Behind Cloudflare, or any proxy, set `TRUSTED_PROXIES` to the proxy's
+   ranges and `TRUSTED_PROXY_HEADER` to the header it sends (`CF-Connecting-IP` for Cloudflare).
+   Without them every visitor reads as a handful of proxy addresses, and their free rounds become one
+   shared allowance. Admin → Platform → AI for apps warns when requests arrive from Cloudflare's
+   ranges while `TRUSTED_PROXIES` is unset.
+3. **One real PayPal sandbox run.** The tests use a stub PayPal. Before payments are switched on, top
+   up with a PayPal sandbox account once (`PAYPAL_ENV=sandbox`), pay for something, refund it in the
+   sandbox dashboard and see the wallet follow (the webhook needs `PAYPAL_WEBHOOK_ID`).
+
 ## Choose the right starting point
 
 | You want to… | Start here |

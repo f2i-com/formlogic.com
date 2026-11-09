@@ -1663,6 +1663,9 @@ class NativeAppService
         if ($bytes > self::MAX_PROJECT_BYTES) throw new InvalidArgumentException('Native project exceeds ' . intdiv(self::MAX_PROJECT_BYTES, 1024 * 1024) . ' MB');
         $manifest = json_decode($files['manifest.json'], true, 64, JSON_THROW_ON_ERROR);
         if (!is_array($manifest) || (isset($manifest['id']) && (!is_string($manifest['id']) || !preg_match('/^[a-zA-Z0-9._-]{1,120}$/D', $manifest['id']))) || !is_string($manifest['main'] ?? null) || !isset($files[$manifest['main']]) || !str_ends_with($manifest['main'], '.ui')) throw new InvalidArgumentException('Invalid native app manifest');
+        // What the app asks of FormLogic itself (App AI, payments): FormLogic's sections, held to
+        // their rules here so a malformed one is refused at install with the reason.
+        AppFormlogicManifest::validate($manifest);
         if (!array_key_exists('server', $manifest)) {
             // Client only. A private tree with no server block to run it would be source no runtime
             // ever starts, kept as if it were a backend: refused, so the owner adds the block.
@@ -2229,7 +2232,13 @@ class NativeAppService
     }
 
 
-    /** Deliver committed events only. Failed delivery leaves the event available for retry. */
+    /**
+     * Deliver committed events only. Failed delivery leaves the event available for retry.
+     * $deliver(id, event, data, bindings, readRow) is called for each, in order, and the event is
+     * acknowledged when it returns. readRow(table, column, value) reads the whole current row from
+     * the app's database on this dispatcher's own connection (an event carries only a preview: 40
+     * columns, text cut at 400 characters), or null when there is none.
+     */
     public function dispatchRecordEvents(string $appId, callable $deliver, int $limit = 100): int
     {
         $path = $this->root($appId) . '/private/data/application.sqlite';
@@ -2247,8 +2256,19 @@ class NativeAppService
             if (!$db->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_formlogic_record_events'")->fetchColumn()) return 0;
             $events = $db->query('SELECT * FROM _formlogic_record_events ORDER BY created_at, rowid LIMIT ' . max(1, min(500, $limit)))->fetchAll();
             $ack = $db->prepare('DELETE FROM _formlogic_record_events WHERE id=?');
+            $readRow = static function (string $table, string $column, mixed $value) use ($db): ?array {
+                if (!preg_match('/^[A-Za-z][A-Za-z0-9_]{0,62}$/D', $table) || !preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,62}$/D', $column) || (!is_string($value) && !is_int($value))) return null;
+                try {
+                    $statement = $db->prepare('SELECT * FROM "' . $table . '" WHERE "' . $column . '" = ? LIMIT 1');
+                    $statement->execute([$value]);
+                    $row = $statement->fetch();
+                    return is_array($row) ? $row : null;
+                } catch (\PDOException) {
+                    return null;
+                }
+            };
             foreach ($events as $event) {
-                $deliver($event['id'], $event['event_name'], json_decode($event['data_json'], true, 64, JSON_THROW_ON_ERROR), json_decode($event['bindings_json'], true, 64, JSON_THROW_ON_ERROR));
+                $deliver($event['id'], $event['event_name'], json_decode($event['data_json'], true, 64, JSON_THROW_ON_ERROR), json_decode($event['bindings_json'], true, 64, JSON_THROW_ON_ERROR), $readRow);
                 $ack->execute([$event['id']]);
             }
             return count($events);

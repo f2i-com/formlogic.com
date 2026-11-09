@@ -110,7 +110,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   const answer = filesAppId ? (answered?.appId === filesAppId ? answered.answer : filesAnswer(filesAppId)) : null;
   const filesGranted = project?.files === 'allow' || (project?.files === 'ask' && answer === 'allow');
   // Storage identity comes only from the admitted runtime GET, never app files or iframe input.
-  const native = useMemo(() => project ? { assets: project.assets, origins: project.origins, access: project.access, storageScope: project.storageScope, files: filesGranted, look: plugin ? undefined : (look ?? null) } : undefined, [project, filesGranted, look, plugin]);
+  const native = useMemo(() => project ? { assets: project.assets, origins: project.origins, access: project.access, storageScope: project.storageScope, files: filesGranted, look: plugin ? undefined : (look ?? null), visitor: !plugin && !!project.formlogic?.visitors, wallet: !plugin && !!project.formlogic?.payments } : undefined, [project, filesGranted, look, plugin]);
   const answerFiles = (choice: 'allow' | 'deny') => {
     if (!filesAppId) return;
     rememberFilesAnswer(filesAppId, choice);

@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
-use FormLogic\Services\{AccessGateService, AppService, AppUserService, NativeAppService, NativePhoneVerification, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService};
+use FormLogic\Services\{AccessGateService, AppAiService, AppFormlogicManifest, AppService, AppUserService, AppVisitors, NativeAppService, NativePhoneVerification, NativeRecordEventRouter, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService};
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -19,7 +19,11 @@ class NativeAppController
     // $engines is required, not optional-with-a-default: this controller is autowired, and PHP-DI's
     // reflection autowiring SKIPS optional parameters (ReflectionBasedAutowiring), so an `= null`
     // here would silently hand production a controller that decides no app's engine.
-    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null, private ?AppLookService $look = null, private ?NativePhoneVerification $verification = null) {}
+    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null, private ?AppLookService $look = null, private ?NativePhoneVerification $verification = null, private ?NativeRecordEventRouter $records = null, private ?AppVisitors $visitors = null, private ?AppAiService $ai = null)
+    {
+        // Every dispatch goes through the one router, so App AI's jobs are never acknowledged unread.
+        $this->records ??= new NativeRecordEventRouter($this->flows, $this->ai);
+    }
 
 
     public function manage(Request $request, Response $response, array $args): Response
@@ -94,7 +98,7 @@ class NativeAppController
                     if (($input['action'] ?? '') !== 'read' && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) throw new \RuntimeException('Cloud access has expired. Records remain available to read.', 402);
                     $result = $this->native->manageRecord($app['id'], $input, $this->flows->nativeRecordSubscriptions($app['id']));
                     if (($input['action'] ?? '') !== 'read') {
-                        try { $this->native->dispatchRecordEvents($app['id'], fn($id, $event, $data, $bindings) => $this->flows->enqueueNativeRecordEvent($app['id'], $id, $event, $data, $bindings)); }
+                        try { $this->native->dispatchRecordEvents($app['id'], $this->records->for($app['id'])); }
                         catch (\Throwable $error) { error_log('Native record automation delivery pending for app ' . $app['id']); }
                     }
                     return $result;
@@ -235,7 +239,9 @@ class NativeAppController
         // pack (`?media=pack`). A page from before the pack is sent the media in the project, as always.
         $mediaRoute = $request->getMethod() === 'GET' && str_ends_with($request->getUri()->getPath(), '/native/media');
         $packed = $mediaRoute || ($request->getMethod() === 'GET' && ($request->getQueryParams()['media'] ?? '') === 'pack');
-        return $this->respond($response, function () use ($request, $response, $app, $user, $owner, $plugin, $mediaRoute, $packed) {
+        // A visitor's cookie, set (or its age renewed) for an app that asks for visitors (AppVisitors).
+        $setCookie = null;
+        $answer = $this->respond($response, function () use ($request, $response, $app, $user, $owner, $plugin, $mediaRoute, $packed, &$setCookie) {
             // Access is decided against the settled project (FL-S04), never an update's leftover project.json.
             // Read without its media where nothing here sends them: a game's are tens of megabytes. An
             // app's API call needs only its version and access, and decoded every picture and sound
@@ -259,6 +265,11 @@ class NativeAppController
             // respond() passes through, so it keeps the engine_changed code the parent remounts on.
             if ($stale = $this->refuseStaleEngine($request, $response, $app['id'])) return $stale;
             $identity = $project['access'] === 'members' ? ['formlogic' => ['appId' => $app['id'], 'userId' => $user, 'roleId' => $owner ? 'owner' : ($membership['roleId'] ?? null)]] : [];
+            // What the app asks of FormLogic itself (AppFormlogicManifest). Only an app that declares
+            // AI or payments is given visitors and the context that goes with them; every other app's
+            // requests are exactly what they were (Coffee.Dating reads any `formlogic` it is given as
+            // a FormLogic member, and would refuse its own visitors).
+            $asks = $plugin === null ? self::formlogicAsks($project) : null;
             if ($mediaRoute) {
                 // An address naming another version than the one read for this request: refused before it is
                 // opened (mediaPack).
@@ -293,6 +304,8 @@ class NativeAppController
                 // one is stripped here, the way the server block above is, so a published project
                 // can never talk its own shell into another engine.
                 unset($manifest['engine'], $manifest['logicEngine'], $manifest['config']['engine']);
+                // FormLogic's own sections are for FormLogic, not the page.
+                unset($manifest['formlogicAi'], $manifest['formlogicPayments']);
                 $client['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR);
                 $client['permission.json'] = '{"permissions":{}}';
                 // This host-owned namespace is emitted only after visibility and membership
@@ -310,13 +323,22 @@ class NativeAppController
                 // settings.softnFiles): 'ask' has the page ask each person first. A plugin's page never may.
                 $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
                 $files = $plugin === null && in_array($settings['softnFiles'] ?? null, ['ask', 'allow'], true) ? ['files' => $settings['softnFiles']] : [];
-                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client] + $served + ['access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope] + $files]
+                // An app that asks for FormLogic's visitors, AI or payments: the page marks its
+                // requests (X-FormLogic-Visitor) and may open FormLogic's wallet. Its visitors'
+                // browsers get their cookie here, or have its age renewed, once a page load.
+                $formlogic = [];
+                if ($asks !== null) {
+                    $formlogic = ['formlogic' => ['visitors' => $project['access'] === 'application', 'ai' => $asks['ai'] !== null, 'payments' => $asks['payments'] !== null]];
+                    if ($project['access'] === 'application' && $this->visitors !== null) $setCookie = $this->visitors->cookieFor($request);
+                }
+                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client] + $served + ['access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope] + $files + $formlogic]
                     + $this->lookForRuntime($app, $plugin) + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();
             if (!is_array($input) || !is_string($input['path'] ?? null) || !preg_match('~^/api/[a-zA-Z0-9/_-]+$~D', $input['path']) || !in_array($input['method'] ?? null, ['GET','POST','PUT','DELETE'], true)) throw new \InvalidArgumentException('Provide an app API path and method');
-            // A plugin's /api/site/ routes are the site's to call (CameraCheckService), never its page's.
-            if ($plugin !== null && str_starts_with(strtolower($input['path']), PluginService::SITE_ROUTE_PREFIX)) throw new \RuntimeException('Not found', 404);
+            // /api/site/ routes are the site's own to call (App AI's deliveries, a plugin's camera
+            // check: CameraCheckService), never a page's, for every app.
+            if (str_starts_with(strtolower($input['path']), PluginService::SITE_ROUTE_PREFIX)) throw new \RuntimeException('Not found', 404);
             // A plugin is the site's own, on no one's plan.
             if ($plugin === null && in_array($input['method'], ['POST', 'PUT'], true) && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) throw new \RuntimeException('The app owner’s cloud access has expired. Records remain available to read and export.', 402);
             $headers = is_array($input['headers'] ?? null) ? array_change_key_case($input['headers'], CASE_LOWER) : [];
@@ -339,6 +361,7 @@ class NativeAppController
                 'client_ip' => \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request), 'photos' => false,
             ];
             $subscriptions = $this->flows->nativeRecordSubscriptions($app['id']);
+            if ($asks !== null) [$identity, $subscriptions, $setCookie] = $this->formlogicRequest($request, $app, $project, $asks, $identity, $subscriptions, (string) $nativeRequest['client_ip'], $user);
             // The app's own page (not a plugin's): photos are redrawn here, and the body held to its route.
             // $context is the host's word to the backend, added to who is asking (never the caller's).
             $run = fn(array $context = []) => $this->native->request($app['id'], $nativeRequest, $identity + $context, $subscriptions, (int) ($project['version'] ?? 0), true, $plugin === null ? 'app' : 'plugin');
@@ -350,7 +373,7 @@ class NativeAppController
                 $result = $this->gate->recordFromPluginAnswer($plugin, (string) $user, $input['method'], $input['path'], $result);
             }
             try {
-                $this->native->dispatchRecordEvents($app['id'], fn($id, $event, $data, $bindings) => $this->flows->enqueueNativeRecordEvent($app['id'], $id, $event, $data, $bindings));
+                $this->native->dispatchRecordEvents($app['id'], $this->records->for($app['id']));
             } catch (\Throwable $error) {
                 // The app write already committed. Returning an error here could make the
                 // caller repeat it; retain the durable event for the recovery dispatcher.
@@ -358,6 +381,56 @@ class NativeAppController
             }
             return ['result' => $result];
         });
+        return $setCookie !== null ? $answer->withAddedHeader('Set-Cookie', $setCookie) : $answer;
+    }
+
+    /** The FormLogic sections an app's manifest declares: ['ai' => ?array, 'payments' => ?array], or null for neither. */
+    private static function formlogicAsks(array $project): ?array
+    {
+        $manifest = AppFormlogicManifest::decode($project['files']['manifest.json'] ?? null);
+        $ai = AppFormlogicManifest::ai($manifest);
+        $payments = AppFormlogicManifest::payments($manifest);
+        return $ai === null && $payments === null ? null : ['ai' => $ai, 'payments' => $payments];
+    }
+
+    /**
+     * One request of an app that asks for FormLogic's visitors, AI or payments: who is asking (the
+     * member, or the browser's visitor when FormLogic's page marked the request), their context, and
+     * App AI's subscription for its jobs table. Answers [identity, subscriptions, Set-Cookie or null].
+     * The requester is FormLogic's word alone: nothing in the request's body or headers names one.
+     */
+    private function formlogicRequest(Request $request, array $app, array $project, array $asks, array $identity, array $subscriptions, string $ip, mixed $user): array
+    {
+        $setCookie = null;
+        $requester = null;
+        if ($project['access'] === 'members') {
+            $requester = ['kind' => 'user', 'id' => (string) $user];
+        } elseif ($this->visitors !== null) {
+            $visitor = $this->visitors->resolve($request, (string) $app['id'], $this->visitors->marked($request));
+            if ($visitor !== null) {
+                $requester = ['kind' => 'visitor', 'id' => $visitor['id']];
+                $setCookie = $visitor['setCookie'];
+            }
+        }
+        $formlogic = is_array($identity['formlogic'] ?? null) ? $identity['formlogic'] : ['appId' => $app['id']];
+        if ($requester !== null && $requester['kind'] === 'visitor') $formlogic['visitor'] = ['id' => $requester['id']];
+        if ($asks['ai'] !== null && $this->ai !== null) {
+            $plan = $this->ai->forRequest($app, $asks['ai'], $requester, $ip);
+            $formlogic['ai'] = $plan['context'];
+            if ($plan['binding'] !== null) {
+                $with = AppAiService::withBinding($subscriptions, $asks['ai']['table'], $plan['binding']);
+                if ($with !== null) {
+                    $subscriptions = $with;
+                } else {
+                    // No room for its subscription (the runner takes 100): this request's jobs would
+                    // not be seen, so the app is told its AI is not available rather than wait for them.
+                    $formlogic['ai']['enabled'] = false;
+                    $formlogic['ai']['reason'] = 'subscriptions_full';
+                }
+            }
+        }
+        $identity['formlogic'] = $formlogic;
+        return [$identity, $subscriptions, $setCookie];
     }
 
     /**

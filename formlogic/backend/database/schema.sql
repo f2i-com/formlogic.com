@@ -763,6 +763,89 @@ CREATE TABLE `camera_checks` (
   CONSTRAINT `fk_camera_checks_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- App AI (AppAiService): each app's AI choice and allowances. A table of its own, like apps.client_engine, so packs, backups and the MCP merge never carry it.
+CREATE TABLE `app_ai_settings` (
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `mode` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'off',
+  `own_connection_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `own_instance_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `own_public_key` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `own_provider_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `own_picture_model` varchar(256) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `own_chat_model` varchar(256) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `own_device_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `per_requester_day` smallint unsigned NOT NULL DEFAULT '10',
+  `per_ip_day` smallint unsigned NOT NULL DEFAULT '20',
+  `per_ip_hour` smallint unsigned NOT NULL DEFAULT '10',
+  `per_app_day` int unsigned NOT NULL DEFAULT '500',
+  `blocked_by_admin` tinyint(1) NOT NULL DEFAULT '0',
+  `blocked_reason` varchar(200) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `paused_until` datetime DEFAULT NULL,
+  `failures_in_row` smallint unsigned NOT NULL DEFAULT '0',
+  `last_served_at` datetime(3) DEFAULT NULL,
+  `updated_by` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`app_id`),
+  CONSTRAINT `fk_app_ai_settings_app` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- App AI jobs: who asked (a member's or visitor's id and their address's key, never the address), what for, where it went, what came back. Prompts cleared after 30 days, rows removed after 90.
+CREATE TABLE `app_ai_jobs` (
+  `id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `event_id` char(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_job_id` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `requester_kind` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `requester_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ip_key` char(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `kind` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` varchar(12) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `source` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `target` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `relay_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `relay_owner` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `channel` text COLLATE utf8mb4_unicode_ci,
+  `prompt` mediumtext COLLATE utf8mb4_unicode_ci,
+  `prompt_sha256` char(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `size` varchar(9) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `seed` bigint DEFAULT NULL,
+  `reference` mediumtext COLLATE utf8mb4_unicode_ci,
+  `model` varchar(256) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `result_path` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `result_meta` text COLLATE utf8mb4_unicode_ci,
+  `code` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `message` varchar(300) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `counted_day` char(10) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `counted_hour` char(13) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `refunded` tinyint(1) NOT NULL DEFAULT '0',
+  `attempts` tinyint unsigned NOT NULL DEFAULT '0',
+  `delivery_attempts` tinyint unsigned NOT NULL DEFAULT '0',
+  `next_attempt_at` datetime(3) DEFAULT NULL,
+  `running_noticed` tinyint(1) NOT NULL DEFAULT '0',
+  `created_at` datetime(3) NOT NULL,
+  `started_at` datetime(3) DEFAULT NULL,
+  `finished_at` datetime(3) DEFAULT NULL,
+  `delivered_at` datetime(3) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_app_ai_jobs_event` (`app_id`,`event_id`),
+  KEY `idx_app_ai_jobs_status` (`status`,`next_attempt_at`),
+  KEY `idx_app_ai_jobs_app` (`app_id`,`status`,`created_at`),
+  KEY `idx_app_ai_jobs_requester` (`app_id`,`requester_kind`,`requester_id`,`status`),
+  KEY `idx_app_ai_jobs_target` (`target`,`status`,`created_at`),
+  CONSTRAINT `fk_app_ai_jobs_app` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- App AI's daily (and hourly) counts: per requester, per address key, per app, and the site's ('').
+CREATE TABLE `app_ai_counters` (
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `scope` varchar(12) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `subject` varchar(80) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `period` char(13) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `used` int unsigned NOT NULL DEFAULT '0',
+  PRIMARY KEY (`app_id`,`scope`,`subject`,`period`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Publishing hosted SoftN apps to a public SoftN directory (SoftnDirectoryService): drafts and what the directory gave back.
 CREATE TABLE `softn_directory_drafts` (
   `id` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,

@@ -9,7 +9,7 @@ import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { readKeyFile } from '../../lib/appKeyFile';
-import { importNativeProject } from '../../lib/nativeHosting';
+import { formlogicAsks, importNativeProject } from '../../lib/nativeHosting';
 import { backendOf, withBackend } from '../../lib/softnBackend';
 import { api } from '../../lib/api';
 import { createSoftnApp, projectFromUpload, projectHasBackend, softnWorkspacePath, uploadName, type SoftnStart } from '../../lib/softnApps';
@@ -20,7 +20,8 @@ import { useUIStore } from '../../stores/uiStore';
 type Method = 'ai' | 'builder' | 'upload';
 
 /** What a chosen .softn file holds, read as soon as it is chosen: its app's name, and whether it brings a backend. */
-interface FileReview { name: string; backend: boolean }
+/** `asks`: what the app asks of FormLogic itself (its AI, its payments), said before it is created. */
+interface FileReview { name: string; backend: boolean; asks: string[] }
 
 const isFileDrag = (event: React.DragEvent) => [...(event.dataTransfer?.types ?? [])].includes('Files');
 
@@ -104,7 +105,7 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
     setChosen(true); setMethod('upload');
     try {
       const project = await projectFromUpload(picked);
-      if (latest.current === picked) setReview({ name: uploadName(project, picked), backend: projectHasBackend(project) });
+      if (latest.current === picked) setReview({ name: uploadName(project, picked), backend: projectHasBackend(project), asks: formlogicAsks(project) });
     } catch (reason) {
       if (latest.current === picked) setFileError(reason instanceof Error ? reason.message : 'That file could not be read as a SoftN app.');
     }
@@ -162,6 +163,7 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
     {file && <p className="mt-3 break-words text-sm text-gray-700 dark:text-slate-300">
       <span className="font-medium">{file.name}</span>
       {review && <span className="text-gray-500 dark:text-slate-400"> · {review.name} · {review.backend ? 'with its own backend and database' : 'runs in the browser, no backend'}</span>}
+      {review && review.asks.length > 0 && <ul className="mt-1 list-disc pl-5 text-gray-600 dark:text-slate-300" data-testid="softn-asks">{review.asks.map(ask => <li key={ask}>{ask}</li>)}</ul>}
     </p>}
     {fileError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-left text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{fileError}</p>}
   </div>;

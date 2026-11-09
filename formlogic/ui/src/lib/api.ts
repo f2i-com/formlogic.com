@@ -2215,8 +2215,14 @@ class ApiClient {
       return { error: 'The app’s pictures and sounds could not be downloaded. Check your connection and try again.', transportFailure: true };
     }
   }
-  async runNativeRequest(slug: string, input: Record<string, unknown>, signal?: AbortSignal, clientEngine?: string): Promise<ApiResponse<{ result: { status: number; body: unknown } }>> {
-    return this.request(`/app/${encodeURIComponent(slug)}/native/request`, { method: 'POST', body: JSON.stringify(input), signal, ...clientEngineHeader(clientEngine) });
+  /**
+   * One request to a native app's backend. `visitor`: the app asks for FormLogic's visitors, so the
+   * request is marked as this page's (X-FormLogic-Visitor) and the browser's visitor cookie counts.
+   */
+  async runNativeRequest(slug: string, input: Record<string, unknown>, signal?: AbortSignal, clientEngine?: string, visitor = false): Promise<ApiResponse<{ result: { status: number; body: unknown } }>> {
+    const engine = clientEngineHeader(clientEngine).headers ?? {};
+    const headers: Record<string, string> = visitor ? { ...engine, 'X-FormLogic-Visitor': '1' } : engine;
+    return this.request(`/app/${encodeURIComponent(slug)}/native/request`, { method: 'POST', body: JSON.stringify(input), signal, ...(Object.keys(headers).length ? { headers } : {}) });
   }
 
   async getAppHosting(id: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment | null; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy; actor?: unknown }>> {

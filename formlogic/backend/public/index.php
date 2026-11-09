@@ -894,8 +894,37 @@ $container->set(\FormLogic\Controllers\NativeAppController::class, function (Con
         $c->get(\FormLogic\Services\PluginService::class),
         $c->get(\FormLogic\Services\AccessGateService::class),
         $c->get(\FormLogic\Services\AppLookService::class),
-        $c->get(\FormLogic\Services\NativePhoneVerification::class)
+        $c->get(\FormLogic\Services\NativePhoneVerification::class),
+        $c->get(\FormLogic\Services\NativeRecordEventRouter::class),
+        $c->get(\FormLogic\Services\AppVisitors::class),
+        $c->get(\FormLogic\Services\AppAiService::class)
     );
+});
+// App AI, visitors and payments (docs/HOSTED_APPS.md, "App AI, visitors and payments").
+$container->set(\FormLogic\Services\AppAiSiteSettings::class, fn () => new \FormLogic\Services\AppAiSiteSettings());
+$container->set(\FormLogic\Services\AppVisitors::class, function (Container $c) {
+    // The origins a visitor's request may come from: the site's own (as for its sessions), or the
+    // app's domain reached directly (SessionOriginPolicy::sameHostOrigin, checked per request).
+    $origins = \FormLogic\Support\Environment::nonEmpty('CORS_ALLOWED_ORIGINS') ?? \FormLogic\Support\Environment::nonEmpty('CORS_ORIGIN');
+    return new \FormLogic\Services\AppVisitors(
+        $c->get(MySQLConnection::class),
+        $c->get('settings')['cookie'] ?? [],
+        new \FormLogic\Support\SessionOriginPolicy($origins === null ? [] : array_map('trim', explode(',', $origins)))
+    );
+});
+$container->set(\FormLogic\Services\AppAiService::class, function (Container $c) {
+    return new \FormLogic\Services\AppAiService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\AppAiSiteSettings::class),
+        $c->get(\FormLogic\Services\AppVisitors::class),
+        $c->get(\FormLogic\Services\NativeAppService::class),
+        $c->get(\FormLogic\Services\SiteAiDesktopSettings::class),
+        $c->get(AIService::class),
+        $c->get(\FormLogic\Services\PlanService::class)
+    );
+});
+$container->set(\FormLogic\Services\NativeRecordEventRouter::class, function (Container $c) {
+    return new \FormLogic\Services\NativeRecordEventRouter($c->get(\FormLogic\Services\FlowService::class), $c->get(\FormLogic\Services\AppAiService::class));
 });
 $container->set(\FormLogic\Services\NativePhoneVerification::class, function (Container $c) {
     return new \FormLogic\Services\NativePhoneVerification($c->get(\FormLogic\Services\NativeAppService::class));

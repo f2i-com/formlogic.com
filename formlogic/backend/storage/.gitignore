@@ -1,0 +1,8 @@
+# Everything the server writes here is runtime state: app databases, AI results, settings files,
+# locks, logs. None of it is ever committed. Only the placeholders that keep the folders and the
+# web server's deny rules in the repository are.
+*
+!*/
+!.gitignore
+!.gitkeep
+!.htaccess
