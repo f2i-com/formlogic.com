@@ -20,6 +20,13 @@ class AppAiSiteSettings
         'perAppDay' => [0, 100000],
     ];
     public const MAX_WORDS = 500;
+    /**
+     * The longest answer a chat job may have, in tokens: the administrator's ceiling, which an app's
+     * own `max_output` is held to and which applies when the app gives none. [lowest, highest] it
+     * may be set to, and where it starts.
+     */
+    public const CHAT_MAX_OUTPUT = [16, 8000];
+    public const CHAT_MAX_OUTPUT_DEFAULT = 2000;
 
     public function __construct(private ?string $path = null)
     {
@@ -42,6 +49,8 @@ class AppAiSiteSettings
             'defaults' => ['perRequesterDay' => 10, 'perIpDay' => 20, 'perIpHour' => 10, 'perAppDay' => 500],
             // Jobs the site's AI takes from every app together in a day.
             'siteDay' => 2000,
+            // The longest answer a chat job may have, in tokens, whatever its app asks for.
+            'chatMaxOutput' => self::CHAT_MAX_OUTPUT_DEFAULT,
             // Words and phrases a prompt may not contain (case-insensitive, whole words).
             'words' => [],
         ];
@@ -98,6 +107,7 @@ class AppAiSiteSettings
             }
         }
         if (array_key_exists('siteDay', $data)) $out['siteDay'] = self::limit($data['siteDay'], 'siteDay', [0, 1000000]);
+        if (array_key_exists('chatMaxOutput', $data)) $out['chatMaxOutput'] = self::limit($data['chatMaxOutput'], 'chatMaxOutput', self::CHAT_MAX_OUTPUT);
         if (array_key_exists('words', $data)) $out['words'] = self::words($data['words']);
         return $out;
     }

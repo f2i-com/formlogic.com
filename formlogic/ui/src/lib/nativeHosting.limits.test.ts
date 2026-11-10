@@ -18,6 +18,7 @@ describe('the import holds a project to the server’s limits', () => {
     expect(NATIVE_LIMITS).toEqual({
       sourceFiles: constant('MAX_SOURCE_FILES'),
       sourceFileBytes: constant('MAX_SOURCE_FILE_BYTES'),
+      migrationBytes: constant('MAX_MIGRATION_BYTES'),
       mediaFiles: constant('MAX_MEDIA_FILES'),
       mediaFileBytes: constant('MAX_MEDIA_FILE_BYTES'),
       projectBytes: constant('MAX_PROJECT_BYTES'),

@@ -45,8 +45,8 @@ class DesktopAiRelayService
     public const ABANDONED_SECONDS = 30;
     /**
      * A picture is let go after this much silence instead (App AI, docs/HOSTED_APPS.md): drawing one
-     * takes a minute or more, OAIY sends a progress frame about every 15 seconds, and gives up on its
-     * own after 240.
+     * takes a minute or more, OAIY sends a progress frame about every 5 seconds (15 before contract
+     * §0.13), and gives up on its own after 240.
      */
     public const ABANDONED_PICTURE_SECONDS = 300;
     /**
@@ -517,7 +517,10 @@ class DesktopAiRelayService
             }
             if (!in_array($row['status'] ?? '', ['claimed', 'streaming'], true)) {
                 $this->mysql->rollBack();
-                throw new \RuntimeException('not_claimed');
+                // Cancelled by whoever asked (cancel()), or let go as too old or too silent
+                // (expireStale, releaseAbandoned): the computer that held it is told so, for it to
+                // stop the work (contract §0.13). Any other state is what it always was.
+                throw new \RuntimeException(self::wasLetGo($row['status'] ?? null, $row['claimed_by'] ?? null, $instanceId) ? 'cancelled' : 'not_claimed');
             }
             $this->assertFrameFits($id, 'out', strlen($envelopeBytes));
             $this->mysql->prepare("
@@ -681,7 +684,8 @@ class DesktopAiRelayService
                 ) {
                     throw new \RuntimeException('claimed_elsewhere');
                 }
-                throw new \RuntimeException('not_claimed');
+                // A request let go while the computer worked on it: told as its frames are.
+                throw new \RuntimeException(self::wasLetGo($existing['status'] ?? null, $existing['claimedBy'] ?? null, $instanceId) ? 'cancelled' : 'not_claimed');
             }
             $this->mysql->prepare("DELETE FROM desktop_ai_frames WHERE request_id = :id AND direction = 'in'")
                 ->execute(['id' => $id]);
@@ -882,6 +886,46 @@ class DesktopAiRelayService
         ");
         $stmt->execute(['id' => $id, 'o' => $ownerUserId]);
         return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * A request whoever asked no longer wants, whatever it is doing (App AI: its app cancelled the
+     * job, the job ran out of time, or the answer ran past what is read): expired now, its sealed
+     * content gone. A pending one is never handed out. A claimed or streaming one frees its lane at
+     * once, and the computer still working on it is answered `cancelled` on its next frame
+     * (appendFrame) and on its completion, for it to stop (contract §0.13). True when it was open.
+     */
+    public function cancel(string $id, string $ownerUserId): bool
+    {
+        $this->mysql->beginTransaction();
+        try {
+            $stmt = $this->mysql->prepare("
+                UPDATE desktop_ai_requests SET status = 'expired', envelope = NULL, finished_at = NOW()
+                WHERE id = :id AND owner_user_id = :o AND status IN ('pending', 'claimed', 'streaming')
+            ");
+            $stmt->execute(['id' => $id, 'o' => $ownerUserId]);
+            $open = $stmt->rowCount() === 1;
+            if ($open) {
+                $this->mysql->prepare('DELETE FROM desktop_ai_frames WHERE request_id = :id')->execute(['id' => $id]);
+            }
+            $this->mysql->commit();
+            return $open;
+        } catch (\Throwable $e) {
+            if ($this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Whether a request in $status was let go under the computer $instanceId that held it (or under
+     * nobody: it was never claimed): cancelled, or expired as too old or too silent. Its frames and
+     * its completion are then answered `cancelled`. A computer that never held it is not told.
+     */
+    private static function wasLetGo(?string $status, ?string $claimedBy, ?string $instanceId): bool
+    {
+        return $status === 'expired' && ($claimedBy === null || $claimedBy === $instanceId);
     }
 
     /** Non-terminal lane occupancy for one target desktop (NULL = the untargeted pool), of one lane or both. */

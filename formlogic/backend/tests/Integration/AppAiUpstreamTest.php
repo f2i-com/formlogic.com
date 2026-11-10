@@ -86,6 +86,30 @@ final class AppAiUpstreamTest extends TestCase
         $this->assertArrayNotHasKey('x-oaiy-incognito', $chat['headers']);
     }
 
+    /**
+     * A chat's answer has a length (contract §0.13): its tokens go to the upstream as `max_tokens`,
+     * and what is read of the answer is held to the job's characters whatever the upstream sends.
+     */
+    public function testAChatsAnswerLengthGoesAsMaxTokensAndWhatIsReadIsHeldToIt(): void
+    {
+        $upstream = new AppAiUpstream(['url' => self::$stub->url(), 'key' => '', 'model' => 'm']);
+        $done = self::answers($upstream, ['c' => ['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => 'Name my cafe.']], 'maxTokens' => 1500, 'maxCharacters' => 12000]]);
+        $this->assertSame('Hello from the stub.', $done['c']['text'] ?? null);
+        $this->assertSame(['model' => 'm', 'messages' => [['role' => 'user', 'content' => 'Name my cafe.']], 'stream' => false, 'max_tokens' => 1500], self::sent()['chat']['body']);
+
+        // A model that runs on past its tokens: no more of its answer is read than the job's characters.
+        $long = self::answers($upstream, ['l' => ['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => '[long:20000] Write a long poem about cats.']], 'maxTokens' => 20, 'maxCharacters' => 160]]);
+        $this->assertTrue($long['l']['ok']);
+        $this->assertSame(160, mb_strlen($long['l']['text']));
+        $this->assertStringStartsWith('All work and no play. All work', $long['l']['text']);
+        $this->assertSame(20, self::sent()['chat']['body']['max_tokens']);
+
+        // A caller that names no length (none does: the worker always names one) is still held to the most that is ever read.
+        $unbounded = self::answers($upstream, ['u' => ['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => '[long:40000]']]]]);
+        $this->assertSame(32000, mb_strlen($unbounded['u']['text']));
+        $this->assertArrayNotHasKey('max_tokens', self::sent()['chat']['body']);
+    }
+
     public function testEachFailureIsAnsweredWithTheDeliverysCode(): void
     {
         $upstream = new AppAiUpstream(['url' => self::$stub->url(), 'key' => '', 'model' => 'm']);

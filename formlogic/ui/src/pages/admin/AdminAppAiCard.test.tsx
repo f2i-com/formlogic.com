@@ -29,7 +29,7 @@ afterEach(async () => {
 const button = (label: string) => [...container.querySelectorAll('button')].find((node) => node.textContent?.includes(label));
 const toggle = (name: string) => [...container.querySelectorAll<HTMLButtonElement>('button[role="switch"]')]
   .find((node) => node.getAttribute('aria-label') === name || document.getElementById(node.getAttribute('aria-labelledby') ?? '')?.textContent === name)!;
-const settings = { allowApps: false, paused: false, pictureModel: null, chatModel: null, defaults: { perRequesterDay: 10, perIpDay: 20, perIpHour: 10, perAppDay: 500 }, siteDay: 2000, words: ['badword'] };
+const settings = { allowApps: false, paused: false, pictureModel: null, chatModel: null, defaults: { perRequesterDay: 10, perIpDay: 20, perIpHour: 10, perAppDay: 500 }, siteDay: 2000, chatMaxOutput: 2000, words: ['badword'] };
 const setup: AppAiSetup = { source: 'none', computer: null, gone: null, provider: { named: false, on: false }, drawing: true, kinds: [], reason: 'site_ai_unavailable', ready: false, workerIdleSeconds: 20, lastTest: null };
 const adminView = (over: Partial<AppAiAdminView> = {}): AppAiAdminView => ({
   settings,
@@ -86,6 +86,39 @@ it('saves the limits and the words together, the words one a line', async () => 
   await typeInto(perIpDay, '7');
   await act(async () => button('Save limits')!.click());
   expect(put).toHaveBeenCalledWith({ ...settings, defaults: { ...settings.defaults, perIpDay: 7 }, words: ['badword', 'worse phrase'] });
+});
+
+it('sets the longest chat answer with the limits, held to what the server takes', async () => {
+  vi.spyOn(api, 'adminGetAppAi').mockResolvedValue({ data: adminView() });
+  vi.spyOn(api, 'adminGetSiteAiDesktop').mockResolvedValue(noComputers);
+  const put = vi.spyOn(api, 'adminPutAppAi').mockResolvedValue({ data: adminView() });
+  await mount();
+  const length = container.querySelector<HTMLInputElement>('[data-testid="ai-chat-max-output"]')!;
+  expect(length.value).toBe('2000');
+  expect(length.closest('label')!.textContent).toContain('Longest chat answer, in tokens');
+  expect(length.closest('label')!.textContent).toContain('From 16 to 8,000');
+  // Under "Limits and safety", and saved by its button.
+  const heading = [...container.querySelectorAll('h3')].find((node) => node.textContent === 'Limits and safety')!;
+  expect(heading.parentElement!.contains(length)).toBe(true);
+  await typeInto(length, '600');
+  await act(async () => button('Save limits')!.click());
+  expect(put).toHaveBeenLastCalledWith({ ...settings, chatMaxOutput: 600 });
+  // Past either end is saved as that end: the server refuses anything else.
+  await typeInto(length, '90000');
+  await act(async () => button('Save limits')!.click());
+  expect(put).toHaveBeenLastCalledWith({ ...settings, chatMaxOutput: 8000 });
+  await typeInto(length, '3');
+  await act(async () => button('Save limits')!.click());
+  expect(put).toHaveBeenLastCalledWith({ ...settings, chatMaxOutput: 16 });
+});
+
+it('starts the longest chat answer at 2,000 on a server that sends none', async () => {
+  const older: Partial<typeof settings> = { ...settings };
+  delete older.chatMaxOutput;
+  vi.spyOn(api, 'adminGetAppAi').mockResolvedValue({ data: adminView({ settings: older as typeof settings }) });
+  vi.spyOn(api, 'adminGetSiteAiDesktop').mockResolvedValue(noComputers);
+  await mount();
+  expect(container.querySelector<HTMLInputElement>('[data-testid="ai-chat-max-output"]')!.value).toBe('2000');
 });
 
 it('pauses every app\'s AI at once, and keeps what is being typed in the limits', async () => {

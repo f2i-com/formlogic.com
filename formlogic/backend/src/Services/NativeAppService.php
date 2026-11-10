@@ -73,9 +73,14 @@ class NativeAppService
     /**
      * What a project may hold, which the app page's import (nativeHosting.ts) reads first and a
      * test holds equal: a game's art and sound run to hundreds of files and tens of megabytes.
+     * A source file may be 1,500,000 bytes: an app's server logic is one file (the runner reads
+     * `server.entry` and nothing else), and a studio's whole library lives in it. The runner
+     * compiles that file for every request, about 160 ms for each 1,000,000 bytes of code.
+     * A migration stays at 1,000,000: the runner reads no more of one (its "Migration size").
      */
     public const MAX_SOURCE_FILES = 200;
-    public const MAX_SOURCE_FILE_BYTES = 1000000;
+    public const MAX_SOURCE_FILE_BYTES = 1500000;
+    public const MAX_MIGRATION_BYTES = 1000000;
     public const MAX_MEDIA_FILES = 1000;
     public const MAX_MEDIA_FILE_BYTES = 8 * 1024 * 1024;
     public const MAX_PROJECT_BYTES = 64 * 1024 * 1024;
@@ -1639,13 +1644,18 @@ class NativeAppService
         $bytes = 0;
         foreach ($files as $path => $source) {
             // `.xdb` is an app's seed data (its local collections), JSON text the app is shipped with.
-            if (!is_string($path) || !preg_match('~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|py|json|sql|xdb)$~D', $path) || str_contains($path, '..') || !is_string($source) || strlen($source) > self::MAX_SOURCE_FILE_BYTES) throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./-]{1,200}$~', $path) ? "Invalid app source file: {$path}" : 'Invalid app source file');
+            if (!is_string($path) || !preg_match('~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|py|json|sql|xdb)$~D', $path) || str_contains($path, '..') || !is_string($source)) throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./-]{1,200}$~', $path) ? "Invalid app source file: {$path}" : 'Invalid app source file');
+            // Said as the app page's import says it (nativeHosting.ts), which reads the same limit first.
+            if (strlen($source) > self::MAX_SOURCE_FILE_BYTES) throw new InvalidArgumentException(preg_match('~^[\w./-]{1,200}$~', $path) ? "{$path} is larger than this host keeps (1.5 MB per source file)." : 'A source file is larger than this host keeps (1.5 MB per source file).');
             // `.py` is CLIENT logic written in Python, which runs in the member's frame on the ZIPP
             // web-python engine. The private tree is the native backend: it is executed by the Node
             // runner as JavaScript, which would read a Python file as a syntax error at best, and
             // nothing derives a language from it — so a `.py` there is refused rather than installed
             // as a file no runtime can run. Lower case only, like every other extension here.
             if (str_ends_with($path, '.py') && preg_match('~^(?:server|backend|private)/~i', $path)) throw new InvalidArgumentException('Python is a client logic language; the app backend stays JavaScript');
+            // The runner takes a migration of at most this size, and would refuse a larger one as
+            // the app is installed, with nothing to say which file it was.
+            if (str_starts_with($path, 'server/migrations/') && str_ends_with($path, '.sql') && strlen($source) > self::MAX_MIGRATION_BYTES) throw new InvalidArgumentException("{$path} is larger than a migration may be (1 MB). Split it into two migrations.");
             $bytes += strlen($source);
         }
         $assets = $project['assets'] ?? [];

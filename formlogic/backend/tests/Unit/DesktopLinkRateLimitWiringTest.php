@@ -14,6 +14,7 @@ use PHPUnit\Framework\TestCase;
  * flow runs, and busy lanes 429'd the writes. This pins the split in public/index.php: every
  * lane route sits in the second /api/v1 group (its own per-address limiter, and a per-key
  * budget named desktop_link), none of them in the data group, and nothing else joins them.
+ * An AI answer's frames are a third group, counted apart from both (desktop_ai_frames).
  */
 final class DesktopLinkRateLimitWiringTest extends TestCase
 {
@@ -30,13 +31,21 @@ final class DesktopLinkRateLimitWiringTest extends TestCase
         'POST /desktop-ai/pubkey',
         'GET /desktop-ai/pending',
         'POST /desktop-ai/{id}/claim',
-        'POST /desktop-ai/{id}/frames',
         'GET /desktop-ai/{id}/input',
         'POST /desktop-ai/{id}/complete',
         'GET /desktop-flows/pending',
         'POST /desktop-flows/{id}/claim',
         'POST /desktop-flows/{id}/frames',
         'POST /desktop-flows/{id}/complete',
+    ];
+
+    /**
+     * An AI answer's frames: ten to twenty a second while a chat answer is written. Counted with the
+     * lanes, one long answer used up the link's minute, and the job's outcome and the next poll for
+     * work were refused with it (contract §0.13), so they have a third group and budgets of their own.
+     */
+    private const FRAME_ROUTES = [
+        'POST /desktop-ai/{id}/frames',
     ];
 
     /** Data calls the desktop also makes, which stay on the data API's budget. */
@@ -121,6 +130,33 @@ final class DesktopLinkRateLimitWiringTest extends TestCase
             $this->assertContains($route, $dataRoutes, "{$route} stays on the data API's budget");
         }
         $this->assertStringNotContainsString('desktop_link', $data, 'no data route counts against the link budget');
+    }
+
+    public function testAnAnswersFramesAreCountedApartFromTheLanes(): void
+    {
+        $source = self::source();
+        $this->assertMatchesRegularExpression(
+            "/\\\$desktopAiFrameRateLimiter\\s*=\\s*new RateLimitMiddleware\\(\\\$rateLimiter,\\s*12000,\\s*60,\\s*'desktop_ai_frames'\\);/",
+            $source,
+            'frames have their own per-address budget, before auth'
+        );
+        $frames = self::group($source, 'desktopAiFrameRateLimiter');
+        $this->assertSame(self::FRAME_ROUTES, self::routes($frames), 'the frames group holds the frames route and nothing else');
+        $this->assertMatchesRegularExpression(
+            "/->add\\(new ApiKeyMiddleware\\(\\\$apiKeyService,\\s*\\[\\],\\s*\\\$rateLimiter,\\s*6000,\\s*60,\\s*'desktop_ai_frames'\\)\\);/",
+            $frames,
+            'frames count 6,000/min per key, in a per-key budget of their own'
+        );
+        $this->assertStringNotContainsString("'desktop_link'", $frames, 'a frame takes nothing from the link budget');
+
+        // And they are in neither other group: the lanes' budget and the data API's are whole.
+        foreach (['desktopLinkRateLimiter', 'apiRateLimiter'] as $limiter) {
+            $routes = self::routes(self::group($source, $limiter));
+            foreach (self::FRAME_ROUTES as $route) {
+                $this->assertNotContains($route, $routes, "{$route} must not also count against {$limiter}");
+            }
+        }
+        $this->assertStringNotContainsString('desktop_ai_frames', self::group($source, 'desktopLinkRateLimiter'), 'no lane route counts against the frames budget');
     }
 
     public function testEachLinkRouteAuthenticatesWithALinkMiddleware(): void

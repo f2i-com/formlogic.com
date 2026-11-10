@@ -371,6 +371,9 @@ class DesktopAiRelayController
             if ($e->getMessage() === 'claimed_elsewhere') {
                 return $this->jsonError($response, 'This request was claimed by a different desktop instance', 409, 'claimed_elsewhere');
             }
+            if ($e->getMessage() === 'cancelled') {
+                return $this->cancelled($response);
+            }
             return $this->jsonError($response, 'This request is not in a claimed state', 409, 'not_claimed');
         }
         return $this->jsonResponse($response, ['accepted' => true, 'seq' => $result['seq'], 'status' => $result['status']], 201);
@@ -428,12 +431,26 @@ class DesktopAiRelayController
             if ($e->getMessage() === 'claimed_elsewhere') {
                 return $this->jsonError($response, 'This request was claimed by a different desktop instance', 409, 'claimed_elsewhere');
             }
+            if ($e->getMessage() === 'cancelled') {
+                return $this->cancelled($response);
+            }
             return $this->jsonError($response, 'This request is not in a claimed state', 409, 'not_claimed');
         }
         if (!$req) {
             return $this->jsonError($response, 'Request not found', 404);
         }
         return $this->jsonResponse($response, ['request' => $req]);
+    }
+
+    /**
+     * 409 `{code: "cancelled"}`: the request was cancelled by whoever asked, or let go as too old or
+     * too silent, while this computer worked on it (contract §0.13). The answer to its next frame
+     * (progress, partial or final) and to its completion: the computer stops the work, sends
+     * nothing more for the request and frees its slot.
+     */
+    private function cancelled(Response $response): Response
+    {
+        return $this->jsonError($response, 'This request was cancelled. Stop the work and send nothing more for it.', 409, 'cancelled');
     }
 
     // ── Shared helpers ──

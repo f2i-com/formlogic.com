@@ -8,7 +8,7 @@ import { engineIdentity, engineNeedsBytes, getEngineBytes, hostZippFiles } from 
 import { announcedIdentity, chooseFrameEngine, frameSource, sameIdentity } from "../../lib/formlogic/frameEngine";
 
 import { nativeAppStorage, nativeFrameAppId, NativeStorageError, isNativeStorageScope, onNativeStorageChange, SMALL_STORAGE_LIMITS, type NativeStorageLimits, type NativeStorageScope } from "../../lib/nativeAppStorage";
-import { NATIVE_TOO_MANY_REQUESTS, nativeRefusal } from "../../lib/nativeRefusal";
+import { NATIVE_IN_FLIGHT_RETRY_SECONDS, nativeRefusal, nativeTooManyRequests } from "../../lib/nativeRefusal";
 import { toast } from "../../stores/toastStore";
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from "../../lib/sessionGeneration";
 import { copyHostedActor, HOSTED_ACTOR_ERROR, isHostedAdmissionCurrent, sameHostedActor, type HostedAdmission } from '../../lib/hostedActor';
@@ -423,7 +423,7 @@ export function HostedAppFrame({
         const counted = !(storage && action === "nativeStorage");
         if (counted && inFlight >= 4) {
           // A fifth request to the app's backend is "too many requests" to the app, as its host says it.
-          reply(mountNative && action === "nativeRequest" ? { result: NATIVE_TOO_MANY_REQUESTS } : { error: "Please wait for the current request." });
+          reply(mountNative && action === "nativeRequest" ? { result: nativeTooManyRequests(NATIVE_IN_FLIGHT_RETRY_SECONDS) } : { error: "Please wait for the current request." });
           return;
         }
         if (counted) inFlight++;

@@ -86,6 +86,8 @@ interface ApiResponse<T> {
   /** The typed `code` from an error envelope ({error:true, code, message}), when the server sent
    *  one: a status alone cannot tell engine_changed apart from any other 409. */
   code?: string;
+  /** With a 429: how many seconds the server says to wait (its `retryAfter`, or its Retry-After header). */
+  retryAfter?: number;
   /** Trusted hosted-action error identity, outside script-owned result data. */
   actor?: unknown;
   /** A form's script acted and nothing was stored. The server keeps the answer under this idempotency key, so sending it again takes a new one. */
@@ -107,6 +109,15 @@ const AUTH_SESSION_CHANGED = 'Session changed. Please try again.';
 const MIGRATION_IN_PROGRESS = 'migration_in_progress';
 /** At about 20 s each that's ten minutes. A migration that ends frees the lock, so this ends too. */
 const MIGRATION_WAITS = 30;
+
+/**
+ * How long a 429 says to wait, in whole seconds: the body's `retryAfter` (FormLogic's limiters send
+ * it), else the Retry-After header. Undefined when neither is a number of seconds.
+ */
+function retryAfterSeconds(body: unknown, header: string | null | undefined): number | undefined {
+  const seconds = typeof body === 'number' ? body : header != null && /^\d{1,6}$/.test(header.trim()) ? Number(header.trim()) : NaN;
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : undefined;
+}
 const NOT_FORMLOGIC_REPLY ='Your answers were not sent: something on the network answered instead of FormLogic (a Wi-Fi sign-in page, for example). Your answers are still here. Check your connection and send them again.';
 
 /**
@@ -1006,7 +1017,8 @@ class ApiClient {
           const fieldMsgs = Object.values(d.errors as Record<string, unknown>).filter((v): v is string => typeof v === 'string');
           if (fieldMsgs.length > 0) message = `${message}: ${fieldMsgs.join('; ')}`;
         }
-        return { error: message, status: response.status, ...(typeof d?.code === 'string' ? { code: d.code } : {}), ...(d && Object.hasOwn(d, 'actor') ? { actor: d.actor } : {}), ...(d?.scriptRan === true ? { scriptRan: true as const } : {}) };
+        const wait = response.status === 429 ? retryAfterSeconds(d?.retryAfter, response.headers?.get?.('Retry-After')) : undefined;
+        return { error: message, status: response.status, ...(typeof d?.code === 'string' ? { code: d.code } : {}), ...(wait !== undefined ? { retryAfter: wait } : {}), ...(d && Object.hasOwn(d, 'actor') ? { actor: d.actor } : {}), ...(d?.scriptRan === true ? { scriptRan: true as const } : {}) };
       }
 
       return { data };

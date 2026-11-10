@@ -241,8 +241,9 @@ final class AppAiWorker
 
     /**
      * Jobs the app cancelled once they were sent or back (AppAiService::cancel): what the AI is still
-     * asked is let go (a request not yet taken is withdrawn; one being drawn finishes unheard), and a
-     * result already back is thrown away.
+     * asked is cancelled (a request not yet taken is withdrawn; one being drawn or written frees its
+     * place now, and its computer is answered `cancelled` on its next frame and stops: contract
+     * §0.13), and a result already back is thrown away.
      */
     private function cancelled(): int
     {
@@ -253,7 +254,8 @@ final class AppAiWorker
         }
         $rows = $this->pdo()->query("SELECT * FROM app_ai_jobs WHERE status = 'cancelled' AND (relay_id IS NOT NULL OR result_path IS NOT NULL OR channel IS NOT NULL)")->fetchAll(PDO::FETCH_ASSOC);
         foreach ($rows as $job) {
-            if ($job['relay_id'] !== null) $this->desktop?->abandon((string) $job['relay_id'], (string) $job['relay_owner']);
+            // Whatever the computer is doing for it: one drawing it is told so on its next frame, and stops.
+            if ($job['relay_id'] !== null) $this->desktop?->cancel((string) $job['relay_id'], (string) $job['relay_owner']);
             $this->removeResult($job);
             $this->pdo()->prepare('UPDATE app_ai_jobs SET relay_id = NULL, relay_owner = NULL, channel = NULL, result_path = NULL WHERE id = ?')->execute([$job['id']]);
             $count++;
@@ -450,6 +452,8 @@ final class AppAiWorker
         $size = (string) ($job['size'] ?: '1024x1024');
         $target = $route['kind'] === 'env' ? 'env' : (string) $route['target']['connectionId'];
         $source = $route['availability']['source'] . '-' . ($route['kind'] === 'env' ? 'env' : 'oaiy');
+        // A chat's answer may be this long, in tokens: what the app asked for, within the site's ceiling.
+        $tokens = $this->answerTokens($job);
         $waitAgain = function (int $seconds) use ($pdo, $id): string {
             $pdo->prepare("UPDATE app_ai_jobs SET status = 'queued', next_attempt_at = ? WHERE id = ?")->execute([AppAiService::stamp(time() + $seconds), $id]);
             return 'wait';
@@ -464,7 +468,9 @@ final class AppAiWorker
             }
             try {
                 $this->env->start($id, ['kind' => $job['kind'], 'model' => $model, 'prompt' => $job['prompt'], 'size' => $size, 'seed' => $seed, 'reference' => $reference,
-                    'messages' => $picture ? null : json_decode((string) $job['prompt'], true)]);
+                    'messages' => $picture ? null : json_decode((string) $job['prompt'], true),
+                    // `max_tokens` to the upstream, and how much of its answer is read whatever it sends.
+                    'maxTokens' => $picture ? null : $tokens, 'maxCharacters' => $picture ? null : AppAiService::answerCharacters($tokens)]);
             } catch (\Throwable $e) {
                 $this->logger?->warning('App AI: the .env upstream could not be asked: ' . $e->getMessage());
                 return $waitAgain(30);
@@ -498,7 +504,9 @@ final class AppAiWorker
             }
         } else {
             // OAIY's own engine answers with the model chosen in OAIY; another provider with the one named here.
-            $body = ['kind' => 'chat', 'messages' => json_decode((string) $job['prompt'], true)]
+            // `maxTokens` is the answer's limit for its engine (contract §0.13); an OAIY that does not
+            // know the field ignores it, and collect() stops reading at the characters it allows.
+            $body = ['kind' => 'chat', 'messages' => json_decode((string) $job['prompt'], true), 'maxTokens' => $tokens]
                 + ((($computer['providerId'] ?? SiteDesktopAi::PROVIDER) !== SiteDesktopAi::PROVIDER && $model !== null) ? ['model' => $model] : []);
         }
         try {
@@ -531,7 +539,7 @@ final class AppAiWorker
         $running->execute([$target, $source, $model !== '' ? $model : null, $relayId, $relayOwner, $channel, $now, $job['id']]);
         if ($running->rowCount() === 0) {
             // Cancelled by the app while it was being sent: what was just asked for is let go.
-            if ($relayId !== null) $this->desktop?->abandon($relayId, (string) $relayOwner);
+            if ($relayId !== null) $this->desktop?->cancel($relayId, (string) $relayOwner);
             else $this->env->abandon((string) $job['id']);
             return;
         }
@@ -568,7 +576,7 @@ final class AppAiWorker
             try {
                 $seen = $this->desktop->collect((string) $job['relay_id'], (string) $job['relay_owner'], $pair);
             } catch (\Throwable $e) {
-                $this->desktop->abandon((string) $job['relay_id'], (string) $job['relay_owner']);
+                $this->desktop->cancel((string) $job['relay_id'], (string) $job['relay_owner']);
                 $this->finish($job, ['ok' => false, 'code' => 'engine_failed', 'message' => 'OAIY sent an answer that could not be read.']);
                 $count++;
                 continue;
@@ -587,13 +595,20 @@ final class AppAiWorker
             } elseif ($seen['error'] !== null) {
                 $this->finish($job, ['ok' => false, 'code' => 'engine_failed', 'message' => mb_substr($seen['error'], 0, 300)]);
             } elseif ($job['kind'] === 'chat' && ($final !== null || ($seen['status'] === 'done' && $seen['content'] !== ''))) {
-                // A chat's reply, streamed or whole in its final frame.
-                $this->finish($job, ['ok' => true, 'text' => mb_substr($seen['content'], 0, 32000), 'model' => $job['model']]);
+                // A chat's reply, streamed or whole in its final frame: as much of it as is read.
+                $this->finish($job, ['ok' => true, 'text' => mb_substr($seen['content'], 0, AppAiService::answerCharacters($this->answerTokens($job))), 'model' => $job['model']]);
+            } elseif ($job['kind'] === 'chat' && mb_strlen($seen['content']) >= AppAiService::answerCharacters($this->answerTokens($job))) {
+                // The answer has run past all that is read of it, and is still coming (an OAIY that
+                // does not know `maxTokens`, or a model that ignores it): the turn ends here with what
+                // was read, and the computer is told to stop on its next frame.
+                $this->desktop->cancel((string) $job['relay_id'], (string) $job['relay_owner']);
+                $this->finish($job, ['ok' => true, 'text' => mb_substr($seen['content'], 0, AppAiService::answerCharacters($this->answerTokens($job))), 'model' => $job['model']]);
             } elseif (in_array($seen['status'], ['failed', 'expired', 'done', null], true)) {
                 // Gone without an answer: never taken in time, given up on as silent, or its frames gone.
                 $this->lost($job);
             } elseif ($age > self::RUNNING_BACKSTOP) {
-                $this->desktop->abandon((string) $job['relay_id'], (string) $job['relay_owner']);
+                // Out of time: the computer is told to stop, on its next frame.
+                $this->desktop->cancel((string) $job['relay_id'], (string) $job['relay_owner']);
                 $this->finish($job, ['ok' => false, 'code' => 'timeout', 'message' => 'The AI did not answer in time.']);
             } else {
                 continue;
@@ -731,13 +746,28 @@ final class AppAiWorker
             // The same key on every try of one delivery, so the app can tell a retry from a second result.
             'headers' => (object) ['authorization' => '', 'idempotency-key' => 'fl-ai-' . $id], 'client_ip' => '127.0.0.1', 'photos' => false,
         ];
-        // As the site itself, never a page: with no subscription, so nothing a delivery writes asks for AI.
-        $identity = ['formlogic' => ['appId' => (string) $job['app_id'], 'ai' => ['delivery' => true]]];
+        // As the site itself, never a page. The delivery names who asked for the job, as their own
+        // requests do (`ai.requester`), and carries one subscription: a new row the deliver route
+        // writes in the jobs table is a follow-up job for that requester (AppAiService::capture; one
+        // for a delivered job, none from a follow-up's delivery: contract §0.13). Nothing else a
+        // delivery writes asks for AI, and no flow hears of it. A refused follow-up's delivery
+        // carries none, so a deliver route that writes a row every time it is called ends there.
+        $who = AppAiService::requesterId(['kind' => (string) $job['requester_kind'], 'id' => (string) $job['requester_id']]);
+        $identity = ['formlogic' => ['appId' => (string) $job['app_id'], 'ai' => ['delivery' => true] + ($who !== null ? ['requester' => $who] : [])]];
+        $subscriptions = AppAiService::deliveryMayAsk($job) ? AppAiService::followUpSubscription($declared['table'], $id) : [];
         try {
-            $answer = $this->native->request((string) $job['app_id'], $request, $identity);
+            $answer = $this->native->request((string) $job['app_id'], $request, $identity, $subscriptions);
             $status = is_int($answer['status'] ?? null) ? $answer['status'] : 0;
         } catch (\RuntimeException $e) {
             $status = in_array($e->getCode(), [404, 409, 413, 429], true) ? (int) $e->getCode() : 503;
+        }
+        if ($subscriptions !== []) {
+            // A follow-up the delivery asked for is taken now, not at the next catch-up.
+            try {
+                $this->native->dispatchRecordEvents((string) $job['app_id'], $this->records->for((string) $job['app_id']));
+            } catch (\Throwable $e) {
+                $this->logger?->warning('App AI: record events still pending for app ' . $job['app_id'] . ': ' . $e->getMessage());
+            }
         }
         if ($status >= 200 && $status < 300) {
             $this->delivered($job, true);
@@ -776,6 +806,12 @@ final class AppAiWorker
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** How long a chat job's answer may be, in tokens: its app's `max_output` within the site's ceiling, or the ceiling. */
+    private function answerTokens(array $job): int
+    {
+        return AppAiService::answerTokens($job['max_output'] ?? null, $this->site->current());
+    }
 
     private function job(string $id): ?array
     {

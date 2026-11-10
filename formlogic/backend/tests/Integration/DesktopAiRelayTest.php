@@ -815,6 +815,122 @@ class DesktopAiRelayTest extends TestCase
         $this->assertSame('queue_full_user', $this->webEnqueue($this->ownerId, $this->sealedBody(['source' => DesktopAiRelayService::SOURCE_APP_AI]))['body']['code'] ?? null);
     }
 
+    // ── cancel reaches the computer (contract §0.13) ──
+
+    /** What a computer is answered for a request that was cancelled under it: this, exactly. */
+    private const CANCELLED = ['error' => true, 'message' => 'This request was cancelled. Stop the work and send nothing more for it.', 'code' => 'cancelled'];
+
+    /**
+     * A request cancelled while its computer works on it: the lane is free at once, and the
+     * computer's next frame, of whatever kind (each is opaque sealed bytes here), is answered 409
+     * `cancelled`, and so is its completion. Before, a cancel reached only a request nobody had
+     * taken: a picture already being drawn was drawn to the end and held the computer's one place.
+     */
+    public function testACancelledRequestsNextFrameIsAnsweredCancelled(): void
+    {
+        $picture = $this->enqueuePicture();
+        $this->assertSame(200, $this->v1Claim($picture, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $this->assertSame(201, $this->v1Frame($picture, ['ai:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('progress-0')])['status']);
+
+        $this->assertTrue(self::$relay->cancel($picture, $this->ownerId));
+        $row = $this->rawRequestRow($picture);
+        $this->assertSame('expired', $row['status']);
+        $this->assertNull($row['envelope'], 'its sealed content goes with it');
+        $this->assertSame(0, $this->frameCount($picture), 'and the frames it had sent');
+
+        // The lane is free now, not when the computer next speaks: the next picture can be claimed.
+        $next = $this->enqueuePicture();
+        $this->assertSame(200, $this->v1Claim($next, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+
+        $frame = $this->v1Frame($picture, ['ai:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('progress-1')]);
+        $this->assertSame(409, $frame['status']);
+        $this->assertSame(self::CANCELLED, $frame['body']);
+        $this->assertSame(0, $this->frameCount($picture), 'a frame sent after the cancel is not kept');
+        // Every frame after it too, and the outcome: a computer that missed one answer hears the next.
+        $this->assertSame(self::CANCELLED, $this->v1Frame($picture, ['ai:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('final')])['body']);
+        foreach (['done', 'failed'] as $outcome) {
+            $complete = $this->v1Complete($picture, ['ai:relay'], ['instanceId' => 'desk-1', 'status' => $outcome]);
+            $this->assertSame(409, $complete['status']);
+            $this->assertSame(self::CANCELLED, $complete['body']);
+        }
+        $this->assertSame('expired', $this->rawRequestRow($picture)['status'], 'nothing the computer sends brings it back');
+        $this->assertFalse(self::$relay->cancel($picture, $this->ownerId), 'a second cancel finds nothing open');
+        // The picture claimed meanwhile is untouched.
+        $this->assertSame(201, $this->v1Frame($next, ['ai:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('progress-0')])['status']);
+    }
+
+    /** A chat that is streaming its answer is cancelled the same way: its next partial frame is answered `cancelled`. */
+    public function testACancelledChatsNextPartialFrameIsAnsweredCancelled(): void
+    {
+        $chat = self::$relay->enqueue($this->ownerId, $this->ownerId, $this->sealedBody(['providerId' => 'oaiy-engine']), DesktopAiRelayService::SOURCE_APP_AI)['request']['requestId'];
+        $this->assertSame(200, $this->v1Claim($chat, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        for ($i = 0; $i < 3; $i++) {
+            $this->assertSame(201, $this->v1Frame($chat, ['ai:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode("delta-{$i}")])['status']);
+        }
+        $this->assertSame('streaming', $this->rawRequestRow($chat)['status']);
+        $this->assertTrue(self::$relay->cancel($chat, $this->ownerId));
+        $frame = $this->v1Frame($chat, ['ai:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('delta-3')]);
+        $this->assertSame([409, self::CANCELLED], [$frame['status'], $frame['body']]);
+    }
+
+    /** One cancelled before any computer took it is never handed out. */
+    public function testACancelledRequestNobodyTookIsNeverHandedOut(): void
+    {
+        $picture = $this->enqueuePicture();
+        $this->assertTrue(self::$relay->cancel($picture, $this->ownerId));
+        $pending = $this->v1Pending(['ai:relay'], ['wait' => 0, 'instanceId' => 'desk-1']);
+        $this->assertNotContains($picture, array_map(static fn ($r) => $r['requestId'], $pending['body']['requests']));
+        $this->assertSame(409, $this->v1Claim($picture, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+    }
+
+    /** A request let go as too silent or too old is told the same way, so its computer stops there too. */
+    public function testARequestLetGoAsSilentOrTooOldAnswersItsComputerCancelled(): void
+    {
+        // Reaped by the sweep (silent past the stale threshold).
+        $reaped = $this->enqueuePicture();
+        $this->assertSame(200, $this->v1Claim($reaped, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $stale = DesktopAiRelayService::CLAIMED_STALE_SECONDS + 5;
+        self::$pdo->prepare("UPDATE desktop_ai_requests SET claimed_at = DATE_SUB(NOW(), INTERVAL {$stale} SECOND) WHERE id = ?")->execute([$reaped]);
+        self::$relay->expireStale($this->ownerId);
+        $this->assertSame('expired', $this->rawRequestRow($reaped)['status']);
+        $frame = $this->v1Frame($reaped, ['ai:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('final')]);
+        $this->assertSame([409, self::CANCELLED], [$frame['status'], $frame['body']]);
+
+        // Let go by its own computer's next claim (a chat silent for 30 s).
+        $held = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $next = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($held, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $quiet = DesktopAiRelayService::ABANDONED_SECONDS + 5;
+        self::$pdo->prepare("UPDATE desktop_ai_requests SET claimed_at = DATE_SUB(NOW(), INTERVAL {$quiet} SECOND) WHERE id = ?")->execute([$held]);
+        $this->assertSame(200, $this->v1Claim($next, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $late = $this->v1Frame($held, ['ai:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('delta')]);
+        $this->assertSame([409, self::CANCELLED], [$late['status'], $late['body']]);
+    }
+
+    /** Only the computer that held it is told, only its owner cancels it, and a finished request is as it was. */
+    public function testCancelledIsToldToTheComputerThatHeldItAndNobodyElse(): void
+    {
+        $picture = $this->enqueuePicture();
+        $this->assertSame(200, $this->v1Claim($picture, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+
+        $this->assertFalse(self::$relay->cancel($picture, $this->otherId), 'another account cannot cancel it');
+        $this->assertSame('claimed', $this->rawRequestRow($picture)['status']);
+
+        $this->assertTrue(self::$relay->cancel($picture, $this->ownerId));
+        $stranger = $this->v1Frame($picture, ['ai:relay'], ['instanceId' => 'desk-2', 'envelope' => base64_encode('x')]);
+        $this->assertSame([409, 'not_claimed'], [$stranger['status'], $stranger['body']['code'] ?? null], 'a computer that never held it learns nothing');
+        $this->assertSame('not_claimed', $this->v1Complete($picture, ['ai:relay'], ['instanceId' => 'desk-2', 'status' => 'done'])['body']['code'] ?? null);
+
+        // A request its computer finished: a frame after the outcome is refused as before.
+        $done = $this->enqueuePicture();
+        $this->assertSame(200, $this->v1Claim($done, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $this->assertSame(200, $this->v1Complete($done, ['ai:relay'], ['instanceId' => 'desk-1', 'status' => 'done'])['status']);
+        $this->assertFalse(self::$relay->cancel($done, $this->ownerId), 'a finished request is not cancelled');
+        $after = $this->v1Frame($done, ['ai:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('x')]);
+        $this->assertSame([409, 'not_claimed'], [$after['status'], $after['body']['code'] ?? null]);
+        $this->assertSame('done', $this->rawRequestRow($done)['status']);
+    }
+
     public function testInFlightCountsByLane(): void
     {
         $this->addConnection('desk-1');

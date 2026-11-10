@@ -151,7 +151,7 @@ final class AppAiController
         } catch (\RuntimeException $e) {
             return $this->jsonError($response, $e->getMessage(), 500);
         }
-        $this->record($request, 'admin.app_ai.settings', null, ['allowApps' => $saved['allowApps'], 'paused' => $saved['paused'], 'pictureModel' => $saved['pictureModel'], 'siteDay' => $saved['siteDay']]);
+        $this->record($request, 'admin.app_ai.settings', null, ['allowApps' => $saved['allowApps'], 'paused' => $saved['paused'], 'pictureModel' => $saved['pictureModel'], 'siteDay' => $saved['siteDay'], 'chatMaxOutput' => $saved['chatMaxOutput']]);
         return $this->jsonResponse($response, ['data' => $this->adminView($request, $saved)]);
     }
 

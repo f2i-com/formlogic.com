@@ -59,7 +59,7 @@ class DesktopAiRelayRouteWiringTest extends TestCase
             $source,
             'the desktop AI relay authenticates the flk_ key without an AND-ed scope list (either-scope check lives in the controller), on the desktop link budget'
         );
-        foreach (['pubkey', 'pending', '{id}/claim', '{id}/frames', '{id}/input', '{id}/complete'] as $path) {
+        foreach (['pubkey', 'pending', '{id}/claim', '{id}/input', '{id}/complete'] as $path) {
             $quoted = preg_quote($path, '/');
             $this->assertMatchesRegularExpression(
                 '/\$group->(?:get|post)\(\'\/desktop-ai\/' . $quoted . '\'.*?\}\)->add\(\$desktopAiRelayAuth\);/s',
@@ -67,5 +67,14 @@ class DesktopAiRelayRouteWiringTest extends TestCase
                 "desktop-ai/{$path} must ride the relay auth middleware"
             );
         }
+        // An answer's frames authenticate the same way (no AND-ed scope list: the controller checks
+        // either scope), but are counted in a budget of their own, so a long answer never uses up
+        // the one its outcome and the next poll draw on (DesktopLinkRateLimitWiringTest).
+        $this->assertMatchesRegularExpression(
+            '/\$group->post\(\'\/desktop-ai\/\{id\}\/frames\'.*?postFrameV1\(.*?\);\s*\}\)->add\(new ApiKeyMiddleware\(\$apiKeyService,\s*\[\],\s*\$rateLimiter,\s*6000,\s*60,\s*\'desktop_ai_frames\'\)\);/s',
+            $source,
+            'desktop-ai/{id}/frames authenticates the flk_ key without a scope list, on the frames budget'
+        );
+        $this->assertSame(1, preg_match_all('/\$group->post\(\'\/desktop-ai\/\{id\}\/frames\'/', $source), 'the frames route is registered once');
     }
 }

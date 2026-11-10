@@ -25,6 +25,7 @@ use Slim\Routing\RouteCollectorProxy;
  *  - A calendar-sync burst that spends the data API's 120/min (per key, per address) is
  *    refused with Retry-After, and the relay lane on the same key and address still answers.
  *  - Lanes busier than the old shared 120/min leave record writes their whole budget.
+ *  - A long AI answer's frames, more than the link's whole minute, leave the link its budget.
  */
 final class DesktopLinkRateLimitTest extends TestCase
 {
@@ -80,7 +81,12 @@ final class DesktopLinkRateLimitTest extends TestCase
             $desktopLinkAuth = fn (array $scopes): ApiKeyMiddleware => new ApiKeyMiddleware($keys, $scopes, $limiter, 600, 60, 'desktop_link');
             $group->get('/connector-commands/pending', $ok)->add($desktopLinkAuth(['connector:relay']));
             $group->post('/desktop-connections', $ok)->add($desktopLinkAuth(['connector:relay']));
+            $group->get('/desktop-ai/pending', $ok)->add($desktopLinkAuth([]));
+            $group->post('/desktop-ai/{id}/complete', $ok)->add($desktopLinkAuth([]));
         })->add(new RateLimitMiddleware($limiter, 1200, 60, 'desktop_link'));
+        self::$slim->group('/api/v1', function (RouteCollectorProxy $group) use ($keys, $limiter, $ok) {
+            $group->post('/desktop-ai/{id}/frames', $ok)->add(new ApiKeyMiddleware($keys, [], $limiter, 6000, 60, 'desktop_ai_frames'));
+        })->add(new RateLimitMiddleware($limiter, 12000, 60, 'desktop_ai_frames'));
         self::$slim->addRoutingMiddleware();
     }
 
@@ -161,5 +167,30 @@ final class DesktopLinkRateLimitTest extends TestCase
         $this->assertSame(200, $write->getStatusCode());
         $this->assertSame('120', $write->getHeaderLine('X-RateLimit-Limit'));
         $this->assertSame('119', $write->getHeaderLine('X-RateLimit-Remaining'), 'the polls took none of it');
+    }
+
+    /**
+     * One long chat answer: 809 frames in 62 seconds were measured from a real computer, more than
+     * the link's whole minute for a key (600). Counted there, the frames past the 600th were refused,
+     * then the job's outcome, then the computer's next poll for work (contract §0.13). In a budget of
+     * their own every frame is taken, and the outcome and the poll find the link's budget untouched.
+     */
+    public function testALongAnswersFramesLeaveTheLinkItsBudget(): void
+    {
+        $desk = self::address();
+        for ($i = 1; $i <= 809; $i++) {
+            $frame = $this->send('POST', '/api/v1/desktop-ai/request-1/frames', $desk);
+            if ($frame->getStatusCode() !== 200) $this->fail("frame {$i} was answered {$frame->getStatusCode()}");
+        }
+        $this->assertSame('12000', $frame->getHeaderLine('X-RateLimit-Limit'), 'counted on the frames budget');
+
+        $outcome = $this->send('POST', '/api/v1/desktop-ai/request-1/complete', $desk);
+        $this->assertSame(200, $outcome->getStatusCode(), 'the outcome is taken');
+        $this->assertSame('1200', $outcome->getHeaderLine('X-RateLimit-Limit'));
+        $this->assertSame('1199', $outcome->getHeaderLine('X-RateLimit-Remaining'), 'the frames took none of the link budget');
+        $this->assertSame(200, $this->send('GET', '/api/v1/desktop-ai/pending?wait=25', $desk)->getStatusCode(), 'and the next poll for work');
+
+        // The same answer's frames from another address: the key's own frames budget holds them too.
+        $this->assertSame(200, $this->send('POST', '/api/v1/desktop-ai/request-1/frames', self::address())->getStatusCode());
     }
 }

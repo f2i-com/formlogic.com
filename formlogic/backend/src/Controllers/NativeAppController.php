@@ -13,6 +13,8 @@ class NativeAppController
     use JsonResponseTrait;
 
     private const DEMO_READ_ONLY = 'The shared demo is read-only: you can browse this app’s backend and database, but not change them.';
+    /** How long a call refused because every worker was busy is told to wait: a request holds one for a fraction of a second. */
+    private const BUSY_RETRY_SECONDS = 2;
     /** NativeAppService's recovery-required refusals (resolveJournal, assertNotRecoveryRequired). */
     private const RECOVERY_REQUIRED = '/^(?:The app (?:database )?needs operator recovery|Restore the app database before installing another update)/';
 
@@ -557,7 +559,12 @@ class NativeAppController
         }
         catch (\InvalidArgumentException|\JsonException $e) { return $this->jsonError($response, $e->getMessage(), 400); }
         catch (\RuntimeException $e) {
-            if (in_array($e->getCode(), [402,403,404,409,413,422,429,501], true)) return $this->jsonError($response, $e->getMessage(), $e->getCode());
+            // Every worker stayed busy while the request waited for one (NativeAppService's slots):
+            // told how long to wait, as the limiter's own 429 is, so the app's page need not guess.
+            if ($e->getCode() === 429) {
+                return $this->jsonResponse($response->withHeader('Retry-After', (string) self::BUSY_RETRY_SECONDS), ['error' => true, 'message' => $e->getMessage(), 'retryAfter' => self::BUSY_RETRY_SECONDS], 429);
+            }
+            if (in_array($e->getCode(), [402,403,404,409,413,422,501], true)) return $this->jsonError($response, $e->getMessage(), $e->getCode());
             error_log('Native app error: ' . $e->getMessage());
             if ($owner && $e->getCode() === 0 && preg_match(self::RECOVERY_REQUIRED, $e->getMessage())) return $this->jsonError($response, $e->getMessage(), 503, 'recovery_required');
             return $this->jsonError($response, 'The native app host is unavailable. Check its runtime configuration.', 503);

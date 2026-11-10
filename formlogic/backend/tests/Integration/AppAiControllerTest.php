@@ -253,6 +253,15 @@ final class AppAiControllerTest extends TestCase
         $saved = self::read($this->controller->adminPut($this->request('PUT', $this->otherId, ['allowApps' => true, 'paused' => true, 'pictureModel' => 'flux-3-image-klein', 'siteDay' => 50, 'words' => ['Forbidden']]), new Response()));
         $this->assertSame([true, 'flux-3-image-klein', 50, ['forbidden']], [$saved['body']['data']['settings']['paused'], $saved['body']['data']['settings']['pictureModel'], $saved['body']['data']['settings']['siteDay'], $saved['body']['data']['settings']['words']]);
         $this->assertSame('paused', $this->ai->ownerView($this->app)['status']['state'], 'the site\'s pause stops every app');
+        // The longest chat answer (contract §0.13): 2,000 tokens until the administrator says otherwise, within 16 to 8,000.
+        $this->assertSame(2000, $saved['body']['data']['settings']['chatMaxOutput']);
+        $shorter = self::read($this->controller->adminPut($this->request('PUT', $this->otherId, ['allowApps' => true, 'chatMaxOutput' => 600]), new Response()));
+        $this->assertSame(600, $shorter['body']['data']['settings']['chatMaxOutput']);
+        $this->assertSame(600, self::read($this->controller->adminGet($this->request('GET', $this->otherId), new Response()))['body']['data']['settings']['chatMaxOutput'], 'and it is kept');
+        foreach ([15, 8001, '600', 600.5, null] as $refused) {
+            $answer = self::read($this->controller->adminPut($this->request('PUT', $this->otherId, ['allowApps' => true, 'chatMaxOutput' => $refused]), new Response()));
+            $this->assertSame([400, 'chatMaxOutput must be a whole number from 16 to 8000.'], [$answer['status'], $answer['body']['message'] ?? null], json_encode($refused));
+        }
         $this->assertSame(404, $this->controller->adminBlock($this->request('PUT', $this->otherId, ['blocked' => true]), new Response(), ['id' => 'no-such-app'])->getStatusCode());
     }
 

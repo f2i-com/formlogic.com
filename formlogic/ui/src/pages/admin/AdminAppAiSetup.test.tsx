@@ -27,7 +27,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-const settings: AppAiSiteSettings = { allowApps: false, paused: false, pictureModel: null, chatModel: null, defaults: { perRequesterDay: 10, perIpDay: 20, perIpHour: 10, perAppDay: 500 }, siteDay: 2000, words: [] };
+const settings: AppAiSiteSettings = { allowApps: false, paused: false, pictureModel: null, chatModel: null, defaults: { perRequesterDay: 10, perIpDay: 20, perIpHour: 10, perAppDay: 500 }, siteDay: 2000, chatMaxOutput: 2000, words: [] };
 const ready: AppAiSiteSettings = { ...settings, allowApps: true, pictureModel: 'flux-3-image-klein' };
 const WORKS: AppAiWorkerState = { state: 'ok', idleSeconds: 3, mode: 'watch', message: null };
 const STALE: AppAiWorkerState = { state: 'stale', idleSeconds: 3, mode: 'watch', message: 'The AI worker was started before the last update. Restart it.' };

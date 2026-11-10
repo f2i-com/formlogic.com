@@ -3451,9 +3451,7 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->claimV1($request, $response, $getArgs($request));
     })->add($desktopAiRelayAuth);
 
-    $group->post('/desktop-ai/{id}/frames', function ($request, $response) use ($container, $getArgs) {
-        return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->postFrameV1($request, $response, $getArgs($request));
-    })->add($desktopAiRelayAuth);
+    // (An answer's frames, POST /desktop-ai/{id}/frames, are counted apart: see below this group.)
 
     $group->get('/desktop-ai/{id}/input', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->inputV1($request, $response, $getArgs($request));
@@ -3486,6 +3484,23 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\DesktopFlowRelayController::class)->completeV1($request, $response, $getArgs($request));
     })->add($desktopFlowRelayAuth);
 })->add($desktopLinkRateLimiter);
+
+// An answer's frames on the AI lane are counted apart from everything else a linked computer sends.
+// A chat answer comes back as it is written, a frame for each piece the model streams: 13 to 56 a
+// second, measured (809 in 62 seconds, 282 in 5). Counted in the lanes' own budget above, one long
+// answer used it up: the frames were refused, and with them the job's outcome and the computer's next
+// poll for work, and every job of every app on that computer waited out the minute (contract §0.13).
+// In budgets of their own a long answer cannot do that: 6,000 a minute per key
+// (`apikey:desktop_ai_frames:<id>`: the fastest answer measured is 3,360 a minute, and a computer
+// writes one at a time) and 12,000 per address before it. Each frame is still held to the request's
+// own limits (DesktopAiRelayService: claimed by this computer, 4 MiB a frame, 64 MiB a request), and
+// App AI stops reading a chat's answer at its length and cancels it (AppAiWorker).
+$desktopAiFrameRateLimiter = new RateLimitMiddleware($rateLimiter, 12000, 60, 'desktop_ai_frames');
+$app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $getArgs, $apiKeyService, $rateLimiter) {
+    $group->post('/desktop-ai/{id}/frames', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->postFrameV1($request, $response, $getArgs($request));
+    })->add(new ApiKeyMiddleware($apiKeyService, [], $rateLimiter, 6000, 60, 'desktop_ai_frames'));
+})->add($desktopAiFrameRateLimiter);
 
 // Audit verification route (platform administrators: the first account to sign up may have gone,
 // or be the demo's, and walking the chain is expensive)
@@ -3588,7 +3603,11 @@ $app->put('/api/apps/{id}/payments', function ($request, $response) use ($contai
 $app->post('/api/apps/{id}/native/{operation:import}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
-$nativeLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'native_apps', true, true, null, true);
+// An app's page and its backend calls, for whoever is asking (a member by account, a visitor without
+// one by address), in each app apart: a token bucket of 120 that refills at 120 a minute. A busy page
+// that goes over is slowed to two calls a second and told how long to wait (`retryAfter`), where a
+// fixed minute refused everything, a save included, until the minute ended.
+$nativeLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'native_apps', true, true, null, true, false, true);
 $app->get('/api/app/{slug}/entry', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->entry($request, $response, $getArgs($request));
 })->add($appAccessGate)->add($nativeLimiter)->add($authOptional);

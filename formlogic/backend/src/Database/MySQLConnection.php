@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = '4414798878770aae71ab069d6a5bcedf';
+    public const SCHEMA_STAMP = 'ec2f846d34a6ed67078dc95818d3856f';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -2399,6 +2399,17 @@ class MySQLConnection
                 INDEX idx_window_start (window_start)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+        // Token buckets (RateLimiter::take): one row a key, holding the moment its next call is due
+        // in full (the "theoretical arrival time" of the generic cell rate algorithm), in
+        // milliseconds. A burst is slowed to the sustained rate, where a fixed window above refuses
+        // everything until it ends.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS rate_buckets (
+                bucket CHAR(64) NOT NULL PRIMARY KEY,
+                tat_ms BIGINT NOT NULL,
+                INDEX idx_rate_buckets_tat (tat_ms)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
 
         // Small key/value store for operational metadata (e.g. background-worker heartbeats).
         $pdo->exec("
@@ -2989,6 +3000,8 @@ class MySQLConnection
                 size VARCHAR(9) NULL,
                 seed BIGINT NULL,
                 reference MEDIUMTEXT NULL,
+                max_output INT UNSIGNED NULL,
+                follow_up_of CHAR(32) NULL,
                 model VARCHAR(256) NULL,
                 result_path VARCHAR(255) NULL,
                 result_meta TEXT NULL,
@@ -3010,6 +3023,7 @@ class MySQLConnection
                 KEY idx_app_ai_jobs_app (app_id, status, created_at),
                 KEY idx_app_ai_jobs_requester (app_id, requester_kind, requester_id, status),
                 KEY idx_app_ai_jobs_target (target, status, created_at),
+                KEY idx_app_ai_jobs_follow (follow_up_of),
                 CONSTRAINT fk_app_ai_jobs_app FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
@@ -3029,6 +3043,15 @@ class MySQLConnection
         $col = $pdo->query("SHOW COLUMNS FROM app_ai_jobs LIKE 'app_id'")->fetch(PDO::FETCH_ASSOC);
         if ($col && strtoupper((string) ($col['Null'] ?? '')) === 'NO') {
             $pdo->exec('ALTER TABLE app_ai_jobs MODIFY COLUMN app_id VARCHAR(36) NULL');
+        }
+        // What a chat job may answer at most, in tokens, as its app asked (the site's ceiling applies
+        // when it is sent); and the delivered job a follow-up was asked for from (a deliver route may
+        // ask for one, never a chain). For installs whose table predates them.
+        if ($pdo->query("SHOW COLUMNS FROM app_ai_jobs LIKE 'max_output'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE app_ai_jobs ADD COLUMN max_output INT UNSIGNED NULL AFTER reference');
+        }
+        if ($pdo->query("SHOW COLUMNS FROM app_ai_jobs LIKE 'follow_up_of'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE app_ai_jobs ADD COLUMN follow_up_of CHAR(32) NULL AFTER max_output, ADD KEY idx_app_ai_jobs_follow (follow_up_of)');
         }
     }
 

@@ -57,6 +57,13 @@ class RateLimitMiddleware implements MiddlewareInterface
      *                                  viewer's budget in its own app leaves them the others.
      * @param bool $demoPostsRead       These POST routes only read, so the demo account's split by
      *                                  address (see getClientKey) covers them as it does a GET.
+     * @param bool $bucket              Count as a token bucket (RateLimiter::take): $maxRequests at
+     *                                  once, refilled evenly at $maxRequests every $windowSeconds.
+     *                                  The sustained rate is the fixed window's, but a burst is
+     *                                  slowed to it: a refused call waits a second or two for the
+     *                                  next token, where the window refuses everything until it
+     *                                  ends. For a page that makes many small calls (an app's
+     *                                  backend requests), whose 429 says how long to wait.
      */
     public function __construct(
         RateLimiter $limiter,
@@ -67,7 +74,8 @@ class RateLimitMiddleware implements MiddlewareInterface
         bool $failClosed = false,
         ?ApiKeyService $apiKeys = null,
         private bool $perApp = false,
-        private bool $demoPostsRead = false
+        private bool $demoPostsRead = false,
+        private bool $bucket = false
     ) {
         $this->limiter = $limiter;
         $this->maxRequests = $maxRequests;
@@ -83,12 +91,25 @@ class RateLimitMiddleware implements MiddlewareInterface
     {
         $key = $this->getClientKey($request);
 
-        // Atomically increment and gate on the post-increment count. Gating on a
-        // separate count() before hit() let K concurrent requests all observe
-        // count < max and overshoot the limit. Incrementing a blocked request is
-        // harmless: the counter is keyed to a fixed window bucket, so it never
-        // extends the lockout.
-        $count = $this->limiter->hit($key, $this->windowSeconds);
+        if ($this->bucket) {
+            // A token bucket: one statement decides and takes (RateLimiter::take).
+            $taken = $this->limiter->take($key, $this->maxRequests, $this->windowSeconds);
+            $count = $taken === null ? RateLimiter::UNAVAILABLE : ($taken['allowed'] ? 1 : $this->maxRequests + 1);
+            $retryAfter = $taken['retryAfter'] ?? 0;
+            $remaining = $taken['remaining'] ?? $this->maxRequests;
+            // When the bucket is full again, were nothing more taken.
+            $reset = time() + (int) ceil(($this->maxRequests - $remaining) * $this->windowSeconds / max(1, $this->maxRequests));
+        } else {
+            // Atomically increment and gate on the post-increment count. Gating on a
+            // separate count() before hit() let K concurrent requests all observe
+            // count < max and overshoot the limit. Incrementing a blocked request is
+            // harmless: the counter is keyed to a fixed window bucket, so it never
+            // extends the lockout.
+            $count = $this->limiter->hit($key, $this->windowSeconds);
+            $retryAfter = $this->limiter->secondsUntilReset($this->windowSeconds);
+            $remaining = max(0, $this->maxRequests - $count);
+            $reset = time() + $retryAfter;
+        }
         if ($count === RateLimiter::UNAVAILABLE && $this->failClosed) {
             // The store failed while gating a high-risk action: refuse rather
             // than allow unlimited attempts. Loud by design — the deep health
@@ -106,8 +127,7 @@ class RateLimitMiddleware implements MiddlewareInterface
                 ->withHeader('Retry-After', '30');
         }
         if ($count > $this->maxRequests) {
-            $retryAfter = $this->limiter->secondsUntilReset($this->windowSeconds);
-
+            // `retryAfter`, in the body and the header: how many seconds until a call is taken again.
             $response = new SlimResponse();
             $response->getBody()->write(json_encode([
                 'error' => true,
@@ -124,8 +144,6 @@ class RateLimitMiddleware implements MiddlewareInterface
                 ->withHeader('X-RateLimit-Reset', (string)(time() + $retryAfter));
         }
 
-        $remaining = max(0, $this->maxRequests - $count);
-
         $response = $handler->handle($request);
 
         // A limiter further in (an API key's own budget) refused the request: its headers say
@@ -138,7 +156,7 @@ class RateLimitMiddleware implements MiddlewareInterface
         return $response
             ->withHeader('X-RateLimit-Limit', (string)$this->maxRequests)
             ->withHeader('X-RateLimit-Remaining', (string)$remaining)
-            ->withHeader('X-RateLimit-Reset', (string)(time() + $this->limiter->secondsUntilReset($this->windowSeconds)));
+            ->withHeader('X-RateLimit-Reset', (string)$reset);
     }
 
     /**

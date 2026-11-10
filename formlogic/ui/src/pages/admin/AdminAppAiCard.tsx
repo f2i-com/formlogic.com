@@ -10,7 +10,7 @@ import { Button } from '../../components/ui/Button';
 import { Card, CardContent } from '../../components/ui/Card';
 import { Switch } from '../../components/ui/Switch';
 import { api, type SiteAiDesktopState } from '../../lib/api';
-import type { AppAiAdminView, AppAiLimits, AppAiSiteSettings } from '../../lib/appAi';
+import { CHAT_MAX_OUTPUT, type AppAiAdminView, type AppAiLimits, type AppAiSiteSettings } from '../../lib/appAi';
 import { onSiteAiChanged } from '../../lib/siteAiEvents';
 import { toast } from '../../stores/toastStore';
 import { AdminAppAiSetup } from './AdminAppAiSetup';
@@ -24,7 +24,11 @@ const LIMITS: { key: keyof AppAiLimits; label: string; hint: string }[] = [
 ];
 const field = 'mt-1 block min-h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white';
 /** The limits edited below the checklist, saved together. */
-type LimitsDraft = Pick<AppAiSiteSettings, 'defaults' | 'siteDay'>;
+type LimitsDraft = Pick<AppAiSiteSettings, 'defaults' | 'siteDay' | 'chatMaxOutput'>;
+/** The form's start: what is saved. A server from before chat answers had a length sends none. */
+const draftOf = (settings: AppAiSiteSettings): LimitsDraft => ({ defaults: settings.defaults, siteDay: settings.siteDay, chatMaxOutput: settings.chatMaxOutput ?? CHAT_MAX_OUTPUT.start });
+/** A whole number of 0 or more, as typed. */
+const wholeNumber = (typed: string) => Math.max(0, Math.floor(Number(typed) || 0));
 
 export function AdminAppAiCard() {
   const [view, setView] = useState<AppAiAdminView | null>(null);
@@ -43,7 +47,7 @@ export function AdminAppAiCard() {
       if (cancelled) return;
       if (result.error || !result.data) { setLoadError(result.error ?? 'Could not read this setting.'); return; }
       setView(result.data);
-      setDraft({ defaults: result.data.settings.defaults, siteDay: result.data.settings.siteDay });
+      setDraft(draftOf(result.data.settings));
       setWords(result.data.settings.words.join('\n'));
       if (computers.data && Array.isArray(computers.data.candidates)) setDesktop(computers.data);
     });
@@ -63,11 +67,13 @@ export function AdminAppAiCard() {
   const saved = view.settings;
   const saveLimits = async () => {
     setSaving('limits');
-    const result = await api.adminPutAppAi({ ...saved, ...draft, words: words.split('\n').map((w) => w.trim()).filter(Boolean) });
+    // The answer length is held to what the server takes, so a number typed past either end is saved as that end.
+    const chatMaxOutput = Math.min(CHAT_MAX_OUTPUT.max, Math.max(CHAT_MAX_OUTPUT.min, draft.chatMaxOutput));
+    const result = await api.adminPutAppAi({ ...saved, ...draft, chatMaxOutput, words: words.split('\n').map((w) => w.trim()).filter(Boolean) });
     setSaving(null);
     if (result.error || !result.data) { toast.error('Not saved', result.error ?? ''); return; }
     setView(result.data);
-    setDraft({ defaults: result.data.settings.defaults, siteDay: result.data.settings.siteDay });
+    setDraft(draftOf(result.data.settings));
     setWords(result.data.settings.words.join('\n'));
     toast.success('Saved');
   };
@@ -122,7 +128,7 @@ export function AdminAppAiCard() {
                 <label key={key} className="flex flex-col text-xs text-gray-600 dark:text-slate-400">
                   {/* Two lines' room, so the boxes line up when one label wraps. */}
                   <span className="flex min-h-8 items-end">{label}</span>
-                  <input type="number" min={0} className={field} value={draft.defaults[key]} onChange={(e) => setDraft({ ...draft, defaults: { ...draft.defaults, [key]: Math.max(0, Math.floor(Number(e.target.value) || 0)) } })} />
+                  <input type="number" min={0} className={field} value={draft.defaults[key]} onChange={(e) => setDraft({ ...draft, defaults: { ...draft.defaults, [key]: wholeNumber(e.target.value) } })} />
                   <span className="mt-1 block">{hint}</span>
                 </label>
               ))}
@@ -131,10 +137,17 @@ export function AdminAppAiCard() {
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block text-sm">
               <span className="font-medium text-gray-700 dark:text-slate-300">Requests a day, all apps together</span>
-              <input type="number" min={0} className={field} value={draft.siteDay} onChange={(e) => setDraft({ ...draft, siteDay: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
+              <input type="number" min={0} className={field} value={draft.siteDay} onChange={(e) => setDraft({ ...draft, siteDay: wholeNumber(e.target.value) })} />
               <span className="mt-1 block text-xs text-gray-500 dark:text-slate-400">Once used up, apps on the site&apos;s AI wait until tomorrow (UTC).</span>
             </label>
             <label className="block text-sm">
+              <span className="font-medium text-gray-700 dark:text-slate-300">Longest chat answer, in tokens</span>
+              <input type="number" min={CHAT_MAX_OUTPUT.min} max={CHAT_MAX_OUTPUT.max} className={field} data-testid="ai-chat-max-output" value={draft.chatMaxOutput} onChange={(e) => setDraft({ ...draft, chatMaxOutput: wholeNumber(e.target.value) })} />
+              <span className="mt-1 block text-xs text-gray-500 dark:text-slate-400">
+                From {CHAT_MAX_OUTPUT.min} to {CHAT_MAX_OUTPUT.max.toLocaleString('en')}; about four characters a token. An app may ask for less, never more, and an answer is cut off there.
+              </span>
+            </label>
+            <label className="block text-sm sm:col-span-2">
               <span className="font-medium text-gray-700 dark:text-slate-300">Words a request may not use</span>
               <textarea className={`${field} min-h-20 py-2`} value={words} placeholder="One word or phrase per line" onChange={(e) => setWords(e.target.value)} />
               <span className="mt-1 block text-xs text-gray-500 dark:text-slate-400">A request that uses one is refused, and the app is told.</span>

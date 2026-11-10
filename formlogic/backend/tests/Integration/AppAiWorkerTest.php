@@ -171,9 +171,11 @@ final class AppAiWorkerTest extends TestCase
 function createJob(req) {
   var body = req.body || {};
   var id = softn.crypto.randomHex(16);
-  softn.sql.execute("INSERT INTO ai_jobs(id, kind, prompt, size, seed, reference, messages) VALUES(?,?,?,?,?,?,?)",
-    [id, body.kind || "picture", body.prompt || null, body.size || null, body.seed === undefined ? null : body.seed, body.reference || null, body.messages ? JSON.stringify(body.messages) : null]);
-  return { status: 201, body: { id: id } };
+  var asking = req.context && req.context.formlogic && req.context.formlogic.ai ? req.context.formlogic.ai : {};
+  softn.sql.execute("INSERT INTO ai_jobs(id, kind, prompt, size, seed, reference, messages, max_output) VALUES(?,?,?,?,?,?,?,?)",
+    [id, body.kind || "picture", body.prompt || null, body.size || null, body.seed === undefined ? null : body.seed, body.reference || null, body.messages ? JSON.stringify(body.messages) : null,
+     body.maxOutput === undefined ? null : body.maxOutput]);
+  return { status: 201, body: { id: id, requester: asking.requester || null } };
 }
 function deliver(req) {
   var b = req.body || {};
@@ -183,9 +185,17 @@ function deliver(req) {
   softn.sql.execute("INSERT INTO tries(job_id, idem) VALUES(?,?)", [String(b.jobId || ""), String((req.headers || {})["idempotency-key"] || "")]);
   var refuse = softn.sql.first("SELECT value FROM settings WHERE name = 'refuse'", []);
   if (refuse && Number(refuse.value) > Number(tries.n)) return { status: 503, body: { error: "busy" } };
-  softn.sql.execute("INSERT INTO deliveries(job_id, status, picture, mime, width, height, seed, model, text, code, message, is_delivery) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+  softn.sql.execute("INSERT INTO deliveries(job_id, status, picture, mime, width, height, seed, model, text, code, message, is_delivery, requester) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
     [String(b.jobId), String(b.status), b.picture || null, b.mimeType || null, b.width || null, b.height || null,
-     b.seed === undefined || b.seed === null ? null : String(b.seed), b.model || null, b.text || null, b.code || null, b.message || null, ai.delivery === true ? 1 : 0]);
+     b.seed === undefined || b.seed === null ? null : String(b.seed), b.model || null, b.text || null, b.code || null, b.message || null, ai.delivery === true ? 1 : 0, ai.requester || null]);
+  // A deliver route that asks for more: `follow` new picture jobs each time it is handed a result.
+  var follow = softn.sql.first("SELECT value FROM settings WHERE name = 'follow'", []);
+  var wanted = follow ? Number(follow.value) : 0;
+  var written = 0;
+  while (written < wanted) {
+    softn.sql.execute("INSERT INTO ai_jobs(id, kind, prompt) VALUES(?,?,?)", [softn.crypto.randomHex(16), "picture", "Drawn after " + String(b.jobId)]);
+    written = written + 1;
+  }
   return { status: 200, body: { ok: true } };
 }
 function ping(req) { return { status: 200, body: { ok: true } }; }
@@ -211,8 +221,8 @@ JS;
             'manifest.json' => json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
             'ui/main.ui' => '<Stack><Text>Logos</Text></Stack>',
             'server/main.logic' => self::SERVER,
-            'server/migrations/001.sql' => "CREATE TABLE ai_jobs(id TEXT PRIMARY KEY, kind TEXT NOT NULL, prompt TEXT, size TEXT, seed INTEGER, reference TEXT, messages TEXT);\n"
-                . "CREATE TABLE deliveries(job_id TEXT, status TEXT, picture TEXT, mime TEXT, width INTEGER, height INTEGER, seed TEXT, model TEXT, text TEXT, code TEXT, message TEXT, is_delivery INTEGER);\n"
+            'server/migrations/001.sql' => "CREATE TABLE ai_jobs(id TEXT PRIMARY KEY, kind TEXT NOT NULL, prompt TEXT, size TEXT, seed INTEGER, reference TEXT, messages TEXT, max_output INTEGER);\n"
+                . "CREATE TABLE deliveries(job_id TEXT, status TEXT, picture TEXT, mime TEXT, width INTEGER, height INTEGER, seed TEXT, model TEXT, text TEXT, code TEXT, message TEXT, is_delivery INTEGER, requester TEXT);\n"
                 . "CREATE TABLE tries(job_id TEXT, idem TEXT);\n"
                 . "CREATE TABLE settings(name TEXT PRIMARY KEY, value TEXT);",
         ]];
@@ -356,6 +366,8 @@ JS;
         $this->assertCount(1, $delivered);
         $this->assertSame([$appJobId, 'done', 'image/jpeg', 1024, 768, '424242', 'flux-3-image-klein', 1],
             [$delivered[0]['job_id'], $delivered[0]['status'], $delivered[0]['mime'], (int) $delivered[0]['width'], (int) $delivered[0]['height'], $delivered[0]['seed'], $delivered[0]['model'], (int) $delivered[0]['is_delivery']]);
+        $this->assertSame('v-' . $this->job($id)['requester_id'], $delivered[0]['requester'], 'the delivery names who asked, as their own request did (contract §0.13)');
+        $this->assertSame($answer['result']['body']['requester'] ?? null, $delivered[0]['requester']);
         $bytes = (string) base64_decode(substr((string) $delivered[0]['picture'], strlen('data:image/jpeg;base64,')), true);
         $this->assertTrue(AppAiPictures::isBaselineJpeg($bytes), 'redrawn, never progressive');
         $this->assertSame(['fl-ai-' . $id], array_column($this->appRows($app['id'], 'SELECT idem FROM tries'), 'idem'));
@@ -829,6 +841,243 @@ JS;
         $this->assertSame(1, $worker->tick()['delivered']);
         $this->assertSame('done', $this->job($id)['status']);
         $this->assertSame('done', $this->appRows($app['id'], 'SELECT status FROM deliveries')[0]['status']);
+    }
+
+    // ------------------------------------------------------------------ contract §0.13: answer length, cancel, follow-ups
+
+    /** A chat is sent with how long its answer may be: what its app asked for, within the administrator's ceiling. */
+    public function testAChatIsSentWithItsAnswersLengthWithinTheSitesCeiling(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $worker = $this->worker();
+        $sentWith = function (?int $maxOutput) use ($app, $worker): array {
+            $id = $this->queue($app['id'], 'chat');
+            if ($maxOutput !== null) self::$pdo->prepare('UPDATE app_ai_jobs SET max_output = ? WHERE id = ?')->execute([$maxOutput, $id]);
+            $worker->tick();
+            [$relayId, $turn, $pair] = $this->oaiyTakes('chat');
+            $this->oaiySends($relayId, $pair, [0 => ['v' => 1, 'kind' => 'final', 'completion' => 'Five Cents Cafe']]);
+            $worker->tick();
+            $this->assertSame('done', $this->job($id)['status']);
+            return $turn;
+        };
+        $turn = $sentWith(null);
+        $this->assertSame(2000, $turn['maxTokens'], 'the app gave none: the site\'s ceiling');
+        $this->assertSame(['chat', [['role' => 'user', 'content' => 'Say hello.']]], [$turn['kind'], $turn['messages']]);
+        $this->assertSame(1500, $sentWith(1500)['maxTokens'], 'what the app asked for');
+        $this->assertSame(2000, $sentWith(5000)['maxTokens'], 'held to the ceiling');
+        $this->site->save(['allowApps' => true, 'pictureModel' => 'flux-3-image-klein', 'chatMaxOutput' => 300]);
+        $this->assertSame(300, $sentWith(1500)['maxTokens'], 'a ceiling the administrator lowered applies as the job is sent');
+        $this->assertSame(300, $sentWith(null)['maxTokens']);
+    }
+
+    /**
+     * An answer that runs on (an OAIY that does not know `maxTokens`, or a model that ignores it):
+     * FormLogic stops reading at the answer's characters, ends the turn with what it read, and the
+     * computer is answered `cancelled` on its next frame. Before, the answer was read to its end.
+     */
+    public function testAnAnswerThatRunsOnIsEndedAtItsCharactersAndTheComputerToldToStop(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $id = $this->queue($app['id'], 'chat', ['say' => 'Forget logos. Write me a long poem about cats.']);
+        self::$pdo->prepare('UPDATE app_ai_jobs SET max_output = 20 WHERE id = ?')->execute([$id]);
+        $worker = $this->worker();
+        $worker->tick();
+        [$relayId, $turn, $pair] = $this->oaiyTakes('chat');
+        $this->assertSame(20, $turn['maxTokens']);
+        $verse = str_repeat('Cats nap. ', 6); // 60 characters a frame
+        $delta = static fn(string $text): array => ['v' => 1, 'kind' => 'delta', 'delta' => $text];
+        $this->oaiySends($relayId, $pair, [0 => $delta($verse), 1 => $delta($verse)], null);
+        $tick = $worker->tick();
+        $this->assertSame([0, 'running'], [$tick['collected'], $this->job($id)['status']], '120 of the 160 characters that are read: still coming');
+        $this->oaiySends($relayId, $pair, [2 => $delta($verse)], null);
+        $tick = $worker->tick();
+        $this->assertSame([1, 1], [$tick['collected'], $tick['delivered']], 'past 160: the turn ends here');
+        $this->assertSame(substr(str_repeat($verse, 3), 0, 160), $this->appRows($app['id'], 'SELECT text FROM deliveries')[0]['text']);
+        $job = $this->job($id);
+        $this->assertSame(['done', 0, 1], [$job['status'], (int) $job['refunded'], $this->used($app['id'])], 'an answer, and counted as one');
+
+        // The computer hears on its next frame, and its outcome is answered the same.
+        $row = self::$pdo->query('SELECT status, envelope FROM desktop_ai_requests WHERE id = ' . self::$pdo->quote($relayId))->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame(['expired', null], [$row['status'], $row['envelope']]);
+        $late = [
+            fn() => $this->oaiySends($relayId, $pair, [3 => $delta($verse)], null),
+            fn() => $this->relay->complete($relayId, $this->adminId, ['status' => 'done', 'instanceId' => 'inst-site-ai']),
+        ];
+        foreach ($late as $send) {
+            try {
+                $send();
+                $this->fail('taken after the turn was ended');
+            } catch (\RuntimeException $e) {
+                $this->assertSame('cancelled', $e->getMessage());
+            }
+        }
+
+        // The chat's place is free for the next one at once. An answer that ends by itself but is
+        // longer than is read is cut the same.
+        $next = $this->queue($app['id'], 'chat');
+        self::$pdo->prepare('UPDATE app_ai_jobs SET max_output = 20 WHERE id = ?')->execute([$next]);
+        $worker->tick();
+        $this->assertSame('running', $this->job($next)['status']);
+        [$nextRelay, , $nextPair] = $this->oaiyTakes('chat');
+        $this->oaiySends($nextRelay, $nextPair, [0 => ['v' => 1, 'kind' => 'final', 'completion' => str_repeat('y', 500)]]);
+        $worker->tick();
+        $this->assertSame(str_repeat('y', 160), $this->appRows($app['id'], 'SELECT text FROM deliveries ORDER BY rowid')[1]['text']);
+    }
+
+    /** The .env upstream is sent the same length as `max_tokens`, and no more of its answer is read. */
+    public function testTheEnvUpstreamIsSentTheAnswersLengthAndHeldToIt(): void
+    {
+        $this->boot('auto', false);
+        if (self::$stub === null) $this->markTestSkipped('Needs curl');
+        self::$stub->clear();
+        $app = $this->app();
+        $short = $this->queue($app['id'], 'chat', ['say' => '[long:5000] Write a long poem about cats.']);
+        self::$pdo->prepare('UPDATE app_ai_jobs SET max_output = 50 WHERE id = ?')->execute([$short]);
+        $plain = $this->queue($app['id'], 'chat');
+        $worker = $this->worker();
+        $deadline = microtime(true) + 30;
+        while (microtime(true) < $deadline && ($this->job($short)['status'] !== 'done' || $this->job($plain)['status'] !== 'done')) $worker->tick();
+        $this->assertSame(['done', 'done'], [$this->job($short)['status'], $this->job($plain)['status']]);
+        $asked = [];
+        foreach (self::$stub->requests() as $request) {
+            if ($request['path'] === '/v1/chat/completions') $asked[(string) end($request['body']['messages'])['content']] = $request['body']['max_tokens'] ?? null;
+        }
+        ksort($asked);
+        $this->assertSame(['Say hello.' => 2000, '[long:5000] Write a long poem about cats.' => 50], $asked, 'the app\'s own length, or the site\'s ceiling when it gives none');
+        $texts = array_column($this->appRows($app['id'], 'SELECT job_id, text FROM deliveries'), 'text', 'job_id');
+        $this->assertSame(400, mb_strlen((string) $texts['job-' . substr($short, 0, 8)]), '50 tokens: 400 characters are read, of the 5,000 it sent');
+        $this->assertSame('Hello from the stub.', $texts['job-' . substr($plain, 0, 8)]);
+    }
+
+    /**
+     * Cancel reaches the computer: a picture cancelled while it is drawn frees its place at once, and
+     * the computer drawing it is answered `cancelled` on its next progress frame. Before, it was drawn
+     * to the end unheard, and the next picture waited behind it.
+     */
+    public function testACancelledPictureFreesItsPlaceAndItsComputerIsToldOnItsNextFrame(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $visitor = bin2hex(random_bytes(16));
+        $id = $this->queue($app['id'], 'picture', [], $visitor);
+        $worker = $this->worker();
+        $this->assertSame(1, $worker->tick()['sent']);
+        [$relayId, , $pair] = $this->oaiyTakes(DesktopAiRelayService::PICTURE_KIND);
+        $this->oaiySends($relayId, $pair, [0 => self::PROGRESS], null);
+        $next = $this->queue($app['id'], 'picture');
+        $this->assertSame(0, $worker->tick()['sent'], 'one picture at a time on a computer');
+
+        $binding = AppAiService::binding(['kind' => 'visitor', 'id' => $visitor], self::IP_KEY);
+        $this->assertSame(1, $this->ai->capture($app['id'], bin2hex(random_bytes(16)), 'app.record.updated.ai_jobs', ['record' => ['id' => $this->job($id)['app_job_id'], 'status' => 'cancelled']], [$binding], null));
+        $tick = $worker->tick();
+        $this->assertSame([1, 1, 1], [$tick['cancelled'], $tick['sent'], $tick['delivered']], 'cancelled, the app told, and the next picture sent in the same pass');
+        $this->assertSame('expired', self::$pdo->query('SELECT status FROM desktop_ai_requests WHERE id = ' . self::$pdo->quote($relayId))->fetchColumn());
+
+        // The computer, still drawing the first, is told when it next says so: it stops there.
+        try {
+            $this->oaiySends($relayId, $pair, [1 => self::PROGRESS], null);
+            $this->fail('the progress frame of a cancelled picture was taken');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('cancelled', $e->getMessage());
+        }
+        // Its place on the lane is free without waiting for that: the next picture is claimed and drawn.
+        [$nextRelay, , $nextPair] = $this->oaiyTakes(DesktopAiRelayService::PICTURE_KIND);
+        $this->assertNotSame($relayId, $nextRelay);
+        $this->oaiySends($nextRelay, $nextPair, [0 => self::pictureFrame(self::jpeg(256, 256))]);
+        $worker->tick();
+        $this->assertSame(['cancelled', 'done'], [$this->job($id)['status'], $this->job($next)['status']]);
+        $this->assertSame(['cancelled', 'done'], array_column($this->appRows($app['id'], 'SELECT status FROM deliveries ORDER BY rowid'), 'status'));
+    }
+
+    /** A job that runs out of time is cancelled on its computer the same way. */
+    public function testAJobOutOfTimeIsCancelledOnItsComputer(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $id = $this->queue($app['id'], 'picture');
+        $worker = $this->worker();
+        $worker->tick();
+        [$relayId, , $pair] = $this->oaiyTakes(DesktopAiRelayService::PICTURE_KIND);
+        $this->oaiySends($relayId, $pair, [0 => self::PROGRESS], null);
+        self::$pdo->prepare('UPDATE app_ai_jobs SET started_at = ? WHERE id = ?')->execute([AppAiService::stamp(time() - AppAiWorker::RUNNING_BACKSTOP - 5), $id]);
+        $worker->tick();
+        $job = $this->job($id);
+        $this->assertSame(['failed', 'timeout', 1], [$job['status'], $job['code'], (int) $job['refunded']]);
+        $this->assertSame('expired', self::$pdo->query('SELECT status FROM desktop_ai_requests WHERE id = ' . self::$pdo->quote($relayId))->fetchColumn());
+        try {
+            $this->oaiySends($relayId, $pair, [1 => self::pictureFrame(self::jpeg(256, 256))], null);
+            $this->fail('the picture of a job that ran out of time was taken');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('cancelled', $e->getMessage());
+        }
+    }
+
+    /**
+     * A follow-up job from the deliver route, through the real runner: here the app's deliver route
+     * writes two new jobs rows every time it is handed anything. The first, written while the chat's
+     * answer is delivered, is drawn for the chat's requester; the second is refused and the app
+     * told; what the follow-up's own delivery writes is refused too; and the refusals' deliveries
+     * ask for nothing, so it ends.
+     */
+    #[DataProvider('runners')]
+    public function testADeliverRouteAsksForOneFollowUpJobForWhoeverAsked(string $runner): void
+    {
+        $this->boot($runner);
+        $app = $this->app();
+        $this->native->withDatabase($app['id'], static fn(PDO $db) => $db->exec("INSERT INTO settings(name, value) VALUES('follow', '2')"));
+        $visitor = bin2hex(random_bytes(16));
+        $chat = $this->queue($app['id'], 'chat', ['say' => 'Plan a logo for my cafe.'], $visitor);
+        $jobs = function () use ($app): array {
+            $statement = self::$pdo->prepare('SELECT * FROM app_ai_jobs WHERE app_id = ? ORDER BY created_at, id');
+            $statement->execute([$app['id']]);
+            return $statement->fetchAll(PDO::FETCH_ASSOC);
+        };
+        $worker = $this->worker();
+        $worker->tick();
+        [$turn, , $pair] = $this->oaiyTakes('chat');
+        $this->oaiySends($turn, $pair, [0 => ['v' => 1, 'kind' => 'final', 'completion' => '{"draw":"a cup"}']]);
+        $this->assertSame(1, $worker->tick()['delivered']);
+
+        // The chat's delivery wrote two rows: one follow-up for its requester, one refused.
+        $after = array_values(array_filter($jobs(), static fn(array $job) => $job['id'] !== $chat));
+        $this->assertCount(2, $after);
+        $taken = array_values(array_filter($after, static fn(array $job) => $job['status'] !== 'refused'));
+        $refused = array_values(array_filter($after, static fn(array $job) => $job['status'] === 'refused'));
+        $this->assertCount(1, $taken);
+        $this->assertSame(['picture', 'visitor', $visitor, self::IP_KEY, $chat, 'Drawn after job-' . substr($chat, 0, 8)],
+            [$taken[0]['kind'], $taken[0]['requester_kind'], $taken[0]['requester_id'], $taken[0]['ip_key'], $taken[0]['follow_up_of'], $taken[0]['prompt']]);
+        $this->assertSame(['limit_reached', $chat, $visitor], [$refused[0]['code'], $refused[0]['follow_up_of'], $refused[0]['requester_id']]);
+        $this->assertStringContainsString('this delivery has asked for its one', (string) $refused[0]['message']);
+        $this->assertSame([2, 2], [$this->used($app['id'], 'requester', 'v:' . $visitor), $this->used($app['id'])], 'the chat and its follow-up, counted as the visitor\'s');
+
+        // The follow-up is drawn like any picture of theirs, and delivered.
+        $drawing = (string) $taken[0]['id'];
+        $worker->tick();
+        $this->assertSame('running', $this->job($drawing)['status']);
+        [$pictureTurn, $asked, $picturePair] = $this->oaiyTakes(DesktopAiRelayService::PICTURE_KIND);
+        $this->assertSame('Drawn after job-' . substr($chat, 0, 8), $asked['prompt']);
+        $this->oaiySends($pictureTurn, $picturePair, [0 => self::pictureFrame(self::jpeg(256, 256))]);
+        for ($pass = 0; $pass < 4; $pass++) $worker->tick();
+        $this->assertSame('done', $this->job($drawing)['status']);
+
+        // Its delivery wrote two rows too: both refused, as a follow-up's delivery asks for nothing more.
+        $all = $jobs();
+        $this->assertCount(5, $all, 'the chat, its follow-up, and three refusals: nothing more is ever asked');
+        $chained = array_values(array_filter($all, static fn(array $job) => $job['follow_up_of'] === $drawing));
+        $this->assertCount(2, $chained);
+        foreach ($chained as $job) {
+            $this->assertSame(['refused', 'limit_reached', 'A follow-up job\'s delivery cannot ask for another job.'], [$job['status'], $job['code'], $job['message']]);
+        }
+        // Every one of the five was delivered, each naming the visitor, and each delivery wrote its two rows.
+        for ($pass = 0; $pass < 3; $pass++) $this->assertSame(0, $worker->tick()['delivered'], 'it has ended');
+        $this->assertCount(5, $jobs());
+        $delivered = $this->appRows($app['id'], 'SELECT status, code, requester FROM deliveries ORDER BY rowid');
+        $this->assertSame(['done', 'failed', 'done', 'failed', 'failed'], array_column($delivered, 'status'));
+        $this->assertSame(array_fill(0, 5, 'v-' . $visitor), array_column($delivered, 'requester'));
+        $this->assertSame(10, (int) $this->appRows($app['id'], 'SELECT COUNT(*) AS n FROM ai_jobs')[0]['n']);
+        $this->assertSame([2, 2], [$this->used($app['id'], 'requester', 'v:' . $visitor), $this->used($app['id'])], 'no refusal was counted');
     }
 
     /** Turns are fair: an app that has been served waits behind one that has not, whatever came first. */

@@ -319,6 +319,15 @@ Without credentials the `/billing` page degrades to "not configured" and no char
 > Rate limiting fails *open* if its table is unwritable (availability over strictness) — the
 > Doctor's `writable:*` checks make that condition visible.
 
+FormLogic keeps its own limits in two tables, both made by the update itself: `rate_limits` (counts
+by the minute or the hour) and `rate_buckets` (the allowance for calls to a hosted app's backend: a
+token bucket, 120 at once and two a second, which slows a burst instead of refusing everything until
+the minute ends). If a proxy or a CDN rule in front of FormLogic limits requests as well, leave room
+for a linked OAIY computer: while it writes a chat answer it posts up to about 60 frames a second to
+`/api/v1/desktop-ai/{id}/frames`, which FormLogic allows up to 6,000 a minute per computer, counted
+apart from the computer's other calls so that a long answer cannot get its outcome or its next poll
+for work refused (docs/FORMLOGIC_DESKTOP.md §8, *Rate budgets*).
+
 ### Dual-store reconcile
 
 MySQL (metadata) and the per-form SQLite files (responses) can drift after a partial failure.

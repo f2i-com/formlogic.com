@@ -348,9 +348,10 @@ it('takes saves apart from the four backend calls, and tells the frame it may se
   await act(async () => sendReady(iframe, 1));
   expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'formlogic:init', storageLane: true }), '*', expect.anything());
   // Four slow backend calls fill the four slots; a fifth is refused, a save is not. The refusal is
-  // the app host's own "too many requests" (429 rate_limited), which an app already backs off for.
+  // the app host's own "too many requests" (429 rate_limited), which an app already backs off for,
+  // with how long to wait for one of the four: about a second.
   await act(async () => { for (const id of [1, 2, 3, 4, 5]) void call(channels[0], { url: '/api/notes', options: {} }, id, 'nativeRequest'); });
-  expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 5, result: { result: { status: 429, body: { error: 'Too many requests.', code: 'rate_limited' } } } });
+  expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 5, result: { result: { status: 429, body: { error: 'Too many requests.', code: 'rate_limited', retryAfter: 1 } } } });
   await act(async () => call(channels[0], { operation: 'set', key: 'draft', value: 'kept' }, 1_000_000_000));
   expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 1_000_000_000, result: { result: { saved: true } } });
   expect(localStorage.getItem(storageKey)).toBe(JSON.stringify({ draft: 'kept' }));
@@ -384,6 +385,10 @@ it("answers FormLogic's own throttling as the app host's 429, and any other refu
   vi.mocked(api.runNativeRequest).mockResolvedValueOnce({ error: 'The app is busy. Try again shortly.', status: 409 } as never);
   await act(async () => call(channels[0], { url: '/api/notes', options: {} }, 2, 'nativeRequest'));
   expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 2, result: { error: 'The app is busy. Try again shortly.' } });
+  // How long to wait reaches the app's page with the 429, as FormLogic said it: the page need not guess.
+  vi.mocked(api.runNativeRequest).mockResolvedValueOnce({ error: 'Too many requests. Please try again later.', status: 429, retryAfter: 1 } as never);
+  await act(async () => call(channels[0], { url: '/api/notes', options: {} }, 3, 'nativeRequest'));
+  expect(channels[0].port1.postMessage).toHaveBeenCalledWith({ id: 3, result: { result: { status: 429, body: { error: 'Too many requests.', code: 'rate_limited', retryAfter: 1 } } } });
 });
 
 it('sends a method upper-cased, as a browser sends it', async () => {

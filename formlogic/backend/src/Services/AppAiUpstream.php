@@ -12,7 +12,7 @@ namespace FormLogic\Services;
  * - a picture: `POST {base}/images/generations` {model, prompt, size, n: 1, response_format: b64_json,
  *   incognito: true, seed?}
  * - an edit: the same, with `images: ["<the picture to edit, as a data URL>"]`
- * - chat: `POST {base}/chat/completions` {model, messages, stream: false}
+ * - chat: `POST {base}/chat/completions` {model, messages, stream: false, max_tokens}
  *
  * Every picture request also carries `X-OAIY-Incognito: 1`, which OAIY reads as "keep no copy" and
  * any other server ignores. Redirects are never followed. Answers and errors use the delivery's codes.
@@ -21,9 +21,11 @@ final class AppAiUpstream
 {
     /** The largest answer read: a 2048 px PNG in base64 is under this. */
     private const MAX_ANSWER_BYTES = 32 * 1024 * 1024;
+    /** The most of a chat's answer that is kept when the job says no less (AppAiService::MAX_ANSWER_CHARACTERS). */
+    private const MAX_CHAT_CHARACTERS = 32000;
 
     private ?\CurlMultiHandle $multi = null;
-    /** @var array<string, array{handle: \CurlHandle, kind: string, seed: ?int, model: string}> */
+    /** @var array<string, array{handle: \CurlHandle, kind: string, seed: ?int, model: string, characters: int}> */
     private array $running = [];
 
     /**
@@ -72,7 +74,9 @@ final class AppAiUpstream
 
     /**
      * Start job $jobId: ['kind' => picture|edit|chat, 'model' => ?string, 'prompt' => string, 'size' => string,
-     * 'seed' => ?int, 'reference' => ?data URL, 'messages' => ?list]. A null or empty model is the upstream's own.
+     * 'seed' => ?int, 'reference' => ?data URL, 'messages' => ?list, 'maxTokens' => ?int, 'maxCharacters' => ?int].
+     * A null or empty model is the upstream's own. A chat's `maxTokens` is sent as `max_tokens`, and
+     * `maxCharacters` is how much of its answer is kept.
      */
     public function start(string $jobId, array $job): void
     {
@@ -84,6 +88,8 @@ final class AppAiUpstream
         if ($chat) {
             $path = '/chat/completions';
             $body = ['model' => $model, 'messages' => $job['messages'], 'stream' => false];
+            // How long the answer may be, in tokens (the app's `max_output` within the site's ceiling).
+            if (is_int($job['maxTokens'] ?? null) && $job['maxTokens'] > 0) $body['max_tokens'] = $job['maxTokens'];
         } else {
             $path = '/images/generations';
             $body = ['model' => $model, 'prompt' => $job['prompt'], 'size' => $job['size'], 'n' => 1, 'response_format' => 'b64_json', 'incognito' => true];
@@ -107,7 +113,9 @@ final class AppAiUpstream
         ]);
         $this->multi ??= curl_multi_init();
         curl_multi_add_handle($this->multi, $handle);
-        $this->running[$jobId] = ['handle' => $handle, 'kind' => $chat ? 'chat' : 'picture', 'seed' => isset($job['seed']) ? (int) $job['seed'] : null, 'model' => $model];
+        $this->running[$jobId] = ['handle' => $handle, 'kind' => $chat ? 'chat' : 'picture', 'seed' => isset($job['seed']) ? (int) $job['seed'] : null, 'model' => $model,
+            // How much of a chat's answer is read, whatever the upstream sends back.
+            'characters' => is_int($job['maxCharacters'] ?? null) && $job['maxCharacters'] > 0 ? $job['maxCharacters'] : self::MAX_CHAT_CHARACTERS];
         // Under way at once: the request is sent while the worker goes on with its other work.
         $this->pump();
     }
@@ -192,7 +200,7 @@ final class AppAiUpstream
         if ($run['kind'] === 'chat') {
             $text = $json['choices'][0]['message']['content'] ?? null;
             if (!is_string($text)) return ['ok' => false, 'code' => 'engine_failed', 'message' => 'The AI answered without a reply.'];
-            return ['ok' => true, 'text' => mb_substr($text, 0, 32000), 'model' => is_string($json['model'] ?? null) ? $json['model'] : $run['model']];
+            return ['ok' => true, 'text' => mb_substr($text, 0, (int) ($run['characters'] ?? self::MAX_CHAT_CHARACTERS)), 'model' => is_string($json['model'] ?? null) ? $json['model'] : $run['model']];
         }
         $item = $json['data'][0] ?? null;
         $b64 = is_array($item) ? ($item['b64_json'] ?? null) : null;

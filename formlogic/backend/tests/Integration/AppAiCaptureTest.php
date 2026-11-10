@@ -253,6 +253,7 @@ JS;
         $this->assertSame(['site', 'This site\'s AI', ['pictures', 'picture-edits', 'chat'], 10, 0, 20, 0], [$ai['source'], $ai['label'], $ai['uses'], $ai['perDay'], $ai['usedToday'], $ai['ipPerDay'], $ai['ipUsedToday']]);
         $this->assertSame($app['id'], $first['body']['context']['formlogic']['appId']);
         $this->assertArrayNotHasKey('userId', $first['body']['context']['formlogic'], 'application access names no member');
+        $this->assertSame('v-' . $visitor, $ai['requester'], 'who is asking, as the delivery of their jobs will name them (contract §0.13)');
 
         $jobs = $this->jobs($app['id']);
         $this->assertCount(1, $jobs);
@@ -328,6 +329,7 @@ JS;
             $this->assertArrayNotHasKey('visitor', $formlogic);
             $this->assertFalse($formlogic['ai']['enabled']);
             $this->assertSame('visitor_required', $formlogic['ai']['reason']);
+            $this->assertArrayNotHasKey('requester', $formlogic['ai'], 'nobody known is asking');
             $this->assertSame('', $answer['cookie']);
         }
         // Their writes are still taken, so the app is answered: refused, as nobody known asked.
@@ -455,8 +457,222 @@ JS;
         $this->assertSame([$app['id'], $this->ownerId, 'owner'], [$formlogic['appId'], $formlogic['userId'], $formlogic['roleId']]);
         $this->assertArrayNotHasKey('visitor', $formlogic);
         $this->assertTrue($formlogic['ai']['enabled']);
+        $this->assertSame('u-' . $this->ownerId, $formlogic['ai']['requester']);
         $job = $this->jobs($app['id'])[0];
         $this->assertSame(['user', $this->ownerId], [$job['requester_kind'], $job['requester_id']]);
+    }
+
+    // ------------------------------------------------------------------ a chat answer's length, and follow-ups (contract §0.13)
+
+    /** A jobs row as the app wrote it, of a chat or a picture. */
+    private static function row(string $kind = 'chat', array $more = []): array
+    {
+        $row = ['id' => 'row-' . bin2hex(random_bytes(6)), 'kind' => $kind];
+        if ($kind === 'chat') $row['messages'] = json_encode([['role' => 'user', 'content' => 'Name my cafe.']]);
+        else $row['prompt'] = 'A coffee cup logo, flat colours';
+        return $more + $row;
+    }
+
+    /** The binding of a request from a visitor's page: [binding, visitor id, address key]. */
+    private static function visitor(?string $ipKey = null): array
+    {
+        $visitor = bin2hex(random_bytes(16));
+        $ipKey ??= bin2hex(random_bytes(8));
+        return [AppAiService::binding(['kind' => 'visitor', 'id' => $visitor], $ipKey), $visitor, $ipKey];
+    }
+
+    /**
+     * One created row captured as a dispatcher hands it over ($binding: the request's, or a
+     * delivery's): the job it became, or null when it was not taken.
+     */
+    private function captured(array $app, array $row, string $binding, string $event = 'app.record.created.ai_jobs'): ?array
+    {
+        $taken = $this->ai->capture($app['id'], bin2hex(random_bytes(16)), $event, ['record' => ['id' => $row['id']]], [$binding], static fn(): array => $row);
+        if ($taken === 0) return null;
+        $statement = self::$pdo->prepare('SELECT * FROM app_ai_jobs WHERE app_id = ? AND app_job_id = ?');
+        $statement->execute([$app['id'], (string) $row['id']]);
+        $job = $statement->fetch(PDO::FETCH_ASSOC);
+        return is_array($job) ? $job : null;
+    }
+
+    /** What a delivery of job $jobId carries: a new row it writes in the jobs table may be that job's follow-up. */
+    private static function deliveryBinding(string $jobId): string
+    {
+        return AppAiService::followUpSubscription('ai_jobs', $jobId)[0]['bindings'][0];
+    }
+
+    public function testAChatJobsRowMaySayHowLongItsAnswerMayBe(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $ask = fn(array $more): array => (array) $this->captured($app, self::row('chat', $more), self::visitor()[0]);
+
+        $this->assertNull($ask([])['max_output'], 'none given: the site\'s ceiling, read as the job is sent');
+        foreach ([[null, null], ['', null], [1500, 1500], ['1500', 1500], [1500.0, 1500], [1, 1], [8000, 8000], [99999, 8000]] as [$given, $kept]) {
+            $job = $ask(['max_output' => $given]);
+            $this->assertSame(['queued', $kept], [$job['status'], $job['max_output'] === null ? null : (int) $job['max_output']], json_encode($given));
+        }
+        $counted = $this->counter($app['id'], 'app', '');
+        $this->assertSame(9, $counted);
+        foreach ([0, -5, '0', 'lots', 1.5, true, '1e3'] as $given) {
+            $job = $ask(['max_output' => $given]);
+            $this->assertSame(['refused', 'bad_request', 'A chat job\'s max_output is a whole number of tokens, 1 or more.', null], [$job['status'], $job['code'], $job['message'], $job['max_output']], json_encode($given));
+        }
+        $this->assertSame($counted, $this->counter($app['id'], 'app', ''), 'a refused job is not counted');
+        // A picture has no answer length: the column is not read.
+        $picture = (array) $this->captured($app, self::row('picture', ['max_output' => 'lots']), self::visitor()[0]);
+        $this->assertSame(['queued', null], [$picture['status'], $picture['max_output']]);
+    }
+
+    public function testAnAnswersLengthIsHeldToTheAdministratorsCeiling(): void
+    {
+        $site = AppAiSiteSettings::defaults();
+        $this->assertSame(2000, $site['chatMaxOutput']);
+        $this->assertSame(2000, AppAiService::answerTokens(null, $site), 'an app that gives none gets the ceiling');
+        $this->assertSame(1500, AppAiService::answerTokens(1500, $site));
+        $this->assertSame(1500, AppAiService::answerTokens('1500', $site), 'as MySQL hands the column back');
+        $this->assertSame(2000, AppAiService::answerTokens(5000, $site), 'more than the site allows is held to what it allows');
+        $this->assertSame(300, AppAiService::answerTokens(1500, ['chatMaxOutput' => 300] + $site), 'a ceiling lowered since the job was asked for applies');
+        $this->assertSame(300, AppAiService::answerTokens(null, ['chatMaxOutput' => 300] + $site));
+        $this->assertSame(2000, AppAiService::answerTokens(null, []), 'settings from before there was a ceiling');
+        // What is read of an answer, whatever comes: eight characters a token, and never more than 32,000.
+        $this->assertSame([8, 160, 12000, 16000, 32000, 32000], array_map(AppAiService::answerCharacters(...), [1, 20, 1500, 2000, 4000, 8000]));
+
+        $this->assertSame(600, AppAiSiteSettings::validate(['chatMaxOutput' => 600])['chatMaxOutput']);
+        $this->assertSame([16, 8000], [AppAiSiteSettings::validate(['chatMaxOutput' => 16])['chatMaxOutput'], AppAiSiteSettings::validate(['chatMaxOutput' => 8000])['chatMaxOutput']]);
+        foreach ([15, 8001, '600', 2000.0] as $refused) {
+            try {
+                AppAiSiteSettings::validate(['chatMaxOutput' => $refused]);
+                $this->fail('accepted ' . json_encode($refused));
+            } catch (\InvalidArgumentException $e) {
+                $this->assertSame('chatMaxOutput must be a whole number from 16 to 8000.', $e->getMessage());
+            }
+        }
+    }
+
+    public function testADeliverysBindingIsReadBackAsItsJob(): void
+    {
+        $job = bin2hex(random_bytes(16));
+        $this->assertSame([['event' => 'app.record.created.ai_jobs', 'bindings' => ['fl-ai-f-' . $job]]], AppAiService::followUpSubscription('ai_jobs', $job), 'only the creation of a row: a delivery\'s update or delete asks nothing');
+        $this->assertSame(['kind' => AppAiService::FOLLOW_UP, 'job' => $job, 'id' => '', 'ipKey' => ''], AppAiService::parseBinding('fl-ai-f-' . $job));
+        foreach (['fl-ai-f-' . strtoupper($job), 'fl-ai-f-' . substr($job, 1), 'fl-ai-f-' . $job . '0', 'fl-ai-f-' . $job . "\n"] as $not) {
+            $this->assertNull(AppAiService::parseBinding($not));
+        }
+        $this->assertSame('v-abc', AppAiService::requesterId(['kind' => 'visitor', 'id' => 'abc']));
+        $this->assertSame('u-u-123', AppAiService::requesterId(['kind' => 'user', 'id' => 'u-123']));
+        foreach ([null, ['kind' => AppAiService::NOBODY, 'id' => ''], ['kind' => AppAiService::TEST_REQUESTER, 'id' => 'u-1']] as $nobody) {
+            $this->assertNull(AppAiService::requesterId($nobody));
+        }
+    }
+
+    /**
+     * A row the deliver route writes while a job's result is handed to it is a follow-up job for
+     * whoever asked for that job (contract §0.13): theirs in every count, one for a delivered job,
+     * and none from a follow-up's delivery.
+     */
+    public function testARowWrittenDuringADeliveryIsAFollowUpForTheDeliveredJobsRequester(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        [$binding, $visitor, $ipKey] = self::visitor();
+        $chat = (array) $this->captured($app, self::row('chat'), $binding);
+        $this->assertSame(['queued', null], [$chat['status'], $chat['follow_up_of']]);
+        // The chat is answered and its result is being delivered: it holds no place any more.
+        self::$pdo->prepare("UPDATE app_ai_jobs SET status = 'delivering' WHERE id = ?")->execute([$chat['id']]);
+
+        $drawing = (array) $this->captured($app, self::row('picture'), self::deliveryBinding($chat['id']));
+        $this->assertSame(['picture', 'queued', 'visitor', $visitor, $ipKey, $chat['id']],
+            [$drawing['kind'], $drawing['status'], $drawing['requester_kind'], $drawing['requester_id'], $drawing['ip_key'], $drawing['follow_up_of']], 'asked for as if their page had asked');
+        foreach ([['requester', 'v:' . $visitor], ['ip', $ipKey], ['ip-hour', $ipKey], ['app', '']] as [$scope, $subject]) {
+            $this->assertSame(2, $this->counter($app['id'], $scope, $subject), "{$scope}: the chat and its follow-up");
+        }
+
+        // A second row from the same delivery (or from a second try of it): refused, the app told, nothing counted.
+        $second = (array) $this->captured($app, self::row('picture'), self::deliveryBinding($chat['id']));
+        $this->assertSame(['refused', 'limit_reached', 'One follow-up job may be asked for while a job\'s result is delivered, and this delivery has asked for its one.', $chat['id'], $visitor],
+            [$second['status'], $second['code'], $second['message'], $second['follow_up_of'], $second['requester_id']]);
+        $this->assertNotNull($second['next_attempt_at'], 'told at once');
+        $this->assertSame(2, $this->counter($app['id'], 'app', ''));
+
+        // The follow-up is drawn and delivered: a row its delivery writes is no job. The chain ends by itself.
+        self::$pdo->prepare("UPDATE app_ai_jobs SET status = 'delivering' WHERE id = ?")->execute([$drawing['id']]);
+        $third = (array) $this->captured($app, self::row('picture'), self::deliveryBinding($drawing['id']));
+        $this->assertSame(['refused', 'limit_reached', 'A follow-up job\'s delivery cannot ask for another job.', $drawing['id']], [$third['status'], $third['code'], $third['message'], $third['follow_up_of']]);
+        $this->assertSame(2, $this->counter($app['id'], 'app', ''));
+
+        // And those refusals' own deliveries ask for nothing at all: a deliver route that writes a
+        // row every time it is called is not answered for ever.
+        foreach ([$second, $third] as $refused) {
+            $this->assertFalse(AppAiService::deliveryMayAsk($refused));
+            $this->assertNull($this->captured($app, self::row('picture'), self::deliveryBinding($refused['id'])));
+        }
+        $this->assertTrue(AppAiService::deliveryMayAsk($chat));
+        $this->assertTrue(AppAiService::deliveryMayAsk(['status' => 'done'] + $drawing), 'a taken follow-up\'s delivery is still heard, to be told no');
+        $this->assertCount(4, $this->jobs($app['id']));
+    }
+
+    /** A follow-up is held to its requester's limits like any job of theirs, and answered with the usual code. */
+    public function testAFollowUpIsHeldToItsRequestersOwnLimits(): void
+    {
+        $this->boot();
+        $app = $this->app();
+
+        // Their day's allowance: one job, which the chat used.
+        self::$pdo->prepare('UPDATE app_ai_settings SET per_requester_day = 1 WHERE app_id = ?')->execute([$app['id']]);
+        [$binding, $visitor] = self::visitor();
+        $chat = (array) $this->captured($app, self::row('chat'), $binding);
+        self::$pdo->prepare("UPDATE app_ai_jobs SET status = 'delivering' WHERE id = ?")->execute([$chat['id']]);
+        $refused = (array) $this->captured($app, self::row('picture'), self::deliveryBinding($chat['id']));
+        $this->assertSame(['refused', 'limit_reached', 'You have used today\'s AI allowance. It starts again tomorrow (UTC).', $visitor],
+            [$refused['status'], $refused['code'], $refused['message'], $refused['requester_id']]);
+        $this->assertSame(1, $this->counter($app['id'], 'requester', 'v:' . $visitor));
+        // That was the delivery's one: another row is not taken in its place.
+        $this->assertSame('limit_reached', $this->captured($app, self::row('picture'), self::deliveryBinding($chat['id']))['code'] ?? null);
+
+        // Their two open jobs: a follow-up asked for while both still run waits for neither.
+        self::$pdo->prepare('UPDATE app_ai_settings SET per_requester_day = 10 WHERE app_id = ?')->execute([$app['id']]);
+        [$binding, $busy] = self::visitor();
+        $delivered = (array) $this->captured($app, self::row('chat'), $binding);
+        self::$pdo->prepare("UPDATE app_ai_jobs SET status = 'delivering' WHERE id = ?")->execute([$delivered['id']]);
+        $this->captured($app, self::row('picture'), $binding);
+        $this->captured($app, self::row('chat'), $binding);
+        $third = (array) $this->captured($app, self::row('picture'), self::deliveryBinding($delivered['id']));
+        $this->assertSame(['refused', 'busy', 'Wait for your current requests to finish first.', $busy], [$third['status'], $third['code'], $third['message'], $third['requester_id']]);
+
+        // Their address: the hour's requests from it are used up.
+        [$binding, , $ipKey] = self::visitor();
+        $last = (array) $this->captured($app, self::row('chat'), $binding);
+        self::$pdo->prepare("UPDATE app_ai_jobs SET status = 'delivering' WHERE id = ?")->execute([$last['id']]);
+        self::$pdo->prepare('UPDATE app_ai_settings SET per_ip_hour = 1 WHERE app_id = ?')->execute([$app['id']]);
+        $fromThere = (array) $this->captured($app, self::row('picture'), self::deliveryBinding($last['id']));
+        $this->assertSame(['refused', 'limit_reached', $ipKey], [$fromThere['status'], $fromThere['code'], $fromThere['ip_key']]);
+        $this->assertStringContainsString('this network', (string) $fromThere['message']);
+    }
+
+    /** What a delivery's binding never does: ask for another app, for nobody, for a test, or cancel. */
+    public function testADeliverysBindingAsksOnlyForItsOwnJobsRequester(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $other = $this->app();
+        [$binding] = self::visitor();
+        $job = (array) $this->captured($app, self::row('chat'), $binding);
+
+        $this->assertNull($this->captured($other, self::row('picture'), self::deliveryBinding($job['id'])), 'another app\'s job');
+        $this->assertNull($this->captured($app, self::row('picture'), self::deliveryBinding(bin2hex(random_bytes(16)))), 'no such job');
+        // A delivery's update or delete of a jobs row cancels nothing, even with the binding.
+        $open = (array) $this->captured($app, self::row('picture'), $binding);
+        foreach (['app.record.updated.ai_jobs', 'app.record.deleted.ai_jobs'] as $event) {
+            $this->assertSame(0, $this->ai->capture($app['id'], bin2hex(random_bytes(16)), $event, ['record' => ['id' => $open['app_job_id'], 'status' => 'cancelled']], [self::deliveryBinding($job['id'])], null));
+        }
+        $this->assertSame('queued', $this->jobs($app['id'])[1]['status']);
+
+        // A job nobody known asked for, and an owner's test: their deliveries ask for nothing.
+        $nobody = (array) $this->captured($app, self::row('chat'), 'fl-ai-n-' . bin2hex(random_bytes(8)));
+        $this->assertSame(['refused', AppAiService::NOBODY], [$nobody['status'], $nobody['requester_kind']]);
+        $this->assertFalse(AppAiService::deliveryMayAsk($nobody));
+        $this->assertNull($this->captured($app, self::row('picture'), self::deliveryBinding($nobody['id'])));
+        $this->assertFalse(AppAiService::deliveryMayAsk(['requester_kind' => AppAiService::TEST_REQUESTER, 'follow_up_of' => null, 'status' => 'done']));
     }
 
     public function testChatAndBadJobsAreReadAsTheyAre(): void

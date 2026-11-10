@@ -172,6 +172,34 @@ class SchemaRoutesTest extends TestCase
         $this->assertSame('YES', $nullable(), 'and nothing changes on the next run');
     }
 
+    /**
+     * An install from before a chat job could say how long its answer may be, a deliver route could
+     * ask for a follow-up job, and an app's calls were counted as a token bucket: its jobs table
+     * gains the two columns, where a fresh install has them, and the buckets' table is made.
+     */
+    public function testAnInstallWhoseAiJobsPredateAnswerLengthsAndFollowUpsGainsThem(): void
+    {
+        $name = $this->createDatabase('aijobs2');
+        $this->pdo->exec("USE `{$name}`");
+        $this->mysql->initializeSchema();
+        $this->mysql->runMigrations();
+        $shape = fn(): string => (string) $this->pdo->query('SHOW CREATE TABLE app_ai_jobs')->fetch(PDO::FETCH_NUM)[1];
+        $fresh = $shape();
+        $this->assertStringContainsString('`max_output` int unsigned DEFAULT NULL', $fresh);
+        $this->assertStringContainsString('KEY `idx_app_ai_jobs_follow` (`follow_up_of`)', $fresh);
+
+        // As every install before the change is.
+        $this->pdo->exec('ALTER TABLE app_ai_jobs DROP KEY idx_app_ai_jobs_follow, DROP COLUMN follow_up_of, DROP COLUMN max_output');
+        $this->pdo->exec('DROP TABLE rate_buckets');
+        $this->assertStringNotContainsString('max_output', $shape());
+
+        $this->mysql->runMigrations();
+        $this->assertSame($fresh, $shape(), 'the same table a fresh install has, column for column');
+        $this->assertSame('bigint', $this->pdo->query("SHOW COLUMNS FROM rate_buckets LIKE 'tat_ms'")->fetch(PDO::FETCH_ASSOC)['Type']);
+        $this->mysql->runMigrations();
+        $this->assertSame($fresh, $shape(), 'and nothing changes on the next run');
+    }
+
     private function createDatabase(string $label): string
     {
         $name = 'formlogic_schema_' . $label . '_' . bin2hex(random_bytes(4));

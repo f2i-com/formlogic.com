@@ -67,7 +67,11 @@ describe('importNativeProject', () => {
     // Backend code with no server block to run it.
     await expect(importNativeProject(softn({ ...client, 'server/main.logic': 'function list() {}' }))).rejects.toThrow('server/main.logic is backend code, but manifest.json has no server block');
     // Sizes and counts.
-    await expect(importNativeProject(softn({ ...client, 'logic/big.logic': 'x'.repeat(1_000_001) }))).rejects.toThrow('logic/big.logic is larger than this host keeps (1 MB per source file)');
+    await expect(importNativeProject(softn({ ...client, 'logic/big.logic': 'x'.repeat(1_500_001) }))).rejects.toThrow('logic/big.logic is larger than this host keeps (1.5 MB per source file)');
+    // A studio's whole library in its one server file: over the megabyte that was the limit.
+    await expect(importNativeProject(softn({ ...client, 'logic/big.logic': 'x'.repeat(1_500_000) }))).resolves.toMatchObject({ files: { 'logic/big.logic': expect.any(String) } });
+    // A migration stays at 1 MB: the runner reads no more of one.
+    await expect(importNativeProject(softn({ ...client, 'server/migrations/001.sql': '-'.repeat(1_000_001) }))).rejects.toThrow('server/migrations/001.sql is larger than a migration may be (1 MB)');
     const pictures = Object.fromEntries(Array.from({ length: 1001 }, (_, i) => [`assets/p${i}.png`, png]));
     await expect(importNativeProject(softn({ ...client, ...pictures }))).rejects.toThrow('This app has 1001 media files; this host keeps up to 1000.');
     // A game's hundreds of pictures and sounds are kept.

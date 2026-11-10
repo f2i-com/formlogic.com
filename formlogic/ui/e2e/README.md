@@ -41,6 +41,13 @@ Failures capture a screenshot + trace (open with `npx playwright show-trace <tra
   second test does the same on the provider in the server's settings. Needs the same stack and
   administrator as the spec above, and changes the same site settings, so run the two with
   `--workers=1`. Skipped otherwise.
+- `app-ai-lane.spec.ts` — what the computer that draws is told, with the same stand-in computer: a
+  visitor cancels a picture being drawn and the computer's next progress frame is answered 409
+  `cancelled` (it stops, and the next picture is drawn at once); a chat whose model runs on is ended
+  at its answer's length and the computer told the same way; and an app's deliver route, handed a
+  chat's answer, asks for one follow-up picture, drawn for the visitor who asked. Same stack,
+  administrator and `--workers=1` as the two above (`app-ai-stack.ts` holds what they share).
+  Skipped otherwise.
 
 ## Notes / follow-ups
 

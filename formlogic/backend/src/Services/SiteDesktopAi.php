@@ -239,6 +239,16 @@ final class SiteDesktopAi
         $this->relay->abandon($id, $owner);
     }
 
+    /**
+     * Cancel a turn whatever it is doing: one not yet taken never is, and a computer already
+     * working on one is told `cancelled` on its next frame, for it to stop (contract §0.13;
+     * DesktopAiRelayService::cancel). App AI's cancelled, timed-out and overlong jobs.
+     */
+    public function cancel(string $id, string $owner): void
+    {
+        $this->relay->cancel($id, $owner);
+    }
+
     /** Why $target cannot take a turn now ($picture: a picture), or null. */
     public function unavailableFor(array $target, bool $picture = false): ?SiteAiBusyException
     {

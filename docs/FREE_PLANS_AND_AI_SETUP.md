@@ -164,6 +164,12 @@ is named in step 1 with **Forget it**; nothing is sent anywhere in its place unt
 - **Requests each new app starts with:** per network address a day (20: an app's free rounds), per
   person a day (10), per network address an hour (10), and per app a day (500, also the most an owner
   may set on the site's AI). **Requests a day, all apps together** (2,000) is the site's own ceiling.
+- **Longest chat answer, in tokens** (2,000; from 16 to 8,000; a token is about four characters). An
+  app may ask for a shorter answer for a request, never a longer one, and gets this length when it
+  asks for none. The AI is told the length, and FormLogic also stops reading an answer that runs past
+  it (eight characters a token, 32,000 at most) and tells the computer to stop, so one run-on answer
+  cannot hold the computer up for the apps waiting behind it. It applies to every app's chat, on the
+  site's AI and on an owner's own OAIY alike.
 - **Words a request may not use**, one a line: a request that uses one is refused, and the app is told.
   **Save limits** saves these and the numbers above together.
 - **Warnings.** The card says when a picture model was refused by your computer in the last day

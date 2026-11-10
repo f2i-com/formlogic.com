@@ -45,6 +45,22 @@ it('surfaces the typed code of a refusal, so engine_changed is not read as a los
   expect(result.error).toContain('different engine');
 });
 
+// A throttled call says how long to wait: the app's page is handed it with the 429 (nativeRefusal).
+it('carries how long a 429 says to wait, from its body or its Retry-After header', async () => {
+  stubFetch({ error: true, message: 'Too many requests. Please try again later.', retryAfter: 1 }, 429);
+  const limited = await api.runNativeRequest('notes', { path: '/x' });
+  expect([limited.status, limited.retryAfter]).toEqual([429, 1]);
+
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: true, message: 'The native host is busy. Try again shortly.' }), { status: 429, headers: { 'Retry-After': '2' } })));
+  expect((await api.runNativeRequest('notes', { path: '/x' })).retryAfter).toBe(2);
+
+  // Nothing is made up when the server did not say, nor read from anything but a 429.
+  stubFetch({ error: true, message: 'Too many requests.' }, 429);
+  expect(await api.runNativeRequest('notes', { path: '/x' })).not.toHaveProperty('retryAfter');
+  stubFetch({ error: true, message: 'The app is busy. Try again shortly.', retryAfter: 5 }, 409);
+  expect(await api.runNativeRequest('notes', { path: '/x' })).not.toHaveProperty('retryAfter');
+});
+
 it('leaves an untyped failure untyped', async () => {
   stubFetch({ error: true, message: 'Someone else saved first' }, 409);
   const result = await api.runHostedAction('notes', 'save', {}, undefined, undefined, actor);

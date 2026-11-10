@@ -812,6 +812,8 @@ CREATE TABLE `app_ai_jobs` (
   `size` varchar(9) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `seed` bigint DEFAULT NULL,
   `reference` mediumtext COLLATE utf8mb4_unicode_ci,
+  `max_output` int unsigned DEFAULT NULL,
+  `follow_up_of` char(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `model` varchar(256) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `result_path` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `result_meta` text COLLATE utf8mb4_unicode_ci,
@@ -834,6 +836,7 @@ CREATE TABLE `app_ai_jobs` (
   KEY `idx_app_ai_jobs_app` (`app_id`,`status`,`created_at`),
   KEY `idx_app_ai_jobs_requester` (`app_id`,`requester_kind`,`requester_id`,`status`),
   KEY `idx_app_ai_jobs_target` (`target`,`status`,`created_at`),
+  KEY `idx_app_ai_jobs_follow` (`follow_up_of`),
   CONSTRAINT `fk_app_ai_jobs_app` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -2080,6 +2083,16 @@ CREATE TABLE `plan_allowances` (
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`plan`,`metric`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+-- Token buckets (RateLimiter::take): one row a key, the moment its next call is due in full, in ms.
+CREATE TABLE `rate_buckets` (
+  `bucket` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tat_ms` bigint NOT NULL,
+  PRIMARY KEY (`bucket`),
+  KEY `idx_rate_buckets_tat` (`tat_ms`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;

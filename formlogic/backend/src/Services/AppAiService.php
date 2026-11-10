@@ -43,8 +43,19 @@ class AppAiService
     public const CANCELLABLE = ['queued', 'sending', 'running', 'delivering'];
     /** Who asked, for a request no FormLogic page marked: nobody known. Its jobs are refused. */
     public const NOBODY = 'nobody';
+    /** A binding's kind for a row written by a deliver route: a follow-up job for the delivered job's requester. */
+    public const FOLLOW_UP = 'follow';
     /** The largest seed a picture may ask for: 2^53 - 1. */
     public const MAX_SEED = 9007199254740991;
+    /**
+     * What FormLogic reads of a chat answer, whatever the AI goes on to send: this many characters
+     * for each token the answer may have (a token is about four characters, so twice what an answer
+     * within its tokens takes), and never more than MAX_ANSWER_CHARACTERS. Past it the turn is ended
+     * and the computer told to stop: an AI that does not know the token limit, or ignores it, cannot
+     * run on (contract §0.13).
+     */
+    public const ANSWER_CHARACTERS_PER_TOKEN = 8;
+    public const MAX_ANSWER_CHARACTERS = 32000;
 
     /** @var \Closure(): int */
     private \Closure $now;
@@ -221,6 +232,8 @@ class AppAiService
             'ipUsedToday' => $this->used((string) $app['id'], 'ip', $ipKey, $day),
             'jobs' => $requester === null ? (object) [] : $this->openJobs((string) $app['id'], $requester),
         ];
+        // Who is asking, as the delivery of their jobs will name them (contract §0.13).
+        if (($who = self::requesterId($requester)) !== null) $context['requester'] = $who;
         if (!$context['enabled'] && $requester === null && $available['enabled']) $context['reason'] = 'visitor_required';
         elseif (!$available['enabled']) $context['reason'] = $available['reason'];
         // Every request carries the binding, whatever its AI can do now: a job it writes is always
@@ -235,14 +248,54 @@ class AppAiService
         return self::BINDING_PREFIX . ($requester['kind'] === 'user' ? 'u' : 'v') . '-' . $requester['id'] . '-' . $ipKey;
     }
 
-    /** A binding id read back: ['kind' => user|visitor|nobody, 'id' => …, 'ipKey' => …], or null when it is not App AI's. */
+    /**
+     * Who asked, as the app is told it (`req.context.formlogic.ai.requester`): `u-<member>` or
+     * `v-<visitor>`, the same id the binding carries, or null when nobody is known. Opaque to the
+     * app: the same for one person in one app, on their own requests and on the delivery of their
+     * jobs, so an app can tell whose job a delivery is without keeping the person's own ids.
+     */
+    public static function requesterId(?array $requester): ?string
+    {
+        if ($requester === null || !in_array($requester['kind'] ?? null, ['user', 'visitor'], true)) return null;
+        return ($requester['kind'] === 'user' ? 'u' : 'v') . '-' . $requester['id'];
+    }
+
+    /** A binding id read back: ['kind' => user|visitor|nobody, 'id' => …, 'ipKey' => …], a follow-up's ['kind' => follow, 'job' => …], or null when it is not App AI's. */
     public static function parseBinding(mixed $binding): ?array
     {
         if (!is_string($binding) || strlen($binding) > 100) return null;
         if (preg_match('/^fl-ai-u-([A-Za-z0-9-]{1,64})-([0-9a-f]{16})$/D', $binding, $m)) return ['kind' => 'user', 'id' => $m[1], 'ipKey' => $m[2]];
         if (preg_match('/^fl-ai-v-([0-9a-f]{32})-([0-9a-f]{16})$/D', $binding, $m)) return ['kind' => 'visitor', 'id' => $m[1], 'ipKey' => $m[2]];
         if (preg_match('/^fl-ai-n-([0-9a-f]{16})$/D', $binding, $m)) return ['kind' => self::NOBODY, 'id' => '', 'ipKey' => $m[1]];
+        if (preg_match('/^fl-ai-f-([0-9a-f]{32})$/D', $binding, $m)) return ['kind' => self::FOLLOW_UP, 'job' => $m[1], 'id' => '', 'ipKey' => ''];
         return null;
+    }
+
+    /**
+     * The subscription a delivery carries (contract §0.13): while an app's deliver route handles the
+     * result of job $jobId, one new row it writes in its jobs table is taken as a follow-up job for
+     * that job's requester (capture). Only the row's creation: a delivery that marks its own row done
+     * or cancels another asks nothing.
+     *
+     * @return list<array{event: string, bindings: list<string>}>
+     */
+    public static function followUpSubscription(string $table, string $jobId): array
+    {
+        return [['event' => 'app.record.created.' . $table, 'bindings' => [self::BINDING_PREFIX . 'f-' . $jobId]]];
+    }
+
+    /**
+     * Whether a row written while job $job (its app_ai_jobs row) is delivered is taken at all: the
+     * job was asked for by a known member or visitor, and is not itself a follow-up that was refused
+     * as it was written. The first such row is the job's follow-up; a second, or one written while a
+     * follow-up is delivered, is refused and the app told (capture). Those refusals' own deliveries
+     * ask for nothing, so however an app answers a delivery, the chain it starts is three jobs deep
+     * and then over.
+     */
+    public static function deliveryMayAsk(array $job): bool
+    {
+        if (!in_array($job['requester_kind'] ?? null, ['user', 'visitor'], true)) return false;
+        return ($job['follow_up_of'] ?? null) === null || ($job['status'] ?? null) !== 'refused';
     }
 
     /**
@@ -328,6 +381,20 @@ class AppAiService
         $declared = $app === null ? null : AppFormlogicManifest::ai($this->native->installedManifest($appId));
         if ($app === null || $declared === null) return 0;
         $table = $declared['table'];
+        // A row the app's deliver route wrote while it was handed a job's result (contract §0.13):
+        // a follow-up job for whoever asked for that job, from the address they asked from.
+        $followUpOf = null;
+        $chained = false;
+        if ($requester['kind'] === self::FOLLOW_UP) {
+            if ($event !== 'app.record.created.' . $table) return 0;
+            $delivered = $this->pdo()->prepare('SELECT id, status, requester_kind, requester_id, ip_key, follow_up_of FROM app_ai_jobs WHERE id = ? AND app_id = ?');
+            $delivered->execute([$requester['job'], $appId]);
+            $delivered = $delivered->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($delivered) || !self::deliveryMayAsk($delivered)) return 0;
+            $followUpOf = (string) $delivered['id'];
+            $chained = $delivered['follow_up_of'] !== null;
+            $requester = ['kind' => (string) $delivered['requester_kind'], 'id' => (string) $delivered['requester_id'], 'ipKey' => (string) $delivered['ip_key']];
+        }
         if ($event === 'app.record.updated.' . $table || $event === 'app.record.deleted.' . $table) {
             return $this->cancel($appId, $event === 'app.record.deleted.' . $table, $data, $readRow, $table);
         }
@@ -341,6 +408,8 @@ class AppAiService
         [$job, $refusal] = $this->jobFrom(is_array($row) ? $row : null, $key, $declared);
         // Nobody known asked (no FormLogic page marked the request): taken, and answered that it cannot run.
         if ($requester['kind'] === self::NOBODY) $refusal ??= ['code' => 'ai_unavailable', 'message' => self::REASONS['visitor_required']];
+        // A chain ends by itself: the delivery of a follow-up asks for nothing more.
+        if ($chained) $refusal ??= ['code' => 'limit_reached', 'message' => self::REASONS['follow_up_chained']];
 
         $pdo = $this->pdo();
         $now = ($this->now)();
@@ -360,18 +429,26 @@ class AppAiService
             if ($seen->fetchColumn() !== false) { $pdo->commit(); return 0; }
             $settings = is_array($settingsRow) ? self::shape($settingsRow) : $this->defaultSettings($appId);
             $available = $this->availability($app, $declared, $settings);
+            if ($refusal === null && $followUpOf !== null) {
+                // One follow-up for a delivered job, whatever became of it: counted under the app's
+                // lock, so two rows written by one delivery cannot both be taken.
+                $asked = $pdo->prepare('SELECT 1 FROM app_ai_jobs WHERE follow_up_of = ? LIMIT 1');
+                $asked->execute([$followUpOf]);
+                if ($asked->fetchColumn() !== false) $refusal = ['code' => 'limit_reached', 'message' => self::REASONS['follow_up_taken']];
+            }
+            // A follow-up is its requester's own job: their allowance, their open jobs, their address.
             if ($refusal === null) $refusal = $this->admission($appId, $requester, $settings, $available, $site, (string) ($job['kind'] ?? ''), $day, $hour);
             $id = bin2hex(random_bytes(16));
             $status = $refusal === null ? 'queued' : 'refused';
             $pdo->prepare(
-                'INSERT INTO app_ai_jobs (id, app_id, event_id, app_job_id, requester_kind, requester_id, ip_key, kind, status, source, target, prompt, prompt_sha256, size, seed, reference, code, message, counted_day, counted_hour, next_attempt_at, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO app_ai_jobs (id, app_id, event_id, app_job_id, requester_kind, requester_id, ip_key, kind, status, source, target, prompt, prompt_sha256, size, seed, reference, max_output, follow_up_of, code, message, counted_day, counted_hour, next_attempt_at, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             )->execute([
                 $id, $appId, $eventId, mb_substr((string) ($job['appJobId'] ?? (is_scalar($key) ? (string) $key : '')), 0, 100), $requester['kind'], $requester['id'], $requester['ipKey'],
                 (string) ($job['kind'] ?? 'unknown'), $status, $status === 'queued' ? $available['source'] . '-' . ($available['target'] === 'env' ? 'env' : 'oaiy') : null,
                 $status === 'queued' ? $available['target'] : null,
                 $job['prompt'] ?? null, isset($job['prompt']) ? hash('sha256', (string) $job['prompt']) : null,
-                $job['size'] ?? null, $job['seed'] ?? null, $job['reference'] ?? null,
+                $job['size'] ?? null, $job['seed'] ?? null, $job['reference'] ?? null, $job['maxOutput'] ?? null, $followUpOf,
                 $refusal['code'] ?? null, $refusal['message'] ?? null, $day, $hour,
                 // A refused job is told to the app as soon as the worker next looks.
                 // Created to the millisecond: queue positions and fair turns follow this order.
@@ -437,6 +514,24 @@ class AppAiService
         }
         foreach ($ids as $id) $this->refund($id);
         return $cancelled;
+    }
+
+    /**
+     * How long a chat job's answer may be, in tokens: what its app asked for in its row's
+     * `max_output` ($asked; null when it gave none), held to the administrator's ceiling ($site's
+     * `chatMaxOutput`), which is also the answer when the app asked for nothing. Read as the job is
+     * sent, so a ceiling lowered since applies.
+     */
+    public static function answerTokens(mixed $asked, array $site): int
+    {
+        $ceiling = (int) ($site['chatMaxOutput'] ?? AppAiSiteSettings::CHAT_MAX_OUTPUT_DEFAULT);
+        return $asked === null ? $ceiling : max(1, min((int) $asked, $ceiling));
+    }
+
+    /** The characters FormLogic reads of an answer that may have $tokens tokens. */
+    public static function answerCharacters(int $tokens): int
+    {
+        return min(self::MAX_ANSWER_CHARACTERS, max(1, $tokens) * self::ANSWER_CHARACTERS_PER_TOKEN);
     }
 
     /**
@@ -561,7 +656,15 @@ class AppAiService
                 if ($role === 'user' && ($word = AppAiSiteSettings::refusedWord($content, $site['words'])) !== null) return [['appJobId' => $appJobId, 'kind' => $kind], ['code' => 'prompt_refused', 'message' => 'That request includes words this site does not allow.']];
             }
             if ($total > self::MAX_CHAT_CHARACTERS) return $bad('A chat job may hold up to ' . self::MAX_CHAT_CHARACTERS . ' characters.', ['kind' => $kind]);
-            return [['appJobId' => $appJobId, 'kind' => $kind, 'prompt' => json_encode($clean, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)], null];
+            // How long the answer may be, in tokens, when the app says: a `max_output` column of its
+            // jobs row. More than the site allows is held to what it allows as the job is sent.
+            $maxOutput = $row['max_output'] ?? null;
+            if ($maxOutput === '') $maxOutput = null;
+            if (is_string($maxOutput) && preg_match('/^\d{1,9}$/D', $maxOutput)) $maxOutput = (int) $maxOutput;
+            if (is_float($maxOutput) && floor($maxOutput) === $maxOutput && $maxOutput >= 1 && $maxOutput < 1e9) $maxOutput = (int) $maxOutput;
+            if ($maxOutput !== null && (!is_int($maxOutput) || $maxOutput < 1)) return $bad('A chat job\'s max_output is a whole number of tokens, 1 or more.', ['kind' => $kind]);
+            return [['appJobId' => $appJobId, 'kind' => $kind, 'prompt' => json_encode($clean, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+                'maxOutput' => $maxOutput === null ? null : min($maxOutput, AppAiSiteSettings::CHAT_MAX_OUTPUT[1])], null];
         }
         $prompt = $row['prompt'] ?? null;
         if (!is_string($prompt) || trim($prompt) === '' || mb_strlen($prompt) > self::MAX_PROMPT || preg_match('/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/u', $prompt) === 1) return $bad('A picture job needs a prompt of 1 to ' . self::MAX_PROMPT . ' characters.', ['kind' => $kind]);
@@ -602,6 +705,8 @@ class AppAiService
         'no_pictures' => 'This server cannot draw pictures for apps: it needs PHP\'s GD extension.',
         'not_offered' => 'This kind of AI request is not available for this app right now.',
         'visitor_required' => 'Open the app in your browser to use its AI.',
+        'follow_up_taken' => 'One follow-up job may be asked for while a job\'s result is delivered, and this delivery has asked for its one.',
+        'follow_up_chained' => 'A follow-up job\'s delivery cannot ask for another job.',
         'subscriptions_full' => 'This app watches too many of its tables for its AI requests to be seen. Its owner can remove a database automation.',
     ];
 

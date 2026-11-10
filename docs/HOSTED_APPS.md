@@ -257,10 +257,15 @@ What the app's backend sees (`req.context.formlogic`):
 | `appId` | always, for an app that declares either section |
 | `userId`, `roleId` | a members-only app, as before |
 | `visitor: {id}` | an application-access app, on a request FormLogic's page marked |
-| `ai: {enabled, source, label, uses, perDay, usedToday, ipPerDay, ipUsedToday, jobs, reason?}` | an app that declares `formlogicAi` |
-| `ai: {delivery: true}` | FormLogic delivering a result to the app's deliver route |
+| `ai: {enabled, source, label, uses, perDay, usedToday, ipPerDay, ipUsedToday, jobs, requester?, reason?}` | an app that declares `formlogicAi` |
+| `ai: {delivery: true, requester}` | FormLogic delivering a result to the app's deliver route |
 | `wallet: {available, balanceCents, currency, items, reason?}` | an app that declares `formlogicPayments` |
 | `payment: {chargeId, item, amountCents, status, code?, balanceCents, alreadyPaid}` | a charge's second run (see [App payments](#app-payments-a-prepaid-balance-and-a-charge-in-two-runs)) |
+
+**`ai.requester` is who is asking**, as App AI counts them: `u-<member id>` or `v-<visitor id>`, an
+opaque id, the same for one person in one app on their own requests and on the delivery of their
+jobs. It is absent when nobody is known (a request no FormLogic page marked). An app can keep it on
+a job's row to know whose job a delivery is.
 
 **Decide "FormLogic member" by `userId`, not by `formlogic`.** An app that declares these sections
 gets `req.context.formlogic` without a `userId` for its visitors. Coffee.Dating, which declares
@@ -283,11 +288,31 @@ rolls back (an exception, or an answer with `rollback: true`) asks for nothing. 
 | `seed` | optional, 0 to 9007199254740991 (2^53 − 1); without one, the AI picks one and the delivery reports it |
 | `reference` | an edit's picture: a PNG, JPEG or WebP data URL of at most 2 MB |
 | `messages` | a chat job's JSON list of 1 to 24 `{role: system/user/assistant, content}`, up to 16,000 characters |
+| `max_output` | optional, a chat job's longest answer in tokens: a whole number, 1 or more (below) |
 | `status` | optional and the app's own, but setting it to `cancelled` cancels the job (below) |
 
 Other columns are the app's own. The model is never the app's choice: the owner or the
 administrator pins it. FormLogic reads the whole row after the commit, once per event, checks it,
 counts it and queues it.
+
+**How long a chat's answer may be.** A chat job's answer has a length in tokens: its row's
+`max_output`, held to the administrator's ceiling (Admin → Platform → AI for apps → Limits and
+safety, **Longest chat answer**: 2,000 tokens to start with, 16 to 8,000), which is also the length
+when the row gives none. More than the ceiling is not an error: the job is taken and held to it.
+Anything but a whole number of 1 or more is `bad_request`.
+
+- The length goes to the AI as the answer's limit: `max_tokens` to the `.env` upstream, `maxTokens`
+  in the sealed chat request to an OAIY computer.
+- FormLogic also stops reading: it keeps at most eight characters for each token (a token is about
+  four, so an answer within its tokens is never cut), and never more than 32,000. On an OAIY
+  computer, where the answer arrives as it is written, one that runs past that is ended there: the
+  job is delivered `done` with what was read, and the computer is told to stop
+  ([Cancel reaches the computer](#app-ai-where-it-runs-and-what-the-app-is-delivered)). So an AI
+  that does not know the limit, or ignores it, cannot run on. The `.env` upstream is asked for its
+  answer whole, so there the answer is cut to that length when it comes, and one that never ends is
+  given up on after two minutes (`timeout`).
+- An app that reads only the start of an answer (one JSON object, say) should ask for no more
+  tokens than that takes: the rest is the computer's time, and the next job waits for it.
 
 **Always an answer.** Every request of an app that declares AI carries the subscription, whatever its
 AI can do at that moment, so no row waits forever. A job FormLogic cannot take is still taken,
@@ -300,11 +325,12 @@ its computer gone, or a request no FormLogic page marked, so nobody is known to 
 **Cancelling a job.** The app cancels a job by setting its row's `status` to `cancelled`, or by
 deleting the row, in a request from its page: FormLogic captures the jobs table's
 `app.record.updated` and `app.record.deleted` events through the same subscription. A job still
-waiting is dropped; one already sent is let go (a request the computer has not taken is withdrawn,
-and one being drawn finishes unheard, its result thrown away); one whose result is back but not yet
-delivered is not delivered. Each gives its use back. A row set to `cancelled` is told so once,
-`{jobId, status: "cancelled"}`; a deleted row hears nothing. A job already answered stands. Any
-other change to a row is not a cancel.
+waiting is dropped; one already sent is cancelled on its computer (a request the computer has not
+taken is withdrawn; one being drawn or written frees its place at once, and the computer is told to
+stop on its next frame: [Cancel reaches the computer](#app-ai-where-it-runs-and-what-the-app-is-delivered));
+one whose result is back but not yet delivered is not delivered. Each gives its use back. A row set
+to `cancelled` is told so once, `{jobId, status: "cancelled"}`; a deleted row hears nothing. A job
+already answered stands. Any other change to a row is not a cancel.
 
 Every dispatcher (the runtime request, the owner's records API, `bin/native-record-dispatch.php`)
 hands an event to NativeRecordEventRouter, which gives App AI its `fl-ai-…` bindings and the flows
@@ -419,7 +445,24 @@ supervisor with `--watch`:
 - **Fair turns.** On each computer the app served least recently goes first, then within it the
   requester served least recently, then the oldest job. A job waiting 30 minutes runs out
   (`expired`).
-- **A picture being drawn is kept alive** by OAIY's progress frames, about every 15 seconds; one silent
+- **Cancel reaches the computer.** When a request a computer is working on is no longer wanted (its
+  app cancelled the job, the job ran out of time after 15 minutes, a chat's answer ran past its
+  length, or the lane let it go as silent or too old), its place on the lane is free at once, and
+  FormLogic answers the computer's next frame for it (`POST /api/v1/desktop-ai/{id}/frames`:
+  progress, partial or final alike) and its outcome (`…/complete`) with
+
+  ```
+  HTTP 409
+  {"error": true, "message": "This request was cancelled. Stop the work and send nothing more for it.", "code": "cancelled"}
+  ```
+
+  A computer that reads `code: "cancelled"` stops the work (OAIY cancels the picture at its engine,
+  or the chat's generation), sends nothing more for the request and frees its own slot. Only the
+  computer that held the request is told so; any other, and a request already finished, is answered
+  `not_claimed` as before. Before this, a cancelled picture was drawn to its end and the next one
+  waited behind it.
+- **A picture being drawn is kept alive** by OAIY's progress frames, about every 5 seconds (which is
+  also how soon a cancel is heard); one silent
   for 5 minutes is let go. A job that never reached the AI, or whose answer was lost (a restarted
   worker carries on from the job's row: the turn's key is kept there, sealed with
   `DATA_ENCRYPTION_KEY` where one is set), is sent once more. OAIY's `busy` (Studio's own queue full)
@@ -441,9 +484,9 @@ ceiling from the site's AI; the administrator's pause, a stop for one app and th
 not use still apply.
 
 **The delivery.** FormLogic posts each result, as the site, to the app's `jobs.deliver` route, with
-`req.context.formlogic.ai.delivery === true` and no subscription (a delivery's own writes never ask
-for AI). Every try of one delivery carries the same `idempotency-key: fl-ai-<FormLogic's job id>`
-header, so the app can tell a retry from a second result.
+`req.context.formlogic.ai.delivery === true` and `ai.requester` naming who asked for the job
+([Visitors](#visitors)). Every try of one delivery carries the same `idempotency-key: fl-ai-<FormLogic's
+job id>` header, so the app can tell a retry from a second result.
 
 ```json
 { "jobId": "<the row's id>", "status": "done",
@@ -467,6 +510,24 @@ header, so the app can tell a retry from a second result.
 - **Retries.** An answer of 2xx takes the delivery. A busy app (409, 429, 503, or no answer) is asked
   again after 5 s, 15 s, 1, 5, 10 and 15 minutes; any other answer is tried three times. A result
   never taken is dropped (`undelivered`).
+- **A follow-up job.** While it handles a delivery, the deliver route may write **one** new row in
+  the jobs table, and FormLogic takes it as a job for the delivered job's requester: a chat's answer
+  that is a plan can ask for the picture at once, whether or not the person's page is still open.
+  - It is theirs in every count: their day's allowance, their two open jobs, their address (the one
+    the delivered job was asked from) and the app's day, as if their page had asked. A limit reached
+    answers it `failed` with the usual code (`limit_reached`, `busy`, and the rest of
+    [Always an answer](#app-ai-asking-for-a-job)).
+  - One for a delivered job, whatever became of it. A second row written by the same delivery (or by
+    another try of it) is answered `failed`, `limit_reached`: "One follow-up job may be asked for
+    while a job's result is delivered…".
+  - None from the delivery of a follow-up: a row written there is answered `failed`,
+    `limit_reached`, "A follow-up job's delivery cannot ask for another job." Rows written while
+    those refusals are delivered are not jobs at all (nothing answers them), so a chain ends by
+    itself however the route is written.
+  - Only a new row counts. A delivery that updates or deletes a jobs row cancels nothing (a cancel
+    comes from the person's own page), and no flow hears of what a delivery writes.
+  - The app charges its own credits as it does now, and can tell whose job it is by
+    `ai.requester`, which is the same on the delivery as it was on the request that asked.
 - **Queue positions** are not delivered: every request of the app sees its requester's open jobs in
   `req.context.formlogic.ai.jobs`, by the row's id: `{status: "queued", lane, position, waiting}` or
   `{status: "running", lane}`. `lane` is `picture` (pictures and edits) or `chat`; `position` counts
@@ -980,8 +1041,12 @@ Owner APIs are `GET/PUT /api/apps/{id}/native` and
 `expectedVersion`. Runtime APIs are `GET /api/app/{slug}/entry`,
 `GET /api/app/{slug}/native`, and `POST /api/app/{slug}/native/request`.
 The last accepts `{method,path,query,headers,body}` and returns `{result:{status,body}}`.
-The service limits decoded project content to 64 MB; source files to 1 MB each and 200 of them;
-media files to 8 MB each and 1,000 of them. A page asks for the project without its media
+The service limits decoded project content to 64 MB; source files to 1,500,000 bytes each and 200 of
+them (a migration to 1,000,000, which is what SoftN's runner applies; a larger one is refused when
+the app is installed, with "Split it into two migrations");
+media files to 8 MB each and 1,000 of them. A larger server file costs every request: the runner
+compiles it for each one (about 260 ms of set-up at 1.5 MB against 160 ms at 0.8 MB on softn-runner,
+measured), so keep what only the page uses out of it. A page asks for the project without its media
 (`?media=pack`), then fetches the media as one pack (`GET /api/app/{slug}/native/media?h=<sha256>`),
 admitted exactly as the project is. The browser keeps it privately (never a shared cache) until the
 app changes; a members-only app's is checked with the server each time it is used (answered 304 while
@@ -1000,6 +1065,34 @@ At most four native workers run concurrently across apps in one storage root, wi
 worker deadline; a request waits up to three seconds for one before it is answered busy (`429`).
 This is an initial capacity limit, not a production concurrency benchmark. Saves to the app's
 browser storage are not counted against the frame's four calls at a time.
+
+**A throttled call, as the app's page sees it.** FormLogic refuses a call before the app's backend
+runs in three cases, and the page's `softn.net.fetch` is answered the same way for each:
+
+```
+status 429
+body   {"error": "Too many requests.", "code": "rate_limited", "retryAfter": 2}
+```
+
+`retryAfter` is how long to wait before trying again, in whole seconds. A page can wait exactly that
+long and tell the person, instead of guessing.
+
+| What refused it | `retryAfter` |
+|---|---|
+| One account (or, for a visitor, one address) made more calls in an app than its allowance | until the next call is allowed: 1 or 2 |
+| Every native worker was busy for three seconds | 2 |
+| A fifth call from one frame while four are in flight | 1 |
+
+- **The allowance is a token bucket**: 120 calls at once, refilled at two a second (120 a minute, as
+  before). A burst spends what is saved up and is then slowed to two a second; it is never locked
+  out for the rest of a minute, as it was while the minute was counted whole. The app's page loads
+  count in the same allowance.
+- The HTTP answer underneath (`POST /api/app/{slug}/native/request`) is `429` with
+  `{error, message, retryAfter}` and a `Retry-After` header; the frame hands the page the body above.
+- The app's own host limit (SoftN's `config.server.requestsPerMinute`, counted by address in the
+  app's runner) answers `429 rate_limited` too, with no `retryAfter`: wait a few seconds.
+- A call refused this way never reached the app's backend, so nothing was written: it is safe to
+  send again, with the same idempotency key where the app uses one.
 
 ### Source and records walkthrough
 

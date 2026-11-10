@@ -20,42 +20,13 @@
 // one at a time with any other spec that uses those (`--workers=1`). Each run makes one of an app
 // owner's ten tests an hour and three of the administrator's twenty, which no setting lifts: a
 // seventh run within the hour is told "Too many requests".
-import { spawn, type ChildProcess } from 'node:child_process';
-import path from 'node:path';
-import { sessionHeaders, E2E_FRONTEND_BASE_URL } from './session-request';
-import { expect, test, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+import { EMAIL, PASSWORD, nothingSetUp, signIn, startComputer, type StandInComputer } from './app-ai-stack';
 
-const EMAIL = process.env.E2E_APP_AI_EMAIL;
-const PASSWORD = process.env.E2E_APP_AI_PASSWORD;
-const STUB_OAIY = process.env.E2E_STUB_OAIY || path.resolve(process.cwd(), '../backend/tests/Support/stub-oaiy-computer.php');
 const COMPUTER = 'Studio PC';
 
-let computer: ChildProcess | null = null;
-const stopComputer = () => { if (computer) { try { computer.kill(); } catch { /* gone */ } computer = null; } };
-
-interface Admin { api: APIRequestContext; csrf: string; headers: Record<string, string> }
-
-async function signIn(context: BrowserContext): Promise<Admin> {
-  const login = await context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email: EMAIL, password: PASSWORD } });
-  expect(login.ok(), await login.text()).toBe(true);
-  const csrf = (await context.cookies()).find((cookie) => cookie.name === 'formlogic_csrf')!.value;
-  const confirmed = await context.request.post('/api/admin/confirm', { headers: { 'X-CSRF-Token': csrf }, data: { password: PASSWORD } });
-  expect(confirmed.ok(), await confirmed.text()).toBe(true);
-  return { api: context.request, csrf, headers: { 'X-CSRF-Token': csrf, 'X-Admin-Confirmation': (await confirmed.json()).confirmation } };
-}
-
-/** Nothing set up: no computer linked or chosen, Site AI off, apps not allowed, no model. */
-async function nothingSetUp({ api, csrf, headers }: Admin): Promise<void> {
-  expect((await api.delete('/api/admin/site-ai-desktop', { headers })).ok()).toBe(true);
-  const connections = await (await api.get('/api/desktop-connections')).json();
-  for (const connection of connections.connections ?? []) {
-    expect((await api.delete(`/api/desktop-connections/${connection.id}`, { headers: { 'X-CSRF-Token': csrf } })).ok()).toBe(true);
-  }
-  const plansAnswer = await (await api.get('/api/admin/plans', { headers })).json();
-  const plans = plansAnswer.plans ?? plansAnswer.data ?? plansAnswer;
-  expect((await api.put('/api/admin/plans', { headers, data: { ...plans, siteAiEnabled: false } })).ok()).toBe(true);
-  expect((await api.put('/api/admin/app-ai', { headers, data: {} })).ok()).toBe(true);
-}
+let computer: StandInComputer | null = null;
+const stopComputer = () => { computer?.stop(); computer = null; };
 
 /** The page asks an administrator for their password before its first change to the site. */
 async function confirmIfAsked(page: Page): Promise<void> {
@@ -96,7 +67,7 @@ test('An administrator sets up AI for apps on their own computer, using only the
   await step(page, 1).getByRole('button', { name: 'Make a code' }).click();
   const code = (await step(page, 1).getByTestId('oaiy-link-code').innerText()).trim();
   expect(code).not.toBe('');
-  computer = spawn(process.env.PHP_BIN || 'php', ['-d', 'xdebug.mode=off', STUB_OAIY, E2E_FRONTEND_BASE_URL, code, COMPUTER], { stdio: 'ignore', windowsHide: true, env: { ...process.env, STUB_OAIY_SECONDS: '220' } });
+  computer = startComputer(code, COMPUTER);
 
   // 2. It shows up by itself once it has started; one click makes it the site's AI.
   const use = step(page, 2).getByRole('button', { name: 'Use this computer' });

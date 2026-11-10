@@ -11,7 +11,8 @@ declare(strict_types=1);
  *   `[missing]` the same for a model whose files are not on the computer; `[unknown]` 400 unknown model;
  *   `[toolarge]` 413; `[broken]` 500; `[garbage]` 200 with bytes that are not a picture;
  *   `[slow:N]` waits N seconds first;
- * - `[jpeg]` answers a JPEG; `[big]` a noisy 1024 px PNG of several megabytes; otherwise a small PNG.
+ * - `[jpeg]` answers a JPEG; `[big]` a noisy 1024 px PNG of several megabytes; otherwise a small PNG;
+ * - a chat's `[long:N]` answers N characters whatever `max_tokens` says: a model that runs on.
  *
  * Every request is appended to STUB_IMAGES_LOG as one JSON line: method, path, headers, body.
  */
@@ -62,6 +63,9 @@ if (str_contains($said, '[toolarge]')) $answer(413, ['error' => ['message' => 't
 if (str_contains($said, '[broken]')) $answer(500, ['error' => ['message' => 'the engine stopped']]);
 
 if ($path === '/v1/chat/completions') {
+    if (preg_match('/\[long:(\d+)\]/', $said, $m)) {
+        $answer(200, ['id' => 'chat-1', 'model' => $model, 'choices' => [['index' => 0, 'message' => ['role' => 'assistant', 'content' => substr(str_repeat('All work and no play. ', (int) ceil((int) $m[1] / 22)), 0, (int) $m[1])]]]]);
+    }
     $answer(200, ['id' => 'chat-1', 'model' => $model, 'choices' => [['index' => 0, 'message' => ['role' => 'assistant', 'content' => 'Hello from the stub.']]]]);
 }
 if ($path !== '/v1/images/generations') $answer(404, ['error' => ['message' => 'not found']]);

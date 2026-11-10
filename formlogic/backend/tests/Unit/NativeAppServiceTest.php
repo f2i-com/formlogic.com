@@ -66,6 +66,46 @@ final class NativeAppServiceTest extends TestCase
         $this->assertSame('members', $this->service->install('notes', $silent, 0)['access']);
     }
 
+    /**
+     * An app's server logic is one file (the runner reads `server.entry` and nothing else), so a
+     * source file may be 1,500,000 bytes (it was 1,000,000). The whole path takes it: the check, the
+     * install, and a request the runner compiles it for. A migration stays at 1,000,000 bytes, which
+     * is all the runner reads of one.
+     */
+    public function testASourceFileMayBeOneAndAHalfMegabytesAndTheRunnerRunsIt(): void
+    {
+        $this->assertSame(1500000, NativeAppService::MAX_SOURCE_FILE_BYTES);
+        // More functions than the megabyte that was the limit held: real code, as a library adds.
+        $project = $this->project();
+        $library = '';
+        for ($i = 0; strlen($library) < 1300000; $i++) $library .= "\nfunction libraryShape{$i}(x, y) { var w = x * {$i} + y; return { path: 'M' + w + ' ' + y + 'L' + x + ' ' + w + 'Z', width: w }; }";
+        $project['files']['server/main.logic'] .= $library;
+        $this->assertGreaterThan(1000000, strlen($project['files']['server/main.logic']));
+        $this->assertSame(1, $this->service->install('notes', $project, 0)['version']);
+        $made = $this->createNote('From a large server file');
+        $this->assertSame([201, 'From a large server file'], [$made['status'], $made['body']['title']]);
+        // Node's runner takes it too (where softn-runner ships, the request above was its).
+        $viaNode = $this->nodeService()->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'And through Node'], 'client_ip' => '127.0.0.1']);
+        $this->assertSame([201, 'And through Node'], [$viaNode['status'], $viaNode['body']['title']]);
+
+        // To the byte, and one over.
+        $exact = $this->project();
+        $exact['files']['logic/big.logic'] = str_repeat('x', NativeAppService::MAX_SOURCE_FILE_BYTES);
+        $this->assertArrayHasKey('logic/big.logic', NativeAppService::validateProject($exact)[0]);
+        $over = $this->project();
+        $over['files']['logic/big.logic'] = str_repeat('x', NativeAppService::MAX_SOURCE_FILE_BYTES + 1);
+        try { NativeAppService::validateProject($over); $this->fail('A source file over the limit was accepted'); }
+        catch (\InvalidArgumentException $e) { $this->assertSame('logic/big.logic is larger than this host keeps (1.5 MB per source file).', $e->getMessage()); }
+
+        // A migration is named when it is too large for the runner, where it was accepted and then failed to run.
+        $migration = $this->project();
+        $migration['files']['server/migrations/001.sql'] = 'CREATE TABLE notes(id INTEGER PRIMARY KEY, title TEXT, session_token TEXT);' . str_repeat(' ', NativeAppService::MAX_MIGRATION_BYTES);
+        try { NativeAppService::validateProject($migration); $this->fail('A migration over the runner\'s limit was accepted'); }
+        catch (\InvalidArgumentException $e) { $this->assertSame('server/migrations/001.sql is larger than a migration may be (1 MB). Split it into two migrations.', $e->getMessage()); }
+        $migration['files']['server/migrations/001.sql'] = str_pad('CREATE TABLE notes(id INTEGER PRIMARY KEY, title TEXT, session_token TEXT);', NativeAppService::MAX_MIGRATION_BYTES);
+        $this->assertArrayHasKey('server/migrations/001.sql', NativeAppService::validateProject($migration)[0]);
+    }
+
     private function createNote(string $title): array
     {
         return $this->service->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => $title], 'client_ip' => '127.0.0.1']);

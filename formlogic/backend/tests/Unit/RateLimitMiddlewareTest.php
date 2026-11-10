@@ -124,6 +124,65 @@ final class RateLimitMiddlewareTest extends TestCase
     }
 
     /**
+     * A token bucket (RateLimiter::take), for an app's page and its backend calls: a refused call
+     * is told how long until the next token, in the body the app's page is handed and in the header,
+     * and a call that is taken says what is left.
+     */
+    public function testATokenBucketSaysHowLongToWaitAndLocksNobodyOut(): void
+    {
+        $answers = [['allowed' => true, 'retryAfter' => 0, 'remaining' => 1], ['allowed' => true, 'retryAfter' => 0, 'remaining' => 0], ['allowed' => false, 'retryAfter' => 1, 'remaining' => 0], ['allowed' => true, 'retryAfter' => 0, 'remaining' => 0]];
+        $asked = [];
+        $limiter = $this->createMock(RateLimiter::class);
+        $limiter->method('take')->willReturnCallback(function (string $key, int $capacity, int $perSeconds) use (&$answers, &$asked): array {
+            $asked[] = [$key, $capacity, $perSeconds];
+            return array_shift($answers);
+        });
+        $limiter->expects($this->never())->method('hit');
+        $limit = new RateLimitMiddleware($limiter, 120, 60, 'native_apps', true, true, null, true, false, true);
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface { return (new SlimResponse())->withStatus(200); }
+        };
+        $call = function () use ($limit, $handler): ResponseInterface {
+            $request = (new ServerRequestFactory())->createServerRequest('POST', 'http://formlogic.local/api/app/logo-maker/native/request', ['REMOTE_ADDR' => '203.0.113.10'])
+                ->withAttribute('userId', 'account-1')->withAttribute('user', new User(id: 'account-1', email: 'member@example.com'));
+            return $limit->process($request, $handler);
+        };
+
+        $first = $call();
+        $this->assertSame([200, '120', '1'], [$first->getStatusCode(), $first->getHeaderLine('X-RateLimit-Limit'), $first->getHeaderLine('X-RateLimit-Remaining')]);
+        $this->assertSame(200, $call()->getStatusCode());
+        $refused = $call();
+        $this->assertSame(429, $refused->getStatusCode());
+        $this->assertSame(['error' => true, 'message' => 'Too many requests. Please try again later.', 'retryAfter' => 1], json_decode((string) $refused->getBody(), true));
+        $this->assertSame(['1', '0'], [$refused->getHeaderLine('Retry-After'), $refused->getHeaderLine('X-RateLimit-Remaining')]);
+        $this->assertSame(200, $call()->getStatusCode(), 'the next call a moment later is taken: nobody waits out a minute');
+        // One member in one app: the bucket's size and what refills it in a minute.
+        $this->assertSame([['native_apps:u:' . hash('sha256', 'account-1') . ':a:' . hash('sha256', 'logo-maker'), 120, 60]], array_values(array_unique($asked, SORT_REGULAR)));
+    }
+
+    public function testATokenBucketWhoseStoreFailsRefusesWhereItMust(): void
+    {
+        $limiter = $this->createMock(RateLimiter::class);
+        $limiter->method('take')->willReturn(null);
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface { return (new SlimResponse())->withStatus(200); }
+        };
+        $request = (new ServerRequestFactory())->createServerRequest('POST', 'http://formlogic.local/api/app/logo-maker/native/request', ['REMOTE_ADDR' => '203.0.113.10']);
+        $closed = (new RateLimitMiddleware($limiter, 120, 60, 'native_apps', true, true, null, true, false, true))->process($request, $handler);
+        $this->assertSame([503, '30'], [$closed->getStatusCode(), $closed->getHeaderLine('Retry-After')]);
+        $open = (new RateLimitMiddleware($limiter, 120, 60, 'low_risk', true, false, null, true, false, true))->process($request, $handler);
+        $this->assertSame(200, $open->getStatusCode());
+    }
+
+    /** An app's page and backend calls are the token bucket; the sustained rate is what it was, 120 a minute. */
+    public function testAnAppsPageAndBackendCallsAreCountedAsATokenBucket(): void
+    {
+        $index = (string) file_get_contents(dirname(__DIR__, 2) . '/public/index.php');
+        $this->assertStringContainsString("\$nativeLimiter = new RateLimitMiddleware(\$rateLimiter, 120, 60, 'native_apps', true, true, null, true, false, true);", $index);
+        $this->assertSame(4, substr_count($index, '->add($appAccessGate)->add($nativeLimiter)->add($authOptional);'), 'the app\'s page, its runtime, its media and its backend calls');
+    }
+
+    /**
      * /api/ai/chat takes a session or, failing one, an flk_ key that the controller authenticates
      * itself, so the limiter saw no account for a key and counted it by address: a key used from
      * many addresses had a budget for each. Given the key service, a valid key counts against

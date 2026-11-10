@@ -76,12 +76,71 @@ class RateLimiter
         }
     }
 
+    /**
+     * A token bucket: $capacity calls at once, refilled evenly at $capacity every $perSeconds. One
+     * call takes one token. Past the burst a caller is slowed to the sustained rate ($capacity a
+     * $perSeconds, the same as a fixed window of that size allows), where a fixed window refuses
+     * everything until it ends: a refused call is told how long until the next token, a second or
+     * two, not the rest of the minute.
+     *
+     * Kept as one number a key in `rate_buckets`: the moment the bucket would next be full of
+     * debt, as the generic cell rate algorithm has it (its "theoretical arrival time"). One
+     * statement decides and takes, so calls at once cannot both take the last token.
+     *
+     * @return array{allowed: bool, retryAfter: int, remaining: int}|null null: the store failed (the
+     *         caller's risk policy decides, as for hit()'s UNAVAILABLE)
+     */
+    public function take(string $key, int $capacity, int $perSeconds, ?float $now = null): ?array
+    {
+        $capacity = max(1, $capacity);
+        // Milliseconds a token takes to come back, and how far ahead of now the bucket may be owed.
+        $interval = max(1, (int) round(max(1, $perSeconds) * 1000 / $capacity));
+        $tolerance = ($capacity - 1) * $interval;
+        $nowMs = (int) floor(($now ?? microtime(true)) * 1000);
+        $bucket = $this->bucket('tb:' . $key);
+        try {
+            // Taken when the debt (tat - now) is within the tolerance: the row moves on by one
+            // token's interval. Refused: the row is set to its own value, which MySQL counts as no
+            // row changed (0), where a new row counts 1 and a changed one 2.
+            $take = $this->pdo->prepare(
+                'INSERT INTO rate_buckets (bucket, tat_ms) VALUES (:b, :first)
+                 ON DUPLICATE KEY UPDATE tat_ms = IF(GREATEST(tat_ms, :n1) - :n2 > :tolerance, tat_ms, GREATEST(tat_ms, :n3) + :interval)'
+            );
+            for ($try = 1; ; $try++) {
+                try {
+                    $take->execute(['b' => $bucket, 'first' => $nowMs + $interval, 'n1' => $nowMs, 'n2' => $nowMs, 'n3' => $nowMs, 'tolerance' => $tolerance, 'interval' => $interval]);
+                    break;
+                } catch (\PDOException $e) {
+                    // Workers making a key's first row at once can be told to try again (a deadlock,
+                    // or a lock waited for too long): nothing was taken, so they do.
+                    if ($try >= 4 || !in_array((int) ($e->errorInfo[1] ?? 0), [1213, 1205], true)) throw $e;
+                    usleep(random_int(2000, 15000));
+                }
+            }
+            $allowed = $take->rowCount() > 0;
+            $read = $this->pdo->prepare('SELECT tat_ms FROM rate_buckets WHERE bucket = :b');
+            $read->execute(['b' => $bucket]);
+            $debt = max(0, (int) $read->fetchColumn() - $nowMs);
+            $this->maybeGc();
+            if ($allowed) {
+                return ['allowed' => true, 'retryAfter' => 0, 'remaining' => max(0, intdiv($tolerance + $interval - $debt, $interval))];
+            }
+            // Until the debt is back within the tolerance: the next token.
+            return ['allowed' => false, 'retryAfter' => max(1, (int) ceil(($debt - $tolerance) / 1000)), 'remaining' => 0];
+        } catch (Throwable $e) {
+            error_log('RateLimiter::take failed: ' . $e->getMessage());
+            return null;
+        }
+    }
+
     /** Remove all counters for a key (e.g. on successful login). */
     public function clear(string $key): void
     {
         try {
             $stmt = $this->pdo->prepare('DELETE FROM rate_limits WHERE bucket = :b');
             $stmt->execute(['b' => $this->bucket($key)]);
+            $stmt = $this->pdo->prepare('DELETE FROM rate_buckets WHERE bucket = :b');
+            $stmt->execute(['b' => $this->bucket('tb:' . $key)]);
         } catch (Throwable $e) {
             error_log('RateLimiter::clear failed: ' . $e->getMessage());
         }
@@ -115,6 +174,9 @@ class RateLimiter
             }
             $stmt = $this->pdo->prepare('DELETE FROM rate_limits WHERE window_start < :cutoff');
             $stmt->execute(['cutoff' => time() - 86400]);
+            // A bucket whose moment passed a day ago is full again: its row says nothing.
+            $stmt = $this->pdo->prepare('DELETE FROM rate_buckets WHERE tat_ms < :cutoff');
+            $stmt->execute(['cutoff' => (time() - 86400) * 1000]);
         } catch (Throwable $e) {
             // Non-fatal — GC is best-effort.
         }

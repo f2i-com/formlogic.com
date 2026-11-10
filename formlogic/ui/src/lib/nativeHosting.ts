@@ -60,7 +60,10 @@ export function declaresFormlogicPayments(project: Pick<NativeProject, 'files'>)
  */
 export const NATIVE_LIMITS = Object.freeze({
   sourceFiles: 200,
-  sourceFileBytes: 1_000_000,
+  // An app's server logic is one file: 1.5 MB holds a studio's whole library.
+  sourceFileBytes: 1_500_000,
+  // The runner reads no more of one migration.
+  migrationBytes: 1_000_000,
   mediaFiles: 1000,
   mediaFileBytes: 8 * 1024 * 1024,
   projectBytes: 64 * 1024 * 1024,
@@ -167,7 +170,8 @@ export async function importNativeProject(file: File): Promise<NativeProject> {
     // .xdb is the app's seed data: JSON text kept with it.
     if (/\.(ui|logic|py|json|sql|xdb)$/.test(path)) {
       if (!SOURCE_PATH.test(path) || path.includes('..')) throw new Error(`${path}: this host keeps file names made of letters, digits, '-', '_' and '.' (never two dots together). Rename it and try again.`);
-      if (bytes.length > NATIVE_LIMITS.sourceFileBytes) throw new Error(`${path} is larger than this host keeps (1 MB per source file).`);
+      if (bytes.length > NATIVE_LIMITS.sourceFileBytes) throw new Error(`${path} is larger than this host keeps (1.5 MB per source file).`);
+      if (path.startsWith('server/migrations/') && path.endsWith('.sql') && bytes.length > NATIVE_LIMITS.migrationBytes) throw new Error(`${path} is larger than a migration may be (1 MB). Split it into two migrations.`);
       source[path] = strFromU8(bytes);
     } else if (path.startsWith('assets/')) {
       if (path.includes('..')) throw new Error(`${path}: this host keeps file names without two dots together. Rename it and try again.`);
