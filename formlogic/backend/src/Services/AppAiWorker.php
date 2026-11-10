@@ -66,8 +66,13 @@ final class AppAiWorker
     /** The codes a job can end with, as the app is told them. */
     private const CODES = ['model_disabled', 'model_unknown', 'busy', 'bad_request', 'too_large', 'engine_failed', 'timeout'];
 
+    /** A worker that has made no pass for this long is not running: cron starts one every minute. */
+    public const QUIET_SECONDS = 120;
+
     private float $lastCatchUp = 0.0;
     private int $passes = 0;
+    /** @var array{fingerprint: string, mode: string, startedAt: int}|null what this worker says of itself (identify) */
+    private ?array $identity = null;
 
     public function __construct(
         private MySQLConnection $mysql,
@@ -111,15 +116,63 @@ final class AppAiWorker
      */
     public static function idleSeconds(string $results): ?int
     {
-        $alive = @filemtime($results . '/.alive');
-        return $alive === false ? null : max(0, time() - $alive);
+        return self::heartbeat($results)['idleSeconds'] ?? null;
+    }
+
+    /**
+     * What this worker says of itself in its heartbeat: the code it loaded (CodeFingerprint, read as
+     * the process started) and how it runs, `watch` or `cron`. bin/app-ai-worker.php says it.
+     */
+    public function identify(string $fingerprint, string $mode): void
+    {
+        $this->identity = ['fingerprint' => $fingerprint, 'mode' => $mode === 'watch' ? 'watch' : 'cron', 'startedAt' => time()];
+    }
+
+    /**
+     * The worker's heartbeat on this server: {idleSeconds, fingerprint, mode}, or null when none has
+     * ever run. The file's time is the last pass; it holds what the worker said of itself (identify).
+     * A worker from before heartbeats said anything left an empty file: its fingerprint and mode are null.
+     */
+    public static function heartbeat(string $results): ?array
+    {
+        $file = $results . '/.alive';
+        clearstatcache(true, $file);
+        $alive = @filemtime($file);
+        if ($alive === false) return null;
+        $said = json_decode((string) @file_get_contents($file), true);
+        $said = is_array($said) ? $said : [];
+        return [
+            'idleSeconds' => max(0, time() - $alive),
+            'fingerprint' => is_string($said['fingerprint'] ?? null) && $said['fingerprint'] !== '' ? $said['fingerprint'] : null,
+            'mode' => in_array($said['mode'] ?? null, ['watch', 'cron'], true) ? $said['mode'] : null,
+        ];
+    }
+
+    /**
+     * Whether a worker runs on this server, and runs the code that is here now ($code,
+     * CodeFingerprint::onDisk()): {state: ok|stale|missing, idleSeconds, mode}.
+     *
+     * - `missing`: none has ever run, or none has made a pass for QUIET_SECONDS.
+     * - `stale`: one runs that was started before the code was last updated, so it does not know what
+     *   the web now asks of it: a --watch worker nobody restarted, or one from before workers said
+     *   what they run. A cron run notices the update, ends within seconds, and the next is fresh, so
+     *   one whose code differs is not stale.
+     */
+    public static function state(string $results, string $code): array
+    {
+        $beat = self::heartbeat($results);
+        if ($beat === null || $beat['idleSeconds'] > self::QUIET_SECONDS) {
+            return ['state' => 'missing', 'idleSeconds' => $beat['idleSeconds'] ?? null, 'mode' => $beat['mode'] ?? null];
+        }
+        $stale = $beat['fingerprint'] === null || ($beat['fingerprint'] !== $code && $beat['mode'] !== 'cron');
+        return ['state' => $stale ? 'stale' : 'ok', 'idleSeconds' => $beat['idleSeconds'], 'mode' => $beat['mode']];
     }
 
     /** One pass. $takeNew false finishes what is in flight and sends nothing new. Answers what it did, for the log. */
     public function tick(bool $takeNew = true): array
     {
         $this->passes++;
-        if ($this->passes % 10 === 1 && (is_dir($this->results) || @mkdir($this->results, 0700, true))) @touch($this->results . '/.alive');
+        if ($this->passes % 10 === 1) $this->beat();
         return [
             'expired' => $this->expire(),
             'cancelled' => $this->cancelled(),
@@ -128,6 +181,25 @@ final class AppAiWorker
             'collected' => $this->collect(),
             'delivered' => $this->deliver(),
         ];
+    }
+
+    /**
+     * The heartbeat: a file in the results folder whose time is this worker's last pass. The first
+     * pass writes what the worker said of itself (identify) into it, whole; later ones touch it.
+     */
+    private function beat(): void
+    {
+        if (!is_dir($this->results) && !@mkdir($this->results, 0700, true)) return;
+        $file = $this->results . '/.alive';
+        if ($this->passes === 1) {
+            $said = (string) json_encode($this->identity ?? new \stdClass());
+            $draft = $file . '.' . bin2hex(random_bytes(4));
+            // Put in place whole, so a reader never finds half of it; written over where that is refused.
+            if (@file_put_contents($draft, $said) !== false && @rename($draft, $file)) return;
+            @unlink($draft);
+            if (@file_put_contents($file, $said) !== false) return;
+        }
+        @touch($file);
     }
 
     /** Whether anything this process started on the .env upstream is still in flight (the script waits for it). */
@@ -240,6 +312,13 @@ final class AppAiWorker
             // The app's AI cannot take it now (turned off, paused, or its computer unlinked or given a new
             // key since it was asked for): answered at once with the code, and its use given back.
             if (!$route['availability']['enabled'] || !in_array($job['kind'], $route['availability']['kinds'], true)) {
+                if ($appId === AppAiService::SITE_TEST) {
+                    // The administrator's test is no app's: it keeps the reason itself, which says what
+                    // changed while it waited, and is told in the administrator's own words.
+                    $reason = $route['availability']['enabled'] ? (AppAiPictures::available() ? 'model_unset' : 'no_pictures') : (string) $route['availability']['reason'];
+                    $this->fail((string) $job['id'], $reason, AppAiService::siteTestFailure($reason, null)['message']);
+                    continue;
+                }
                 $reason = $route['availability']['enabled'] ? 'not_offered' : (string) $route['availability']['reason'];
                 $this->fail((string) $job['id'], AppAiService::code($reason), AppAiService::REASONS[$reason] ?? AppAiService::REASONS['not_offered']);
                 continue;

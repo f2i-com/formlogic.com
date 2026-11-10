@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { api, DEFAULT_PLATFORM_PLANS, type SiteAiDesktopState } from '../../lib/api';
-import type { AppAiAdminView, AppAiSetup, AppAiSiteSettings } from '../../lib/appAi';
+import type { AppAiAdminView, AppAiSetup, AppAiSiteSettings, AppAiWorkerState } from '../../lib/appAi';
 import { AdminAppAiSetup } from './AdminAppAiSetup';
 
 vi.mock('../../stores/toastStore', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -29,8 +29,11 @@ afterEach(async () => {
 
 const settings: AppAiSiteSettings = { allowApps: false, paused: false, pictureModel: null, chatModel: null, defaults: { perRequesterDay: 10, perIpDay: 20, perIpHour: 10, perAppDay: 500 }, siteDay: 2000, words: [] };
 const ready: AppAiSiteSettings = { ...settings, allowApps: true, pictureModel: 'flux-3-image-klein' };
+const WORKS: AppAiWorkerState = { state: 'ok', idleSeconds: 3, mode: 'watch', message: null };
+const STALE: AppAiWorkerState = { state: 'stale', idleSeconds: 3, mode: 'watch', message: 'The AI worker was started before the last update. Restart it.' };
+const MISSING: AppAiWorkerState = { state: 'missing', idleSeconds: null, mode: null, message: 'The AI worker isn\'t running. Start it: php bin/app-ai-worker.php --watch under a supervisor, or every minute from cron.' };
 const nothing = (over: Partial<AppAiSetup> = {}): AppAiSetup => ({
-  source: 'none', computer: null, gone: null, provider: { named: false, on: false }, drawing: true, kinds: [], reason: 'site_ai_unavailable', ready: false, workerIdleSeconds: 20, lastTest: null, ...over,
+  source: 'none', computer: null, gone: null, provider: { named: false, on: false }, drawing: true, kinds: [], reason: 'site_ai_unavailable', ready: false, workerIdleSeconds: 3, worker: WORKS, lastTest: null, ...over,
 });
 /** A computer chosen for the site's AI. */
 const chosen = (over: Partial<AppAiSetup> = {}, computer: Partial<NonNullable<AppAiSetup['computer']>> = {}): AppAiSetup => nothing({
@@ -76,8 +79,8 @@ it('starts from nothing: four steps left, and the first is to link a computer', 
   expect(button('Test chat')!.disabled).toBe(true);
   expect(step(5).textContent).toContain('Choose where the site\'s AI runs first (steps 1 and 2).');
   expect(models).not.toHaveBeenCalled();
-  // Nothing has been sent anywhere yet, so the worker is not what is missing.
-  expect(container.textContent).not.toContain('Nothing is running the AI worker');
+  // A worker runs: nothing is said of it.
+  expect(container.querySelector('[data-testid="ai-setup-worker"]')).toBeNull();
 });
 
 it('makes a linked computer the site\'s AI with one click, and leaves members\' Site AI alone', async () => {
@@ -269,22 +272,73 @@ it('lets apps use the site\'s AI with one switch, saved at once', async () => {
   expect(onSaved).toHaveBeenCalledWith(saved({ ...settings, allowApps: true }));
 });
 
-it('warns when nothing runs the worker, which every request and the test need', async () => {
+const workerWarning = () => container.querySelector('[data-testid="ai-setup-worker"]');
+const testWarning = () => step(5).querySelector('[data-testid="ai-setup-test-worker"]');
+
+it('says above the steps when the AI worker was started before the last update, and the test says the same', async () => {
   vi.spyOn(api, 'adminOaiyModels').mockResolvedValue({ data: { models: MODELS } });
-  const { again } = await mount(chosen({ workerIdleSeconds: null }), ready, linked(pc));
-  expect(step(5).querySelector('[role="alert"]')?.textContent).toContain('Nothing is running the AI worker on this server yet, so apps\' requests, and this test, would only wait.');
-  expect(step(5).textContent).toContain('php bin/app-ai-worker.php');
-  await again(chosen({ workerIdleSeconds: 600 }), linked(pc));
-  expect(step(5).querySelector('[role="alert"]')?.textContent).toContain('(it last ran 10 minutes ago)');
-  await again(chosen({ workerIdleSeconds: 45 }), linked(pc));
-  expect(step(5).querySelector('[role="alert"]')).toBeNull();
+  const start = vi.spyOn(api, 'adminTestAppAi');
+  // Everything is set, and the server does not call it ready: the worker would fail apps' requests.
+  const { onReload, again } = await mount(chosen({ kinds: ['picture', 'chat'], ready: false, worker: STALE }), ready, linked(pc));
+  expect(summary()).toBe('Not ready: the AI worker has to be restarted.');
+  expect(workerWarning()?.getAttribute('role')).toBe('alert');
+  expect(workerWarning()?.textContent).toContain('The AI worker was started before the last update. Restart it.');
+  // It comes before the steps.
+  expect(workerWarning()!.compareDocumentPosition(step(1)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // The test is not tried: it says the same.
+  expect(button('Make a test picture')!.disabled).toBe(true);
+  expect(button('Test chat')!.disabled).toBe(true);
+  expect(testWarning()?.textContent).toContain('The AI worker was started before the last update. Restart it. A test cannot be made until then.');
+  expect(start).not.toHaveBeenCalled();
+  await act(async () => button('Check again', step(5))!.click());
+  expect(onReload).toHaveBeenCalledTimes(1);
+  // The card looks again by itself, and says nothing more once a fresh worker runs.
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+  expect(onReload).toHaveBeenCalledTimes(2);
+  await again(chosen({ kinds: ['picture', 'chat'], ready: true, worker: WORKS }), linked(pc));
+  expect(workerWarning()).toBeNull();
+  expect(testWarning()).toBeNull();
+  expect(summary()).toBe('Ready: apps can make pictures with flux-3-image-klein on Studio PC.');
+  expect(button('Make a test picture')!.disabled).toBe(false);
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+  expect(onReload).toHaveBeenCalledTimes(2);
+});
+
+it('says when the AI worker is not running, and how to start it', async () => {
+  vi.spyOn(api, 'adminOaiyModels').mockResolvedValue({ data: { models: MODELS } });
+  await mount(chosen({ kinds: ['picture', 'chat'], ready: false, worker: MISSING }), ready, linked(pc));
+  expect(summary()).toBe('Not ready: the AI worker is not running.');
+  expect(workerWarning()?.textContent).toContain('The AI worker isn\'t running. Start it: php bin/app-ai-worker.php --watch under a supervisor, or every minute from cron.');
+  expect(testWarning()?.textContent).toContain('The AI worker isn\'t running. Start it: php bin/app-ai-worker.php --watch under a supervisor, or every minute from cron. A test cannot be made until then.');
+  expect(button('Make a test picture')!.disabled).toBe(true);
+});
+
+it('says so about the worker while steps are still left, too', async () => {
+  await mount(nothing({ worker: MISSING, workerIdleSeconds: null }));
+  expect(summary()).toBe('4 steps left before apps can make pictures.');
+  expect(workerWarning()?.textContent).toContain('The AI worker isn\'t running.');
+  // No test can be made yet for other reasons: those are what the fifth line says.
+  expect(testWarning()).toBeNull();
+  expect(step(5).textContent).toContain('Choose where the site\'s AI runs first (steps 1 and 2).');
+});
+
+it('reads a server that says only how long ago a worker ran', async () => {
+  vi.spyOn(api, 'adminOaiyModels').mockResolvedValue({ data: { models: MODELS } });
+  const { again } = await mount(chosen({ kinds: ['picture', 'chat'], ready: true, worker: undefined, workerIdleSeconds: null }), ready, linked(pc));
+  expect(workerWarning()?.textContent).toContain('The AI worker isn\'t running. Start it:');
+  expect(summary()).toBe('Not ready: the AI worker is not running.');
+  await again(chosen({ kinds: ['picture', 'chat'], ready: true, worker: undefined, workerIdleSeconds: 600 }), linked(pc));
+  expect(workerWarning()?.textContent).toContain('The AI worker isn\'t running.');
+  await again(chosen({ kinds: ['picture', 'chat'], ready: true, worker: undefined, workerIdleSeconds: 45 }), linked(pc));
+  expect(workerWarning()).toBeNull();
+  expect(summary()).toBe('Ready: apps can make pictures with flux-3-image-klein on Studio PC.');
 });
 
 it('makes a test picture through the worker and shows it with the time it took', async () => {
   vi.spyOn(api, 'adminOaiyModels').mockResolvedValue({ data: { models: MODELS } });
   const start = vi.spyOn(api, 'adminTestAppAi').mockResolvedValue({ data: { jobId: 'f'.repeat(32) } });
   const follow = vi.spyOn(api, 'adminGetAppAiTest')
-    .mockResolvedValueOnce({ data: { status: 'queued', waitedSeconds: 1, waiting: 'worker' } })
+    .mockResolvedValueOnce({ data: { status: 'queued', waitedSeconds: 1, waiting: 'worker', workerMessage: MISSING.message } })
     .mockResolvedValueOnce({ data: { status: 'queued', waitedSeconds: 5, waiting: 'computer' } })
     .mockResolvedValueOnce({ data: { status: 'running', waitedSeconds: 8 } })
     .mockResolvedValueOnce({ data: { status: 'done', picture: 'data:image/png;base64,iVBORw0KGgo=', model: 'flux-3-image-klein', seed: 42, seconds: 37.5 } });
@@ -295,8 +349,9 @@ it('makes a test picture through the worker and shows it with the time it took',
   expect(result()).toContain('Test picture: Waiting for its turn…');
   expect(button('Make a test picture')!.disabled).toBe(true);
   await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
-  expect(result()).toContain('Test picture: Waiting, but nothing will start it');
-  expect(result()).toContain('Nothing is running the AI worker on this server, so the test cannot start.');
+  // The worker stopped after the test was let start.
+  expect(result()).toContain('Test picture: Waiting for the AI worker');
+  expect(result()).toContain('The AI worker isn\'t running. Start it: php bin/app-ai-worker.php --watch under a supervisor, or every minute from cron. The test starts by itself once a fresh worker runs.');
   await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
   expect(result()).toContain('Test picture: Waiting for Studio PC to come online… 5 s');
   await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
@@ -318,7 +373,7 @@ it('says why a test failed or could not start, and tests chat too', async () => 
     .mockResolvedValueOnce({ error: 'A test is already running. Wait for it to finish.' })
     .mockResolvedValue({ data: { jobId: 'e'.repeat(32) } });
   vi.spyOn(api, 'adminGetAppAiTest')
-    .mockResolvedValueOnce({ data: { status: 'failed', code: 'model_disabled', message: 'flux-3-image-klein is switched off in Engines.' } })
+    .mockResolvedValueOnce({ data: { status: 'failed', code: 'model_disabled', message: 'flux-3-image-klein is switched off in Engines.', advice: 'Turn the model on in OAIY (Engines) and check its files have downloaded, or choose another picture model.' } })
     .mockResolvedValueOnce({ data: { status: 'done', text: 'Hello there, how are you?', model: 'nanbeige', seconds: 2.1 } });
   await mount(chosen({ kinds: ['picture', 'chat'], ready: true }), ready, linked(pc));
   await act(async () => button('Make a test picture')!.click());
@@ -329,7 +384,8 @@ it('says why a test failed or could not start, and tests chat too', async () => 
   await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
   const result = step(5).querySelector('[data-testid="ai-test"]')!;
   expect(result.textContent).toContain('Test picture: It failed');
-  expect(result.querySelector('[role="alert"]')?.textContent).toBe('flux-3-image-klein is switched off in Engines. Turn the model on in OAIY (Engines) and check its files have downloaded, or choose another model.');
+  // What the AI said, then what the server says to try: the page adds nothing of its own.
+  expect(result.querySelector('[role="alert"]')?.textContent).toBe('flux-3-image-klein is switched off in Engines. Turn the model on in OAIY (Engines) and check its files have downloaded, or choose another picture model.');
 
   await act(async () => button('Test chat')!.click());
   expect(start).toHaveBeenLastCalledWith('chat');
@@ -337,6 +393,45 @@ it('says why a test failed or could not start, and tests chat too', async () => 
   expect(result.textContent).toContain('Test chat: It works');
   expect(result.textContent).toContain('Hello there, how are you?');
   expect(result.textContent).toContain('Answered in 2.1 s · with nanbeige');
+});
+
+// The administrator's test is no app's. A worker left running through an update once failed it as an
+// app's: "AI is turned off for this app. The AI was switched off or changed while the test waited."
+it('tells an administrator\'s failed test in its own words, never an app\'s, and adds no hint of the page\'s own', async () => {
+  vi.spyOn(api, 'adminOaiyModels').mockResolvedValue({ data: { models: MODELS } });
+  vi.spyOn(api, 'adminTestAppAi').mockResolvedValue({ data: { jobId: 'd'.repeat(32) } });
+  const outdated = 'The AI worker that took the test was started before the last update, and does not know how to run it. Restart the AI worker, then test again.';
+  const changed = 'The site\'s AI was switched off or changed while the test waited. Set it up again, then test.';
+  vi.spyOn(api, 'adminGetAppAiTest')
+    .mockResolvedValueOnce({ data: { status: 'failed', code: 'worker_outdated', message: outdated, advice: '' } })
+    // The page has a hint of its own for these codes, for an app's owner: the server's word is the whole of it here.
+    .mockResolvedValueOnce({ data: { status: 'failed', code: 'expired', message: 'Nothing took the test in half an hour. Check that the AI worker runs and the computer is on, then test again.', advice: '' } })
+    .mockResolvedValueOnce({ data: { status: 'failed', code: 'site_ai_unavailable', message: changed, advice: '' } });
+  await mount(chosen({ kinds: ['picture', 'chat'], ready: true }), ready, linked(pc));
+  const told = async () => {
+    await act(async () => button('Make a test picture')!.click());
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    return step(5).querySelector('[data-testid="ai-test"] [role="alert"]')!.textContent;
+  };
+  const first = await told();
+  expect(first).toBe(outdated);
+  expect(first).not.toContain('this app');
+  expect(first).not.toContain('switched off or changed');
+  expect(await told()).toBe('Nothing took the test in half an hour. Check that the AI worker runs and the computer is on, then test again.');
+  // Said when that is what happened, once.
+  expect(await told()).toBe(changed);
+});
+
+it('says what the server says when the worker stopped just before the test was pressed', async () => {
+  vi.spyOn(api, 'adminOaiyModels').mockResolvedValue({ data: { models: MODELS } });
+  vi.spyOn(api, 'adminTestAppAi').mockResolvedValue({ error: STALE.message!, status: 409 });
+  const follow = vi.spyOn(api, 'adminGetAppAiTest');
+  await mount(chosen({ kinds: ['picture', 'chat'], ready: true }), ready, linked(pc));
+  await act(async () => button('Make a test picture')!.click());
+  expect(step(5).querySelector('[role="alert"]')?.textContent).toBe('The AI worker was started before the last update. Restart it.');
+  expect(step(5).querySelector('[data-testid="ai-test"]')).toBeNull();
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  expect(follow).not.toHaveBeenCalled();
 });
 
 it('offers the other linked computers once one is chosen', async () => {

@@ -877,6 +877,61 @@ class AppAiService
         }
     }
 
+    /** Why the administrator's test cannot start now, in their own words: it is no app's. */
+    public const SITE_TEST_REFUSALS = [
+        'site_ai_unavailable' => 'The site\'s AI is not set up yet. Choose where it runs first.',
+        'site_ai_gone' => 'The computer the site\'s AI ran on was unlinked or has a new key. Choose a computer again first.',
+        'model_unset' => 'No picture model is chosen yet. Choose one first.',
+        'no_pictures' => 'This server cannot prepare pictures: it needs PHP\'s GD extension.',
+    ];
+
+    /**
+     * Why the administrator's test failed, by the code its job ended with, where FormLogic is the one
+     * to say (what the AI itself said is told as it said it). The test was let start, so each of the
+     * first four is something that changed while it waited, and says which.
+     */
+    public const SITE_TEST_FAILURES = [
+        'site_ai_unavailable' => 'The site\'s AI was switched off or changed while the test waited. Set it up again, then test.',
+        'site_ai_gone' => 'The computer the site\'s AI runs on was unlinked, or got a new key, while the test waited. Choose a computer again, then test.',
+        'model_unset' => 'The picture model was cleared while the test waited. Choose one, then test.',
+        'no_pictures' => 'This server cannot prepare pictures: it needs PHP\'s GD extension.',
+        'expired' => 'Nothing took the test in half an hour. Check that the AI worker runs and the computer is on, then test again.',
+        'worker_outdated' => 'The AI worker that took the test was started before the last update, and does not know how to run it. Restart the AI worker, then test again.',
+    ];
+
+    /** What the administrator can try when the AI itself failed their test, after what it said. */
+    public const SITE_TEST_ADVICE = [
+        'model_disabled' => 'Turn the model on in OAIY (Engines) and check its files have downloaded, or choose another picture model.',
+        'model_unknown' => 'The AI has no model by this name. Choose one from its list.',
+        'timeout' => 'Check that the computer is on and OAIY is running, then test again.',
+        'engine_failed' => 'Look at OAIY on the computer for why, then test again.',
+        'busy' => 'The AI was busy with other work each time it was asked. Test again in a moment.',
+    ];
+
+    /**
+     * An administrator's test's failure as they are told it: {code, message, advice}. $code and
+     * $message are the job's own. `message` is FormLogic's own sentence where it is the one to say
+     * (SITE_TEST_FAILURES), else what the AI said; `advice` is what to try, or ''.
+     *
+     * A job's coarse codes for an app whose AI cannot take it (`ai_unavailable`, `ai_off`,
+     * `ai_paused`) are never a site test's from this code: only a worker running older code, which
+     * does not know a test that is no app's, ends one so (`worker_outdated`). What it wrote ("AI is
+     * turned off for this app") is never passed on: there is no app.
+     *
+     * @return array{code: string, message: string, advice: string}
+     */
+    public static function siteTestFailure(?string $code, ?string $message): array
+    {
+        $code = (string) $code;
+        if (in_array($code, ['ai_unavailable', 'ai_off', 'ai_paused'], true)) $code = 'worker_outdated';
+        if (isset(self::SITE_TEST_FAILURES[$code])) return ['code' => $code, 'message' => self::SITE_TEST_FAILURES[$code], 'advice' => ''];
+        return [
+            'code' => $code !== '' ? $code : 'engine_failed',
+            'message' => $message !== null && trim($message) !== '' ? $message : 'The AI gave no reason.',
+            'advice' => self::SITE_TEST_ADVICE[$code] ?? '',
+        ];
+    }
+
     /**
      * Queue the administrator's own test of the site's AI (the setup checklist's "Make a test
      * picture"): the same small picture or five-word chat as an owner's test, sent where apps'
@@ -888,8 +943,8 @@ class AppAiService
     {
         $kind = $kind === 'chat' ? 'chat' : 'picture';
         $available = $this->siteTestAvailability();
-        if (!$available['enabled']) throw new \RuntimeException(self::REASONS[$available['reason']] ?? self::REASONS['site_ai_unavailable']);
-        if (!in_array($kind, $available['kinds'], true)) throw new \RuntimeException(self::REASONS[AppAiPictures::available() ? 'model_unset' : 'no_pictures']);
+        if (!$available['enabled']) throw new \RuntimeException(self::SITE_TEST_REFUSALS[$available['reason']] ?? self::SITE_TEST_REFUSALS['site_ai_unavailable']);
+        if (!in_array($kind, $available['kinds'], true)) throw new \RuntimeException(self::SITE_TEST_REFUSALS[AppAiPictures::available() ? 'model_unset' : 'no_pictures']);
         $pdo = $this->pdo();
         // One at a time, whoever asks: no row of its own to lock, so a named lock.
         $lock = $pdo->prepare('SELECT GET_LOCK(?, 5)');
@@ -919,6 +974,8 @@ class AppAiService
      * How a test is getting on: {status: queued|running|done|failed, picture?, text?, model, seed,
      * seconds, waitedSeconds?, code?, message?}, or null when $jobId is not a test of this app
      * (SITE_TEST: of the site's own). $results is where the worker keeps results (AppAiWorker).
+     * A failed site test's code and message are the administrator's own, with `advice`
+     * (siteTestFailure): it is no app's, and is never told as one.
      */
     public function testResult(string $appId, string $jobId, string $results): ?array
     {
@@ -935,9 +992,14 @@ class AppAiService
         if ($job['status'] === 'running') return ['status' => 'running', 'waitedSeconds' => $waited];
         if ($job['status'] === 'done') {
             $result = $job['result_path'] !== null ? json_decode((string) @file_get_contents($results . '/' . basename((string) $job['result_path'])), true) : null;
-            if (!is_array($result)) return ['status' => 'failed', 'code' => 'expired', 'message' => 'This test\'s result is no longer kept. Run it again.', 'seconds' => $seconds];
+            if (!is_array($result)) {
+                return ['status' => 'failed', 'code' => 'expired', 'message' => 'This test\'s result is no longer kept. Run it again.', 'seconds' => $seconds]
+                    + ($appId === self::SITE_TEST ? ['advice' => ''] : []);
+            }
             return ['status' => 'done', 'seconds' => $seconds] + array_intersect_key($result, array_flip(['picture', 'text', 'model', 'seed', 'mimeType', 'width', 'height']));
         }
+        // The administrator's test is no app's: its failure is told in their own words, never an app's.
+        if ($appId === self::SITE_TEST) return ['status' => 'failed', 'seconds' => $seconds] + self::siteTestFailure($job['code'], $job['message']);
         return ['status' => 'failed', 'code' => $job['code'], 'message' => $job['message'], 'seconds' => $seconds];
     }
 
@@ -1051,13 +1113,14 @@ class AppAiService
         $statement->execute([self::TEST_REQUESTER]);
         $job = $statement->fetch(PDO::FETCH_ASSOC);
         if (!is_array($job)) return null;
+        $failure = $job['status'] === 'failed' ? self::siteTestFailure($job['code'], $job['message']) : ['code' => null, 'message' => null];
         return [
             'status' => (string) $job['status'],
             'at' => substr((string) $job['finished_at'], 0, 19),
             'seconds' => $job['started_at'] !== null ? round(max(0.0, self::seconds((string) $job['finished_at']) - self::seconds((string) $job['started_at'])), 1) : null,
             'model' => $job['model'],
-            'code' => $job['code'],
-            'message' => $job['message'],
+            'code' => $failure['code'],
+            'message' => $failure['message'],
             'current' => $on['target'] !== null && $job['target'] === $on['target'] && $job['model'] !== null && $job['model'] === $site['pictureModel'],
         ];
     }

@@ -11,7 +11,8 @@
 //
 // Needs the App AI stack (see app-ai-payments.spec.ts): one origin that answers several requests at
 // once (a request that waits for the computer must not hold up the computer's own answer),
-// bin/app-ai-worker.php --watch, AI_BASE_URL at backend/tests/Support/stub-images-server.php (the
+// bin/app-ai-worker.php --watch started from the code being tested (a worker from before an update
+// is refused the test, and the card says to restart it), AI_BASE_URL at backend/tests/Support/stub-images-server.php (the
 // second test is skipped without it), and an administrator account of its own (E2E_APP_AI_EMAIL,
 // E2E_APP_AI_PASSWORD): the tests unlink that account's computers to start from nothing. PHP_BIN
 // names the php that runs the stand-in computer (`php` by default), and E2E_STUB_OAIY its script
@@ -86,6 +87,8 @@ test('An administrator sets up AI for apps on their own computer, using only the
   const summary = page.getByTestId('ai-setup-summary');
   await expect(summary).toHaveText(/^[34] steps left before apps can make pictures\./);
   await expect(step(page, 2)).toHaveAttribute('data-done', 'no');
+  // The stack's worker runs, and runs the code that is there: the card has nothing to say of it.
+  await expect(page.getByTestId('ai-setup-worker')).toHaveCount(0);
 
   // 1. A computer: a one-time code, typed on the server (here, given to the stand-in).
   await step(page, 1).getByRole('button', { name: 'Connect an OAIY server' }).click();

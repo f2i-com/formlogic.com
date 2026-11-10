@@ -11,6 +11,7 @@ use FormLogic\Services\AppAiSiteSettings;
 use FormLogic\Services\AppAiWorker;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AuditService;
+use FormLogic\Support\CodeFingerprint;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -30,6 +31,14 @@ final class AppAiController
     use JsonResponseTrait;
 
     private string $results;
+    /** @var \Closure(): string the server code's fingerprint as it is on disk now (CodeFingerprint) */
+    private \Closure $code;
+
+    /** What the administrator is told about the worker, wherever it is said: above the checklist, and by the test. */
+    public const WORKER_MESSAGES = [
+        'stale' => 'The AI worker was started before the last update. Restart it.',
+        'missing' => 'The AI worker isn\'t running. Start it: php bin/app-ai-worker.php --watch under a supervisor, or every minute from cron.',
+    ];
 
     public function __construct(
         private AppService $apps,
@@ -38,8 +47,20 @@ final class AppAiController
         private ?AuditService $audit = null,
         ?string $results = null,
         private ?OaiyComputerController $computers = null,
+        ?\Closure $code = null,
     ) {
         $this->results = $results ?? AppAiWorker::resultsPath();
+        $this->code = $code ?? static fn(): string => CodeFingerprint::onDisk();
+    }
+
+    /**
+     * The worker on this server (AppAiWorker::state): {state: ok|stale|missing, idleSeconds, mode,
+     * message}. `message` is what to do when it is not ok, else null.
+     */
+    private function worker(): array
+    {
+        $worker = AppAiWorker::state($this->results, ($this->code)());
+        return $worker + ['message' => self::WORKER_MESSAGES[$worker['state']] ?? null];
     }
 
     /**
@@ -150,12 +171,16 @@ final class AppAiController
     /**
      * POST /api/admin/app-ai/test {kind: picture|chat}: the administrator's own test of the site's AI,
      * a real small job through the worker, where apps' requests on the site's AI go. No app's, and
-     * needing none: it works before apps are allowed.
+     * needing none: it works before apps are allowed. Refused, and told why, when no worker would run
+     * it (`worker_missing`) or the one running was started before the last update (`worker_stale`):
+     * such a test would only wait, or be failed by code that does not know it.
      */
     public function adminTest(Request $request, Response $response): Response
     {
         $body = $request->getParsedBody();
         $kind = is_array($body) && ($body['kind'] ?? null) === 'chat' ? 'chat' : 'picture';
+        $worker = $this->worker();
+        if ($worker['state'] !== 'ok') return $this->jsonError($response, (string) $worker['message'], 409, 'worker_' . $worker['state']);
         try {
             $jobId = $this->ai->queueSiteTest((string) $request->getAttribute('userId'), $kind);
         } catch (\RuntimeException $e) {
@@ -168,31 +193,35 @@ final class AppAiController
     /**
      * GET /api/admin/app-ai/test/{job}: how the administrator's test is getting on, its picture or
      * reply once it is there, and while it waits, what it is waiting for (`waiting`: `worker` when
-     * nothing is running bin/app-ai-worker.php, `computer` when the site's computer is offline).
+     * the worker stopped since the test was let start, with `workerMessage` saying what to do;
+     * `computer` when the site's computer is offline). A failure is told in the administrator's own
+     * words (AppAiService::siteTestFailure): `code`, `message` and `advice`.
      */
     public function adminTestResult(Request $request, Response $response, array $args): Response
     {
         $result = $this->ai->testResult(AppAiService::SITE_TEST, (string) ($args['job'] ?? ''), $this->results);
         if ($result === null) return $this->jsonError($response, 'Unknown test', 404);
         if ($result['status'] === 'queued') {
-            $idle = AppAiWorker::idleSeconds($this->results);
+            $worker = $this->worker();
             $setup = $this->ai->adminSetup();
-            if ($idle === null || $idle > self::WORKER_QUIET_SECONDS) $result['waiting'] = 'worker';
+            if ($worker['state'] !== 'ok') $result += ['waiting' => 'worker', 'workerMessage' => $worker['message']];
             elseif ($setup['source'] === 'computer' && !$setup['computer']['online']) $result['waiting'] = 'computer';
         }
         return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), ['data' => $result]);
     }
 
-    /** A worker that has made no pass for this long is not running (it touches its file every few passes). */
-    private const WORKER_QUIET_SECONDS = 120;
-
     private function adminView(Request $request, array $settings): array
     {
+        $worker = $this->worker();
+        $setup = $this->ai->adminSetup();
+        // Apps can make pictures only with a worker to send their requests.
+        $setup['ready'] = $setup['ready'] && $worker['state'] === 'ok';
         return [
             'settings' => $settings,
-            // The setup checklist's facts: where the site's AI runs, what apps would get, and whether
-            // anything is running the worker (seconds since its last pass; null when it never has).
-            'setup' => $this->ai->adminSetup() + ['workerIdleSeconds' => AppAiWorker::idleSeconds($this->results)],
+            // The setup checklist's facts: where the site's AI runs, what apps would get, and the
+            // worker: whether one runs, and runs the code that is here now (`workerIdleSeconds` is
+            // the seconds since its last pass, null when it never ran: kept for older pages).
+            'setup' => $setup + ['worker' => $worker, 'workerIdleSeconds' => $worker['idleSeconds']],
             'apps' => $this->ai->adminOverview(),
             'warnings' => array_merge(self::proxyWarnings($request), $this->ai->adminWarnings(), $this->workerWarnings()),
         ];

@@ -44,6 +44,8 @@ final class AppAiSetupTest extends TestCase
     /** The server's own provider: named in its settings, and the Site AI switch. */
     private bool $named = false;
     private bool $switch = false;
+    /** The server code's fingerprint as the web reads it on disk. */
+    private string $code = 'code-1';
 
     public static function setUpBeforeClass(): void
     {
@@ -85,7 +87,16 @@ final class AppAiSetupTest extends TestCase
         $provider->method('isConfigured')->willReturnCallback(fn(): bool => $this->named && $this->switch);
         $this->ai = new AppAiService(self::$mysql, $this->site, new AppVisitors(self::$mysql, ['secure' => false], new SessionOriginPolicy([])), new NativeAppService(self::$tmpRoot . '/native'), $this->computers, $provider);
         $this->results = self::$tmpRoot . '/results-' . bin2hex(random_bytes(3));
-        $this->controller = new AppAiController(self::$apps, $this->ai, $this->site, null, $this->results);
+        $this->code = 'code-1';
+        $this->controller = new AppAiController(self::$apps, $this->ai, $this->site, null, $this->results, null, fn(): string => $this->code);
+    }
+
+    /** A worker's heartbeat: it made a pass $secondsAgo, running the code $fingerprint names. */
+    private function workerRuns(string $fingerprint = 'code-1', string $mode = 'watch', int $secondsAgo = 1): void
+    {
+        @mkdir($this->results, 0777, true);
+        file_put_contents($this->results . '/.alive', json_encode(['fingerprint' => $fingerprint, 'mode' => $mode, 'startedAt' => time() - 600]));
+        touch($this->results . '/.alive', time() - $secondsAgo);
     }
 
     protected function tearDown(): void
@@ -138,6 +149,8 @@ final class AppAiSetupTest extends TestCase
             [$none['source'], $none['computer'], $none['gone'], $none['provider'], $none['kinds'], $none['reason'], $none['ready'], $none['workerIdleSeconds']]);
         $this->assertTrue($none['drawing']);
         $this->assertNull($none['lastTest'], 'no test picture has been made');
+        $this->assertSame(['state' => 'missing', 'idleSeconds' => null, 'mode' => null, 'message' => AppAiController::WORKER_MESSAGES['missing']], $none['worker']);
+        $this->workerRuns();
 
         // The server's settings name a provider: it is used only once the Site AI switch is on.
         $this->named = true;
@@ -176,22 +189,102 @@ final class AppAiSetupTest extends TestCase
         $this->assertSame(['env', true], [$this->checklist()['source'], $this->checklist()['ready']], 'forgotten: the provider in the server\'s settings again');
 
         // Whether anything runs the worker: seconds since its last pass.
-        @mkdir($this->results, 0777, true);
         touch($this->results . '/.alive', time() - 30);
         $this->assertEqualsWithDelta(30, $this->checklist()['workerIdleSeconds'], 3);
+    }
+
+    /** Apps' requests are sent by the worker: with none, or one running older code, nothing is ready. */
+    public function testTheChecklistSaysWhenTheWorkerIsMissingOrWasStartedBeforeTheLastUpdate(): void
+    {
+        $this->named = true;
+        $this->switch = true;
+        $this->site->save(['pictureModel' => 'stub-image', 'allowApps' => true]);
+        $missing = $this->checklist();
+        $this->assertSame(['missing', 'The AI worker isn\'t running. Start it: php bin/app-ai-worker.php --watch under a supervisor, or every minute from cron.'], [$missing['worker']['state'], $missing['worker']['message']]);
+        $this->assertFalse($missing['ready'], 'everything is set, and nothing would send a request');
+        $this->assertSame(['picture', 'chat'], $missing['kinds']);
+
+        $this->workerRuns('code-1', 'watch');
+        $ok = $this->checklist();
+        $this->assertSame(['ok', null, 'watch', true], [$ok['worker']['state'], $ok['worker']['message'], $ok['worker']['mode'], $ok['ready']]);
+
+        // FormLogic was updated, and the --watch worker is still the one from before.
+        $this->code = 'code-2';
+        $stale = $this->checklist();
+        $this->assertSame(['stale', 'The AI worker was started before the last update. Restart it.', false], [$stale['worker']['state'], $stale['worker']['message'], $stale['ready']]);
+        // Its supervisor started a fresh one.
+        $this->workerRuns('code-2', 'watch');
+        $this->assertSame(['ok', true], [$this->checklist()['worker']['state'], $this->checklist()['ready']]);
+
+        // A cron run from the minute before an update is over within seconds: the next is fresh.
+        $this->workerRuns('code-1', 'cron', 40);
+        $this->assertSame(['ok', true], [$this->checklist()['worker']['state'], $this->checklist()['ready']]);
+        // A worker from before workers said what they run only touched its file.
+        file_put_contents($this->results . '/.alive', '');
+        $this->assertSame('stale', $this->checklist()['worker']['state']);
+        // One that stopped: quiet for more than two minutes.
+        $this->workerRuns('code-2', 'watch', 200);
+        $quiet = $this->checklist();
+        $this->assertSame(['missing', false], [$quiet['worker']['state'], $quiet['ready']]);
+        $this->assertEqualsWithDelta(200, $quiet['worker']['idleSeconds'], 3);
+    }
+
+    /** Pressing the test says the same as the card, instead of queueing a test that would wait or be failed. */
+    public function testTheTestIsNotQueuedWhenNoWorkerWouldRunItOrAStaleOneWould(): void
+    {
+        $this->named = true;
+        $this->switch = true;
+        $queued = fn(): int => (int) self::$pdo->query('SELECT COUNT(*) FROM app_ai_jobs WHERE app_id IS NULL')->fetchColumn();
+        $missing = $this->askFor('chat');
+        $this->assertSame([409, 'worker_missing', AppAiController::WORKER_MESSAGES['missing']], [$missing['status'], $missing['body']['code'], $missing['body']['message']]);
+        $this->workerRuns('code-0', 'watch');
+        $stale = $this->askFor('chat');
+        $this->assertSame([409, 'worker_stale', 'The AI worker was started before the last update. Restart it.'], [$stale['status'], $stale['body']['code'], $stale['body']['message']]);
+        $this->assertSame(0, $queued());
+        $this->workerRuns('code-1', 'watch');
+        $this->assertSame(202, $this->askFor('chat')['status']);
+        $this->assertSame(1, $queued());
+    }
+
+    /**
+     * A test that a worker running older code took and failed as it fails an app's job with no app
+     * ("AI is turned off for this app") is told to the administrator as what it was, in the test's
+     * result and on the checklist's last line.
+     */
+    public function testATestFailedByAnOutdatedWorkerIsNeverToldAsAnApps(): void
+    {
+        $this->named = true;
+        $this->switch = true;
+        $this->site->save(['pictureModel' => 'stub-image']);
+        $this->workerRuns();
+        $jobId = (string) $this->askFor('picture')['body']['data']['jobId'];
+        // What the worker from before the update did with it.
+        self::$pdo->prepare("UPDATE app_ai_jobs SET status = 'failed', code = 'ai_unavailable', message = 'AI is turned off for this app.', finished_at = UTC_TIMESTAMP(3) WHERE id = ?")->execute([$jobId]);
+        $failed = $this->answerOf($jobId)['body']['data'];
+        $this->assertSame(['failed', 'worker_outdated', AppAiService::SITE_TEST_FAILURES['worker_outdated'], ''], [$failed['status'], $failed['code'], $failed['message'], $failed['advice']]);
+        $this->assertStringNotContainsString('this app', json_encode($failed));
+        $this->assertStringNotContainsString('switched off or changed', json_encode($failed));
+        $last = $this->checklist()['lastTest'];
+        $this->assertSame(['failed', 'worker_outdated', AppAiService::SITE_TEST_FAILURES['worker_outdated']], [$last['status'], $last['code'], $last['message']]);
+
+        // What the AI itself refused is told as it said it, with what to try.
+        self::$pdo->prepare("UPDATE app_ai_jobs SET code = 'model_disabled', message = 'image model stub-image is disabled' WHERE id = ?")->execute([$jobId]);
+        $refused = $this->answerOf($jobId)['body']['data'];
+        $this->assertSame(['model_disabled', 'image model stub-image is disabled', AppAiService::SITE_TEST_ADVICE['model_disabled']], [$refused['code'], $refused['message'], $refused['advice']]);
     }
 
     public function testTheAdministratorsTestIsARealJobThatIsNoApps(): void
     {
         // Apps are neither allowed nor unpaused: the test is the administrator's own, and needs neither.
         $this->site->save(['allowApps' => false, 'paused' => true]);
+        $this->workerRuns();
         $refused = $this->askFor('picture');
-        $this->assertSame([409, 'ai_unavailable', 'The site\'s AI is not set up.'], [$refused['status'], $refused['body']['code'], $refused['body']['message']]);
+        $this->assertSame([409, 'ai_unavailable', 'The site\'s AI is not set up yet. Choose where it runs first.'], [$refused['status'], $refused['body']['code'], $refused['body']['message']]);
 
         $this->named = true;
         $this->switch = true;
         $unset = $this->askFor('picture');
-        $this->assertSame([409, 'No model is chosen for this kind of request yet.'], [$unset['status'], $unset['body']['message']], 'a picture needs its model');
+        $this->assertSame([409, 'No picture model is chosen yet. Choose one first.'], [$unset['status'], $unset['body']['message']], 'a picture needs its model');
         $counted = fn(): int => (int) self::$pdo->query('SELECT COALESCE(SUM(used), 0) FROM app_ai_counters')->fetchColumn();
         $before = $counted();
         $chat = $this->askFor('chat');
@@ -205,13 +298,20 @@ final class AppAiSetupTest extends TestCase
         $again = $this->askFor('chat');
         $this->assertSame([409, 'A test is already running. Wait for it to finish.'], [$again['status'], $again['body']['message']]);
 
-        // While it waits, the administrator is told what for: here, nothing runs the worker.
+        // While it waits, a worker that ran a moment ago is about to take it.
         $waiting = $this->answerOf($jobId);
-        $this->assertSame([200, 'queued', 'worker'], [$waiting['status'], $waiting['body']['data']['status'], $waiting['body']['data']['waiting']]);
+        $this->assertSame([200, 'queued'], [$waiting['status'], $waiting['body']['data']['status']]);
+        $this->assertArrayNotHasKey('waiting', $waiting['body']['data']);
         $this->assertLessThan(5, $waiting['body']['data']['waitedSeconds']);
-        @mkdir($this->results, 0777, true);
-        touch($this->results . '/.alive');
-        $this->assertArrayNotHasKey('waiting', $this->answerOf($jobId)['body']['data'], 'a worker ran a moment ago: it is about to be taken');
+        // The worker stopped since: the administrator is told what the test waits for, and what to do.
+        $this->workerRuns('code-1', 'watch', 200);
+        $stopped = $this->answerOf($jobId)['body']['data'];
+        $this->assertSame(['queued', 'worker', AppAiController::WORKER_MESSAGES['missing']], [$stopped['status'], $stopped['waiting'], $stopped['workerMessage']]);
+        // Or FormLogic was updated under it.
+        $this->workerRuns('code-0', 'watch');
+        $outdated = $this->answerOf($jobId)['body']['data'];
+        $this->assertSame(['worker', AppAiController::WORKER_MESSAGES['stale']], [$outdated['waiting'], $outdated['workerMessage']]);
+        $this->workerRuns();
 
         $this->assertSame(404, $this->answerOf(bin2hex(random_bytes(16)))['status']);
         $this->assertSame(404, $this->answerOf('not-an-id')['status']);

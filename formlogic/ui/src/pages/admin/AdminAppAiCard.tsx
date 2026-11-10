@@ -84,8 +84,9 @@ export function AdminAppAiCard() {
     if (result.error || !result.data) { toast.error('Not changed', result.error ?? ''); return; }
     setView(result.data);
   };
-  // The checklist's fourth line says a picture model is missing; the same warning below it would say it twice.
-  const warnings = view.warnings.filter((warning) => !(view.setup && warning.code === 'picture_model_unset'));
+  // The checklist says a picture model is missing (its fourth line) and that no worker runs (above
+  // its steps); the same warnings below it would say them twice.
+  const warnings = view.warnings.filter((warning) => !(view.setup && (warning.code === 'picture_model_unset' || warning.code === 'worker_idle')));
 
   return (
     <Card>

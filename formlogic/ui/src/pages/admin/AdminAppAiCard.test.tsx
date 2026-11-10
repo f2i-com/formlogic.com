@@ -38,6 +38,7 @@ const adminView = (over: Partial<AppAiAdminView> = {}): AppAiAdminView => ({
   warnings: [
     { code: 'trusted_proxies_unset', message: 'This site is reached through Cloudflare, but TRUSTED_PROXIES is not set.' },
     { code: 'picture_model_unset', message: 'Apps may use this site\'s AI, but no picture model is chosen, so they can ask for chat only.' },
+    { code: 'worker_idle', message: 'Apps\' AI requests are waiting, but bin/app-ai-worker.php has not run on this server.' },
   ],
   ...over,
 });
@@ -59,7 +60,7 @@ it('shows the checklist first, then the warnings and every app', async () => {
   const checklist = container.querySelector('[data-testid="ai-setup"]')!;
   expect(checklist.querySelector('[data-testid="ai-setup-summary"]')?.textContent).toBe('4 steps left before apps can make pictures.');
   expect(checklist.compareDocumentPosition(button('Save limits')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  // The checklist's fourth line says a picture model is missing: the warning is not said twice.
+  // The checklist says a picture model is missing, and what the worker is doing: neither is said twice.
   const warnings = [...container.querySelectorAll('ul[aria-label="Warnings"] li')].map((node) => node.textContent);
   expect(warnings).toEqual(['This site is reached through Cloudflare, but TRUSTED_PROXIES is not set.']);
   expect(container.textContent).toContain('Five Cent Designs');
@@ -71,7 +72,7 @@ it('still shows a server that sends no checklist its settings and every warning'
   vi.spyOn(api, 'adminGetSiteAiDesktop').mockResolvedValue(noComputers);
   await mount();
   expect(container.querySelector('[data-testid="ai-setup"]')).toBeNull();
-  expect(container.querySelectorAll('ul[aria-label="Warnings"] li')).toHaveLength(2);
+  expect(container.querySelectorAll('ul[aria-label="Warnings"] li')).toHaveLength(3);
   expect(button('Save limits')).toBeDefined();
 });
 

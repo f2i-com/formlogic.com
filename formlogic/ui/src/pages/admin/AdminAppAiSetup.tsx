@@ -3,8 +3,10 @@
 // Five lines, each with its live state and one action: a computer for the site's AI, the site's AI
 // running on it, apps allowed, a picture model, and a test picture through the real worker. Each
 // action takes effect at once (with the usual administrator confirmation). It also adapts when the
-// site's AI is the provider in the server's settings. See docs/FREE_PLANS_AND_AI_SETUP.md, "AI for apps".
-import { useState, type ReactNode } from 'react';
+// site's AI is the provider in the server's settings, and says above the steps when the worker that
+// sends every request is not running, or was started before the last update and has to be restarted:
+// the test then says the same instead of being tried. See docs/FREE_PLANS_AND_AI_SETUP.md, "AI for apps".
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { AiTestResult } from '../../components/apps/AiTestResult';
@@ -14,14 +16,19 @@ import { ConnectOaiyServer } from '../../components/desktop/ConnectOaiyServer';
 import { Button } from '../../components/ui/Button';
 import { Switch } from '../../components/ui/Switch';
 import { api, type SiteAiDesktopState } from '../../lib/api';
-import { sinceWords, suggestedPictureModel, whenWords, type AppAiAdminView, type AppAiSetup, type AppAiSiteSettings } from '../../lib/appAi';
+import { sinceWords, suggestedPictureModel, whenWords, type AppAiAdminView, type AppAiSetup, type AppAiSiteSettings, type AppAiWorkerState } from '../../lib/appAi';
 import { announceSiteAiChanged } from '../../lib/siteAiEvents';
 import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 
 const ENGINE = 'oaiy-engine';
-/** A worker that has made no pass for this long is not running. */
+/** A worker that has made no pass for this long is not running (for a server that does not say so itself). */
 const WORKER_QUIET_SECONDS = 150;
+/** What the server says of the worker, for one that says only how long ago it ran. */
+const WORKER_STALE = 'The AI worker was started before the last update. Restart it.';
+const WORKER_MISSING = 'The AI worker isn\'t running. Start it: php bin/app-ai-worker.php --watch under a supervisor, or every minute from cron.';
+/** While the worker is not right, how often the card looks again. */
+const WORKER_LOOK_MS = 10_000;
 const PROVIDER = 'the AI provider in your server settings';
 /** The Plans card's switch for members' Site AI, by the name it has there. */
 const SITE_AI_SWITCH = '“Offer operator-funded Site AI”';
@@ -118,7 +125,12 @@ export function AdminAppAiSetup({ setup, settings, desktop, onReload, onSaved }:
   };
 
   const { test, error: testError, run, running } = useAiTest(
-    (kind) => api.adminTestAppAi(kind),
+    async (kind) => {
+      const started = await api.adminTestAppAi(kind);
+      // Refused: what changed since the card was read (the worker stopped, say) is read again.
+      if (!started.data) void onReload();
+      return started;
+    },
     (id) => api.adminGetAppAiTest(id),
     // What the server now keeps as the last test is what marks the fifth line.
     () => void onReload(),
@@ -134,19 +146,36 @@ export function AdminAppAiSetup({ setup, settings, desktop, onReload, onSaved }:
   const left = steps.filter((done) => !done).length;
   const next = steps.indexOf(false) + 1;
   const where = source === 'computer' ? name : PROVIDER;
-  const chatWorks = step3 && !settings.paused && setup.kinds.includes('chat');
-  const summary: { tone: 'ready' | 'warn' | 'todo'; text: string } = setup.ready
+  // The worker sends every request, and the test: none running, or one started before the last
+  // update, is said above the steps and by the test itself. A server from before it said which
+  // gives only how long ago a worker last ran.
+  const worker: AppAiWorkerState = setup.worker ?? (setup.workerIdleSeconds === null || setup.workerIdleSeconds > WORKER_QUIET_SECONDS
+    ? { state: 'missing', idleSeconds: setup.workerIdleSeconds, mode: null, message: WORKER_MISSING }
+    : { state: 'ok', idleSeconds: setup.workerIdleSeconds, mode: null, message: null });
+  const workerMessage = worker.state === 'ok' ? null : worker.message ?? (worker.state === 'stale' ? WORKER_STALE : WORKER_MISSING);
+  const chatWorks = step3 && !settings.paused && setup.kinds.includes('chat') && workerMessage === null;
+  const summary: { tone: 'ready' | 'warn' | 'todo'; text: string } = setup.ready && workerMessage === null
     ? (computer && !computer.online
       ? { tone: 'warn', text: `Ready, but ${name} is offline. Apps' requests wait until it is back.` }
       : { tone: 'ready', text: `Ready: apps can make pictures with ${settings.pictureModel} on ${where}.` })
     : left > 0 ? { tone: 'todo', text: `${left} step${left === 1 ? '' : 's'} left before apps can make pictures.${!step4 && left === 1 && chatWorks ? ' Chat already works.' : ''}` }
+    : workerMessage !== null ? { tone: 'warn', text: worker.state === 'stale' ? 'Not ready: the AI worker has to be restarted.' : 'Not ready: the AI worker is not running.' }
     : settings.paused ? { tone: 'warn', text: 'Paused: you have paused every app\'s AI. Turn the pause off below when you are ready.' }
     : !setup.drawing ? { tone: 'warn', text: 'Not ready: this server cannot prepare pictures for apps. It needs PHP\'s GD extension.' }
     : { tone: 'warn', text: 'Not ready yet. Make a test picture to see why.' };
 
+  // A worker that is started, or restarted, shows here by itself.
+  const awaitingWorker = workerMessage !== null;
+  const reloadNow = useRef(onReload);
+  useLayoutEffect(() => { reloadNow.current = onReload; });
+  useEffect(() => {
+    if (!awaitingWorker) return;
+    const timer = setInterval(() => void reloadNow.current(), WORKER_LOOK_MS);
+    return () => clearInterval(timer);
+  }, [awaitingWorker]);
+
   const canDraw = setup.kinds.includes('picture');
   const canChat = setup.kinds.includes('chat');
-  const workerQuiet = step2 && (setup.workerIdleSeconds === null || setup.workerIdleSeconds > WORKER_QUIET_SECONDS);
   const others = candidates.filter((candidate) => candidate.connectionId !== computer?.connectionId);
   // The last test picture counts while it is about what is set up now: the model, and where the
   // site's AI runs, have not changed since it was made.
@@ -179,6 +208,14 @@ export function AdminAppAiSetup({ setup, settings, desktop, onReload, onSaved }:
       >
         {summary.text}
       </p>
+      {workerMessage !== null && (
+        <p role="alert" data-testid="ai-setup-worker" className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
+          <strong className="font-semibold">{workerMessage}</strong>{' '}
+          {worker.state === 'stale'
+            ? 'It still runs the code from before, so apps\' requests can fail. Under a supervisor it restarts by itself.'
+            : 'Nothing sends apps\' requests until it runs (DEPLOYMENT.md, “Every scheduled job”).'}
+        </p>
+      )}
       <ol className="space-y-2">
         <Step number={1} title={usesProvider ? 'Where the site\'s AI runs' : 'A computer for the site\'s AI'} done={step1} next={next === 1}>
           {source === 'computer' && computer && <p className={muted}><strong className="text-gray-900 dark:text-white">{name}</strong> · <Presence online={computer.online} lastSeenAt={computer.lastSeenAt} /></p>}
@@ -288,18 +325,18 @@ export function AdminAppAiSetup({ setup, settings, desktop, onReload, onSaved }:
 
         <Step number={5} title="Make a test picture" done={proven} next={next === 0 && !proven}>
           <p className={muted}>A real small picture, made the way an app&apos;s would be. It shows every part works, and how long a picture takes.</p>
-          {workerQuiet && (
-            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-200" role="alert">
-              Nothing is running the AI worker on this server{setup.workerIdleSeconds === null ? ' yet' : ` (it last ran ${Math.round(setup.workerIdleSeconds / 60)} minutes ago)`}, so apps&apos; requests, and this test, would only wait.
-              Set <code>php bin/app-ai-worker.php</code> to run every minute (DEPLOYMENT.md, &ldquo;Every scheduled job&rdquo;).
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant={next === 0 && !proven && !offline && workerMessage === null ? 'primary' : 'outline'} disabled={!canDraw || running || workerMessage !== null} isLoading={running && test?.kind !== 'chat'} onClick={() => void run('picture')}>Make a test picture</Button>
+            <Button size="sm" variant="outline" disabled={!canChat || running || workerMessage !== null} isLoading={running && test?.kind === 'chat'} onClick={() => void run('chat')}>Test chat</Button>
+          </div>
+          {/* A test would only wait for a worker, or be failed by one that does not know it: said, not tried. */}
+          {workerMessage !== null && (canDraw || canChat) && (
+            <p className="text-sm text-amber-800 dark:text-amber-200" data-testid="ai-setup-test-worker">
+              {workerMessage} A test cannot be made until then. <button type="button" className="font-medium underline underline-offset-2" onClick={() => void onReload()}>Check again</button>
             </p>
           )}
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant={next === 0 && !proven && !offline ? 'primary' : 'outline'} disabled={!canDraw || running} isLoading={running && test?.kind !== 'chat'} onClick={() => void run('picture')}>Make a test picture</Button>
-            <Button size="sm" variant="outline" disabled={!canChat || running} isLoading={running && test?.kind === 'chat'} onClick={() => void run('chat')}>Test chat</Button>
-          </div>
           {!canDraw && <p className={small}>{!step2 ? 'Choose where the site\'s AI runs first (steps 1 and 2).' : !step4 ? 'Choose a picture model first (step 4).' : !setup.drawing ? 'This server cannot prepare pictures: it needs PHP\'s GD extension.' : 'The site\'s AI cannot make pictures now.'}</p>}
-          {canDraw && offline && !test && <p className={small}>{name} is offline, so a test waits until it is back.</p>}
+          {canDraw && offline && !test && workerMessage === null && <p className={small}>{name} is offline, so a test waits until it is back.</p>}
           {testError && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{testError}</p>}
           {test && <AiTestResult test={test} computer={name || undefined} />}
           {!test && last && canDraw && (

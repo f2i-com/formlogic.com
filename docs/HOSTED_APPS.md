@@ -356,14 +356,29 @@ apps ([AI for apps](FREE_PLANS_AND_AI_SETUP.md#ai-for-apps)): a computer, the si
 allowed, a picture model from the computer's own list, and a test picture. `GET /api/admin/app-ai`
 carries what it shows as `setup`: `source` (`computer`, `env`, `gone` or `none`), the `computer` (with
 `online` and `lastSeenAt`), `provider` (`named` in the server's settings, and `on`: the Site AI
-switch), `kinds` the site's AI takes now, `ready` (apps can make pictures), `workerIdleSeconds`, and
-`lastTest`. `POST /api/admin/app-ai/test` `{kind: "picture" | "chat"}` queues the administrator's own
-test (202, `{data: {jobId}}`; 20 an hour, one at a time, with the confirmation every administrator's
-change needs), and `GET /api/admin/app-ai/test/{job}` follows it: `queued` (with `waiting: "worker"`
-when nothing runs the worker, `"computer"` while the computer is offline), `running`, `done` with the
-picture or the reply, or `failed` with the code and what the AI said. The test is a job like an app's,
-sent by the same worker to the same place, but it is no app's (`app_ai_jobs.app_id` is null): it is
-never delivered, counts against no allowance, and runs whether or not apps are allowed or paused.
+switch), `kinds` the site's AI takes now, `worker`, `ready` (apps can make pictures: everything is
+set and a worker runs to send their requests), and `lastTest`. `POST /api/admin/app-ai/test` `{kind:
+"picture" | "chat"}` queues the administrator's own test (202, `{data: {jobId}}`; 20 an hour, one at a
+time, with the confirmation every administrator's change needs), and `GET /api/admin/app-ai/test/{job}`
+follows it: `queued` (with `waiting: "computer"` while the computer is offline), `running`, `done`
+with the picture or the reply, or `failed`. The test is a job like an app's, sent by the same worker
+to the same place, but it is no app's (`app_ai_jobs.app_id` is null): it is never delivered, counts
+against no allowance, and runs whether or not apps are allowed or paused.
+
+- **The worker, on the card.** `setup.worker` is `{state, idleSeconds, mode, message}`. `missing`: no
+  worker has made a pass for two minutes ("The AI worker isn't running. Start it: …"). `stale`: one
+  runs, but its heartbeat says it loaded other code than is on the server now ("The AI worker was
+  started before the last update. Restart it."). The card says it above the steps, `ready` is false,
+  and the test is not queued: `POST …/test` answers 409 `worker_missing` or `worker_stale` with the
+  same sentence. A test already waiting when the worker stops reads `waiting: "worker"` with
+  `workerMessage`.
+- **A failed test is told in the administrator's own words**, never an app's: `code`, `message` and
+  `advice`. What can change while a test waits has a code and a sentence of its own:
+  `site_ai_unavailable` (the site's AI was switched off or changed), `site_ai_gone` (the computer was
+  unlinked or re-keyed), `model_unset` (the picture model was cleared), `no_pictures`, `expired`.
+  `worker_outdated` is a test taken by a worker running older code, which ended it as an app's job
+  with no app: restart the worker. What the AI itself refused (`model_disabled`, `model_unknown`,
+  `engine_failed`, `timeout`, `busy`) is told as it said it, with what to try in `advice`.
 
 **The worker** (`bin/app-ai-worker.php`, AppAiWorker) sends the jobs and delivers the results. Run it
 every minute from cron (each run works for about 55 seconds and finishes what it started), or under a
@@ -372,6 +387,18 @@ supervisor with `--watch`:
 ```
 * * * * * cd /path/to/formlogic/backend && php bin/app-ai-worker.php >> logs/app-ai-worker.log 2>&1
 ```
+
+- **It never outlives an update.** A worker keeps the code it started with, and one left running
+  through an update fails what the new code asks of it. So before every pass it reads the code's
+  fingerprint on disk again (CodeFingerprint: the size and time of every PHP file under `src/`,
+  `config/` and `bin/`, and Composer's list; it differs after any update of the server's code, with
+  or without a schema change). When it differs the worker takes nothing new, finishes what it has in
+  hand, logs `FormLogic was updated; stopping so a fresh worker starts` and exits with status 75. A
+  cron run is fresh every minute. `--watch` belongs under a supervisor that starts it again whenever
+  it exits (systemd `Restart=always`, supervisord `autorestart=true`); see [DEPLOYMENT.md, "Every
+  scheduled job"](../DEPLOYMENT.md#every-scheduled-job). Its heartbeat
+  (`storage/app-ai/results/.alive`) holds the fingerprint it loaded and whether it is `watch` or
+  `cron`, which is how the administrator's card tells a stale worker from a missing one.
 
 - **Where a job goes.** The app's choice when the job is sent: the site's OAIY computer (Admin →
   Platform → Plans & AI → Serve it from your OAIY), the owner's own (**Use my OAIY**), or the `.env` upstream
@@ -586,8 +613,10 @@ Five things for the site's owner, before the public uses an app's AI or pays thr
    `CUSTOMER.DISPUTE.RESOLVED`. Without them a refund, reversal or dispute in PayPal never reaches the
    wallet, and a top-up whose capture answer was lost is never credited.
 5. **The worker.** App AI's jobs wait until `bin/app-ai-worker.php` runs: from cron every minute, or
-   with `--watch` under a supervisor ([the worker](#app-ai-where-it-runs-and-what-the-app-is-delivered)).
-   Admin → Platform → AI for apps warns when jobs are waiting and no worker has run lately.
+   with `--watch` under a supervisor that restarts it whenever it exits: it stops by itself when
+   FormLogic is updated ([the worker](#app-ai-where-it-runs-and-what-the-app-is-delivered)). Admin →
+   Platform → AI for apps says when no worker runs, or when the one running was started before the
+   last update.
 
 **A known limit, and the SoftN change that would lift it.** Whether a paid charge's second run was
 rolled back by the runtime is read from the runner's error channel: its own `softn: handler <name>:`

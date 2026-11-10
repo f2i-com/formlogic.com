@@ -132,9 +132,23 @@ Each line shows how things stand now and has one action, which takes effect at o
 5. **Make a test picture.** A real small picture (or **Test chat**), sent where apps' requests go and
    run by the same worker, shown with the time it took, or with why it failed and what to try. It
    belongs to no app, counts against nobody's allowance, and works before apps are allowed, so you can
-   test first. While it waits it says what for: its turn, the computer coming online, or the worker
-   (`bin/app-ai-worker.php`) not running on this server. The line stays ticked while the last test
-   worked with the model and the computer chosen now.
+   test first. While it waits it says what for: its turn, or the computer coming online. A failure is
+   told in your own words, never an app's: what changed while the test waited, or what the AI said
+   and what to try. The line stays ticked while the last test worked with the model and the computer
+   chosen now.
+
+**The worker.** Every request, and the test, is sent by `bin/app-ai-worker.php`. Above the steps the
+card says when it is not right, and the summary does not read "Ready" until it is:
+
+- "The AI worker isn't running. Start it: …": none has made a pass for two minutes. Run it every
+  minute from cron, or with `--watch` under a supervisor.
+- "The AI worker was started before the last update. Restart it.": one is running the code from
+  before, and would fail what the new code asks of it. A worker stops by itself when FormLogic is
+  updated under it, so this shows only for one started before that guard existed, or for a moment
+  while a supervisor restarts it.
+
+Either way **Make a test picture** says the same, and is not tried until a fresh worker runs; the card
+looks again by itself. See [DEPLOYMENT.md, "Every scheduled job"](../DEPLOYMENT.md#every-scheduled-job).
 
 When no computer is chosen and your server settings name an AI provider (`AI_API_KEY`, or `AI_BASE_URL`),
 the checklist says so and adapts. Step 2 is **Turn on Site AI**, the same switch as "Offer
@@ -165,7 +179,8 @@ still apply to it.
 The settings are kept in `backend/storage/app-ai.json` (include it in backups); a missing or broken file
 means apps may not use the site's AI. Requests are sent and delivered by `bin/app-ai-worker.php`, which
 must run every minute from cron or under a supervisor with `--watch`; without it, apps' requests wait and
-then run out. Your OAIY computer draws one picture at a time, and a member's chat is never held up by a
+then run out. It exits when FormLogic is updated under it (status 75), for cron's next run or its
+supervisor to start a fresh one. Your OAIY computer draws one picture at a time, and a member's chat is never held up by a
 picture, though the computer's one GPU is: a chat that reaches it while a picture is drawn waits for the
 picture, and its model may take half a minute to load again. See [App AI: where it runs, and what the
 app is delivered](HOSTED_APPS.md#app-ai-where-it-runs-and-what-the-app-is-delivered).

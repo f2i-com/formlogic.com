@@ -232,6 +232,30 @@ after one started from the admin panel they wait for the next night.
 0 4 * * 1      php /path/to/backend/bin/reconcile.php >> /path/to/backend/logs/formlogic-reconcile.log 2>&1
 ```
 
+**The App AI worker after an update.** A PHP process keeps the code it started with, so a worker
+that outlived an update would run what was there before: it fails requests the new code makes, such
+as the administrator's test picture. The worker guards against that itself. Before every pass, about
+once a second, it reads the code on disk again (the size and time of every PHP file under `src/`,
+`config/` and `bin/`, and Composer's list of what is installed; no schema change is needed for it to
+differ). When FormLogic was updated it takes no new work, finishes what it has in hand, writes one
+line (`FormLogic was updated; stopping so a fresh worker starts`) and exits with status **75**. A
+worker that starts while an update is still being written waits for the files to stop changing.
+
+- **From cron** (the line above) nothing more is needed: every minute's run is fresh.
+- **With `--watch`** it must run under a supervisor that starts it again whenever it exits, whatever
+  the status: systemd with `Restart=always`, supervisord with `autorestart=true`, or at the least a
+  shell loop (`while true; do php bin/app-ai-worker.php --watch; sleep 1; done`). Started by hand and
+  left, it stops at the first update and nothing takes its place. Status 1 means a pass failed (the
+  database went away, say); it is restarted the same way.
+- **Where each release has a folder of its own** and a link is switched between them, the old
+  worker's folder never changes, so it cannot notice: restart the worker as a step of the deploy.
+  The card below says so if that step is missed.
+
+Admin → Platform → AI for apps says so above its checklist when no worker has run for two minutes
+("The AI worker isn't running. Start it: …") or when the one running was started before the last
+update and did not stop, as a worker from before this guard would not ("The AI worker was started
+before the last update. Restart it."). The test picture says the same instead of waiting.
+
 The jobs that must not overlap hold a lock in `storage/locks`, or in the system's temp folder under
 a name this install alone uses if the user running cron can't write there. They exit non-zero if
 neither works. Run them as the web server's user, so that every run of a job shares one lock. It can

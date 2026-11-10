@@ -17,8 +17,25 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
 //
 // --budget=<seconds> changes how long one run takes new work (default 55). One worker runs at a time:
 // a run that finds another working exits at once.
+//
+// A worker keeps the code it started with, so it never outlives an update: before every pass it reads
+// the code on disk again, and when FormLogic was updated it finishes what it has in hand, says so, and
+// exits with status 75 (AppAiWorkerLoop). A cron run is fresh every minute. --watch belongs under a
+// supervisor that starts it again whenever it exits (systemd Restart=always, supervisord
+// autorestart=true): started by hand, it stops at the first update and nothing takes its place, and
+// Admin → Platform → AI for apps says the worker is not running.
 if (PHP_SAPI !== 'cli') exit;
 require __DIR__ . '/../vendor/autoload.php';
+// The code as this process loads it. An update writes its files over a moment, and a supervisor
+// starts this again at once: wait until the code has stopped changing, so one version of it is
+// loaded and not half of each.
+$loaded = \FormLogic\Support\CodeFingerprint::onDisk();
+for ($look = 0; $look < 20; $look++) {
+    usleep(500000);
+    $again = \FormLogic\Support\CodeFingerprint::onDisk();
+    if ($again === $loaded) break;
+    $loaded = $again;
+}
 date_default_timezone_set('UTC');
 \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
 $config = require __DIR__ . '/../config/settings.php';
@@ -33,7 +50,7 @@ foreach ($argv as $argument) {
 $lock = \FormLogic\Support\CronLock::take('app-ai-worker');
 if ($lock === null) exit(0);
 
-$failed = false;
+$status = \FormLogic\Services\AppAiWorkerLoop::FAILED;
 try {
     $mysql = new \FormLogic\Database\MySQLConnection($config['settings']['mysql']);
     // The App AI tables exist even if this runs before the web app first booted (under its migration lock).
@@ -43,25 +60,25 @@ try {
         fwrite(STDERR, date('c') . ' schema check failed: ' . $e->getMessage() . "\n");
     }
     $worker = \FormLogic\Services\AppAiWorker::standalone($mysql);
-    $deadline = microtime(true) + $budget;
-    do {
-        $started = microtime(true);
-        try {
-            $done = $worker->tick($watch || microtime(true) < $deadline);
-            $busy = array_filter($done);
-            if ($busy !== []) fwrite(STDOUT, date('c') . ' ' . json_encode($busy) . "\n");
-        } catch (\Throwable $error) {
-            $failed = true;
-            fwrite(STDERR, date('c') . ' App AI worker pass failed: ' . get_class($error) . ': ' . $error->getMessage() . "\n");
-            if ($watch) exit(1); // the supervisor restarts it with a fresh connection
-        }
-        // About a pass a second; a pass with work in flight on the .env upstream waits on it instead.
-        $spent = microtime(true) - $started;
-        if ($spent < 1.0) usleep((int) ((1.0 - $spent) * 1000000));
-        // Past the budget, a run takes no new work but finishes what it sent to the .env upstream.
-    } while ($watch || microtime(true) < $deadline || $worker->busy());
+    // Its heartbeat says which code it runs, for the administrator's card to tell a stale worker.
+    $worker->identify($loaded, $watch ? 'watch' : 'cron');
+    $loop = new \FormLogic\Services\AppAiWorkerLoop(
+        static fn(bool $takeNew): array => $worker->tick($takeNew),
+        static fn(): bool => $worker->busy(),
+        static fn(): string => \FormLogic\Support\CodeFingerprint::onDisk(),
+        $loaded,
+        static function (string $line): void {
+            fwrite(STDOUT, date('c') . ' ' . $line . "\n");
+        },
+        static function (string $line): void {
+            fwrite(STDERR, date('c') . ' ' . $line . "\n");
+        },
+    );
+    // 0: done. 1: a pass failed (--watch ends at once, for its supervisor to start it with a fresh
+    // connection). 75: FormLogic was updated; a fresh worker has to take over.
+    $status = $loop->run($watch, $budget);
 } finally {
     flock($lock, LOCK_UN);
     fclose($lock);
 }
-exit($failed ? 1 : 0);
+exit($status);

@@ -86,8 +86,27 @@ export interface AppAiTestResult {
   message?: string | null;
   /** While it waits or runs: for how long. */
   waitedSeconds?: number;
-  /** The administrator's test, while it waits: for the worker (nothing runs it), or for the computer (it is offline). */
+  /** The administrator's test, while it waits: for the worker (none runs, or it has to be restarted), or for the computer (it is offline). */
   waiting?: 'worker' | 'computer';
+  /** With `waiting: 'worker'`: what to do about the worker. */
+  workerMessage?: string | null;
+  /**
+   * The administrator's failed test: what to try, after `message` ('' when the message says it all).
+   * Their test is no app's, so the server words all of it; an app's test has none, and the page
+   * adds its own hint by `code`.
+   */
+  advice?: string;
+}
+
+/** Whether the App AI worker runs on the server, and runs the code that is there now. */
+export interface AppAiWorkerState {
+  /** ok; stale: started before the last update, it has to be restarted; missing: none runs. */
+  state: 'ok' | 'stale' | 'missing';
+  /** Seconds since its last pass; null when it never ran. */
+  idleSeconds: number | null;
+  mode: 'watch' | 'cron' | null;
+  /** What to do when it is not ok. */
+  message: string | null;
 }
 
 /** The administrator's "AI for apps". */
@@ -126,10 +145,12 @@ export interface AppAiSetup {
   /** What the site's AI takes now: picture, chat. */
   kinds: string[];
   reason: string | null;
-  /** Apps can make pictures now. */
+  /** Apps can make pictures now: everything is set, and a worker runs to send their requests. */
   ready: boolean;
   /** Seconds since the worker last ran on this server; null when it never has. */
   workerIdleSeconds: number | null;
+  /** The worker that sends every request (a server from before it said so gives only `workerIdleSeconds`). */
+  worker?: AppAiWorkerState;
   /**
    * The last test picture that finished (UTC `at`), or null. `current`: it ran where the site's AI
    * runs now, with the picture model chosen now.

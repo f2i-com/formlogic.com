@@ -644,6 +644,80 @@ JS;
         self::$pdo->prepare('DELETE FROM app_ai_jobs WHERE app_id IS NULL AND requester_id = ?')->execute([$this->adminId]);
     }
 
+    /**
+     * A test that cannot be sent when its turn comes was let start, so something changed while it
+     * waited: the administrator is told which, in their own words. It is no app's, and is never told
+     * that "AI is turned off for this app".
+     */
+    public function testAnAdministratorsTestThatCannotBeSentSaysWhatChangedWhileItWaited(): void
+    {
+        $this->boot();
+        $told = function (string $id): array {
+            $result = $this->ai->testResult(AppAiService::SITE_TEST, $id, $this->results);
+            $this->assertSame('failed', $result['status']);
+            $this->assertStringNotContainsStringIgnoringCase('this app', $result['message']);
+            return [$this->job($id)['code'], $result['code'], $result['message'], $result['advice']];
+        };
+
+        // The picture model was cleared.
+        $picture = $this->ai->queueSiteTest($this->adminId, 'picture');
+        $this->site->save(['allowApps' => true, 'pictureModel' => null]);
+        $this->assertSame(0, $this->worker()->tick()['sent']);
+        $this->assertSame(['model_unset', 'model_unset', 'The picture model was cleared while the test waited. Choose one, then test.', ''], $told($picture));
+        $this->site->save(['allowApps' => true, 'pictureModel' => 'flux-3-image-klein']);
+
+        // The computer got a new key (OAIY reinstalled): nothing takes its place.
+        $chosen = $this->computers->current();
+        $chat = $this->ai->queueSiteTest($this->adminId, 'chat');
+        self::$pdo->prepare('UPDATE desktop_connections SET e2e_public_key = ? WHERE id = ?')->execute([base64_encode(random_bytes(32)), $chosen['connectionId']]);
+        $this->worker()->tick();
+        $this->assertSame(['site_ai_gone', 'site_ai_gone', 'The computer the site\'s AI runs on was unlinked, or got a new key, while the test waited. Choose a computer again, then test.', ''], $told($chat));
+        // The checklist remembers the last test picture, in the same words.
+        $last = $this->ai->adminSetup()['lastTest'];
+        $this->assertSame(['failed', 'model_unset', 'The picture model was cleared while the test waited. Choose one, then test.'], [$last['status'], $last['code'], $last['message']]);
+
+        // The computer was forgotten, and this server has no provider of its own to ask instead.
+        self::$pdo->prepare('UPDATE desktop_connections SET e2e_public_key = ? WHERE id = ?')->execute([$chosen['publicKey'], $chosen['connectionId']]);
+        $again = $this->ai->queueSiteTest($this->adminId, 'picture');
+        $this->computers->clear();
+        $this->worker(null, new AppAiUpstream(null))->tick();
+        $this->assertSame(['site_ai_unavailable', 'site_ai_unavailable', 'The site\'s AI was switched off or changed while the test waited. Set it up again, then test.', ''], $told($again));
+        $last = $this->ai->adminSetup()['lastTest'];
+        $this->assertSame(['failed', 'site_ai_unavailable', false], [$last['status'], $last['code'], $last['current']]);
+
+        // An app's job in the same place keeps the app's own words and the code apps are told.
+        $app = $this->app();
+        $id = $this->queue($app['id'], 'picture');
+        $this->worker(null, new AppAiUpstream(null))->tick();
+        $this->assertSame(['failed', 'ai_unavailable', 'The site\'s AI is not set up.'], [$this->job($id)['status'], $this->job($id)['code'], $this->job($id)['message']]);
+        self::$pdo->prepare('DELETE FROM app_ai_jobs WHERE app_id IS NULL AND requester_id = ?')->execute([$this->adminId]);
+    }
+
+    /** The heartbeat says which code the worker runs and how, for the web to tell a stale worker. */
+    public function testTheHeartbeatSaysWhichCodeTheWorkerRuns(): void
+    {
+        $this->boot();
+        $this->assertSame('missing', AppAiWorker::state($this->results, 'code-1')['state'], 'no worker has run here');
+        $worker = $this->worker();
+        $worker->identify('code-1', 'watch');
+        $worker->tick();
+        $beat = AppAiWorker::heartbeat($this->results);
+        $this->assertSame(['code-1', 'watch'], [$beat['fingerprint'], $beat['mode']]);
+        $this->assertLessThan(5, $beat['idleSeconds']);
+        $this->assertSame('ok', AppAiWorker::state($this->results, 'code-1')['state']);
+        $this->assertSame('stale', AppAiWorker::state($this->results, 'code-2')['state'], 'FormLogic was updated under it');
+        // It goes on beating without saying it again; a fresh worker says its own.
+        for ($pass = 0; $pass < 12; $pass++) $worker->tick();
+        $this->assertSame('code-1', AppAiWorker::heartbeat($this->results)['fingerprint']);
+        $fresh = $this->worker();
+        $fresh->identify('code-2', 'cron');
+        $fresh->tick();
+        $this->assertSame(['code-2', 'cron'], [AppAiWorker::heartbeat($this->results)['fingerprint'], AppAiWorker::heartbeat($this->results)['mode']]);
+        // A worker that says nothing of itself (as one from before this) reads as stale.
+        $this->worker()->tick();
+        $this->assertSame([null, 'stale'], [AppAiWorker::heartbeat($this->results)['fingerprint'], AppAiWorker::state($this->results, 'code-2')['state']]);
+    }
+
     /** The same test where the site's AI is the provider in the server's settings. */
     public function testTheAdministratorsSiteTestRunsOnTheServersOwnProvider(): void
     {
