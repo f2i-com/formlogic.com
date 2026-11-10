@@ -175,7 +175,8 @@ function createJob(req) {
   softn.sql.execute("INSERT INTO ai_jobs(id, kind, prompt, size, seed, reference, messages, max_output) VALUES(?,?,?,?,?,?,?,?)",
     [id, body.kind || "picture", body.prompt || null, body.size || null, body.seed === undefined ? null : body.seed, body.reference || null, body.messages ? JSON.stringify(body.messages) : null,
      body.maxOutput === undefined ? null : body.maxOutput]);
-  return { status: 201, body: { id: id, requester: asking.requester || null } };
+  var from = req.context && req.context.formlogic ? req.context.formlogic.addressKey : null;
+  return { status: 201, body: { id: id, requester: asking.requester || null, addressKey: from || null } };
 }
 function deliver(req) {
   var b = req.body || {};
@@ -185,9 +186,10 @@ function deliver(req) {
   softn.sql.execute("INSERT INTO tries(job_id, idem) VALUES(?,?)", [String(b.jobId || ""), String((req.headers || {})["idempotency-key"] || "")]);
   var refuse = softn.sql.first("SELECT value FROM settings WHERE name = 'refuse'", []);
   if (refuse && Number(refuse.value) > Number(tries.n)) return { status: 503, body: { error: "busy" } };
-  softn.sql.execute("INSERT INTO deliveries(job_id, status, picture, mime, width, height, seed, model, text, code, message, is_delivery, requester) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+  softn.sql.execute("INSERT INTO deliveries(job_id, status, picture, mime, width, height, seed, model, text, code, message, is_delivery, requester, address_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     [String(b.jobId), String(b.status), b.picture || null, b.mimeType || null, b.width || null, b.height || null,
-     b.seed === undefined || b.seed === null ? null : String(b.seed), b.model || null, b.text || null, b.code || null, b.message || null, ai.delivery === true ? 1 : 0, ai.requester || null]);
+     b.seed === undefined || b.seed === null ? null : String(b.seed), b.model || null, b.text || null, b.code || null, b.message || null, ai.delivery === true ? 1 : 0, ai.requester || null,
+     formlogic.addressKey || null]);
   // A deliver route that asks for more: `follow` new picture jobs each time it is handed a result.
   var follow = softn.sql.first("SELECT value FROM settings WHERE name = 'follow'", []);
   var wanted = follow ? Number(follow.value) : 0;
@@ -222,7 +224,7 @@ JS;
             'ui/main.ui' => '<Stack><Text>Logos</Text></Stack>',
             'server/main.logic' => self::SERVER,
             'server/migrations/001.sql' => "CREATE TABLE ai_jobs(id TEXT PRIMARY KEY, kind TEXT NOT NULL, prompt TEXT, size TEXT, seed INTEGER, reference TEXT, messages TEXT, max_output INTEGER);\n"
-                . "CREATE TABLE deliveries(job_id TEXT, status TEXT, picture TEXT, mime TEXT, width INTEGER, height INTEGER, seed TEXT, model TEXT, text TEXT, code TEXT, message TEXT, is_delivery INTEGER, requester TEXT);\n"
+                . "CREATE TABLE deliveries(job_id TEXT, status TEXT, picture TEXT, mime TEXT, width INTEGER, height INTEGER, seed TEXT, model TEXT, text TEXT, code TEXT, message TEXT, is_delivery INTEGER, requester TEXT, address_key TEXT);\n"
                 . "CREATE TABLE tries(job_id TEXT, idem TEXT);\n"
                 . "CREATE TABLE settings(name TEXT PRIMARY KEY, value TEXT);",
         ]];
@@ -368,6 +370,10 @@ JS;
             [$delivered[0]['job_id'], $delivered[0]['status'], $delivered[0]['mime'], (int) $delivered[0]['width'], (int) $delivered[0]['height'], $delivered[0]['seed'], $delivered[0]['model'], (int) $delivered[0]['is_delivery']]);
         $this->assertSame('v-' . $this->job($id)['requester_id'], $delivered[0]['requester'], 'the delivery names who asked, as their own request did (contract §0.13)');
         $this->assertSame($answer['result']['body']['requester'] ?? null, $delivered[0]['requester']);
+        // The visitor's own request says which address it came from, as a key. FormLogic's call to
+        // the deliver route comes from no visitor, and says none.
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/D', (string) ($answer['result']['body']['addressKey'] ?? ''));
+        $this->assertNull($delivered[0]['address_key'], 'no addressKey on FormLogic\'s own calls to /api/site/');
         $bytes = (string) base64_decode(substr((string) $delivered[0]['picture'], strlen('data:image/jpeg;base64,')), true);
         $this->assertTrue(AppAiPictures::isBaselineJpeg($bytes), 'redrawn, never progressive');
         $this->assertSame(['fl-ai-' . $id], array_column($this->appRows($app['id'], 'SELECT idem FROM tries'), 'idem'));

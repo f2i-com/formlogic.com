@@ -15,6 +15,12 @@ export interface WalletSheetData {
   packages: number[];
   items: Record<string, number>;
   paypalClientId: string | null;
+  /**
+   * Development only: a stand-in answers in PayPal's place on this site (PAYPAL_BASE_URL with
+   * APP_ENV=development). The sheet then shows its own button, which approves the order at the
+   * stand-in, and never loads PayPal's script. No money moves. Absent or false everywhere else.
+   */
+  paypalStandIn?: boolean;
   ledger: WalletLedgerLine[];
   email: { saved: boolean; possible: boolean };
 }

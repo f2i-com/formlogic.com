@@ -54,6 +54,33 @@ class IpResolverTest extends TestCase
         $this->assertSame('10.0.0.2', $this->ip($resolver, ['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6']));
     }
 
+    /**
+     * For a caller that must tell "no address" from an address (an app's `addressKey`): the address
+     * limits count, but only where the request named a peer and the answer is an IP address.
+     */
+    public function testAnAddressIsKnownOnlyWhereThereIsOne(): void
+    {
+        $known = static fn(IpResolver $resolver, array $server): ?string
+            => $resolver->knownClientIp((new ServerRequestFactory())->createServerRequest('POST', 'http://formlogic.local/api/app/logos/native/request', $server));
+        $this->assertSame('198.51.100.9', $known(new IpResolver(), ['REMOTE_ADDR' => '198.51.100.9']));
+        $this->assertSame('127.0.0.1', $known(new IpResolver(), ['REMOTE_ADDR' => '127.0.0.1']), 'a real peer on this machine is an address');
+        $this->assertSame('2001:db8::7', $known(new IpResolver(), ['REMOTE_ADDR' => '[2001:db8::7]:4431']));
+        // The same address getClientIp gives, forwarding headers read from a trusted proxy alone.
+        $this->assertSame('198.51.100.9', $known(new IpResolver(), ['REMOTE_ADDR' => '198.51.100.9', 'HTTP_X_FORWARDED_FOR' => '203.0.113.1', 'HTTP_X_REAL_IP' => '203.0.113.2', 'HTTP_CLIENT_IP' => '203.0.113.3']));
+        $this->assertSame('198.51.100.7', $known(new IpResolver(['10.0.0.0/8']), ['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => '6.6.6.6, 198.51.100.7, 10.0.0.5']));
+        $this->assertSame('10.0.0.2', $known(new IpResolver(['10.0.0.0/8']), ['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => 'not an address']), 'a proxy that names no client is itself the peer');
+
+        // No peer named: getClientIp answers 127.0.0.1 so a limit has something to count. That is not an address anyone came from.
+        $this->assertSame('127.0.0.1', $this->ip(new IpResolver(), []));
+        $this->assertNull($known(new IpResolver(), []));
+        $this->assertNull($known(new IpResolver(), ['HTTP_X_FORWARDED_FOR' => '203.0.113.1']), 'and a header does not make one');
+        $this->assertNull($known(new IpResolver(['127.0.0.0/8']), ['HTTP_X_FORWARDED_FOR' => '203.0.113.1']), 'even where this machine is a trusted proxy: nobody is known to have forwarded it');
+        // A peer that is not an address.
+        foreach (['', '   ', 'unix:', 'unknown', 'localhost'] as $peer) {
+            $this->assertNull($known(new IpResolver(), ['REMOTE_ADDR' => $peer]), "'{$peer}'");
+        }
+    }
+
     public function testTheHeaderIsReadFromTheEnvironment(): void
     {
         $previous = [getenv('TRUSTED_PROXIES'), getenv('TRUSTED_PROXY_HEADER')];

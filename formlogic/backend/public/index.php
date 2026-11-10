@@ -3630,7 +3630,10 @@ $app->get('/api/app/{slug}/wallet', function ($request, $response) use ($contain
 $app->post('/api/app/{slug}/wallet/{operation:orders|email|confirm}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->wallet($request, $response, $getArgs($request));
 })->add($appAccessGate)->add($walletLimiter)->add($authOptional);
-$app->post('/api/app/{slug}/wallet/{operation:orders}/{orderId:[A-Za-z0-9-]{1,64}}', function ($request, $response) use ($container, $getArgs) {
+// `orders/{orderId}` captures a top-up PayPal approved. `stand-in/{orderId}` approves one at the
+// stand-in for PayPal, for a person paying on a development site (AppWalletService::approveStandIn):
+// answered 404 unless PAYPAL_BASE_URL names a stand-in and APP_ENV is exactly `development`.
+$app->post('/api/app/{slug}/wallet/{operation:orders|stand-in}/{orderId:[A-Za-z0-9-]{1,64}}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->wallet($request, $response, $getArgs($request));
 })->add($appAccessGate)->add($walletLimiter)->add($authOptional);
 

@@ -220,13 +220,26 @@ JS;
         return ['http' => $response->getStatusCode(), 'status' => $data['result']['status'] ?? null, 'body' => $data['result']['body'] ?? $data];
     }
 
-    /** The visitor's wallet sheet operations, as FormLogic's own page sends them. */
-    private function wallet(array $app, string $method, array $args = [], array $body = [], array $cookie = []): array
+    /** The visitor's wallet sheet operations, as FormLogic's own page sends them; $site: another site's controller than this test's own. */
+    private function wallet(array $app, string $method, array $args = [], array $body = [], array $cookie = [], ?NativeAppController $site = null): array
     {
         $request = (new ServerRequestFactory())->createServerRequest($method, self::ORIGIN . '/api/app/' . $app['slug'] . '/wallet', ['REMOTE_ADDR' => self::IP])
             ->withHeader(AppVisitors::HEADER, '1')->withHeader('Origin', self::ORIGIN)->withCookieParams($cookie)->withParsedBody($body);
-        $response = $this->controller->wallet($request, new Response(), ['slug' => $app['slug']] + $args);
+        $response = ($site ?? $this->controller)->wallet($request, new Response(), ['slug' => $app['slug']] + $args);
         return ['http' => $response->getStatusCode(), 'body' => json_decode((string) $response->getBody(), true)];
+    }
+
+    /**
+     * The controller of a site set up as the environment says, its PayPal made as public/index.php
+     * makes the site's own (`new PayPalService()`: every setting from the environment, none from the
+     * code), over this test's database and apps.
+     */
+    private function siteFromEnvironment(): NativeAppController
+    {
+        $wallets = new AppWalletService(self::$mysql, $this->site, new PayPalService(), $this->platform, $this->visitors);
+        $flows = new FlowService(self::$mysql);
+        return new NativeAppController(self::$apps, $this->createMock(AppUserService::class), $this->native, $this->createMock(PlanService::class), $flows, $this->createMock(RuntimeEngineService::class),
+            null, null, null, null, new NativeRecordEventRouter($flows, null), $this->visitors, null, $wallets, new NativeAppCharges($wallets));
     }
 
     private function visitorOf(array $cookie, string $appId): array
@@ -549,11 +562,13 @@ JS;
                 $_ENV['APP_ENV'] = $env;
                 $paypal = new PayPalService(['clientId' => 'a', 'secret' => 'b', 'webhookId' => 'w']);
                 $this->assertSame([true, 'https://api-m.sandbox.paypal.com'], [$paypal->standInRefused(), $base($paypal)], "APP_ENV={$env}");
+                $this->assertFalse($paypal->standIn(), "APP_ENV={$env}: no stand-in, so no stand-in button and nothing to approve an order with");
                 $this->assertSame('paypal_unconfigured', $wallets($paypal)->availability($app)['reason'], "APP_ENV={$env}: payments are unavailable, never sent to the stand-in");
             }
             $_ENV['APP_ENV'] = 'development';
             $paypal = new PayPalService(['clientId' => 'a', 'secret' => 'b', 'webhookId' => 'w']);
             $this->assertSame([false, self::$paypal->base], [$paypal->standInRefused(), $base($paypal)]);
+            $this->assertTrue($paypal->standIn(), 'exactly development: the stand-in is used, and a person can pay through it');
             $this->assertTrue($wallets($paypal)->availability($app)['available']);
             $this->assertSame('paypal_unconfigured', $wallets(new PayPalService(['clientId' => 'a', 'secret' => 'b', 'webhookId' => '']))->availability($app)['reason'], 'no webhook: refunds and disputes would never reach a wallet');
         } finally {
@@ -677,6 +692,183 @@ JS;
         $this->assertSame(200, $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 200], $cookie)['http'], 'the fifth this hour');
         $this->assertSame(429, $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 200], $cookie)['http'], 'five top-ups an hour');
         $this->assertSame(700, (int) $this->wallets->wallet($app['id'], $this->visitorOf($cookie, $app['id']), false)['balance_cents']);
+    }
+
+    /**
+     * A person can pay on a development site, in a real browser: where a stand-in answers for PayPal
+     * the sheet says so, and FormLogic approves the person's own order at the stand-in, which is what
+     * they would do in PayPal's own window (PayPal's script knows nothing of a stand-in's orders).
+     * Where PayPal is PayPal there is no such thing.
+     */
+    public function testOnADevelopmentSiteAPersonPaysThroughTheStandIn(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $cookie = [];
+        $this->call($app, '/api/whoami', [], $cookie, 'GET');
+        $sheet = $this->wallet($app, 'GET', [], [], $cookie)['body']['data'];
+        $this->assertSame([true, true, 'stub-client'], [$sheet['available'], $sheet['paypalStandIn'], $sheet['paypalClientId']]);
+
+        // The three steps the sheet's button takes: start, approve at the stand-in, capture.
+        $order = $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 200], $cookie)['body']['data']['orderId'];
+        $this->assertSame('CREATED', self::$paypal->orders()[$order]['status']);
+        $this->assertSame(502, $this->wallet($app, 'POST', ['operation' => 'orders', 'orderId' => $order], [], $cookie)['http'], 'an order nobody approved is not captured');
+        $approved = $this->wallet($app, 'POST', ['operation' => 'stand-in', 'orderId' => $order], [], $cookie);
+        $this->assertSame([200, ['approved' => true]], [$approved['http'], $approved['body']['data'] ?? null], json_encode($approved));
+        $this->assertSame(['APPROVED', 'completed'], [self::$paypal->orders()[$order]['status'], self::$paypal->orders()[$order]['outcome']]);
+        $captured = $this->wallet($app, 'POST', ['operation' => 'orders', 'orderId' => $order], [], $cookie)['body']['data'];
+        $this->assertSame(['completed', 200], [$captured['status'], $captured['balanceCents']]);
+        $this->assertSame([['kind' => 'topup', 'amount_cents' => 200]], array_map(static fn(array $line) => ['kind' => $line['kind'], 'amount_cents' => (int) $line['amount_cents']], $this->ledger($app)), 'credited once, as any top-up is');
+        // And it buys what a real top-up buys.
+        $this->assertSame([200, 195], [($bought = $this->call($app, '/api/download', ['design' => 'd1'], $cookie))['status'], $bought['body']['balanceCents'] ?? null]);
+
+        // Only a top-up of one's own that still waits: not one already paid, another browser's, or none.
+        $this->assertSame(404, $this->wallet($app, 'POST', ['operation' => 'stand-in', 'orderId' => $order], [], $cookie)['http']);
+        $mine = $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 500], $cookie)['body']['data']['orderId'];
+        $other = [];
+        $this->call($app, '/api/whoami', [], $other, 'GET');
+        $this->assertSame(404, $this->wallet($app, 'POST', ['operation' => 'stand-in', 'orderId' => $mine], [], $other)['http'], 'another browser\'s order');
+        $this->assertSame(404, $this->wallet($app, 'POST', ['operation' => 'stand-in', 'orderId' => 'STUBORDER999999'], [], $cookie)['http']);
+        $this->assertSame('CREATED', self::$paypal->orders()[$mine]['status']);
+
+        // Where PayPal is PayPal (no stand-in named, whatever the environment says of one): the sheet
+        // shows PayPal's own buttons, and nothing approves an order but its buyer.
+        $before = $_ENV['PAYPAL_BASE_URL'] ?? null;
+        unset($_ENV['PAYPAL_BASE_URL']);
+        try {
+            $paypal = new PayPalService(['clientId' => 'a', 'secret' => 'b', 'webhookId' => 'w']);
+            $this->assertFalse($paypal->standIn());
+            $real = new AppWalletService(self::$mysql, $this->site, $paypal, $this->platform, $this->visitors);
+            $holder = $this->visitorOf($cookie, $app['id']);
+            $this->assertSame([true, false], [$real->sheet($app, self::DECLARED, $holder)['available'], $real->sheet($app, self::DECLARED, $holder)['paypalStandIn']]);
+            try {
+                $real->approveStandIn($app, $holder, $mine);
+                $this->fail('approved without its buyer');
+            } catch (WalletRefusal $e) {
+                $this->assertSame(['not_found', 404], [$e->reason, $e->status]);
+            }
+            try {
+                $paypal->approveStandInOrder($mine);
+                $this->fail('PayPal itself was asked to approve');
+            } catch (\RuntimeException $e) {
+                $this->assertSame('No stand-in for PayPal is in use', $e->getMessage());
+            }
+        } finally {
+            if ($before !== null) $_ENV['PAYPAL_BASE_URL'] = $before;
+        }
+        $this->assertSame('CREATED', self::$paypal->orders()[$mine]['status']);
+
+        // Five top-ups an hour for a wallet and for an address, as everywhere. A development site,
+        // where a test suite's visitors all come from one address, may name another number; a site
+        // whose PayPal is PayPal never reads it.
+        $limit = $_ENV['APP_WALLET_TOPUPS_PER_HOUR'] ?? null;
+        try {
+            $started = fn(): int => (int) self::$pdo->query('SELECT COUNT(*) FROM app_wallet_topups WHERE app_id = ' . self::$pdo->quote($app['id']))->fetchColumn();
+            $this->assertSame(2, $started());
+            foreach ([3, 4, 5] as $n) $this->assertSame(200, $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 200], $cookie)['http'], "top-up {$n}");
+            $sixth = $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 200], $cookie);
+            $this->assertSame([429, 'too_many'], [$sixth['http'], $sixth['body']['code'] ?? null]);
+            $_ENV['APP_WALLET_TOPUPS_PER_HOUR'] = '7';
+            $this->assertSame(200, $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 200], $cookie)['http'], 'the sixth, where a stand-in answers and the site says seven');
+            $this->assertSame(200, $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 200], $cookie)['http']);
+            $this->assertSame(429, $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 200], $cookie)['http'], 'and no more than it says');
+            foreach (['0', '-3', 'many', ''] as $nonsense) {
+                $_ENV['APP_WALLET_TOPUPS_PER_HOUR'] = $nonsense;
+                $this->assertSame(429, $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 200], $cookie)['http'], "'{$nonsense}' is not a number of top-ups: five, as ever");
+            }
+            // PayPal itself: the number is not read, whatever it says.
+            $_ENV['APP_WALLET_TOPUPS_PER_HOUR'] = '1000';
+            unset($_ENV['PAYPAL_BASE_URL']);
+            $real = new AppWalletService(self::$mysql, $this->site, new PayPalService(['clientId' => 'a', 'secret' => 'b', 'webhookId' => 'w']), $this->platform, $this->visitors);
+            try {
+                $real->createTopup($app, $this->visitorOf($cookie, $app['id']), 200, 'dddddddddddddddd');
+                $this->fail('a real site took a development setting');
+            } catch (WalletRefusal $e) {
+                $this->assertSame('too_many', $e->reason);
+            }
+            $this->assertSame(7, $started());
+        } finally {
+            if ($limit === null) unset($_ENV['APP_WALLET_TOPUPS_PER_HOUR']); else $_ENV['APP_WALLET_TOPUPS_PER_HOUR'] = $limit;
+            if ($before !== null) $_ENV['PAYPAL_BASE_URL'] = $before;
+        }
+
+        // While payments are off nothing is approved either.
+        $this->site->save(['enabled' => false]);
+        $off = $this->wallet($app, 'POST', ['operation' => 'stand-in', 'orderId' => $mine], [], $cookie);
+        $this->assertSame([403, 'payments_off'], [$off['http'], $off['body']['code'] ?? null]);
+        $this->assertFalse($this->wallet($app, 'GET', [], [], $cookie)['body']['data']['paypalStandIn'], 'and the sheet offers no button');
+    }
+
+    /**
+     * The stand-in button and its route are a development site's alone. Asked through the controller,
+     * as FormLogic's page asks, of a site whose PayPal is made as the real site's is (from the
+     * environment alone): under every configuration but APP_ENV exactly `development` with a
+     * PAYPAL_BASE_URL, the sheet offers no stand-in, `…/wallet/stand-in/{orderId}` answers 404 and
+     * approves nothing, and APP_WALLET_TOPUPS_PER_HOUR is not read.
+     */
+    public function testOnlyADevelopmentSiteWithAStandInHasItsButtonAndItsRoute(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $cookie = [];
+        $this->call($app, '/api/whoami', [], $cookie, 'GET');
+        // The visitor's own top-ups at the stand-in, still waiting for their buyer: what the route
+        // would approve, and an hour's allowance of them used up.
+        $orders = [];
+        foreach (range(1, AppWalletService::TOPUPS_PER_HOUR) as $n) $orders[] = $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 200], $cookie)['body']['data']['orderId'];
+        $order = $orders[0];
+        $started = fn(): int => (int) self::$pdo->query('SELECT COUNT(*) FROM app_wallet_topups WHERE app_id = ' . self::$pdo->quote($app['id']))->fetchColumn();
+        $this->assertSame([AppWalletService::TOPUPS_PER_HOUR, 'CREATED'], [$started(), self::$paypal->orders()[$order]['status']]);
+
+        $names = ['APP_ENV', 'PAYPAL_BASE_URL', 'PAYPAL_CLIENT_ID', 'PAYPAL_SECRET', 'PAYPAL_WEBHOOK_ID', 'PAYPAL_ENV', 'APP_WALLET_TOPUPS_PER_HOUR'];
+        $before = array_map(static fn(string $name): ?string => $_ENV[$name] ?? null, array_combine($names, $names));
+        $set = static function (array $values): void {
+            foreach ($values as $name => $value) {
+                if ($value === null) unset($_ENV[$name]); else $_ENV[$name] = $value;
+            }
+        };
+        try {
+            $standIn = self::$paypal->base;
+            $set(['PAYPAL_CLIENT_ID' => 'the-site-client', 'PAYPAL_SECRET' => 'the-site-secret', 'PAYPAL_WEBHOOK_ID' => 'the-site-webhook', 'PAYPAL_ENV' => null, 'APP_WALLET_TOPUPS_PER_HOUR' => '1000']);
+            // What the site is: [APP_ENV, PAYPAL_BASE_URL, PAYPAL_ENV, whether it takes payments at all].
+            $sites = [
+                'production, PayPal itself' => ['production', null, 'live', true],
+                'production, PayPal\'s sandbox' => ['production', null, 'sandbox', true],
+                'no APP_ENV, PayPal itself' => [null, null, 'live', true],
+                'development, PayPal\'s sandbox and no stand-in' => ['development', null, null, true],
+                'development, PAYPAL_BASE_URL empty' => ['development', '', null, true],
+            ];
+            // A stand-in named anywhere but in development is refused, and payments are off until it is removed.
+            foreach ([null, '', 'production', 'prod', 'staging', 'test', 'local', 'dev', 'Development', 'DEVELOPMENT', 'development ', ' development', 'development,production'] as $env) {
+                $sites['APP_ENV ' . json_encode($env) . ', a stand-in named'] = [$env, $standIn, null, false];
+            }
+            foreach ($sites as $what => [$env, $base, $paypalEnv, $takesPayments]) {
+                $set(['APP_ENV' => $env, 'PAYPAL_BASE_URL' => $base, 'PAYPAL_ENV' => $paypalEnv]);
+                $site = $this->siteFromEnvironment();
+                $sheet = $this->wallet($app, 'GET', [], [], $cookie, $site)['body']['data'];
+                $this->assertSame([$takesPayments, false, $takesPayments ? 'the-site-client' : null], [$sheet['available'], $sheet['paypalStandIn'], $sheet['paypalClientId']], "{$what}: the sheet offers no stand-in button");
+                $refused = $this->wallet($app, 'POST', ['operation' => 'stand-in', 'orderId' => $order], [], $cookie, $site);
+                $this->assertSame([404, 'not_found'], [$refused['http'], $refused['body']['code'] ?? null], "{$what}: there is no such route");
+                $this->assertSame('CREATED', self::$paypal->orders()[$order]['status'], "{$what}: and nothing was approved");
+                // One more top-up this hour: turned away, the development setting unread (and where payments are off, they are off).
+                $more = $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 200], $cookie, $site);
+                $this->assertSame($takesPayments ? [429, 'too_many'] : [403, 'payments_off'], [$more['http'], $more['body']['code'] ?? null], "{$what}: five top-ups an hour, whatever APP_WALLET_TOPUPS_PER_HOUR says");
+            }
+            $this->assertSame(AppWalletService::TOPUPS_PER_HOUR, $started());
+
+            // The one site that has them: APP_ENV exactly `development`, and a stand-in named.
+            $set(['APP_ENV' => 'development', 'PAYPAL_BASE_URL' => $standIn, 'PAYPAL_ENV' => null]);
+            $site = $this->siteFromEnvironment();
+            $sheet = $this->wallet($app, 'GET', [], [], $cookie, $site)['body']['data'];
+            $this->assertSame([true, true], [$sheet['available'], $sheet['paypalStandIn']]);
+            $approved = $this->wallet($app, 'POST', ['operation' => 'stand-in', 'orderId' => $order], [], $cookie, $site);
+            $this->assertSame([200, ['approved' => true]], [$approved['http'], $approved['body']['data'] ?? null], json_encode($approved));
+            $this->assertSame('APPROVED', self::$paypal->orders()[$order]['status']);
+            $this->assertSame(200, $this->wallet($app, 'POST', ['operation' => 'orders'], ['cents' => 200], $cookie, $site)['http'], 'and there the setting is read');
+            $this->assertSame(AppWalletService::TOPUPS_PER_HOUR + 1, $started());
+        } finally {
+            $set($before);
+        }
     }
 
     public function testWebhooksCreditAHeldPaymentTakeBackARefundAndHoldADispute(): void

@@ -356,15 +356,16 @@ class NativeAppController
             $body = is_object($sent) && property_exists($sent, 'body') && $sent->body !== null ? $sent->body : ($input['body'] ?? (object) []);
             if (is_string($body)) $body = json_decode($body, false, 64, JSON_THROW_ON_ERROR);
             if (!is_array($body) && !is_object($body)) throw new \InvalidArgumentException('App request body must be JSON');
+            $addresses = \FormLogic\Helpers\IpResolver::fromEnvironment();
             $nativeRequest = [
                 'method' => $input['method'], 'path' => $input['path'], 'query' => (object) ($input['query'] ?? []), 'body' => $body,
                 // Both always present, empty when not sent, as SoftN's PHP host gives them.
                 'headers' => (object) ['authorization' => $authorization, 'idempotency-key' => $idempotency],
-                'client_ip' => \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request), 'photos' => false,
+                'client_ip' => $addresses->getClientIp($request), 'photos' => false,
             ];
             $subscriptions = $this->flows->nativeRecordSubscriptions($app['id']);
             $requester = null;
-            if ($asks !== null) [$identity, $subscriptions, $setCookie, $requester] = $this->formlogicRequest($request, $app, $project, $asks, $identity, $subscriptions, (string) $nativeRequest['client_ip'], $user);
+            if ($asks !== null) [$identity, $subscriptions, $setCookie, $requester] = $this->formlogicRequest($request, $app, $project, $asks, $identity, $subscriptions, (string) $nativeRequest['client_ip'], $user, $owner, $addresses->knownClientIp($request));
             // The app's own page (not a plugin's): photos are redrawn here, and the body held to its route.
             // $context is the host's word to the backend, added to who is asking (never the caller's);
             // $who replaces who is asking, for a charge's second run (NativeAppCharges).
@@ -401,7 +402,9 @@ class NativeAppController
      * The app's wallet for whoever is asking (AppWalletService), from FormLogic's own wallet sheet,
      * never the app's frame: GET the sheet; POST `orders` {cents} to start a top-up and
      * `orders/{orderId}` once PayPal approved it, to capture it; POST `email` {purpose: save|restore,
-     * email} for a code, and `confirm` {purpose, email, code}. Admitted as the app's own requests are:
+     * email} for a code, and `confirm` {purpose, email, code}; and, where a stand-in answers for
+     * PayPal (development only), POST `stand-in/{orderId}` to approve an order as a buyer does in
+     * PayPal's own window. Admitted as the app's own requests are:
      * a members' app's member, or a visitor's browser on a request FormLogic's page marked.
      */
     public function wallet(Request $request, Response $response, array $args): Response
@@ -436,6 +439,9 @@ class NativeAppController
         try {
             if ($request->getMethod() === 'GET') {
                 $data = $this->wallets->sheet($app, $declared, $holder);
+            } elseif ($operation === 'stand-in' && isset($args['orderId'])) {
+                // Development only (a stand-in for PayPal): 404 anywhere else.
+                $data = $this->wallets->approveStandIn($app, $holder, (string) $args['orderId']);
             } elseif ($operation === 'orders' && isset($args['orderId'])) {
                 $data = $this->wallets->captureTopup($app, $holder, (string) $args['orderId']);
             } elseif ($operation === 'orders') {
@@ -473,8 +479,25 @@ class NativeAppController
      * App AI's subscription for its jobs table, and the wallet of an app that takes payments.
      * Answers [identity, subscriptions, Set-Cookie or null, the requester or null].
      * The requester is FormLogic's word alone: nothing in the request's body or headers names one.
+     *
+     * $owner: the request is from the app's owner, signed in (runtime()'s own answer: the session's
+     * account is the app's owner). On an app anyone may open, the backend is told so, `owner: true`,
+     * and nothing else of them: no `userId`, and who is asking for AI and whose wallet it is stay the
+     * browser's visitor. It is how an owner reaches their own app's settings once it is public. From
+     * the sign-in alone, never from anything the page sends; a request that carries the sign-in
+     * cookie reaches here only past the CSRF check (CsrfMiddleware, on every POST). Absent otherwise,
+     * never false. A members' app says the same with `roleId: "owner"`, as it always has.
+     *
+     * $address: the address the request came from, where one is known (IpResolver::knownClientIp:
+     * the address FormLogic's own limits count, or null). The backend is given a key for it,
+     * `addressKey` (AppVisitors::addressKey), so the app's own limits can be per address: a count
+     * per visitor alone is no limit, since a new cookie is a new visitor. On every request here,
+     * a member's, a visitor's and one nobody marked alike; left out when no address is known, so
+     * the app can tell that from an address. From the connection alone, as the server reads it
+     * (TRUSTED_PROXIES), never from anything the page sends. FormLogic's own calls to /api/site/
+     * do not pass here, and carry none.
      */
-    private function formlogicRequest(Request $request, array $app, array $project, array $asks, array $identity, array $subscriptions, string $ip, mixed $user): array
+    private function formlogicRequest(Request $request, array $app, array $project, array $asks, array $identity, array $subscriptions, string $ip, mixed $user, bool $owner = false, ?string $address = null): array
     {
         $setCookie = null;
         $requester = null;
@@ -489,6 +512,9 @@ class NativeAppController
         }
         $formlogic = is_array($identity['formlogic'] ?? null) ? $identity['formlogic'] : ['appId' => $app['id']];
         if ($requester !== null && $requester['kind'] === 'visitor') $formlogic['visitor'] = ['id' => $requester['id']];
+        if ($owner && $project['access'] !== 'members') $formlogic['owner'] = true;
+        $addressKey = $address !== null ? $this->visitors?->addressKey((string) $app['id'], $address) : null;
+        if ($addressKey !== null) $formlogic['addressKey'] = $addressKey;
         if ($asks['ai'] !== null && $this->ai !== null) {
             $plan = $this->ai->forRequest($app, $asks['ai'], $requester, $ip);
             $formlogic['ai'] = $plan['context'];

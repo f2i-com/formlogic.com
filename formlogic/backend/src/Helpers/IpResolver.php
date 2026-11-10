@@ -350,6 +350,23 @@ class IpResolver
     }
 
     /**
+     * The client's address where one is known, or null. getClientIp always answers something, so
+     * that a limit has a subject to count: 127.0.0.1 for a request that names no peer (no
+     * REMOTE_ADDR), and whatever a peer that is not an address is called (a unix socket's). This
+     * is for a caller that must tell "no address" from an address: the same answer as
+     * getClientIp, but only when the request named a peer and the answer is an IP address.
+     */
+    public function knownClientIp(Request $request): ?string
+    {
+        $peer = $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        if (!is_string($peer) || trim($peer) === '') {
+            return null;
+        }
+        $ip = $this->getClientIp($request);
+        return $this->isValidIp($ip) ? $ip : null;
+    }
+
+    /**
      * Extract the original client IP from a forwarded header value.
      *
      * X-Forwarded-For format: client, proxy1, proxy2, ...

@@ -3083,6 +3083,10 @@ class ApiClient {
   async captureAppWalletOrder(slug: string, orderId: string, visitor: boolean): Promise<ApiResponse<{ status: 'completed' | 'processing'; balanceCents: number; alreadyProcessed?: boolean }>> {
     return unwrapData(await this.request<{ data: { status: 'completed' | 'processing'; balanceCents: number; alreadyProcessed?: boolean } }>(`/app/${seg(slug)}/wallet/orders/${seg(orderId)}`, { method: 'POST', headers: walletHeaders(visitor), body: '{}' }));
   }
+  /** Development only: approve a top-up's order at the stand-in for PayPal, as a buyer does in PayPal's window. 404 where PayPal is PayPal. */
+  async approveAppWalletStandIn(slug: string, orderId: string, visitor: boolean): Promise<ApiResponse<{ approved: true }>> {
+    return unwrapData(await this.request<{ data: { approved: true } }>(`/app/${seg(slug)}/wallet/stand-in/${seg(orderId)}`, { method: 'POST', headers: walletHeaders(visitor), body: '{}' }));
+  }
   async sendAppWalletCode(slug: string, purpose: 'save' | 'restore', email: string, visitor: boolean): Promise<ApiResponse<{ sent: true }>> {
     return unwrapData(await this.request<{ data: { sent: true } }>(`/app/${seg(slug)}/wallet/email`, { method: 'POST', headers: walletHeaders(visitor), body: JSON.stringify({ purpose, email }) }));
   }

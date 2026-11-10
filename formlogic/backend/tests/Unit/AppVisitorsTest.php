@@ -66,6 +66,33 @@ final class AppVisitorsTest extends TestCase
         $this->assertStringNotContainsString('203', $visitors->ipKey('203.0.113.7'));
     }
 
+    /** What an app is given to count an address by (`req.context.formlogic.addressKey`). */
+    public function testAnAppsKeyForAnAddressIsItsOwnCountsAnIpv6SlashSixtyFourAndNeverGivesTheAddress(): void
+    {
+        $visitors = $this->visitors();
+        $key = $visitors->addressKey('app-logos', '203.0.113.7');
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/D', (string) $key);
+        $this->assertSame($key, $visitors->addressKey('app-logos', '203.0.113.7'), 'one address, one app: the same key every time');
+        $this->assertSame($key, $this->visitors()->addressKey('app-logos', '203.0.113.7'), 'and in another process, another day: nothing goes into it but the site\'s key, the app and the address');
+        $this->assertSame(substr(hash_hmac('sha256', 'fl-app-address-v1|app-logos|203.0.113.7', str_repeat("\x07", 32)), 0, 32), $key);
+        $this->assertNotSame($key, $visitors->addressKey('app-cafe', '203.0.113.7'), 'another app sees another key: an address cannot be followed from app to app');
+        $this->assertNotSame($key, $visitors->addressKey('app-logos', '203.0.113.8'), 'another address is another key');
+        $this->assertNotSame($key, (new AppVisitors(null, [], null, str_repeat("\x08", 32)))->addressKey('app-logos', '203.0.113.7'), 'keyed with the site\'s key: no one without it can make an address\'s key');
+        $this->assertStringNotContainsString('203', (string) $key);
+        $this->assertStringNotContainsString($visitors->ipKey('203.0.113.7'), (string) $key, 'nor is it FormLogic\'s own key for the address, which is the same in every app');
+
+        // An IPv6 address by its /64, as FormLogic's own limits count it; one written as IPv6 is its IPv4 address.
+        $this->assertSame($visitors->addressKey('app-logos', '2001:db8:1:2::10'), $visitors->addressKey('app-logos', '2001:db8:1:2:ffff::1'), 'one /64 is one subscriber');
+        $this->assertSame($visitors->addressKey('app-logos', '2001:db8:1:2::10'), $visitors->addressKey('app-logos', '2001:0DB8:0001:0002:0000:0000:0000:0010'), 'however it is spelt');
+        $this->assertNotSame($visitors->addressKey('app-logos', '2001:db8:1:2::10'), $visitors->addressKey('app-logos', '2001:db8:1:3::10'), 'the next /64 is someone else');
+        $this->assertSame($key, $visitors->addressKey('app-logos', '::ffff:203.0.113.7'), 'a dual-stack listener\'s spelling of an IPv4 peer');
+
+        // Not an address: no key, never one that every such request would share.
+        foreach (['', 'unknown', 'unix:', '203.0.113', '203.0.113.7, 198.51.100.1', '203.0.113.7:8080', 'localhost'] as $nothing) {
+            $this->assertNull($visitors->addressKey('app-logos', $nothing), "'{$nothing}'");
+        }
+    }
+
     public function testOnlyAMarkedRequestFromAnAcceptedOriginActsAsItsVisitor(): void
     {
         $visitors = $this->visitors(true);

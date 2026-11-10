@@ -20,6 +20,8 @@ class PayPalService
     private string $webhookId;
     /** A stand-in's address named outside development: refused, and payments read as not set up. */
     private bool $standInRefused = false;
+    /** A stand-in answers in PayPal's place: named by the code (tests), or by PAYPAL_BASE_URL in development. */
+    private bool $standIn = false;
     private ?string $cachedToken = null;
 
     public function __construct(?array $config = null)
@@ -48,6 +50,7 @@ class PayPalService
         }
         if (is_string($override) && preg_match('~^https?://[^\s/?#:]+(?::\d+)?$~D', rtrim($override, '/'))) {
             $this->baseUrl = rtrim($override, '/');
+            $this->standIn = true;
         }
     }
 
@@ -60,6 +63,34 @@ class PayPalService
     public function standInRefused(): bool
     {
         return $this->standInRefused;
+    }
+
+    /**
+     * Whether a stand-in answers in PayPal's place: PAYPAL_BASE_URL with APP_ENV exactly
+     * `development` (or an address the code itself named, as the tests do). Never true on a site
+     * that takes real payments: there the address is refused (standInRefused()).
+     */
+    public function standIn(): bool
+    {
+        return $this->standIn;
+    }
+
+    /**
+     * Development only: approve an order at the stand-in, as a buyer does in PayPal's own window
+     * (the stand-in's `POST /stub/orders/{id}/approve`). PayPal's own script cannot do it: it knows
+     * neither the stand-in's client id nor its orders. Refused wherever PayPal is PayPal.
+     *
+     * @throws \RuntimeException when no stand-in is in use, or it did not approve the order
+     */
+    public function approveStandInOrder(string $orderId): void
+    {
+        if (!$this->standIn) {
+            throw new \RuntimeException('No stand-in for PayPal is in use');
+        }
+        $answer = $this->request('POST', '/stub/orders/' . rawurlencode($orderId) . '/approve', ['outcome' => 'completed']);
+        if (($answer['_httpCode'] ?? 0) !== 200 || ($answer['approved'] ?? null) !== $orderId) {
+            throw new \RuntimeException('The stand-in for PayPal did not approve the order (HTTP ' . ($answer['_httpCode'] ?? 0) . ')');
+        }
     }
 
     public function getClientId(): string

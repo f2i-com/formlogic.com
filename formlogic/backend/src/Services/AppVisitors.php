@@ -26,6 +26,10 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  * key that signs it is the site's, kept in system_meta and backed up with the database. It is not
  * derived from JWT_SECRET, which an operator rotates after an incident: that must never orphan
  * everyone's balance.
+ *
+ * A visitor is only a cookie, and a new cookie is a new visitor. So the same key also makes what an
+ * address is counted as: by FormLogic's own limits (`ipKey`), and by an app's (`addressKey`, the
+ * app's own key for the address, as its visitor ids are its own).
  */
 final class AppVisitors
 {
@@ -37,6 +41,7 @@ final class AppVisitors
     public const MAX_AGE = 34560000;
     private const ID_LABEL = 'fl-visitor-v1|';
     private const IP_LABEL = 'fl-visitor-ip-v1|';
+    private const ADDRESS_LABEL = 'fl-app-address-v1|';
 
     private ?string $key;
 
@@ -96,6 +101,23 @@ final class AppVisitors
     public function ipKey(string $ip): string
     {
         return substr(hash_hmac('sha256', self::IP_LABEL . IpResolver::rateLimitSubject($ip), $this->key()), 0, 16);
+    }
+
+    /**
+     * What app $appId may count an address as (its `req.context.formlogic.addressKey`), so its own
+     * limits can be per address as FormLogic's are: 32 hex characters, the same for every request
+     * from one address to that app, and another in every other app, as a visitor's id is, so an
+     * address cannot be followed from app to app. An address counts as ipKey counts it (an IPv6
+     * address by its /64), and is keyed, so the address itself is never given. Nothing else goes
+     * into it: it stays the same for as long as the site's key does.
+     *
+     * Null when $ip is not an address: the app is told nothing, never a key that every request
+     * without an address would share.
+     */
+    public function addressKey(string $appId, string $ip): ?string
+    {
+        if (filter_var($ip, FILTER_VALIDATE_IP) === false) return null;
+        return substr(hash_hmac('sha256', self::ADDRESS_LABEL . $appId . '|' . IpResolver::rateLimitSubject($ip), $this->key()), 0, 32);
     }
 
     /**

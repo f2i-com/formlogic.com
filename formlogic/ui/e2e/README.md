@@ -30,9 +30,14 @@ Failures capture a screenshot + trace (open with `npx playwright show-trace <tra
 - `script-editor.spec.ts` — the ScriptEditor "Run Test" success + rejection flows.
 - `storage-mode.spec.ts` — login auto-enables cloud (API) storage.
 - `app-ai-payments.spec.ts` — App AI and app payments: a visitor's picture drawn by the site's AI and
-  delivered to the app, then a 5¢ download paid from a balance topped up in FormLogic's wallet. Needs
-  the App AI worker, the stand-ins for Studio's gateway and for PayPal, and an administrator
-  (`E2E_APP_AI_EMAIL`, `E2E_APP_AI_PASSWORD`); the spec's header says how. Skipped otherwise.
+  delivered to the app, then a 5¢ download paid from a balance topped up in FormLogic's wallet, with
+  the wallet's own **Pay with the stand-in PayPal** button, as a person pays on a development site
+  (PayPal's script is never asked for); and the shop, open to anyone, is told when its own signed-in
+  owner opens it (`formlogic.owner`), and nobody else, and where each request came from, as a key
+  to count by (`formlogic.addressKey`). Needs the App AI worker, the stand-ins for Studio's gateway
+  and for PayPal, and an administrator (`E2E_APP_AI_EMAIL`, `E2E_APP_AI_PASSWORD`); the spec's header
+  says how. A stack run more than five times an hour needs `APP_WALLET_TOPUPS_PER_HOUR` raised, since
+  every test visitor comes from one address. Skipped otherwise.
 - `app-ai-setup.spec.ts` — setting up AI for apps from nothing with the checklist in Admin → Platform →
   AI for apps alone: a one-time code links a stand-in OAIY computer
   (`backend/tests/Support/stub-oaiy-computer.php`), the computer is chosen, apps are allowed, the

@@ -257,6 +257,8 @@ What the app's backend sees (`req.context.formlogic`):
 | `appId` | always, for an app that declares either section |
 | `userId`, `roleId` | a members-only app, as before |
 | `visitor: {id}` | an application-access app, on a request FormLogic's page marked |
+| `owner: true` | an application-access app, on a request from the app's owner while they are signed in to FormLogic; absent otherwise, never `false` |
+| `addressKey` | every request from the app's page, for an app that declares either section: a member's, a visitor's, and one nobody marked; absent when the address is not known |
 | `ai: {enabled, source, label, uses, perDay, usedToday, ipPerDay, ipUsedToday, jobs, requester?, reason?}` | an app that declares `formlogicAi` |
 | `ai: {delivery: true, requester}` | FormLogic delivering a result to the app's deliver route |
 | `wallet: {available, balanceCents, currency, items, reason?}` | an app that declares `formlogicPayments` |
@@ -266,6 +268,42 @@ What the app's backend sees (`req.context.formlogic`):
 opaque id, the same for one person in one app on their own requests and on the delivery of their
 jobs. It is absent when nobody is known (a request no FormLogic page marked). An app can keep it on
 a job's row to know whose job a delivery is.
+
+**`owner: true` is the app's owner, on an app anyone may open.** A public app has no members, so
+without it the owner could not reach the app's own settings once the app is public. FormLogic says
+it from the sign-in alone: the request carries the owner's FormLogic session, and, as every
+signed-in request must, that session's CSRF token (a request with the sign-in cookie and no token is
+refused before the app is asked anything). Nothing the page sends makes an owner: no header, no body
+field. Nothing else of the owner is said: there is no `userId`, and who asks for AI and whose wallet
+it is stay the browser's visitor, so an owner trying their own app is counted and charged as any
+visitor is. A members' app does not get the field: there the owner is `roleId: "owner"`, as always.
+An app that declares neither section gets no `formlogic` at all, for its owner as for anyone. An
+owner who is signed out, or in another browser, is a visitor like any other: show them nothing an
+owner sees, and let them sign in to FormLogic and come back.
+
+**`addressKey` is the address a request came from, as the app may count it.** A visitor is a cookie:
+clearing it, a private window, or a script that never keeps it makes a new visitor on every request,
+so a limit counted per visitor alone bounds one honest browser and nothing else. For its own limits
+(free rounds a day, stored designs, uploads) an app counts by `addressKey` as well, as FormLogic's AI
+limits count by address.
+
+- **What it is.** An opaque string of 32 hex characters: the same for every request from one address
+  to this app, and different in every other app, as a visitor's id is, so an address cannot be
+  followed from app to app. An IPv6 address counts by its /64, since one subscriber is handed a whole
+  /64; an IPv4 address reported as IPv6 (`::ffff:…`) is that IPv4 address. It is a keyed hash, made
+  with the site's key that signs visitors' cookies: the address itself is never given, and cannot be
+  worked back from it.
+- **When it is there.** On every request from the app's page: a member's, a visitor's, and one
+  nobody marked, so the app can count or refuse those too. It is absent when FormLogic knows no
+  address for the request, so an app can tell "no address" from an address: count such a request per
+  visitor, or refuse it. FormLogic's own calls to `/api/site/` (a delivery) come from no visitor and
+  carry none.
+- **How long it lasts.** Nothing goes into it but the site's key, the app's id and the address, so it
+  is the same tomorrow and next year. Only replacing the site's key (`system_meta`,
+  `app_visitor_key`) changes it, and then every count kept by it starts again.
+- **Nothing the page sends sets it**: no header, no body field. It is the connection's address as
+  FormLogic reads it, so it is only as good as the site's `TRUSTED_PROXIES` setting: behind a proxy
+  without it, every visitor has the proxy's key (see [Before going live](#before-going-live)).
 
 **Decide "FormLogic member" by `userId`, not by `formlogic`.** An app that declares these sections
 gets `req.context.formlogic` without a `userId` for its visitors. Coffee.Dating, which declares
@@ -605,6 +643,25 @@ Its routes, for FormLogic's own page:
 `POST …/wallet/email {purpose: save|restore, email}`, `POST …/wallet/confirm {purpose, email, code}`;
 a visitor's carry `X-FormLogic-Visitor: 1`, as the app's own requests do.
 
+**Paying on a development site.** PayPal's own buttons cannot work against a stand-in for PayPal
+(`PAYPAL_BASE_URL`, taken only when `APP_ENV` is exactly `development`): PayPal's script knows
+neither the stand-in's client id nor its orders. So there the sheet's answer carries
+`paypalStandIn: true`, and the sheet shows one button of its own, **Pay with the stand-in PayPal**,
+under a line saying that no money moves, and never loads PayPal's script. The button does what
+PayPal's do, with the approval a buyer gives in PayPal's window made at the stand-in:
+`POST …/wallet/orders {cents}`, `POST …/wallet/stand-in/{orderId}` (FormLogic approves the person's
+own pending order at the stand-in), then `POST …/wallet/orders/{orderId}` to capture it. On any site
+whose PayPal is PayPal, `paypalStandIn` is false and `…/wallet/stand-in/…` answers 404.
+
+To set a development site up for it: `APP_ENV=development`, any `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`
+and `PAYPAL_WEBHOOK_ID`, `PAYPAL_BASE_URL=http://127.0.0.1:8306`, and the stand-in started beside it
+(`php -S 127.0.0.1:8306 formlogic/backend/tests/Support/stub-paypal-server.php`); then the switches
+of [App payments](#app-payments-a-prepaid-balance-and-a-charge-in-two-runs) as on any site. The
+stand-in sends no webhooks: to see a refund or a dispute reach a wallet, post the event to
+`/api/billing/webhook/paypal` with `PayPal-Transmission-Sig: stub-valid`, which is the one signature
+the stand-in vouches for. A test suite's visitors all come from one address, so there, and only
+there, `APP_WALLET_TOPUPS_PER_HOUR` may raise the five top-ups an hour a wallet and an address get.
+
 **The ledger.** Every top-up, charge, refund, transfer and correction is a ledger line written with
 the balance, in one transaction. A top-up is credited once (the capture call and PayPal's webhook,
 whichever comes first), to the wallet its holder has when it is credited. Each refund or reversal in
@@ -665,6 +722,9 @@ Five things for the site's owner, before the public uses an app's AI or pays thr
    as a handful of proxy addresses, and their free rounds become one shared allowance. Admin →
    Platform → AI for apps warns when the administrator's own request arrives from Cloudflare's ranges
    (or with Cloudflare's `CF-Connecting-IP` header) while `TRUSTED_PROXIES` is unset.
+   An app's own limits go the same way: what it counts by `req.context.formlogic.addressKey` (its
+   free rounds a day, say) is counted against those same few proxy addresses, so behind a proxy
+   without `TRUSTED_PROXIES` each of an app's per-address limits is one allowance shared by everyone.
 3. **One real PayPal sandbox run.** The tests use a stub PayPal. Before payments are switched on, top
    up with a PayPal sandbox account once (`PAYPAL_ENV=sandbox`), pay for something, refund it in the
    sandbox dashboard and see the wallet follow (the webhook needs `PAYPAL_WEBHOOK_ID`).

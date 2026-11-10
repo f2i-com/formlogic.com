@@ -70,6 +70,53 @@ it('keeps an approved payment it could not confirm, to confirm again rather than
   expect(button('Confirm the payment again')).toBeUndefined();
 });
 
+it('on a development site, pays through the stand-in for PayPal with its own button and never loads PayPal', async () => {
+  // PayPal's script is not there, and must not be asked for: it knows nothing of a stand-in's orders.
+  delete window.paypal;
+  vi.spyOn(api, 'getAppWallet').mockResolvedValueOnce({ data: sheet({ paypalStandIn: true, paypalClientId: 'stub-client' }) }).mockResolvedValueOnce({ data: sheet({ paypalStandIn: true, balanceCents: 500 }) });
+  const calls: string[] = [];
+  const create = vi.spyOn(api, 'createAppWalletOrder').mockImplementation(async () => { calls.push('create'); return { data: { orderId: 'STUBORDER000001' } }; });
+  const approve = vi.spyOn(api, 'approveAppWalletStandIn').mockImplementation(async () => { calls.push('approve'); return { data: { approved: true } }; });
+  const capture = vi.spyOn(api, 'captureAppWalletOrder').mockImplementation(async () => { calls.push('capture'); return { data: { status: 'completed', balanceCents: 500 } }; });
+  await mount();
+  expect(container.querySelector('[data-testid="wallet-paypal"]')).toBeNull();
+  expect(document.getElementById('paypal-sdk')).toBeNull();
+  expect(buttonsOptions).toBeNull();
+  expect(container.querySelector('[data-testid="wallet-stand-in"]')?.textContent).toContain('a stand-in answers for PayPal here, and no money moves');
+  const five = [...container.querySelectorAll<HTMLInputElement>('input[name="fl-wallet-package"]')][1];
+  await act(async () => five.click());
+  await act(async () => button('Pay with the stand-in PayPal')!.click());
+  // The steps PayPal's buttons take, the buyer's approval made at the stand-in.
+  expect(calls).toEqual(['create', 'approve', 'capture']);
+  expect(create).toHaveBeenCalledWith('logo-shop', 500, true);
+  expect(approve).toHaveBeenCalledWith('logo-shop', 'STUBORDER000001', true);
+  expect(capture).toHaveBeenCalledWith('logo-shop', 'STUBORDER000001', true);
+  expect(container.querySelector('[data-testid="wallet-balance"]')?.textContent).toBe('$5.00');
+  expect(container.textContent).toContain('Added. Your balance is $5.00.');
+});
+
+it('says so when the stand-in does not answer, and captures nothing', async () => {
+  delete window.paypal;
+  vi.spyOn(api, 'getAppWallet').mockResolvedValue({ data: sheet({ paypalStandIn: true }) });
+  vi.spyOn(api, 'createAppWalletOrder').mockResolvedValue({ data: { orderId: 'STUBORDER000002' } });
+  vi.spyOn(api, 'approveAppWalletStandIn').mockResolvedValue({ error: 'The stand-in for PayPal did not answer. Check that it is running at PAYPAL_BASE_URL.' });
+  const capture = vi.spyOn(api, 'captureAppWalletOrder');
+  await mount();
+  await act(async () => button('Pay with the stand-in PayPal')!.click());
+  expect(container.textContent).toContain('The stand-in for PayPal did not answer.');
+  expect(capture).not.toHaveBeenCalled();
+  expect(button('Pay with the stand-in PayPal')!.hasAttribute('disabled')).toBe(false);
+});
+
+it('shows PayPal\'s own buttons, and no stand-in, on a site whose PayPal is PayPal', async () => {
+  vi.spyOn(api, 'getAppWallet').mockResolvedValue({ data: sheet({ paypalStandIn: false }) });
+  await mount();
+  expect(container.querySelector('[data-testid="wallet-stand-in"]')).toBeNull();
+  expect(button('Pay with the stand-in PayPal')).toBeUndefined();
+  expect(container.querySelector('[data-testid="wallet-paypal"]')).not.toBeNull();
+  expect(buttonsOptions).not.toBeNull();
+});
+
 it('says why payments are off, and shows no PayPal', async () => {
   vi.spyOn(api, 'getAppWallet').mockResolvedValue({ data: sheet({ available: false, reason: 'beta', reasonText: 'Payments are off during the beta.', paypalClientId: null, balanceCents: 120 }) });
   await mount();

@@ -201,6 +201,10 @@ payments; the app's owner then turns them on for the app and confirms its prices
 - **It needs** the Plans payments switch on, PayPal configured (`PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`,
   and `PAYPAL_WEBHOOK_ID` for refunds and held payments), and `BETA_MODE` off. While any is missing,
   apps are told payments are off, and no top-up or charge is taken.
+- **To try it on a development site** without PayPal, name the stand-in that ships with the tests
+  (`PAYPAL_BASE_URL`, taken only when `APP_ENV` is exactly `development`): a visitor's wallet then
+  shows **Pay with the stand-in PayPal** in place of PayPal's buttons, and no money moves. See
+  [Paying on a development site](HOSTED_APPS.md#app-payments-a-prepaid-balance-and-a-charge-in-two-runs).
 - **Top-ups offered**: $2, $5 and $10 to start; $2 at least, since PayPal's fixed fee makes less poor
   value.
 - **Most one charge may be** (500¢), whatever an app declares, and **most one wallet may spend a day**

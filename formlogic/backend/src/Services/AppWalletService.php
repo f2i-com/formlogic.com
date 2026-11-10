@@ -353,6 +353,9 @@ class AppWalletService
             'packages' => $this->site->current()['packages'],
             'items' => $context['items'],
             'paypalClientId' => $context['available'] ? $this->paypal->getClientId() : null,
+            // Development only: a stand-in answers in PayPal's place, so the sheet shows its own
+            // button (approveStandIn) and never loads PayPal's script, which knows nothing of it.
+            'paypalStandIn' => $context['available'] && $this->paypal->standIn(),
             'ledger' => $lines,
             'email' => ['saved' => $wallet !== null && $wallet['email_hash'] !== null, 'possible' => $this->email !== null && $this->email->isConfigured()],
         ];
@@ -368,7 +371,7 @@ class AppWalletService
         $pdo = $this->pdo();
         $recent = $pdo->prepare('SELECT COUNT(*) FROM app_wallet_topups WHERE (ip_key = ? OR (holder_kind = ? AND holder_id = ?)) AND created_at > ?');
         $recent->execute([$ipKey, $holder['kind'], $holder['id'], AppAiService::stamp(time() - 3600)]);
-        if ((int) $recent->fetchColumn() >= self::TOPUPS_PER_HOUR) throw new WalletRefusal('Too many top-ups started in the last hour. Try again later.', 'too_many', 429);
+        if ((int) $recent->fetchColumn() >= $this->topupsPerHour()) throw new WalletRefusal('Too many top-ups started in the last hour. Try again later.', 'too_many', 429);
         $wallet = $this->wallet($appId, $holder, true) ?? throw new \RuntimeException('No wallet');
         if ($wallet['status'] === 'disputed') throw new WalletRefusal('This balance is held while a payment is disputed.', 'wallet_disputed', 409);
         $id = bin2hex(random_bytes(16));
@@ -382,6 +385,43 @@ class AppWalletService
         $pdo->prepare('INSERT INTO app_wallet_topups (id, wallet_id, app_id, order_id, amount_cents, currency, package_cents, status, holder_kind, holder_id, ip_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
             ->execute([$id, $wallet['id'], $appId, $orderId, $cents, self::CURRENCY, $cents, 'pending', $holder['kind'], $holder['id'], $ipKey, $now, $now]);
         return ['orderId' => $orderId];
+    }
+
+    /**
+     * Top-ups one wallet, or one address, may start in an hour: TOPUPS_PER_HOUR. Where a stand-in
+     * answers for PayPal (development only) a test suite's many visitors all come from one address,
+     * so there, and only there, APP_WALLET_TOPUPS_PER_HOUR may name another number. A site whose
+     * PayPal is PayPal never reads it.
+     */
+    private function topupsPerHour(): int
+    {
+        if (!$this->paypal->standIn()) return self::TOPUPS_PER_HOUR;
+        $asked = (string) \FormLogic\Support\Environment::get('APP_WALLET_TOPUPS_PER_HOUR', '');
+        return preg_match('/^[1-9]\d{0,5}$/D', $asked) === 1 ? (int) $asked : self::TOPUPS_PER_HOUR;
+    }
+
+    /**
+     * Development only: approve a top-up's order at the stand-in for PayPal, which is what the buyer
+     * does in PayPal's own window on a real site. The sheet's stand-in button calls it between
+     * starting the top-up and capturing it, so a person can pay through a local FormLogic in a real
+     * browser (PayPal's script cannot: it knows neither the stand-in's client id nor its orders).
+     * Only the holder's own top-up, still pending. Where PayPal is PayPal (PayPalService::standIn()
+     * is false: any APP_ENV but `development`, or no PAYPAL_BASE_URL) there is no such thing: 404.
+     */
+    public function approveStandIn(array $app, array $holder, string $orderId): array
+    {
+        if (!$this->paypal->standIn()) throw new WalletRefusal('Not found', 'not_found', 404);
+        $available = $this->availability($app);
+        if (!$available['available']) throw new WalletRefusal(self::REASONS[$available['reason']] ?? 'Payments are off.', 'payments_off', 403);
+        $topup = $this->topupForHolder((string) $app['id'], $holder, $orderId);
+        if ($topup === null || $topup['status'] !== 'pending') throw new WalletRefusal('Top-up not found.', 'not_found', 404);
+        try {
+            $this->paypal->approveStandInOrder($orderId);
+        } catch (\Throwable $e) {
+            $this->logger?->error('The stand-in for PayPal did not approve a wallet top-up', ['order' => $orderId, 'error' => $e->getMessage()]);
+            throw new WalletRefusal('The stand-in for PayPal did not answer. Check that it is running at PAYPAL_BASE_URL.', 'paypal_error', 502);
+        }
+        return ['approved' => true];
     }
 
     /**

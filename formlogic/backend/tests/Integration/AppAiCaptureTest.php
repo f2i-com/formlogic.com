@@ -7,9 +7,12 @@ namespace FormLogic\Tests\Integration;
 use FormLogic\Controllers\NativeAppController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Middleware\AuthMiddleware;
+use FormLogic\Middleware\CsrfMiddleware;
 use FormLogic\Models\User;
 use FormLogic\Services\AIService;
 use FormLogic\Services\AppAiService;
+use FormLogic\Services\AuthService;
 use FormLogic\Services\AppAiSiteSettings;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
@@ -24,6 +27,7 @@ use FormLogic\Support\SessionOriginPolicy;
 use PDO;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Psr\Http\Server\RequestHandlerInterface;
 use Slim\Psr7\Factory\ServerRequestFactory;
 use Slim\Psr7\Response;
 
@@ -51,6 +55,8 @@ final class AppAiCaptureTest extends TestCase
     private AppAiService $ai;
     private NativeRecordEventRouter $router;
     private NativeAppController $controller;
+    /** The apps' members, as the controller asks for them: nobody is one, until a test says who. */
+    private AppUserService&\PHPUnit\Framework\MockObject\MockObject $members;
     /** @var string[] */
     private array $appIds = [];
 
@@ -107,7 +113,8 @@ final class AppAiCaptureTest extends TestCase
         $engines = $this->createMock(RuntimeEngineService::class);
         $engines->method('effective')->willReturn(['id' => 'zipp-web-python', 'requested' => 'zipp-web-python', 'stored' => null, 'revision' => '0123456789abcdef']);
         $plans = $this->createMock(PlanService::class);
-        $this->controller = new NativeAppController(self::$apps, $this->createMock(AppUserService::class), $this->native, $plans, $flows, $engines, null, null, null, null, $this->router, $this->visitors, $this->ai);
+        $this->members = $this->createMock(AppUserService::class);
+        $this->controller = new NativeAppController(self::$apps, $this->members, $this->native, $plans, $flows, $engines, null, null, null, null, $this->router, $this->visitors, $this->ai);
     }
 
     protected function tearDown(): void
@@ -159,7 +166,7 @@ function forgetJob(req) { softn.sql.execute("DELETE FROM ai_jobs WHERE id = ?", 
 function deliver(req) { return { status: 200, body: { delivered: true } }; }
 JS;
 
-    private function project(string $access, bool $asks): array
+    private function project(string $access, bool $asks, bool $sells = false): array
     {
         $manifest = [
             'name' => 'Logo maker', 'version' => '0.0.1', 'main' => 'ui/main.ui',
@@ -182,6 +189,7 @@ JS;
             ],
         ];
         if ($asks) $manifest['formlogicAi'] = ['uses' => ['pictures', 'picture-edits', 'chat'], 'purpose' => 'Draws logos.', 'jobs' => ['table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver']];
+        if ($sells) $manifest['formlogicPayments'] = ['purpose' => 'Pay 5 cents to download a logo.', 'items' => [['id' => 'download', 'label' => 'Download a logo', 'priceCents' => 5]], 'routes' => ['/api/touch']];
         return ['version' => 0, 'home' => true, 'access' => $access, 'assets' => [], 'files' => [
             'manifest.json' => json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
             'ui/main.ui' => '<Stack><Text>Logos</Text></Stack>',
@@ -190,29 +198,44 @@ JS;
         ]];
     }
 
-    /** A published app with this project, and AI set to $mode for it. */
-    private function app(string $access = 'application', bool $asks = true, string $mode = 'site'): array
+    /** A published app with this project, and AI set to $mode for it. $sells: it declares payments too. */
+    private function app(string $access = 'application', bool $asks = true, string $mode = 'site', bool $sells = false): array
     {
         $app = self::$apps->createApp(['name' => 'Logos ' . bin2hex(random_bytes(3)), 'settings' => ['softnApp' => true]], $this->ownerId);
         $this->appIds[] = $app['id'];
-        $this->native->install($app['id'], $this->project($access, $asks), 0);
+        $this->native->install($app['id'], $this->project($access, $asks, $sells), 0);
         self::$pdo->prepare("UPDATE apps SET status = 'published' WHERE id = ?")->execute([$app['id']]);
         if ($mode !== 'off') self::$pdo->prepare('INSERT INTO app_ai_settings (app_id, mode) VALUES (?, ?)')->execute([$app['id'], $mode]);
         return self::$apps->getApp($app['id']);
     }
 
-    /** One request from the app's page, as the parent sends it. */
-    private function call(array $app, string $path, array $headers = [], array $cookies = [], ?string $user = null, string $method = 'POST', array $body = []): array
+    /**
+     * The request FormLogic's page posts for one call of the app's backend; $extra: more (or other) fields of what it posts.
+     * $server: what the web server says of the connection (its peer's address, a proxy's headers); the test's own address when null.
+     */
+    private function posted(array $app, string $path, array $headers = [], array $cookies = [], string $method = 'POST', array $body = [], array $extra = [], ?array $server = null): \Psr\Http\Message\ServerRequestInterface
     {
-        $payload = ['method' => $method, 'path' => $path, 'query' => [], 'headers' => [], 'body' => $body === [] ? new \stdClass() : $body];
-        $request = (new ServerRequestFactory())->createServerRequest('POST', self::ORIGIN . '/api/app/' . $app['slug'] . '/native/request', ['REMOTE_ADDR' => self::IP])
+        $payload = array_replace(['method' => $method, 'path' => $path, 'query' => [], 'headers' => [], 'body' => $body === [] ? new \stdClass() : $body], $extra);
+        $request = (new ServerRequestFactory())->createServerRequest('POST', self::ORIGIN . '/api/app/' . $app['slug'] . '/native/request', $server ?? ['REMOTE_ADDR' => self::IP])
             ->withHeader('Host', '127.0.0.1:8300')->withHeader('Content-Type', 'application/json')->withCookieParams($cookies)->withParsedBody(json_decode(json_encode($payload), true));
         $request->getBody()->write(json_encode($payload));
         foreach ($headers as $name => $value) $request = $request->withHeader($name, $value);
-        if ($user !== null) $request = $request->withAttribute('userId', $user)->withAttribute('user', new User(id: $user, email: $user . '@test.local'));
-        $response = $this->controller->runtime($request, new Response(), ['slug' => $app['slug']]);
+        return $request;
+    }
+
+    /** What the page is answered, read. */
+    private static function answered(\Psr\Http\Message\ResponseInterface $response): array
+    {
         $data = json_decode((string) $response->getBody(), true);
         return ['http' => $response->getStatusCode(), 'status' => $data['result']['status'] ?? null, 'body' => $data['result']['body'] ?? $data, 'cookie' => $response->getHeaderLine('Set-Cookie')];
+    }
+
+    /** One request from the app's page, as the parent sends it, signed in as $user (as the sign-in middleware leaves it) or nobody. */
+    private function call(array $app, string $path, array $headers = [], array $cookies = [], ?string $user = null, string $method = 'POST', array $body = [], array $extra = [], ?array $server = null): array
+    {
+        $request = $this->posted($app, $path, $headers, $cookies, $method, $body, $extra, $server);
+        if ($user !== null) $request = $request->withAttribute('userId', $user)->withAttribute('user', new User(id: $user, email: $user . '@test.local'));
+        return self::answered($this->controller->runtime($request, new Response(), ['slug' => $app['slug']]));
     }
 
     private const MARKED = [AppVisitors::HEADER => '1', 'Origin' => self::ORIGIN];
@@ -455,11 +478,323 @@ JS;
         $answer = $this->call($app, '/api/jobs', [], [], $this->ownerId);
         $formlogic = $answer['body']['context']['formlogic'];
         $this->assertSame([$app['id'], $this->ownerId, 'owner'], [$formlogic['appId'], $formlogic['userId'], $formlogic['roleId']]);
+        $this->assertArrayNotHasKey('owner', $formlogic, 'a members\' app says its owner by roleId, as it always has');
         $this->assertArrayNotHasKey('visitor', $formlogic);
         $this->assertTrue($formlogic['ai']['enabled']);
         $this->assertSame('u-' . $this->ownerId, $formlogic['ai']['requester']);
         $job = $this->jobs($app['id'])[0];
         $this->assertSame(['user', $this->ownerId], [$job['requester_kind'], $job['requester_id']]);
+    }
+
+    // ------------------------------------------------------------------ the owner of a public app
+
+    /**
+     * An app anyone may open is told when its own owner is the one asking: `owner: true`, from the
+     * sign-in alone, so the owner can reach the app's own settings once it is public. Nothing else of
+     * them is said: no `userId`, and who asks for AI stays the browser's visitor.
+     */
+    public function testAPublicAppIsToldWhenItsOwnerIsAsking(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $seen = fn(array $headers, array $cookies, ?string $user, array $body = [], array $extra = []): array
+            => $this->call($app, '/api/context', $headers, $cookies, $user, 'GET', $body, $extra)['body']['context']['formlogic'];
+
+        // The owner, signed in, on the app's own page.
+        $first = $this->call($app, '/api/jobs', self::MARKED, [], $this->ownerId);
+        $cookie = self::cookieValue($first['cookie']);
+        $formlogic = $first['body']['context']['formlogic'];
+        $this->assertTrue($formlogic['owner']);
+        $this->assertArrayNotHasKey('userId', $formlogic, 'no account is named: the app is open to anyone');
+        $this->assertArrayNotHasKey('roleId', $formlogic);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/D', (string) ($formlogic['visitor']['id'] ?? ''));
+        $this->assertSame('v-' . $formlogic['visitor']['id'], $formlogic['ai']['requester'], 'who asks for AI is still the browser\'s visitor');
+        $job = $this->jobs($app['id'])[0];
+        $this->assertSame(['visitor', $formlogic['visitor']['id']], [$job['requester_kind'], $job['requester_id']], 'and their job is counted as a visitor\'s');
+        $fields = array_keys($seen(self::MARKED, $cookie, $this->ownerId));
+        sort($fields);
+        $this->assertSame(['addressKey', 'ai', 'appId', 'owner', 'visitor'], $fields, 'and that is all');
+
+        // Signed in, but not through the app's page (no marker): still the owner, and no visitor.
+        $direct = $seen([], [], $this->ownerId);
+        $this->assertTrue($direct['owner']);
+        $this->assertArrayNotHasKey('visitor', $direct);
+
+        // Anyone else: the field is absent, never false.
+        $stranger = 'u-' . bin2hex(random_bytes(12));
+        $this->assertArrayNotHasKey('owner', $seen(self::MARKED, $cookie, $stranger), 'someone else, signed in');
+        $this->assertArrayNotHasKey('owner', $seen(self::MARKED, $cookie, null), 'a visitor, the owner\'s own browser included once signed out');
+        $this->assertArrayNotHasKey('owner', $seen([], [], null), 'nobody');
+
+        // Nothing the page sends makes an owner: not a header, not the app's own headers, not the
+        // body, not a field beside them.
+        $forgedHeaders = self::MARKED + ['X-FormLogic-Owner' => '1', 'X-Owner' => 'true', 'X-FormLogic-User' => $this->ownerId];
+        $forgedFields = [
+            'headers' => ['x-formlogic-owner' => '1', 'owner' => 'true', 'authorization' => 'Bearer ' . $this->ownerId],
+            'owner' => true, 'userId' => $this->ownerId, 'formlogic' => ['owner' => true], 'context' => ['formlogic' => ['owner' => true]], 'identity' => ['formlogic' => ['owner' => true, 'userId' => $this->ownerId]],
+        ];
+        $forgedBody = ['owner' => true, 'formlogic' => ['owner' => true], 'context' => ['formlogic' => ['owner' => true]]];
+        foreach ([null, $stranger] as $who) {
+            $forged = $seen($forgedHeaders, $cookie, $who, $forgedBody, $forgedFields);
+            $this->assertArrayNotHasKey('owner', $forged, json_encode($who));
+            $this->assertArrayNotHasKey('userId', $forged);
+        }
+        // And the owner's is FormLogic's own word, whatever the page adds.
+        $this->assertTrue($seen($forgedHeaders, $cookie, $this->ownerId, ['owner' => false], ['owner' => false, 'formlogic' => ['owner' => false]])['owner']);
+    }
+
+    /** Which apps are told: one that declares AI or payments and is open to anyone. Every other app is exactly as it was. */
+    public function testOnlyAPublicAppThatDeclaresAiOrPaymentsIsToldOfItsOwner(): void
+    {
+        $this->boot();
+        // Payments alone.
+        $shop = $this->app('application', false, 'site', true);
+        $formlogic = $this->call($shop, '/api/context', self::MARKED, [], $this->ownerId, 'GET')['body']['context']['formlogic'];
+        $this->assertTrue($formlogic['owner']);
+        $this->assertArrayNotHasKey('userId', $formlogic);
+        $this->assertArrayNotHasKey('owner', $this->call($shop, '/api/context', self::MARKED, [], null, 'GET')['body']['context']['formlogic']);
+
+        // Neither section (Coffee.Dating's shape): no `formlogic` at all, for its owner as for anyone.
+        $plain = $this->app('application', false);
+        $this->assertSame([], $this->call($plain, '/api/context', self::MARKED, [], $this->ownerId, 'GET')['body']['context']);
+        $this->assertSame([], $this->call($plain, '/api/context', self::MARKED + ['X-FormLogic-Owner' => '1'], [], null, 'GET', ['owner' => true], ['owner' => true])['body']['context']);
+
+        // A members' app, with or without the sections: the owner is `roleId: "owner"`, and no `owner`.
+        foreach ([true, false] as $asks) {
+            $members = $this->app('members', $asks);
+            $formlogic = $this->call($members, '/api/context', [], [], $this->ownerId, 'GET')['body']['context']['formlogic'];
+            $this->assertSame([$this->ownerId, 'owner'], [$formlogic['userId'], $formlogic['roleId']]);
+            $this->assertArrayNotHasKey('owner', $formlogic);
+        }
+    }
+
+    /**
+     * The sign-in that makes an owner is the session's, checked as every signed-in request is: a
+     * POST that carries the sign-in cookie reaches the app only with that session's CSRF token.
+     * Through the middleware as public/index.php stacks it (CSRF for every route, then the route's
+     * optional sign-in), with a real session.
+     */
+    public function testTheOwnersSignInCountsOnlyPastTheCsrfCheck(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $jwt = ['secret' => 'owner-context-test-secret-0123456789abcdef', 'algorithm' => 'HS256', 'expiry' => 3600];
+        $auth = new AuthService(self::$mysql, $jwt);
+        $csrfSecret = CsrfMiddleware::secretForJwt($jwt['secret']);
+        $csrf = new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', 'formlogic_auth', $csrfSecret, [self::ORIGIN]);
+        $signIn = new AuthMiddleware($auth, true, 'formlogic_auth');
+        $controller = $this->controller;
+        $route = new class($controller, $app['slug']) implements RequestHandlerInterface {
+            public function __construct(private NativeAppController $controller, private string $slug) {}
+            public function handle(\Psr\Http\Message\ServerRequestInterface $request): \Psr\Http\Message\ResponseInterface
+            {
+                return $this->controller->runtime($request, new Response(), ['slug' => $this->slug]);
+            }
+        };
+        $afterCsrf = new class($signIn, $route) implements RequestHandlerInterface {
+            public function __construct(private AuthMiddleware $signIn, private RequestHandlerInterface $route) {}
+            public function handle(\Psr\Http\Message\ServerRequestInterface $request): \Psr\Http\Message\ResponseInterface
+            {
+                return $this->signIn->process($request, $this->route);
+            }
+        };
+        $send = fn(array $cookies, array $headers): array => self::answered($csrf->process($this->posted($app, '/api/context', self::MARKED + $headers, $cookies, 'GET'), $afterCsrf));
+
+        $session = $auth->issueToken(new User(id: $this->ownerId, email: $this->ownerId . '@test.local'));
+        $token = CsrfMiddleware::tokenForAuth($session, $csrfSecret);
+
+        // The owner's browser, as FormLogic's page sends it: the cookie and its token.
+        $owner = $send(['formlogic_auth' => $session], ['X-CSRF-Token' => $token]);
+        $this->assertSame(200, $owner['http'], json_encode($owner['body']));
+        $this->assertTrue($owner['body']['context']['formlogic']['owner']);
+        $this->assertArrayNotHasKey('userId', $owner['body']['context']['formlogic']);
+
+        // The cookie alone, as another site's page could make the browser send it: refused before
+        // the app is asked anything. So is a token that is not this session's.
+        $other = $auth->issueToken(new User(id: $this->ownerId, email: 'someone-else@test.local'));
+        foreach ([[], ['X-CSRF-Token' => 'forged'], ['X-CSRF-Token' => CsrfMiddleware::tokenForAuth($other, $csrfSecret)], ['X-FormLogic-Owner' => '1']] as $headers) {
+            $refused = $send(['formlogic_auth' => $session], $headers);
+            $this->assertSame([403, 'CSRF token validation failed'], [$refused['http'], $refused['body']['message'] ?? null], json_encode($headers));
+        }
+        // No sign-in: a visitor, and nothing of an owner. A cookie that is no session: the same.
+        foreach ([[], ['formlogic_auth' => '']] as $cookies) {
+            $visitor = $send($cookies, ['X-CSRF-Token' => $token]);
+            $this->assertSame(200, $visitor['http']);
+            $this->assertArrayNotHasKey('owner', $visitor['body']['context']['formlogic']);
+            $this->assertArrayHasKey('visitor', $visitor['body']['context']['formlogic']);
+        }
+        // Someone else's real session, with their own token: signed in, and not the owner.
+        $stranger = 'u-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'Someone')")->execute([$stranger, $stranger . '@test.local']);
+        try {
+            $theirs = $auth->issueToken(new User(id: $stranger, email: $stranger . '@test.local'));
+            $answer = $send(['formlogic_auth' => $theirs], ['X-CSRF-Token' => CsrfMiddleware::tokenForAuth($theirs, $csrfSecret)]);
+            $this->assertSame(200, $answer['http']);
+            $this->assertArrayNotHasKey('owner', $answer['body']['context']['formlogic']);
+        } finally {
+            self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$stranger]);
+        }
+    }
+
+    // ------------------------------------------------------------------ the address a request came from
+
+    /** `req.context.formlogic` on one call of $app's backend, over the connection $server describes (the test's own address when null). */
+    private function seenFrom(array $app, ?array $server, array $headers = self::MARKED, array $cookies = [], ?string $user = null, array $body = [], array $extra = []): array
+    {
+        $answer = $this->call($app, '/api/context', $headers, $cookies, $user, 'GET', $body, $extra, $server);
+        $this->assertSame(200, $answer['status'], json_encode($answer['body']));
+        return $answer['body']['context']['formlogic'];
+    }
+
+    /** Run $work on a site whose TRUSTED_PROXIES is $proxies (none when null) and that names no TRUSTED_PROXY_HEADER; then put both back. */
+    private static function withTrustedProxies(?string $proxies, callable $work): void
+    {
+        $names = ['TRUSTED_PROXIES', 'TRUSTED_PROXY_HEADER'];
+        $before = array_map(static fn(string $name): array => [getenv($name), $_ENV[$name] ?? null], array_combine($names, $names));
+        try {
+            foreach ($names as $name) { putenv($name); unset($_ENV[$name]); }
+            if ($proxies !== null) putenv('TRUSTED_PROXIES=' . $proxies);
+            $work();
+        } finally {
+            foreach ($before as $name => [$process, $loaded]) {
+                $process === false ? putenv($name) : putenv($name . '=' . $process);
+                if ($loaded === null) unset($_ENV[$name]); else $_ENV[$name] = $loaded;
+            }
+        }
+    }
+
+    /**
+     * An app that declares AI or payments is given a key for the address each request came from
+     * (`addressKey`), so its own limits can be per address as FormLogic's AI limits are: a count per
+     * visitor alone is no limit, since a new cookie is a new visitor. One address is one key in one
+     * app, whoever asks; another app sees another; an IPv6 address counts by its /64; the address
+     * itself is never given; and where no address is known, nothing is.
+     */
+    public function testAnAppIsGivenAKeyForTheAddressEachRequestCameFrom(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        self::withTrustedProxies(null, function () use ($app): void {
+            // A visitor, on the app's own page.
+            $first = $this->call($app, '/api/jobs', self::MARKED);
+            $visitor = $first['body']['context']['formlogic']['visitor']['id'];
+            $key = $first['body']['context']['formlogic']['addressKey'] ?? null;
+            $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/D', (string) $key);
+            // Nothing goes into it but the site's key, the app and the address: it is the same
+            // tomorrow, and for as long as the site's key is.
+            $siteKey = (string) hex2bin((string) self::$pdo->query("SELECT meta_value FROM system_meta WHERE meta_key = 'app_visitor_key'")->fetchColumn());
+            $this->assertSame(substr(hash_hmac('sha256', 'fl-app-address-v1|' . $app['id'] . '|' . self::IP, $siteKey), 0, 32), $key);
+            $this->assertSame($key, (new AppVisitors(self::$mysql))->addressKey($app['id'], self::IP), 'another process reads the same key');
+            $told = (string) json_encode($first['body']['context']);
+            $this->assertStringNotContainsString(self::IP, $told, 'the address itself is never given');
+            $this->assertStringNotContainsString($this->visitors->ipKey(self::IP), $told, 'nor FormLogic\'s own key for it, which is the same in every app');
+
+            // Whoever asks from that address: the same browser again, a new one (a new cookie is a
+            // new visitor, at the same address), a request nobody marked, the owner signed in.
+            $cookie = self::cookieValue($first['cookie']);
+            $again = $this->seenFrom($app, null, self::MARKED, $cookie);
+            $this->assertSame([$visitor, $key], [$again['visitor']['id'], $again['addressKey']]);
+            $another = $this->seenFrom($app, null);
+            $this->assertNotSame($visitor, $another['visitor']['id']);
+            $this->assertSame($key, $another['addressKey'], 'a cleared cookie is a new visitor, and the same address');
+            $unmarked = $this->seenFrom($app, null, []);
+            $this->assertArrayNotHasKey('visitor', $unmarked);
+            $this->assertSame($key, $unmarked['addressKey'], 'a request nobody marked has an address too, so the app can count or refuse it');
+            $owner = $this->seenFrom($app, null, self::MARKED, $cookie, $this->ownerId);
+            $this->assertSame([true, $key], [$owner['owner'], $owner['addressKey']]);
+
+            // Another app sees another key for the same address: it cannot be followed from app to app.
+            $cafe = $this->app();
+            $there = $this->seenFrom($cafe, null, self::MARKED, $cookie)['addressKey'];
+            $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/D', (string) $there);
+            $this->assertNotSame($key, $there);
+            $this->assertSame($there, $this->seenFrom($cafe, null)['addressKey']);
+
+            // Another address is another key, for the same browser.
+            $moved = $this->seenFrom($app, ['REMOTE_ADDR' => '203.0.113.10'], self::MARKED, $cookie);
+            $this->assertSame($visitor, $moved['visitor']['id']);
+            $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/D', (string) $moved['addressKey']);
+            $this->assertNotSame($key, $moved['addressKey']);
+
+            // An IPv6 address by its /64, as FormLogic's own limits count it (AppVisitors::ipKey).
+            $six = fn(string $address): ?string => $this->seenFrom($app, ['REMOTE_ADDR' => $address])['addressKey'] ?? null;
+            $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/D', (string) $six('2001:db8:1:2::10'));
+            $this->assertSame($six('2001:db8:1:2::10'), $six('2001:db8:1:2:ffff::1'), 'one /64 is one subscriber, whichever of its addresses they use');
+            $this->assertNotSame($six('2001:db8:1:2::10'), $six('2001:db8:1:3::10'), 'the next /64 is someone else');
+            $this->assertSame($key, $six('::ffff:' . self::IP), 'an IPv4 peer as a dual-stack listener reports it');
+
+            // No address known: the field is absent, so the app can tell that from an address. The
+            // visitor is still the visitor.
+            foreach ([[], ['REMOTE_ADDR' => ''], ['REMOTE_ADDR' => 'unix:'], ['REMOTE_ADDR' => 'unknown'], ['HTTP_X_FORWARDED_FOR' => self::IP]] as $server) {
+                $nowhere = $this->seenFrom($app, $server, self::MARKED, $cookie);
+                $this->assertArrayNotHasKey('addressKey', $nowhere, json_encode($server));
+                $this->assertSame($visitor, $nowhere['visitor']['id']);
+            }
+
+            // Nothing the page sends sets it, or moves it: not a header, not the app's own headers,
+            // not the body, not a field beside them.
+            $made = str_repeat('a', 32);
+            $elsewhere = '198.51.100.77';
+            $forgedHeaders = self::MARKED + ['X-Forwarded-For' => $elsewhere, 'X-Real-IP' => $elsewhere, 'Client-IP' => $elsewhere, 'CF-Connecting-IP' => $elsewhere, 'Forwarded' => 'for=' . $elsewhere,
+                'X-FormLogic-Address-Key' => $made, 'X-FormLogic-Address' => $elsewhere, 'X-Address-Key' => $made];
+            $forgedConnection = ['HTTP_X_FORWARDED_FOR' => $elsewhere, 'HTTP_X_REAL_IP' => $elsewhere, 'HTTP_CLIENT_IP' => $elsewhere, 'HTTP_CF_CONNECTING_IP' => $elsewhere, 'HTTP_FORWARDED' => 'for=' . $elsewhere];
+            $forgedFields = [
+                'headers' => ['x-forwarded-for' => $elsewhere, 'x-formlogic-address-key' => $made, 'addresskey' => $made],
+                'addressKey' => $made, 'client_ip' => $elsewhere, 'clientIp' => $elsewhere, 'ip' => $elsewhere,
+                'formlogic' => ['addressKey' => $made], 'context' => ['formlogic' => ['addressKey' => $made]], 'identity' => ['formlogic' => ['addressKey' => $made]],
+            ];
+            $forgedBody = ['addressKey' => $made, 'client_ip' => $elsewhere, 'formlogic' => ['addressKey' => $made], 'context' => ['formlogic' => ['addressKey' => $made]]];
+            $forged = $this->seenFrom($app, ['REMOTE_ADDR' => self::IP] + $forgedConnection, $forgedHeaders, $cookie, null, $forgedBody, $forgedFields);
+            $this->assertSame($key, $forged['addressKey'], 'the connection\'s address, whatever the page says');
+            $this->assertArrayNotHasKey('addressKey', $this->seenFrom($app, $forgedConnection, $forgedHeaders, $cookie, null, $forgedBody, $forgedFields), 'and where none is known, the page cannot make one');
+        });
+
+        // Behind a proxy. Without TRUSTED_PROXIES every visitor is the proxy, so an app's limits
+        // per address become one shared allowance (docs/HOSTED_APPS.md, "Before going live"). With
+        // it, each visitor is the address the proxy says they came from.
+        $behind = static fn(string $visitor): array => ['REMOTE_ADDR' => '10.0.0.2', 'HTTP_X_FORWARDED_FOR' => $visitor];
+        self::withTrustedProxies(null, function () use ($app, $behind): void {
+            $this->assertSame($this->seenFrom($app, $behind('198.51.100.7'))['addressKey'], $this->seenFrom($app, $behind('198.51.100.8'))['addressKey'], 'two visitors, one key: the proxy\'s');
+        });
+        self::withTrustedProxies('10.0.0.0/8', function () use ($app, $behind): void {
+            $one = $this->seenFrom($app, $behind('198.51.100.7'))['addressKey'];
+            $this->assertNotSame($one, $this->seenFrom($app, $behind('198.51.100.8'))['addressKey'], 'two visitors, two keys');
+            $this->assertSame($one, $this->seenFrom($app, ['REMOTE_ADDR' => '198.51.100.7'])['addressKey'], 'the visitor\'s own address, as if they had come directly');
+            $this->assertSame($one, $this->seenFrom($app, $behind('6.6.6.6, 198.51.100.7'))['addressKey'], 'what the visitor wrote before the proxy\'s word is not read');
+        });
+    }
+
+    /** Which apps are given it: one that declares AI or payments, open to anyone or members only. Every other app is exactly as it was. */
+    public function testOnlyAnAppThatDeclaresAiOrPaymentsIsGivenAnAddressKey(): void
+    {
+        $this->boot();
+        $key = '/^[0-9a-f]{32}$/D';
+        // Payments alone, open to anyone.
+        $shop = $this->app('application', false, 'site', true);
+        $this->assertMatchesRegularExpression($key, (string) ($this->seenFrom($shop, null)['addressKey'] ?? ''));
+
+        // A members' app that declares AI: beside who the member is, for its owner and for any other member.
+        $members = $this->app('members');
+        $owner = $this->seenFrom($members, null, [], [], $this->ownerId);
+        $this->assertSame([$this->ownerId, 'owner'], [$owner['userId'], $owner['roleId']]);
+        $this->assertMatchesRegularExpression($key, (string) ($owner['addressKey'] ?? ''));
+        $this->members->method('getAppUser')->willReturn(['status' => 'active', 'roleId' => 'member']);
+        $member = 'u-' . bin2hex(random_bytes(12));
+        $theirs = $this->seenFrom($members, null, [], [], $member);
+        $this->assertSame([$member, 'member', $owner['addressKey']], [$theirs['userId'], $theirs['roleId'], $theirs['addressKey'] ?? null], 'two members at one address');
+        $this->assertArrayNotHasKey('addressKey', $this->seenFrom($members, [], [], [], $member), 'and none where no address is known');
+
+        // Neither section (Coffee.Dating's shape): no `formlogic` at all, whatever the page sends.
+        $plain = $this->app('application', false);
+        $this->assertSame([], $this->call($plain, '/api/context', self::MARKED, [], null, 'GET')['body']['context']);
+        $made = str_repeat('a', 32);
+        $this->assertSame([], $this->call($plain, '/api/context', self::MARKED + ['X-FormLogic-Address-Key' => $made, 'X-Forwarded-For' => '198.51.100.77'], [], $this->ownerId, 'GET',
+            ['addressKey' => $made], ['addressKey' => $made, 'formlogic' => ['addressKey' => $made], 'context' => ['formlogic' => ['addressKey' => $made]]])['body']['context']);
+
+        // A members' app with neither: who the member is, exactly as it always was.
+        $old = $this->app('members', false);
+        $this->assertSame(['appId' => $old['id'], 'userId' => $this->ownerId, 'roleId' => 'owner'], $this->call($old, '/api/context', [], [], $this->ownerId, 'GET')['body']['context']['formlogic']);
+        $this->assertSame(['appId' => $old['id'], 'userId' => $member, 'roleId' => 'member'], $this->call($old, '/api/context', [], [], $member, 'GET')['body']['context']['formlogic']);
     }
 
     // ------------------------------------------------------------------ a chat answer's length, and follow-ups (contract §0.13)

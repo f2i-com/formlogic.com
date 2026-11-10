@@ -7,35 +7,24 @@
 // - bin/app-ai-worker.php --watch;
 // - AI_BASE_URL at the stand-in for Studio's gateway (backend/tests/Support/stub-images-server.php);
 // - PAYPAL_BASE_URL at the stand-in for PayPal (backend/tests/Support/stub-paypal-server.php), with
-//   PAYPAL_CLIENT_ID, PAYPAL_SECRET and APP_ENV=development;
-// - an administrator account: E2E_APP_AI_EMAIL and E2E_APP_AI_PASSWORD; E2E_STUB_PAYPAL_URL is the
-//   stand-in's address as this test reaches it.
-// PayPal's own SDK is never loaded: the page is given a stand-in whose button calls the sheet's real
-// createOrder and onApprove, and the test approves the order on the stand-in as a buyer would.
+//   PAYPAL_CLIENT_ID, PAYPAL_SECRET, PAYPAL_WEBHOOK_ID and APP_ENV=development;
+// - an administrator account: E2E_APP_AI_EMAIL and E2E_APP_AI_PASSWORD.
+// The visitor pays as a person does on a development site: with the wallet's own "Pay with the
+// stand-in PayPal" button, which the sheet shows where a stand-in answers for PayPal. PayPal's own
+// script is never asked for (it knows nothing of a stand-in's orders), and the test checks it is not.
 import { sessionHeaders } from './session-request';
 import { expect, test } from '@playwright/test';
 
 const EMAIL = process.env.E2E_APP_AI_EMAIL;
 const PASSWORD = process.env.E2E_APP_AI_PASSWORD;
-const STUB_PAYPAL = process.env.E2E_STUB_PAYPAL_URL || 'http://127.0.0.1:8306';
-
-const FAKE_PAYPAL_SDK = `
-window.paypal = { Buttons: function (options) { return { render: function (target) {
-  var node = typeof target === 'string' ? document.querySelector(target) : target;
-  var button = document.createElement('button');
-  button.type = 'button';
-  button.textContent = 'Pay with PayPal';
-  button.onclick = function () { Promise.resolve(options.createOrder()).then(function (id) { window.__fakePaypalOrder = id; }); };
-  node.appendChild(button);
-  window.__fakePaypalApprove = function (id) { return options.onApprove({ orderID: id }); };
-  return Promise.resolve();
-} }; } };`;
 
 const UI = `<logic>
 var message = 'Ready.';
 var jobId = '';
 var balance = '';
 var got = '';
+var who = '';
+var where = '';
 function read(response) { if (!response) return {}; if (typeof response.body === 'object') return response.body || {}; try { return JSON.parse(response.body || '{}'); } catch (problem) { return {}; } }
 function poll() {
   softn.net.fetch('/api/latest', { method: 'GET', timeout: 15000 }, function (response) {
@@ -70,8 +59,15 @@ function openWallet() {
     message = 'Wallet closed.';
   });
 }
+function whoAmI() {
+  softn.net.fetch('/api/latest', { method: 'GET', timeout: 15000 }, function (response) {
+    var body = read(response);
+    who = body.owner ? 'You own this shop.' : 'A visitor.';
+    where = 'From ' + (body.addressKey || 'nowhere');
+  });
+}
 </logic>
-<Stack padding="24"><Text>Logo shop</Text><Button onClick={draw}>Draw</Button><Button onClick={download}>Download</Button><Text>{message}</Text><Text>{balance}</Text><Text>{got}</Text></Stack>`;
+<Stack padding="24"><Text>Logo shop</Text><Button onClick={draw}>Draw</Button><Button onClick={download}>Download</Button><Button onClick={whoAmI}>Who am I</Button><Text>{message}</Text><Text>{balance}</Text><Text>{got}</Text><Text>{who}</Text><Text>{where}</Text></Stack>`;
 
 const SERVER = `function owner(req) { var f = req.context && req.context.formlogic ? req.context.formlogic : {}; return f.visitor ? f.visitor.id : (f.userId || ''); }
 function createJob(req) {
@@ -81,7 +77,7 @@ function createJob(req) {
 }
 function latest(req) {
   var row = softn.sql.first("SELECT j.id, d.status, d.code FROM ai_jobs j LEFT JOIN deliveries d ON d.job_id = j.id WHERE j.owner = ? ORDER BY j.rowid DESC LIMIT 1", [owner(req)]);
-  return { status: 200, body: { job: row || null, wallet: req.context.formlogic.wallet || null } };
+  return { status: 200, body: { job: row || null, wallet: req.context.formlogic.wallet || null, owner: req.context.formlogic.owner === true, addressKey: req.context.formlogic.addressKey || '' } };
 }
 function deliver(req) {
   if (!(req.context.formlogic.ai && req.context.formlogic.ai.delivery === true)) return { status: 403, body: { error: 'not a delivery' } };
@@ -153,7 +149,8 @@ test('A visitor gets a picture from the site\'s AI and pays 5 cents to download 
   // The visitor: no account, their own browser.
   const visitor = await browser.newContext({ serviceWorkers: 'block' });
   const page = await visitor.newPage();
-  await page.route('https://www.paypal.com/sdk/js**', (route) => route.fulfill({ contentType: 'application/javascript', body: FAKE_PAYPAL_SDK }));
+  const askedOfPayPal: string[] = [];
+  page.on('request', (request) => { if (/paypal\.com/i.test(request.url())) askedOfPayPal.push(request.url()); });
   await page.goto(`/app/${slug}`);
   const frame = page.frameLocator('iframe[title="Hosted app"]');
   await frame.getByRole('button', { name: 'Draw', exact: true }).click();
@@ -163,12 +160,12 @@ test('A visitor gets a picture from the site\'s AI and pays 5 cents to download 
   const sheet = page.getByRole('dialog', { name: /Your balance with/ });
   await expect(sheet).toBeVisible();
   await expect(sheet.getByTestId('wallet-balance')).toHaveText('$0.00');
-  await sheet.getByRole('button', { name: 'Pay with PayPal' }).click();
-  const orderId = await (await page.waitForFunction(() => (window as unknown as { __fakePaypalOrder?: string }).__fakePaypalOrder)).jsonValue();
-  const approved = await fetch(`${STUB_PAYPAL}/stub/orders/${orderId}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outcome: 'completed' }) });
-  expect(approved.ok).toBe(true);
-  await page.evaluate((id) => (window as unknown as { __fakePaypalApprove: (order: string) => Promise<void> }).__fakePaypalApprove(id), orderId);
+  // A development site: the sheet says its PayPal is a stand-in, and pays through it with one button.
+  await expect(sheet.getByTestId('wallet-stand-in')).toContainText('a stand-in answers for PayPal here, and no money moves');
+  await sheet.getByRole('button', { name: 'Pay with the stand-in PayPal' }).click();
   await expect(sheet.getByTestId('wallet-balance')).toHaveText('$2.00');
+  await expect(sheet).toContainText('Added. Your balance is $2.00.');
+  expect(askedOfPayPal, 'PayPal itself is never asked for anything').toEqual([]);
   await sheet.getByRole('button', { name: 'Close' }).click();
   await expect(frame.getByText('Wallet closed.', { exact: true })).toBeVisible();
   await expect(frame.getByText('Balance 200', { exact: true })).toBeVisible();
@@ -180,10 +177,26 @@ test('A visitor gets a picture from the site\'s AI and pays 5 cents to download 
 
   // The administrator sees the top-up with PayPal's ids, and the owner the sale.
   const overview = await (await context.request.get('/api/admin/app-payments', { headers: admin })).json();
-  expect(overview.data.topups.some((t: { orderId: string; status: string }) => t.orderId === orderId && t.status === 'completed')).toBe(true);
+  expect(overview.data.topups.some((t: { appId: string; status: string; amountCents: number; captureId: string | null }) => t.appId === app.id && t.status === 'completed' && t.amountCents === 200 && t.captureId !== null)).toBe(true);
   const sales = await (await context.request.get(`/api/apps/${app.id}/payments`)).json();
   expect(sales.data.sales.today.cents).toBe(5);
   const owner = await (await context.request.get(`/api/apps/${app.id}/ai`)).json();
   expect(owner.data.log[0].status).toBe('done');
+
+  // The shop is open to anyone, and its owner is still its owner: in the browser where they are
+  // signed in to FormLogic the same page's backend is told so (`formlogic.owner`), and nobody else's.
+  await frame.getByRole('button', { name: 'Who am I', exact: true }).click();
+  await expect(frame.getByText('A visitor.', { exact: true })).toBeVisible();
+  // The backend is also told where each request came from, as a key it can count by
+  // (`formlogic.addressKey`): never the address.
+  const from = await frame.getByText(/^From [0-9a-f]{32}$/).innerText();
+  const ownersPage = await context.newPage();
+  await ownersPage.goto(`/app/${slug}`);
+  const ownersFrame = ownersPage.frameLocator('iframe[title="Hosted app"]');
+  await ownersFrame.getByRole('button', { name: 'Who am I', exact: true }).click();
+  await expect(ownersFrame.getByText('You own this shop.', { exact: true })).toBeVisible();
+  // Two browsers on this machine are two visitors at one address: the same key.
+  await expect(ownersFrame.getByText(from, { exact: true })).toBeVisible();
+  await ownersPage.close();
   await visitor.close();
 });

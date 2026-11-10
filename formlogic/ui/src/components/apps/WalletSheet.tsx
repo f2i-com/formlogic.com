@@ -61,9 +61,22 @@ export function WalletSheet({ slug, appName, visitor, onClose }: { slug: string;
     await load();
   }, [slug, visitor, load]);
 
+  // Development only: this site's PayPal is a stand-in, which PayPal's own script knows nothing of.
+  // The same three steps as PayPal's buttons take, with the approval a buyer gives in PayPal's
+  // window made at the stand-in instead.
+  const payAtStandIn = useCallback(async () => {
+    setBusy(true);
+    setNotice(null);
+    const order = await api.createAppWalletOrder(slug, centsRef.current ?? 0, visitor);
+    if (order.error || !order.data) { setBusy(false); setNotice(order.error ?? 'Could not start the payment.'); return; }
+    const approved = await api.approveAppWalletStandIn(slug, order.data.orderId, visitor);
+    if (approved.error) { setBusy(false); setNotice(approved.error); return; }
+    await captured(order.data.orderId);
+  }, [slug, visitor, captured]);
+
   // PayPal's buttons, once there is something to pay for: createOrder reads the chosen amount from a ref.
   useEffect(() => {
-    if (!sheet?.available || !sheet.paypalClientId || rendered.current || !buttons.current) return;
+    if (!sheet?.available || sheet.paypalStandIn || !sheet.paypalClientId || rendered.current || !buttons.current) return;
     rendered.current = true;
     let cancelled = false;
     loadPayPalSdk(sheet.paypalClientId, sheet.currency).then((paypal) => {
@@ -134,7 +147,12 @@ export function WalletSheet({ slug, appName, visitor, onClose }: { slug: string;
                     <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">{formatCents(cents)} pays for {Math.floor(cents / cheapest)} at {formatCents(cheapest)} each.</p>
                   )}
                 </fieldset>
-                <div ref={buttons} id="fl-wallet-paypal" data-testid="wallet-paypal" />
+                {sheet.paypalStandIn ? (
+                  <div className="space-y-1.5 rounded-lg border border-dashed border-amber-400 bg-amber-50 p-3 dark:border-amber-500/60 dark:bg-amber-500/10" data-testid="wallet-stand-in">
+                    <Button size="sm" isLoading={busy && !pendingOrder} disabled={busy || cents === null} onClick={() => void payAtStandIn()}>Pay with the stand-in PayPal</Button>
+                    <p className="text-xs text-amber-900 dark:text-amber-200">This site is in development: a stand-in answers for PayPal here, and no money moves.</p>
+                  </div>
+                ) : <div ref={buttons} id="fl-wallet-paypal" data-testid="wallet-paypal" />}
                 {pendingOrder && <Button size="sm" variant="outline" isLoading={busy} onClick={() => void captured(pendingOrder)}>Confirm the payment again</Button>}
                 <p className="text-xs text-gray-500 dark:text-slate-400">Paid to this site through PayPal. Your balance is kept for you; ask the site to refund what is left.</p>
               </div>
