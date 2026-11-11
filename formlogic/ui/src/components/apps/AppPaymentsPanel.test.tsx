@@ -44,7 +44,7 @@ it('shows what the app sells and what it sold, and saves a lower price with paym
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(price, '9');
     price.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  expect(price.value).toBe('5', 'never above what the app declares');
+  expect(price.value, 'never above what the app declares').toBe('5');
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(price, '4');
     price.dispatchEvent(new Event('input', { bubbles: true }));

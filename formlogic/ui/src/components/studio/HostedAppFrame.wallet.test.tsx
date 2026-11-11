@@ -69,7 +69,7 @@ it('opens the wallet for an app that takes payments, and answers when it closes 
   const asked = call(channel, 1, { op: 'open' });
   await act(async () => { await Promise.resolve(); });
   expect(onWallet).toHaveBeenCalledTimes(1);
-  expect(replies(channel)).toEqual([], 'not answered while the sheet is open');
+  expect(replies(channel), 'not answered while the sheet is open').toEqual([]);
   await act(async () => close({ closed: true, balanceCents: 195 }));
   await asked;
   expect(replies(channel)).toEqual([{ id: 1, result: { result: { closed: true, balanceCents: 195 } } }]);

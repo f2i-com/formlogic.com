@@ -15,7 +15,7 @@ describe('nativeRefusal', () => {
       result: { status: 429, body: { error: 'Too many requests.', code: 'rate_limited', retryAfter: 1 } },
     });
     // Every worker busy.
-    expect(nativeRefusal({ error: 'The native host is busy. Try again shortly.', status: 429, retryAfter: 2 }).result).toMatchObject({ body: { retryAfter: 2 } });
+    expect(nativeRefusal({ error: 'The native host is busy. Try again shortly.', status: 429, retryAfter: 2 })).toMatchObject({ result: { body: { retryAfter: 2 } } });
     expect(nativeTooManyRequests(1.2).body.retryAfter).toBe(2);
     expect(nativeTooManyRequests(0).body.retryAfter).toBe(0);
     // Nothing made up when it was not said, or was not a time.
