@@ -103,10 +103,17 @@ describe('printRecoveryKit', () => {
   let printDoc: Document;
   let win: { focus: ReturnType<typeof vi.fn>; print: ReturnType<typeof vi.fn>; addEventListener: ReturnType<typeof vi.fn> };
   const frame = () => document.querySelector('iframe');
-  const finishLoading = () => frame()!.dispatchEvent(new Event('load'));
+  // The frame's load listener is held here and run by the test: jsdom 31 loads a srcdoc frame as
+  // it is attached, earlier versions never did, and a browser does it later.
+  let onLoad: (() => void) | undefined;
+  const finishLoading = () => onLoad!();
   const afterPrint = () => (win.addEventListener.mock.calls.find(([type]) => type === 'afterprint')![1] as () => void)();
 
   beforeEach(() => {
+    onLoad = undefined;
+    vi.spyOn(HTMLIFrameElement.prototype, 'addEventListener').mockImplementation((type: string, listener: EventListenerOrEventListenerObject | null) => {
+      if (type === 'load') onLoad = listener as () => void;
+    });
     printDoc = document.implementation.createHTMLDocument('');
     win = { focus: vi.fn(), print: vi.fn(), addEventListener: vi.fn() };
     vi.spyOn(HTMLIFrameElement.prototype, 'contentWindow', 'get').mockReturnValue(win as unknown as Window);
