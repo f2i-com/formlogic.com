@@ -483,6 +483,28 @@ describe('normalizeToolActivity', () => {
     expect(normalizeToolActivity({ type: 'tool_result', name: 'create_softn_app', status: 'done', result: { error: 'x' } })?.link).toBeUndefined();
   });
 
+  it('links a change to a SoftN app to its workspace, as a request for AI Studio to carry out on the app as it is', () => {
+    expect(
+      normalizeToolActivity({ type: 'tool_result', name: 'edit_softn_app', status: 'done', result: { app: { id: 'a-7', name: 'Recipes' }, version: 4, request: 'Add a dark theme.', edit: true, workspaceUrl: '/apps/a-7/softn' } })
+    ).toMatchObject({ label: 'Hand the change to AI Studio', link: { kind: 'softnApp', id: 'a-7', brief: 'Add a dark theme.', edit: true } });
+  });
+
+  it('links what a tool did to a SoftN app to the section of its own page where it shows', () => {
+    expect(normalizeToolActivity({ type: 'tool_result', name: 'get_softn_app', status: 'done', result: { app: { id: 'a-7' }, softnApp: true, version: 3 } })?.link).toEqual({ kind: 'softnApp', id: 'a-7' });
+    expect(normalizeToolActivity({ type: 'tool_result', name: 'list_native_app_records', status: 'done', result: { appId: 'a-7', softnApp: true, table: 'orders', rows: [] } })?.link).toEqual({ kind: 'softnApp', id: 'a-7', section: 'data', table: 'orders' });
+    // With no table named it is the Data section itself; a name that is not a table's is not put in an address.
+    expect(normalizeToolActivity({ type: 'tool_result', name: 'list_native_app_records', status: 'done', result: { appId: 'a-7', softnApp: true, tables: [] } })?.link).toEqual({ kind: 'softnApp', id: 'a-7', section: 'data' });
+    expect(normalizeToolActivity({ type: 'tool_result', name: 'change_native_app_record', status: 'done', result: { appId: 'a-7', softnApp: true, table: '../x', saved: true } })?.link).toEqual({ kind: 'softnApp', id: 'a-7', section: 'data' });
+    expect(normalizeToolActivity({ type: 'tool_result', name: 'list_app_members', status: 'done', result: { appId: 'a-7', softnApp: true, members: [] } })?.link).toEqual({ kind: 'softnApp', id: 'a-7', section: 'members' });
+    // The same tools work on a forms app, which has no such page: its members and records are in its App Studio.
+    expect(normalizeToolActivity({ type: 'tool_result', name: 'list_app_members', status: 'done', result: { appId: 'a-9', softnApp: false, members: [] } })?.link).toEqual({ kind: 'app', id: 'a-9' });
+    expect(normalizeToolActivity({ type: 'tool_result', name: 'list_native_app_records', status: 'done', result: { appId: 'a-9', softnApp: false, table: 'orders', rows: [] } })?.link).toEqual({ kind: 'app', id: 'a-9' });
+    // A file saved in a SoftN app shows under its Edit; in a project a forms app hosts, in that app's Studio.
+    expect(normalizeToolActivity({ type: 'tool_result', name: 'update_native_app_files', status: 'done', result: { appId: 'a-7', softnApp: true, version: 5 } })?.link).toEqual({ kind: 'softnApp', id: 'a-7', section: 'edit' });
+    expect(normalizeToolActivity({ type: 'tool_result', name: 'update_native_app_files', status: 'done', result: { appId: 'a-9', softnApp: false, version: 5 } })?.link).toEqual({ kind: 'app', id: 'a-9', step: 'screens' });
+    expect(normalizeToolActivity({ type: 'tool_result', name: 'get_native_app_record', status: 'done', result: { appId: 'a-7', table: 'orders', record: {} } })?.label).toBe('Read a record of the app');
+  });
+
   it('links the screen tools to their Studios, not the builder/app list', () => {
     // set_form_screen returns the updated FORM — the link must be the screen studio kind,
     // never the generic form/builder link the name-based fallback would produce.

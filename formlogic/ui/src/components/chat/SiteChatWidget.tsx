@@ -105,7 +105,7 @@ function activityIcon(status: string): React.ReactNode {
   return <Loader2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 animate-spin text-gray-400 dark:text-slate-500" aria-hidden="true" />;
 }
 
-function ToolActivityCard({ activity, onOpenLink }: { activity: ChatToolActivity; onOpenLink: (link: NonNullable<ChatToolActivity['link']>) => void }) {
+function ToolActivityCard({ activity, onOpenLink }: { activity: ChatToolActivity; onOpenLink: (link: NonNullable<ChatToolActivity['link']>, activityId?: string) => void }) {
   const path = activity.link ? chatToolLinkPath(activity.link) : null;
   return (
     <div
@@ -121,7 +121,7 @@ function ToolActivityCard({ activity, onOpenLink }: { activity: ChatToolActivity
       {path && (
         <button
           type="button"
-          onClick={() => activity.link && onOpenLink(activity.link)}
+          onClick={() => activity.link && onOpenLink(activity.link, activity.id)}
           className="inline-flex flex-shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 font-medium text-primary-600 hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-500/10"
         >
           Open
@@ -478,15 +478,17 @@ function AccountChatWidget() {
   const followActivity = useCallback(
     (activity: ChatToolActivity) => {
       if (activity.status !== 'done' || !activity.link) return;
-      // A new SoftN app is followed whatever the setting: the person asked for it to be built,
-      // and AI Studio builds it in its workspace while they watch.
-      const handOff = activity.link.kind === 'softnApp';
+      // A SoftN app handed to AI Studio (a new one to build, or a change to one) is followed
+      // whatever the setting: the person asked for it, and AI Studio does it in the app's
+      // workspace while they watch. A link with no request is an ordinary one.
+      const handOff = activity.link.kind === 'softnApp' && !!activity.link.brief;
       if (!followAiRef.current && !handOff) return;
       const path = chatToolLinkPath(activity.link);
-      if (!path || path === lastFollowedRef.current) return;
+      // A second request for the same app is at the same address, and is still handed over.
+      if (!path || (path === lastFollowedRef.current && !handOff)) return;
       lastFollowedRef.current = path;
       if (handOff) {
-        prepareSoftnHandOff(activity.link);
+        prepareSoftnHandOff(activity.link, activity.id);
         if (isMobile) setChatMinimized(true);
         navigate(path);
         return;
@@ -780,10 +782,10 @@ function AccountChatWidget() {
   }, [prefs, savingToolMode]);
 
   const openLink = useCallback(
-    (link: NonNullable<ChatToolActivity['link']>) => {
+    (link: NonNullable<ChatToolActivity['link']>, activityId?: string) => {
       const path = chatToolLinkPath(link);
       if (!path) return;
-      prepareSoftnHandOff(link);
+      prepareSoftnHandOff(link, activityId);
       if (isMobile) setChatMinimized(true);
       navigate(path);
     },

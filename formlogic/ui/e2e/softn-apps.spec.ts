@@ -95,7 +95,8 @@ async function watchStudioBuild(page: Page, request: string, heading: string, ai
   const frame = page.frameLocator('iframe[title="App AI editor"]');
   const pasteNotice = studio.getByText('paste yours into its AI chat', { exact: false });
   const finished = studio.getByRole('status').filter({ hasText: `Done: Built ${heading}.` });
-  await expect(pasteNotice.or(finished).or(studio.getByRole('status').filter({ hasText: 'AI Studio is building your app' }))).toBeVisible({ timeout: 90000 });
+  // "building your app" for a new one, "making your change" for a change to one that exists.
+  await expect(pasteNotice.or(finished).or(studio.getByRole('status').filter({ hasText: /AI Studio is (building your app|making your change)/ }))).toBeVisible({ timeout: 90000 });
   if (await pasteNotice.isVisible()) {
     await expect(studio.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled({ timeout: 90000 });
     await openStudioAiPanel(frame);
@@ -384,5 +385,41 @@ test.describe('hosted SoftN apps', () => {
     await expect(page).toHaveURL(new RegExp(`/apps/${appRecord.id}/softn$`), { timeout: 30000 });
     await watchStudioBuild(page, request, '<Text>Weeknight Dinners</Text>');
     expect((await nativeProject(context, appRecord.id))!.files['ui/main.ui']).toContain('<Text>Weeknight Dinners</Text>');
+  });
+
+  test('from the chat: a change to a SoftN app that exists is handed to AI Studio, from the app’s own page', async ({ page, context }) => {
+    test.setTimeout(240000);
+    const name = `Chat Edit ${Date.now()}`;
+    const app = (await (await context.request.post('/api/apps', { headers, data: { name, settings: { softnApp: true } } })).json());
+    const appRecord = (app.app ?? app) as { id: string; slug: string };
+    created.push(appRecord.id);
+    expect((await context.request.post(`/api/apps/${appRecord.id}/native/starter`, { headers, data: {} })).ok()).toBe(true);
+    const request = 'Call it Sunday Roasts instead.';
+    const agent = studioAgent(context, () => appRecord.id, () => `<Text>${name}</Text>`, '<Text>Sunday Roasts</Text>');
+    await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'auto' } } }));
+    await page.route('**/api/ai/chat', async route => {
+      const body = route.request().postDataJSON();
+      if (body.aiTools !== undefined) { await agent.handle(route, body); return; }
+      // What edit_softn_app answers (ChatToolsService): the app, the request, and that it is an edit.
+      const result = { app: { id: appRecord.id, name, slug: appRecord.slug }, version: 1, request, edit: true, workspaceUrl: `/apps/${appRecord.id}/softn`, next: 'Handed to AI Studio.' };
+      const frames = [
+        `data: ${JSON.stringify({ type: 'tool_result', id: 'tool-1', name: 'edit_softn_app', status: 'done', result })}\n\n`,
+        `event: delta\ndata: ${JSON.stringify({ content: 'AI Studio is making that change now.' })}\n\n`,
+        'event: done\ndata: {"usage":{}}\n\n',
+        'event: end\ndata: {}\n\n',
+      ];
+      await route.fulfill({ status: 200, headers: { 'Content-Type': 'text/event-stream' }, body: frames.join('') });
+    });
+
+    // The person is already on the app's page when they ask: the hand-off is to the address they are at.
+    await page.goto(`/apps/${appRecord.id}/softn`);
+    await expect(page.getByRole('button', { name: 'Open chat' })).toBeVisible({ timeout: 30000 });
+    await page.getByRole('button', { name: 'Open chat' }).click();
+    await page.getByRole('textbox', { name: 'Chat message' }).fill(request);
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await watchStudioBuild(page, request, '<Text>Sunday Roasts</Text>');
+    expect((await nativeProject(context, appRecord.id))!.files['ui/main.ui']).toContain('<Text>Sunday Roasts</Text>');
+    // Studio was asked to change the app as it is, not to build one.
+    expect(agent.requests.length).toBeGreaterThan(0);
   });
 });

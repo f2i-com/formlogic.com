@@ -15,9 +15,11 @@ const APP_STUDIO_STEPS = new Set(['plan', 'data', 'screens', 'automations', 'acc
 
 export function chatToolLinkPath(link: NonNullable<ChatToolActivity['link']>): string | null {
   switch (link.kind) {
-    // A SoftN app lands in its workspace, where AI Studio opens on the request.
+    // A SoftN app lands on its own page (where AI Studio opens on a request), or in the section the tool worked in.
     case 'softnApp':
-      return `/apps/${encodeURIComponent(link.id)}/softn`;
+      return link.section
+        ? `/apps/${encodeURIComponent(link.id)}/softn/${link.section}${link.section === 'data' && link.table ? `/${encodeURIComponent(link.table)}` : ''}`
+        : `/apps/${encodeURIComponent(link.id)}/softn`;
     case 'form':
       return `/builder/${encodeURIComponent(link.id)}`;
     // App links land in the APP STUDIO — the same guided wizard a human uses —
@@ -72,19 +74,27 @@ export function chatThreadTitle(text: string): string {
   return collapsed.length > 48 ? `${collapsed.slice(0, 47)}…` : collapsed;
 }
 
-/** SoftN apps whose request has been handed to AI Studio in this session: opened again, they open plainly. */
+/** The requests handed to AI Studio in this session, each by its app and its words: opened again, the app opens plainly. */
 const softnHandedOff = new Set<string>();
 
 /**
  * A SoftN app link opens the app's workspace straight into AI Studio with the person's request,
  * the first time. Opening it again (the card's Open, later) must not build the app a second time.
  */
-export function prepareSoftnHandOff(link: NonNullable<ChatToolActivity['link']>): void {
+export function prepareSoftnHandOff(link: NonNullable<ChatToolActivity['link']>, activityId?: string): void {
   if (link.kind !== 'softnApp') return;
-  if (softnHandedOff.has(link.id) || !link.brief) {
+  // One hand-off for each time the tool ran (`activityId`): opening its card again later does not
+  // carry the request out a second time, while asking again, even in the same words, is a new one.
+  // Without an id, the request's own words stand in for it.
+  const handed = `${link.id}\n${link.edit ? 'edit' : 'build'}\n${activityId ?? link.brief ?? ''}`;
+  if (softnHandedOff.has(handed) || !link.brief) {
+    // The same activity arriving twice in a turn must not undo the hand-off it has just made:
+    // the workspace takes the request only once the app's project has loaded.
+    const pending = useUIStore.getState().softnOpen;
+    if (link.brief && pending?.appId === link.id && pending.brief?.prompt === link.brief) return;
     useUIStore.getState().setSoftnOpen(null);
     return;
   }
-  softnHandedOff.add(link.id);
-  useUIStore.getState().setSoftnOpen({ appId: link.id, editor: 'studio', brief: { prompt: link.brief, kind: 'build' } });
+  softnHandedOff.add(handed);
+  useUIStore.getState().setSoftnOpen({ appId: link.id, editor: 'studio', brief: { prompt: link.brief, kind: link.edit ? 'edit' : 'build' } });
 }

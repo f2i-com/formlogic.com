@@ -172,7 +172,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
       <div className="flex min-w-0 items-center gap-3"><Button variant="ghost" disabled={busy} onClick={() => { if (!ready || window.confirm(agentWorking ? 'The AI is still building your app. Leave now and the work it has done so far is lost.' : `Return without applying editor changes? Use “${applyLabel}” to keep your work.`)) onClose(); }} leftIcon={<ArrowLeft className="h-4 w-4" />}>Back</Button><div className="min-w-0"><h2 className="truncate text-sm font-semibold">{kind === 'builder' ? 'Visual Builder' : 'AI Studio'} · {name}</h2><p className="text-xs text-slate-500 dark:text-slate-400">Edit and preview here, then choose “{applyLabel}”. The editor’s preview does not run your app’s backend; your app does.</p></div></div>
       <Button disabled={!ready || busy || aiPending || agentWorking} isLoading={busy} onClick={() => void apply()} leftIcon={<Check className="h-4 w-4" />}>{applyLabel}</Button>
     </header>
-    {agent ? <AgentStatusBar status={agent} applyLabel={applyLabel} /> : aiPending && <p role="status" className="border-b border-slate-200 px-4 py-2 text-sm dark:border-slate-700">AI is editing your draft. Wait for it to finish, or choose Stop generating in Studio.</p>}
+    {agent ? <AgentStatusBar status={agent} applyLabel={applyLabel} edit={brief?.kind === 'edit'} /> : aiPending && <p role="status" className="border-b border-slate-200 px-4 py-2 text-sm dark:border-slate-700">AI is editing your draft. Wait for it to finish, or choose Stop generating in Studio.</p>}
     {briefToPaste && <div role="note" className="flex flex-wrap items-center gap-3 border-b border-primary-200 bg-primary-50 px-4 py-2 text-sm text-primary-900 dark:border-primary-500/30 dark:bg-primary-950/40 dark:text-primary-100">
       <span className="min-w-0 flex-1">This version of AI Studio does not start from a request yet: paste yours into its AI chat. <span className="text-primary-700 dark:text-primary-300">“{briefToPaste.length > 140 ? `${briefToPaste.slice(0, 140)}…` : briefToPaste}”</span></span>
       <Button size="sm" variant="secondary" leftIcon={<Copy className="h-4 w-4" />} onClick={() => {
@@ -191,14 +191,14 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
 }
 
 /** What Studio's agent is doing, above the editor: working, waiting on the person, or done. */
-function AgentStatusBar({ status, applyLabel }: { status: EditorAgentStatus; applyLabel: string }) {
+function AgentStatusBar({ status, applyLabel, edit = false }: { status: EditorAgentStatus; applyLabel: string; edit?: boolean }) {
   const tone = status.state === 'failed' || status.state === 'stopped' || status.state === 'paused'
     ? 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100'
     : status.state === 'finished' ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-100'
     : 'border-primary-200 bg-primary-50 text-primary-900 dark:border-primary-500/30 dark:bg-primary-950/40 dark:text-primary-100';
   const message = (() => {
     switch (status.state) {
-      case 'running': return <>AI Studio is building your app{status.step ? <>: <span className="font-medium">{status.step}</span></> : '…'} Watch it in the preview; your changes are kept when you choose “{applyLabel}” once it is done.</>;
+      case 'running': return <>{edit ? 'AI Studio is making your change' : 'AI Studio is building your app'}{status.step ? <>: <span className="font-medium">{status.step}</span></> : '…'} Watch it in the preview; your changes are kept when you choose “{applyLabel}” once it is done.</>;
       case 'waiting': return <>AI Studio has a question for you in its chat.</>;
       case 'paused': return <>The AI paused{status.reason ? `: ${status.reason}` : '.'} Resume it in Studio&apos;s chat.</>;
       case 'stopped': return <>The AI stopped. What it wrote so far is in the editor; choose “{applyLabel}” to keep it.</>;

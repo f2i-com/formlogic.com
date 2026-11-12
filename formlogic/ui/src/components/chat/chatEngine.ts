@@ -321,10 +321,12 @@ export interface ChatToolActivity {
    *  App links may carry the App Studio step the action belongs to, so
    *  Follow-AI walks the user through the studio as the app takes shape. */
   /**
-   * `softnApp`: a hosted SoftN app's workspace; `brief` is the person's request, which AI Studio
-   * builds once the chat has taken them there.
+   * `softnApp`: a hosted SoftN app's own page. With a `brief` (the person's request) the chat
+   * takes them there and AI Studio builds it, or, with `edit`, makes that change to the app as
+   * it is. Without one it is a plain link, to the `section` the tool worked in (its data, with
+   * the `table`; its members).
    */
-  link?: { kind: 'form' | 'app' | 'flow' | 'response' | 'diagram' | 'formScreen' | 'appScreen' | 'softnApp'; id: string; step?: string; brief?: string };
+  link?: { kind: 'form' | 'app' | 'flow' | 'response' | 'diagram' | 'formScreen' | 'appScreen' | 'softnApp'; id: string; step?: string; brief?: string; edit?: boolean; section?: 'data' | 'members' | 'edit'; table?: string };
 }
 
 /** A confirm-mode tool proposal awaiting the user's decision (desktop source). */
@@ -443,6 +445,18 @@ const APP_STUDIO_STEP_BY_TOOL: Record<string, string | null> = {
   publish_app_project: 'screens',
 };
 
+/** The section of a SoftN app's page where each of its tools' work shows (null: the page itself). */
+const SOFTN_SECTION_BY_TOOL: Record<string, 'data' | 'members' | 'edit' | null> = {
+  get_softn_app: null,
+  list_native_app_records: 'data',
+  get_native_app_record: 'data',
+  change_native_app_record: 'data',
+  list_app_members: 'members',
+  update_app_member: 'members',
+  update_native_app_files: 'edit',
+  publish_native_app_project: 'edit',
+};
+
 /** Bounded scan of a tool result for the first appId-shaped value. */
 function appIdFromResult(result: unknown): string | undefined {
   const seen: unknown[] = [result];
@@ -464,12 +478,25 @@ function appIdFromResult(result: unknown): string | undefined {
 
 /** Recursively (bounded) hunt a tool result for a deep-linkable record id. */
 function toolLinkFromResult(toolName: string, result: unknown): ChatToolActivity['link'] | null {
-  // A new SoftN app: its workspace, carrying the request AI Studio is to build.
-  if (toolName === 'create_softn_app') {
+  // A new SoftN app, or a change to one: its workspace, carrying the request AI Studio is to carry out.
+  if (toolName === 'create_softn_app' || toolName === 'edit_softn_app') {
     const rec = asRecord(result);
     const id = firstString(asRecord(rec?.app)?.id);
     const brief = firstString(rec?.request);
-    return id ? { kind: 'softnApp', id, ...(brief ? { brief: brief.slice(0, 8000) } : {}) } : null;
+    return id ? { kind: 'softnApp', id, ...(brief ? { brief: brief.slice(0, 8000) } : {}), ...(toolName === 'edit_softn_app' ? { edit: true } : {}) } : null;
+  }
+  // What a tool did to a SoftN app is seen on the app's own page: its data in the Data section
+  // (at the table), its people under Members, its source under Edit.
+  if (toolName in SOFTN_SECTION_BY_TOOL) {
+    const rec = asRecord(result);
+    const id = firstString(rec?.appId, asRecord(rec?.app)?.id);
+    // Only a SoftN app has such a page (the answer says which it is: softnApp). The same tools work
+    // on a forms app, whose members and hosted project are in its App Studio: that link is below.
+    if (id && rec?.softnApp === true) {
+      const section = SOFTN_SECTION_BY_TOOL[toolName];
+      const table = section === 'data' ? firstString(rec?.table) : undefined;
+      return { kind: 'softnApp', id, ...(section ? { section } : {}), ...(table && /^[A-Za-z0-9_]{1,64}$/.test(table) ? { table } : {}) };
+    }
   }
   // Screen tools deep-link to their STUDIO (live preview + take-over), not the builder /
   // app forms list — the result is the updated form/app, whose id is the studio route param.
@@ -537,6 +564,14 @@ function toolLinkFromResult(toolName: string, result: unknown): ChatToolActivity
  */
 const TOOL_LABELS: Record<string, string> = {
   create_softn_app: 'Create your SoftN app',
+  edit_softn_app: 'Hand the change to AI Studio',
+  get_softn_app: 'Look over the app',
+  get_softn_guide: 'Read how SoftN apps are written',
+  lookup_softn_components: 'Look up SoftN components',
+  get_native_app_record: 'Read a record of the app',
+  change_native_app_record: 'Save a record in the app',
+  list_app_members: 'Look at who can use the app',
+  update_app_member: 'Update a member',
   get_native_app_template: 'Start an app with a backend and database',
   get_native_app_project: 'Read the app source',
   publish_native_app_project: 'Install the app project',
@@ -1122,7 +1157,7 @@ async function routeChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDeps, de
       kind === 'formScreen'
         ? `Page context: the user is in the custom-screen Studio for form ${id} (a sandboxed frontend rendered instead of the form's default field UI). When they say "this screen" or ask for pages/changes without naming a target, they mean this form's customScreen: read the current one with get_form (formId ${id}), write it with set_form_screen — send the COMPLETE screen (all files) each time.`
         : kind === 'softnApp'
-          ? `Page context: the user is in the workspace of SoftN app ${id}: a hosted app whose interface, private backend and database are its SoftN project, not forms. When they say "this app" or ask for changes without naming a target, they mean this one: read it with get_native_app_project (appId ${id}), change named files with update_native_app_files using the version you read, and read its data with list_native_app_records. Bigger changes are better made in AI Studio, which they can open from this page with "Describe a change".`
+          ? `Page context: the user is in the workspace of SoftN app ${id}: a hosted app whose interface, private backend and database are its SoftN project, not forms. When they say "this app" or ask for changes without naming a target, they mean this one: get_softn_app (appId ${id}) says how it stands. To change how it looks or behaves, hand the request to AI Studio with edit_softn_app (appId ${id}): the person watches the change being made and reviews it before it is published. Only a small correction to a file you have just read (get_native_app_project) is made with update_native_app_files, using the version you read. Its data is read with list_native_app_records (search, filter and sort) and get_native_app_record, and a record is added or corrected with change_native_app_record; its people with list_app_members.`
         : kind === 'appScreen'
           ? `Page context: the user is in the custom-screen Studio for the HOME screen of app ${id}. When they say "this screen" or ask for pages/changes without naming a target, they mean this app's customScreen: read the app's forms with list_forms/get_form, write the screen with set_app_home (appId ${id}) — send the COMPLETE screen (all files) each time.`
           : kind === 'appStudio'
