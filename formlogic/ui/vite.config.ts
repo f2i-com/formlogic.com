@@ -171,7 +171,7 @@ export default defineConfig(({ mode }) => {
         // screen-host.html stays out too: its FRESH response headers (frame-ancestors scope in
         // .htaccess) are load-bearing, and a precached copy would pin stale ones.
         // The zipp expression engine (ZIPP's javascript-python-base module, installed from
-        // the Softn release) is 6.58 MB at ZIPP v0.0.33 and is only needed by a form that
+        // the Softn release) is 6.28 MB at ZIPP v0.0.35 and is only needed by a form that
         // actually HAS logic (a calculated field, a conditional rule, a validation
         // expression). Precaching it would make every visitor pay for it at
         // service-worker install — including the majority who never open such a
