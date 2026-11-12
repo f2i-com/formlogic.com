@@ -54,12 +54,44 @@ an app's page (v0.0.28 on), which can also `fetch` them. Scene3D draws a model f
 SoftN v0.0.30 (before it, it refused the frame's `data:` URLs as "Unsafe model URL"). HTML, CSS
 and JavaScript files are not kept. A file name may not have two dots together, and `apiVersion` is written `1`, not `1.0`.
 
-The owner manages it at `/apps/<id>/softn`: **App** previews it at desktop or phone width and
-changes it with AI Studio, the Visual Builder, a new `.softn` file or the source editor; **Data**
-browses and edits the tables in its database; **Settings** chooses who can use it and whether it
-opens at the app's address. While the app is unpublished, a change returned from an editor is
+The owner manages it at `/apps/<id>/softn`, a page of five sections, each at its own address so a
+link or the back button lands where it was. The page itself is the **Overview**: whether the app
+is live and at which version, its addresses, how much data it holds and who can use it. It starts
+nothing, so looking over many apps runs none of them. **Data** (`…/softn/data/<table>/<view>`) is
+the data manager described below; **Edit** (`…/softn/edit`) previews the app at desktop or phone
+width and changes it with AI Studio, the Visual Builder, a new `.softn` file or the source editor;
+**Domains** (`…/softn/domains`) holds whether it opens at the app's address, and its own domains;
+**Settings** (`…/softn/settings`, with `#settings-…` for each panel) chooses who can use it and what
+it may do. The apps list (`/apps`) is one table of every app with the same facts beside each
+(`GET /api/apps/summary`: the installed version, who can use it, the database's size, the connected
+domain), with filters for kind and status. While the app is unpublished, a change returned from an editor is
 installed at once; once it is published, changes wait as a draft (kept in this browser) until
 **Publish changes**. App Studio's checklist counts a form-less app's database tables as its data, so it does not ask for a form first.
+
+**The data manager** (the Data section, `components/data`) is the owner's view of the app's SQLite
+database, in the manner of phpMyAdmin and more compact. The tables are listed on the left with
+their row counts; a table opens in one of four views. *Browse* sorts by a column, searches every
+shown column, filters (`is`, `contains`, `starts with`, greater and less, empty), pages 25 to 250
+rows at a time and says how many rows match; a cell is edited in place (the row is read first for
+its whole value and its revision, and the save is refused if the row changed meanwhile), rows are
+ticked and deleted together, and a foreign-key value leads to the row it points at. A row opens
+from its key, beside the grid, with the whole of every value, the rows it links to and the tables
+that use it. What Browse shows (the search, the filters, the order, the page and the open row) is
+held in the address's query, so a reload, Back and a copied link return to it. On a wide screen the
+manager fills the page's height and its table list and rows scroll inside it, with the pager always
+in view; columns keep the width of what they hold and sit together at the left. On a phone each
+row is a card (a summary, which opens out to every column with an Edit beside each value) and a row
+opens as a sheet over the page. The app's page is one place to the router (`lib/pagePlace`): it
+stays mounted from section to section and from table to table, so an unsaved draft and the table
+list keep their state, and only what changed is asked of the server. *Structure*
+lists columns, indexes and the tables that point here; it is read-only, because a table's shape
+comes from the app's own migrations. *Export* downloads a table, or the rows that match, as CSV or
+JSON, and every table as one JSON file. *Import* brings the data from where the app ran before.
+Columns that look like credentials (`NativeRecordStore::hidden()`) are never shown, searched,
+sorted, filtered or exported; Structure names them and says their values are never shown. The
+requests are `GET /api/apps/{id}/native/records` with `summary`, `table`, `limit`, `sort`, `dir`,
+`q`, `filter`, `view=structure` and `export`, and `POST` with `deleteMany` beside the four record
+actions; a caller that sends none of the new parameters gets the answers it got before.
 
 **Files on this device** (Settings, the owner alone) decides whether the app may open the files a
 person picks for it and save files they ask for, such as a saved game (SoftN's `files`
@@ -120,7 +152,7 @@ Each keeps the site's own value beside what it gives (`data-fl-original`, `data-
 page of the domain that isn't the app's (the legal pages, a form) gets FormLogic's back.
 
 **Adding an API backend.** An app with none (all its pages run in the visitor's browser) gets one
-from its Data tab (AddBackendPanel, lib/softnBackend), installed as its next version, or kept in the
+from its Data section (AddBackendPanel, lib/softnBackend), installed as its next version, or kept in the
 draft for the owner to publish once the app is live:
 
 - **Add a backend**: the starter's (backend/resources/native-app-starter.json): an `items` table,
@@ -173,7 +205,7 @@ again, and never given to the app's code, its page, a log or an answer. Then:
   messaging is not configured yet." A host configuration in development (never FormLogic's own)
   passes everything through, and the app shows its own codes.
 
-**Bringing data** (the Data tab, or "Bring its data too" when adding an app from a `.softn` file).
+**Bringing data** (Import in the Data section, or "Bring its data too" when adding an app from a `.softn` file).
 An app moved from SoftN's own hosting brings its database (`private/data/application.sqlite`) and,
 optionally, that host's `private/config.json`, for the key the data was kept under: of that file
 only `keyHex`, `cryptoDomains` and the app id are taken (the id must be this app's), and its Twilio
@@ -391,7 +423,7 @@ Addresses are kept only as a keyed hash. They are only as good as the site's
 
 ### App AI: where it runs, and what the app is delivered
 
-**The owner chooses.** An app that declares `formlogicAi` has **AI for this app** in its Settings tab:
+**The owner chooses.** An app that declares `formlogicAi` has **AI for this app** in its Settings section:
 off (the start), **this site's AI** (where the administrator offers it, Admin → Platform → AI for
 apps), or **their own OAIY** (below). The owner sets the limits above, within the administrator's
 ceiling for apps on the site's AI, and a **Test** button runs a real small job (a 512 px picture, or a
@@ -1040,10 +1072,15 @@ named-action editor described above.
    both source editors include syntax colours, line numbers, search, wrapping, and light/dark themes.
    Existing migrations remain read-only. Import a new numbered migration to evolve the schema.
 5. **Records** lets the owner browse, create, edit, and delete records in the app's SQLite tables.
-   The list paginates 50 rows and previews 400 characters per text cell. **View → Edit record**
+   It is the data manager described above (the one the app's own page has, over the same API):
+   the dialog widens for it, and holds the open table, its view and what is being looked at in
+   it, where the page keeps them in its address.
+   The list previews 400 characters per text cell. **Open a row → Edit**
    loads full values (up to 100 KB per field); primary keys, generated fields, and binary values
    stay read-only. Common authentication secrets (columns named for passwords, tokens, secrets,
-   sign-in code digests, key digests such as `key_hash`, and API, access or private keys) and host
+   sign-in code digests, key digests such as `key_hash`, API, access or private keys, and any
+   column with the word `hash`, `salt`, `otp`, `pin`, `passcode`, `passphrase` or `credential` in
+   its name, in snake_case or camelCase: `NativeRecordStore::hidden()`) and host
    metadata remain hidden. Tables need
    a visible primary key for editing/deletion; creation requiring private or binary fields goes
    through the app. Defaults and NULL are separate from empty text. Stale edits are rejected.
@@ -1180,8 +1217,10 @@ These session-authenticated endpoints are for the FormLogic project owner, separ
 visitor accounts inside the hosted application. POST requests require the session's CSRF
 header. The shared demo can browse a native project and its records read-only: its reads skip
 the runtime preflight and answer `readOnly: true`, its writes (install, record actions) are
-refused with `403` `demo_readonly`, and its installed app does not run. Record requests have
-their own limit of 30 per minute per account, separate from app publication requests; the demo
+refused with `403` `demo_readonly`, a table export is refused with `403`, and its installed app
+does not run. Record requests have
+their own limit of 180 per minute per account (the data manager sorts, searches and edits cell by
+cell, so it asks more often than the earlier browser did), separate from app publication requests; the demo
 account's reads are counted per account and client IP, since every demo visitor shares it.
 
 | Request | Result |
@@ -1392,7 +1431,8 @@ successful update; staging directories are discarded.
 
 #### Records browsing window
 
-The Records view reads pages of 50 rows in primary-key order, and a page may start no further
+The Records view reads pages of 50 rows in primary-key order (the data manager asks for 25, 50,
+100 or 250, in the order of any shown column), and a page may start no further
 than offset 100,000 (a bounded browser, not a full-table scan). Every response says which
 offset it actually used (`offset`), the page size (`limit`), the window (`offsetLimit`) and
 why it stops: `end` is `more` (a next page exists inside the window), `limit` (rows exist

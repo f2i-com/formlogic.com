@@ -27,6 +27,7 @@ Manual editing and starters do not require an AI provider. Site AI and payments 
 | Multiple portals using shared data with different permissions | [One backend, many portals](ONE_BACKEND_MANY_PORTALS.md) |
 | Flow definitions, event bindings, queues and run history | [FormLogic Flows contract](FORMLOGIC_FLOWS.md) |
 | Extension packages, contributed nodes and service bindings | [Extensions](EXTENSIONS.md) |
+| How a signed-in page is laid out: the frame, sections, panels, lists, colour, phones | [Workspace pages](WORKSPACE_PAGES.md) |
 | Add or edit installable Softn app folders, backends and metadata | [Editable app packs](PACK_PROJECTS.md) |
 | Pack v1 structure, cross-references and import/export boundaries | [Pack format](PACK_FORMAT.md), [JSON schema](pack-schema-v1.json) |
 | Existing custom screens, effects, connectors and app domains | [Custom app platform reference](CUSTOM_APP_PLATFORM.md) |
