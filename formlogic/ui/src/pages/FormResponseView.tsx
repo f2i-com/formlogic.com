@@ -4,8 +4,11 @@
 // /responses/:formId/:responseId (owner-scoped; local-storage forms supported).
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Check, Edit2, Lock, RefreshCw, Trash2, X } from 'lucide-react';
+import { CalendarDays, Check, ChevronLeft, ChevronRight, CircleDot, Edit2, Lock, RefreshCw, Timer, Trash2, User, X } from 'lucide-react';
 import { Header } from '../components/layout/Header';
+import { PageBody } from '../components/layout/PageBody';
+import { PageHeader } from '../components/ui/PageHeader';
+import { Panel } from '../components/ui/Panel';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -28,7 +31,7 @@ import { api } from '../lib/api';
 import { deferEffect } from '../lib/deferredEffect';
 import { isDemoLocalId } from '../lib/demoLocal';
 import { toast } from '../stores/toastStore';
-import { statusBadgeVariant, formatStatusLabel } from '../lib/utils';
+import { cn, statusBadgeVariant, formatStatusLabel } from '../lib/utils';
 import { useAccountTimezone, formatDateTimeInZone } from '../lib/timezone';
 import { describeUserAgent, primaryLanguage } from '../lib/userAgent';
 import { useDecryptedResponses, useResetOnVaultGenerationChange, CORRUPT_ROW_CODE } from '../lib/crypto/useDecryptedResponses';
@@ -265,18 +268,43 @@ function FormResponseView() {
   const fields = (form?.fields ?? []).filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
   const completionTime = record?.metadata?.completionTime ?? 0;
 
+  // The responses a list handed over when it opened this one (router state `responseIds`, in
+  // the list's own order): with them the page can step to the one before and the one after.
+  // Opened any other way (a link, a reload of a shared address) there are none and no arrows.
+  const siblingIds = (location.state as { responseIds?: unknown } | null)?.responseIds;
+  const siblings = Array.isArray(siblingIds) ? siblingIds.filter((id): id is string => typeof id === 'string') : [];
+  const position = responseId ? siblings.indexOf(responseId) : -1;
+  // Stepping replaces this page in history, so Back still returns to the list it came from.
+  const step = (to: number) => navigate(`/responses/${formId}/${siblings[to]}`, { replace: true, state: location.state });
+
+  const shown = viewRecord ?? record;
+  const title = !record ? 'Record' : isPrivateRecord && vaultLocked ? 'Encrypted record' : recordTitle(form, (shown ?? record).answers);
+  const status = record?.status || 'submitted';
+  // The record's facts, as the strip of facts over the list of responses (FormResponses).
+  const submittedBy = record?.metadata?.submittedByUserId
+    ? (authUser?.id === record.metadata.submittedByUserId
+      ? (authUser?.name || authUser?.email || 'You')
+      : `User ${record.metadata.submittedByUserId.slice(0, 8)}`)
+    : null;
+  // One answer, or one detail, as a row: its name beside its value where the box has room
+  // for two columns, over it where it does not.
+  const ROW = 'grid gap-x-4 gap-y-0.5 border-b border-gray-100 py-2 last:border-b-0 last:pb-0 first:pt-0 dark:border-slate-800';
+  const ROW_NAME = 'min-w-0 text-[13px] font-medium leading-5 text-gray-500 [overflow-wrap:anywhere] dark:text-slate-400';
+
   return (
     <div className="min-h-screen transition-colors">
       <Header
         title="Record"
         actions={
           record && !loading ? (
-            <div className="flex flex-wrap gap-1.5 sm:gap-2">
+            // The words give way to the icons by the header's own width (the sidebar and a
+            // docked chat take their share of the window), never by the screen's.
+            <div className="flex gap-1.5 sm:gap-2">
               {editing ? (
                 <>
-                  <Button variant="outline" size="sm" onClick={() => setEditing(false)} disabled={saving}>
+                  <Button variant="outline" size="sm" onClick={() => setEditing(false)} disabled={saving} title="Cancel">
                     <X className="h-4 w-4" />
-                    <span className="hidden lg:inline ml-2">Cancel</span>
+                    <span className="ml-2 hidden @2xl/header:inline">Cancel</span>
                   </Button>
                   <Button size="sm" onClick={saveEdit} isLoading={saving}>
                     <Check className="h-4 w-4" />
@@ -288,16 +316,16 @@ function FormResponseView() {
                   {storageMode === 'api' && form?.logicScript && !isPrivateRecord && (
                     <Button variant="outline" size="sm" onClick={recompute} isLoading={recomputing} title="Re-run the form's logic script on this record">
                       <RefreshCw className="h-4 w-4" />
-                      <span className="hidden lg:inline ml-2">Re-run logic</span>
+                      <span className="ml-2 hidden @3xl/header:inline">Re-run logic</span>
                     </Button>
                   )}
-                  <Button variant="outline" size="sm" onClick={startEdit} disabled={vaultLocked || !!decRow?._decryptError} title={vaultLocked ? 'Unlock your vault to edit' : decRow?._decryptError ? 'This record could not be decrypted' : undefined}>
+                  <Button variant="outline" size="sm" onClick={startEdit} disabled={vaultLocked || !!decRow?._decryptError} title={vaultLocked ? 'Unlock your vault to edit' : decRow?._decryptError ? 'This record could not be decrypted' : 'Edit'}>
                     <Edit2 className="h-4 w-4" />
-                    <span className="hidden lg:inline ml-2">Edit</span>
+                    <span className="ml-2 hidden @2xl/header:inline">Edit</span>
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => setShowDelete(true)} className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10">
+                  <Button variant="outline" size="sm" onClick={() => setShowDelete(true)} title="Delete" className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10">
                     <Trash2 className="h-4 w-4" />
-                    <span className="hidden lg:inline ml-2">Delete</span>
+                    <span className="ml-2 hidden @2xl/header:inline">Delete</span>
                   </Button>
                 </>
               )}
@@ -306,32 +334,41 @@ function FormResponseView() {
         }
       />
 
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
+      {/* The page frame every workspace page has: the header's gutter, the window's width. */}
+      <PageBody className="@container/record">
         {/* History-aware back: return to wherever the user came from (the records table,
             another record via a linked chip or related row, Analytics, a dashboard…),
             falling back to this form's records list on a direct load. A separate quiet
             link always offers the list, since "back" may lead somewhere else entirely. */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-4">
-          <button
-            type="button"
-            onClick={() => { if (location.key !== 'default') navigate(-1); else navigate(`/responses/${formId}`); }}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
-          >
-            <ArrowLeft className="h-4 w-4" /> Back
-          </button>
-          <span className="text-gray-300 dark:text-slate-700" aria-hidden="true">·</span>
-          <button
-            type="button"
-            onClick={() => navigate(`/responses/${formId}`)}
-            className="text-sm text-gray-400 hover:text-gray-700 dark:text-slate-500 dark:hover:text-slate-300 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded truncate max-w-[60vw]"
-          >
-            {form?.title ? `${form.title} — all records` : 'All records'}
-          </button>
-        </div>
+        <PageHeader
+          title={loading ? 'Record' : title}
+          subtitle={
+            <button
+              type="button"
+              onClick={() => navigate(`/responses/${formId}`)}
+              className="max-w-full cursor-pointer truncate rounded text-left align-top transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:hover:text-white max-sm:min-h-11"
+            >
+              {form?.title ? `${form.title} — all records` : 'All records'}
+            </button>
+          }
+          onBack={() => { if (location.key !== 'default') navigate(-1); else navigate(`/responses/${formId}`); }}
+          backLabel="Back"
+          actions={position >= 0 && siblings.length > 1 ? (
+            <div className="flex items-center gap-1" role="group" aria-label="Other records of this list">
+              <Button variant="outline" size="sm" className="px-2 max-sm:min-w-11" onClick={() => step(position - 1)} disabled={position === 0 || editing} aria-label="Previous record" title="Previous record">
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="hidden px-1 text-xs tabular-nums text-gray-500 dark:text-slate-400 @md/record:inline">{position + 1} of {siblings.length}</span>
+              <Button variant="outline" size="sm" className="px-2 max-sm:min-w-11" onClick={() => step(position + 1)} disabled={position === siblings.length - 1 || editing} aria-label="Next record" title="Next record">
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : undefined}
+        />
 
         {loading ? (
           <div className="space-y-3" role="status" aria-label="Loading record">
-            <Skeleton className="h-9 w-64" />
+            <Skeleton className="h-14 w-full rounded-xl" />
             <Skeleton className="h-40 w-full" />
             <Skeleton className="h-40 w-full" />
           </div>
@@ -343,38 +380,50 @@ function FormResponseView() {
           />
         ) : (
           <>
-            {/* Title row: title on the left (truncating), status + timestamp anchored
-                to the RIGHT so they don't jump around as record titles change length.
-                On phones the controls wrap onto their own line, left-aligned. */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-x-4 gap-y-2 mb-6">
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight truncate min-w-0 sm:flex-1">
-                {isPrivateRecord && vaultLocked ? 'Encrypted record' : recordTitle(form, (viewRecord ?? record).answers)}
-              </h1>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:flex-shrink-0 sm:justify-end">
-                {storageMode === 'api' ? (
-                  <select
-                    value={record.status || 'submitted'}
-                    onChange={(e) => changeStatus(e.target.value)}
-                    aria-label="Record status"
-                    className="px-2.5 py-1 rounded-lg text-sm border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:ring-2 focus:ring-primary-500 focus:outline-none cursor-pointer"
-                  >
-                    {STATUS_OPTIONS.map((s) => (
-                      <option key={s} value={s}>{formatStatusLabel(s)}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <Badge variant={statusBadgeVariant(record.status || 'submitted')} className="rounded-full">
-                    {formatStatusLabel(record.status || 'submitted')}
-                  </Badge>
-                )}
-                <span className="text-sm text-gray-400 dark:text-slate-500 whitespace-nowrap">
-                  Submitted {formatDateTimeInZone(record.submittedAt, displayTz)}
-                </span>
+            {/* The record's facts as one strip, as the counts stand over the list of responses:
+                its status (which the owner sets here), when it came, how long it took, from whom. */}
+            <dl className="mb-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 dark:border-slate-800 dark:bg-slate-800 @3xl/record:grid-cols-4">
+              <div className="flex min-w-0 items-center gap-3 bg-white px-3 py-2 dark:bg-slate-900">
+                <CircleDot className="h-4 w-4 flex-none text-gray-400 dark:text-slate-500" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <dt className="truncate text-[11px] font-medium uppercase tracking-wider text-gray-500 dark:text-slate-400">Status</dt>
+                  <dd className="mt-0.5">
+                    {storageMode === 'api' ? (
+                      <select
+                        value={status}
+                        onChange={(e) => changeStatus(e.target.value)}
+                        aria-label="Record status"
+                        className="max-w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white max-sm:min-h-11"
+                      >
+                        {STATUS_OPTIONS.map((s) => (
+                          <option key={s} value={s}>{formatStatusLabel(s)}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Badge variant={statusBadgeVariant(status)} className="rounded-full">
+                        {formatStatusLabel(status)}
+                      </Badge>
+                    )}
+                  </dd>
+                </div>
               </div>
-            </div>
+              {([
+                [CalendarDays, 'Submitted', formatDateTimeInZone(record.submittedAt, displayTz)],
+                [Timer, 'Completion time', formatDuration(completionTime)],
+                [User, 'Submitted by', submittedBy ?? '—'],
+              ] as const).map(([Icon, label, value]) => (
+                <div key={label} className="flex min-w-0 items-center gap-3 bg-white px-3 py-2 dark:bg-slate-900">
+                  <Icon className="h-4 w-4 flex-none text-gray-400 dark:text-slate-500" aria-hidden="true" />
+                  <div className="min-w-0">
+                    <dt className="truncate text-[11px] font-medium uppercase tracking-wider text-gray-500 dark:text-slate-400">{label}</dt>
+                    <dd className="text-sm font-semibold leading-6 tabular-nums text-gray-900 [overflow-wrap:anywhere] dark:text-white">{value}</dd>
+                  </div>
+                </div>
+              ))}
+            </dl>
 
             {isPrivateRecord && vaultLocked && (
-              <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 p-4">
+              <div className="mb-3 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 p-4">
                 <Lock className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
                 <p className="flex-1 text-sm text-amber-800 dark:text-amber-200">
                   🔒 This record is end-to-end encrypted. Unlock your vault to view or edit it.
@@ -383,12 +432,14 @@ function FormResponseView() {
               </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+            {/* The answers take the width; the trail of the submission stands beside them where
+                there is room and under them where there is not. */}
+            <div className="grid grid-cols-1 items-start gap-4 @4xl/record:grid-cols-[minmax(0,1fr)_20rem]">
               {/* Answers */}
-              <div className="lg:col-span-2 min-w-0">
-                <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5 sm:p-6 space-y-4">
+              <div className="min-w-0 space-y-4">
+                <Panel title="Answers" className="@container/answers">
                   {isPrivateRecord && vaultLocked ? (
-                    <p className="text-sm text-gray-400 dark:text-slate-500 italic">Unlock your vault to view this record's answers.</p>
+                    <p className="text-sm text-gray-500 dark:text-slate-400">Unlock your vault to view this record's answers.</p>
                   ) : decRow?._decryptError ? (
                     <div className="rounded-lg border border-red-300 dark:border-red-500/40 bg-red-50 dark:bg-red-500/10 p-4" role="alert">
                       <p className="text-sm font-medium text-red-800 dark:text-red-200">
@@ -398,12 +449,14 @@ function FormResponseView() {
                       </p>
                     </div>
                   ) : fields.map((field) => (
-                    <div key={field.id} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0 last:pb-0">
-                      <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">{field.label}</p>
+                    <div key={field.id} className={cn(ROW, '@lg/answers:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]')}>
+                      <p className={cn(ROW_NAME, editing && '@lg/answers:pt-2.5')}>{field.label}</p>
                       {editing ? (
-                        renderEditField(field, draft[field.id], (value) => setDraft((prev) => ({ ...prev, [field.id]: value })))
+                        <div className="min-w-0 max-w-3xl">
+                          {renderEditField(field, draft[field.id], (value) => setDraft((prev) => ({ ...prev, [field.id]: value })))}
+                        </div>
                       ) : (
-                        <div className="text-gray-900 dark:text-white break-words">
+                        <div className="min-w-0 max-w-[80ch] whitespace-pre-line text-sm leading-5 text-gray-900 break-words dark:text-white">
                           {field.type === 'linked_record' ? (
                             <LinkedRecordChips
                               items={asResolvedList(record._resolved?.[field.id])}
@@ -420,7 +473,7 @@ function FormResponseView() {
                             <SignatureValue value={(viewRecord ?? record).answers[field.id]} />
                           ) : (
                             formatValue((viewRecord ?? record).answers[field.id], field.type, field.properties?.options, displayTz) === '-' ? (
-                              <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
+                              <span className="text-gray-500 dark:text-slate-400">No answer</span>
                             ) : (
                               formatValue((viewRecord ?? record).answers[field.id], field.type, field.properties?.options, displayTz)
                             )
@@ -430,9 +483,9 @@ function FormResponseView() {
                     </div>
                   ))}
                   {fields.length === 0 && (
-                    <p className="text-sm text-gray-400 dark:text-slate-500 italic">This form has no displayable fields.</p>
+                    <p className="text-sm text-gray-500 dark:text-slate-400">This form has no displayable fields.</p>
                   )}
-                </div>
+                </Panel>
 
                 {/* Related records (owner-scoped) — hidden while editing so a stale grid
                     never sits under half-changed answers. */}
@@ -450,87 +503,72 @@ function FormResponseView() {
                 )}
               </div>
 
-              {/* Details sidebar */}
-              <div className="space-y-4 min-w-0">
-                <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5">
-                  <h3 className="text-sm font-semibold text-gray-900 dark:text-white tracking-tight mb-3">Details</h3>
-                  <dl className="space-y-3 text-sm">
-                    <div>
-                      <dt className="text-gray-500 dark:text-slate-400">Record ID</dt>
-                      <dd className="text-gray-700 dark:text-slate-300 font-mono text-xs bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded mt-1 break-all">{record.id}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-gray-500 dark:text-slate-400">Completion time</dt>
-                      <dd className="text-gray-900 dark:text-white mt-0.5">{formatDuration(completionTime)}</dd>
+              {/* Details: the rest of the submission's trail (its status, moment, duration and
+                  sender stand in the strip above), each as a name beside its value. */}
+              <div className="min-w-0 space-y-4">
+                <Panel title="Details">
+                  <dl>
+                    <div className={cn(ROW, 'grid-cols-[6.5rem_minmax(0,1fr)]')}>
+                      <dt className={ROW_NAME}>Record ID</dt>
+                      <dd className="font-mono text-xs leading-5 text-gray-700 break-all dark:text-slate-300">{record.id}</dd>
                     </div>
                     {record.tags && record.tags.length > 0 && (
-                      <div>
-                        <dt className="text-gray-500 dark:text-slate-400 mb-1">Tags</dt>
+                      <div className={cn(ROW, 'grid-cols-[6.5rem_minmax(0,1fr)]')}>
+                        <dt className={ROW_NAME}>Tags</dt>
                         <dd className="flex flex-wrap gap-1.5">
                           {record.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}
                         </dd>
                       </div>
                     )}
                     {/* Submission trail — who/where/what the submission came from (owner-only view). */}
-                    {record.metadata?.submittedByUserId && (
-                      <div>
-                        <dt className="text-gray-500 dark:text-slate-400">Submitted by</dt>
-                        <dd className="text-gray-700 dark:text-slate-300 mt-0.5 break-all">
-                          {authUser?.id === record.metadata.submittedByUserId
-                            ? (authUser?.name || authUser?.email || 'You')
-                            : `User ${record.metadata.submittedByUserId.slice(0, 8)}`}
-                        </dd>
-                      </div>
-                    )}
                     {record.metadata?.ipAddress && (
-                      <div>
-                        <dt className="text-gray-500 dark:text-slate-400">IP address</dt>
-                        <dd className="text-gray-700 dark:text-slate-300 font-mono text-xs mt-0.5 break-all">{record.metadata.ipAddress}</dd>
+                      <div className={cn(ROW, 'grid-cols-[6.5rem_minmax(0,1fr)]')}>
+                        <dt className={ROW_NAME}>IP address</dt>
+                        <dd className="font-mono text-xs leading-5 text-gray-700 break-all dark:text-slate-300">{record.metadata.ipAddress}</dd>
                       </div>
                     )}
                     {record.metadata?.userAgent && (
-                      <div>
-                        <dt className="text-gray-500 dark:text-slate-400">Browser</dt>
-                        <dd className="text-gray-700 dark:text-slate-300 text-xs truncate mt-0.5" title={record.metadata.userAgent}>
+                      <div className={cn(ROW, 'grid-cols-[6.5rem_minmax(0,1fr)]')}>
+                        <dt className={ROW_NAME}>Browser</dt>
+                        <dd className="text-[13px] leading-5 text-gray-700 [overflow-wrap:anywhere] dark:text-slate-300" title={record.metadata.userAgent}>
                           {describeUserAgent(record.metadata.userAgent) ?? record.metadata.userAgent}
                         </dd>
                       </div>
                     )}
                     {primaryLanguage(record.metadata?.language) && (
-                      <div>
-                        <dt className="text-gray-500 dark:text-slate-400">Language</dt>
-                        <dd className="text-gray-700 dark:text-slate-300 mt-0.5" title={record.metadata?.language}>{primaryLanguage(record.metadata?.language)}</dd>
+                      <div className={cn(ROW, 'grid-cols-[6.5rem_minmax(0,1fr)]')}>
+                        <dt className={ROW_NAME}>Language</dt>
+                        <dd className="text-[13px] leading-5 text-gray-700 dark:text-slate-300" title={record.metadata?.language}>{primaryLanguage(record.metadata?.language)}</dd>
                       </div>
                     )}
                     {record.metadata?.referrer && (
-                      <div>
-                        <dt className="text-gray-500 dark:text-slate-400">Referrer</dt>
-                        <dd className="text-gray-700 dark:text-slate-300 text-xs truncate mt-0.5" title={record.metadata.referrer}>{record.metadata.referrer}</dd>
+                      <div className={cn(ROW, 'grid-cols-[6.5rem_minmax(0,1fr)]')}>
+                        <dt className={ROW_NAME}>Referrer</dt>
+                        <dd className="text-[13px] leading-5 text-gray-700 [overflow-wrap:anywhere] dark:text-slate-300">{record.metadata.referrer}</dd>
                       </div>
                     )}
                   </dl>
-                </div>
+                </Panel>
 
                 {record.computed && Object.keys(record.computed).length > 0 && (
-                  <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5">
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white tracking-tight mb-3">Computed</h3>
-                    <dl className="space-y-3 text-sm">
+                  <Panel title="Computed">
+                    <dl>
                       {Object.entries(record.computed).map(([key, value]) => (
-                        <div key={key} className="min-w-0">
-                          <dt className="text-xs text-gray-500 dark:text-slate-400 truncate" title={key}>{key}</dt>
-                          <dd className="text-gray-900 dark:text-white break-words mt-0.5">
+                        <div key={key} className={cn(ROW, 'grid-cols-[minmax(0,2fr)_minmax(0,3fr)]')}>
+                          <dt className={cn(ROW_NAME, 'font-mono text-xs')}>{key}</dt>
+                          <dd className="min-w-0 text-[13px] leading-5 text-gray-900 break-words dark:text-white">
                             {value === null || value === undefined ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value)}
                           </dd>
                         </div>
                       ))}
                     </dl>
-                  </div>
+                  </Panel>
                 )}
               </div>
             </div>
           </>
         )}
-      </div>
+      </PageBody>
 
       <ConfirmDialog
         isOpen={showDelete}

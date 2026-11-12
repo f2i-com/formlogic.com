@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, type ElementType, type ReactNode } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Download, Users, Clock, CheckCircle, TrendingUp, TrendingDown, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox, Eye, MousePointerClick, Lock } from 'lucide-react';
+import { Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox, Eye, MousePointerClick, Lock } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LabelList } from 'recharts';
 import { useUIStore } from '../stores/uiStore';
 import { ListRowSkeleton } from '../components/ui/Skeleton';
@@ -8,8 +8,8 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { LoadFailure } from '../components/ui/LoadFailure';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
-import { Card, CardContent, CardHeader } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
+import { Panel } from '../components/ui/Panel';
 import { useFormStore } from '../stores/formStore';
 import { toast } from '../stores/toastStore';
 import { logger } from '../lib/logger';
@@ -635,7 +635,7 @@ export default function FormAnalytics() {
       {/* @container/analytics: the six-number strip used `lg:grid-cols-6` on the viewport,
           so at 1280px with the sidebar out and the chat docked it packed six numbers into
           a ~576px box and they wrapped mid-digit. */}
-      <div className="@container/analytics flex-1 w-full p-4 sm:p-6 lg:p-8 space-y-4 sm:space-y-6">
+      <div className="@container/analytics flex-1 w-full px-4 pb-24 pt-4 sm:px-6">
         <PageHeader
           title={form.title}
           subtitle="Analytics"
@@ -644,62 +644,62 @@ export default function FormAnalytics() {
         />
 
         {loadError && (
-          <LoadFailure
-            title="We couldn't load this form's analytics"
-            message={loadError}
-            onRetry={() => { setLoadError(null); setReloadToken((n) => n + 1); }}
-          />
+          <div className="mb-3">
+            <LoadFailure
+              title="We couldn't load this form's analytics"
+              message={loadError}
+              onRetry={() => { setLoadError(null); setReloadToken((n) => n + 1); }}
+            />
+          </div>
         )}
 
-        {/* Metrics — one divided card (gap-px hairlines) instead of separate tiles, so up to
-            six numbers stay readable at every width: 2-up on phones, 3-up on tablets, 6-up on
-            desktop. The icon is a small inline label, not a chip that steals the number's room. */}
-        <Card className="overflow-hidden">
-          <div className="grid grid-cols-2 gap-px bg-gray-100 @xl/analytics:grid-cols-3 @4xl/analytics:grid-cols-6 dark:bg-slate-800/80">
-            {([
-              { icon: Eye, iconColor: 'text-sky-500', label: 'Views', value: hasServerAnalytics ? totalViews : '—', subtext: hasServerAnalytics ? undefined : 'Cloud only', help: 'Times the form was opened.' },
-              ...(typeof totalStarts === 'number' ? [{ icon: MousePointerClick, iconColor: 'text-teal-500', label: 'Starts', value: totalStarts, help: 'Times someone began answering after opening it.' }] : []),
-              { icon: Users, iconColor: 'text-blue-500', label: 'Responses', value: totalResponses, help: 'Completed submissions you received.' },
-              { icon: CheckCircle, iconColor: 'text-green-500', label: 'Completion', value: hasServerAnalytics ? `${Math.round(completionRate)}%` : '—', subtext: hasServerAnalytics ? undefined : 'Cloud only', help: 'Of the people who started, how many finished.' },
-              { icon: Clock, iconColor: 'text-purple-500', label: 'Avg. time', value: avgCompletionTime > 60 ? `${Math.floor(avgCompletionTime / 60)}m` : `${avgCompletionTime}s`, help: 'How long a submission takes on average.' },
-              { icon: TrendingUp, iconColor: 'text-orange-500', label: 'This week', value: weeklyTrend.thisWeek, trend: { pct: weeklyTrend.pct, label: 'vs last' }, help: 'Responses in the last seven days, compared with the week before.' },
-            ] as Array<{ icon: ElementType; iconColor: string; label: string; value: ReactNode; subtext?: string; help?: string; trend?: { pct: number | null; label?: string } }>).map((m) => (
-              <div key={m.label} className="bg-white dark:bg-slate-900/50 p-3.5 sm:p-4 min-w-0" title={m.help}>
-                <div className="flex items-center gap-1.5 text-gray-400 dark:text-slate-500">
-                  <m.icon className={cn('h-3.5 w-3.5 flex-none', m.iconColor)} aria-hidden="true" />
-                  <span className="text-[11px] font-medium uppercase tracking-wide truncate">{m.label}</span>
-                </div>
-                <p className="mt-1 text-xl sm:text-2xl font-bold text-gray-900 dark:text-white tracking-tight tabular-nums leading-tight break-words">{m.value}</p>
-                {m.trend && (
-                  <span className={cn('mt-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
-                    m.trend.pct === null ? 'bg-gray-500/10 text-gray-500 dark:text-slate-400'
-                      : m.trend.pct >= 0 ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-                        : 'bg-red-500/10 text-red-600 dark:text-red-400')}>
-                    {m.trend.pct !== null && (m.trend.pct >= 0
-                      ? <TrendingUp className="h-3 w-3" aria-hidden="true" />
-                      : <TrendingDown className="h-3 w-3" aria-hidden="true" />)}
-                    {m.trend.pct === null ? 'New' : `${m.trend.pct >= 0 ? '+' : ''}${m.trend.pct}%`}
-                  </span>
-                )}
-                {m.subtext && <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-0.5 truncate">{m.subtext}</p>}
-                {m.help && (
-                  <p className="mt-1 hidden text-[11px] leading-snug text-gray-400 @4xl/analytics:block dark:text-slate-500">{m.help}</p>
-                )}
+        {/* The form's numbers as one strip of facts, the strip that stands over the list of its
+            responses (FormResponses): two to a line on a phone, three on a tablet, all six on a
+            desktop, by this box's own width. What each number counts is its title; five numbers
+            (a form with no "starts") leave no empty cell, the last takes two. */}
+        <dl className="mb-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 dark:border-slate-800 dark:bg-slate-800 @xl/analytics:grid-cols-3 @4xl/analytics:grid-cols-6">
+          {(([
+            { icon: Eye, label: 'Views', value: hasServerAnalytics ? totalViews : '—', subtext: hasServerAnalytics ? undefined : 'Cloud only', help: 'Times the form was opened.' },
+            ...(typeof totalStarts === 'number' ? [{ icon: MousePointerClick, label: 'Starts', value: totalStarts, help: 'Times someone began answering after opening it.' }] : []),
+            { icon: Users, label: 'Responses', value: totalResponses, help: 'Completed submissions you received.' },
+            { icon: CheckCircle, label: 'Completion', value: hasServerAnalytics ? `${Math.round(completionRate)}%` : '—', subtext: hasServerAnalytics ? undefined : 'Cloud only', help: 'Of the people who started, how many finished.' },
+            { icon: Clock, label: 'Avg. time', value: avgCompletionTime > 60 ? `${Math.floor(avgCompletionTime / 60)}m` : `${avgCompletionTime}s`, help: 'How long a submission takes on average.' },
+            { icon: TrendingUp, label: 'This week', value: weeklyTrend.thisWeek, change: weeklyTrend.pct, help: 'Responses in the last seven days, compared with the week before.' },
+          ]) as Array<{ icon: ElementType; label: string; value: ReactNode; subtext?: string; help?: string; change?: number | null }>).map((m, index, all) => (
+            <div key={m.label} className={cn('flex min-w-0 items-center gap-3 bg-white px-3 py-2.5 dark:bg-slate-900', all.length === 5 && index === 4 && 'col-span-2')} title={m.help}>
+              <m.icon className="h-4 w-4 flex-none text-gray-400 dark:text-slate-500" aria-hidden="true" />
+              <div className="min-w-0">
+                <dt className="truncate text-[11px] font-medium uppercase tracking-wider text-gray-500 dark:text-slate-400">{m.label}</dt>
+                <dd className="flex flex-wrap items-baseline gap-x-2 text-lg font-semibold leading-6 tabular-nums text-gray-900 dark:text-white">
+                  {m.value}
+                  {/* Against the week before; "New" when there was no week before to compare with. */}
+                  {m.change !== undefined && (
+                    <span className={cn('text-[11px] font-semibold', m.change === null ? 'text-gray-500 dark:text-slate-400' : m.change >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
+                      {m.change === null ? 'New' : `${m.change >= 0 ? '+' : ''}${m.change}%`} <span className="font-normal text-gray-400 dark:text-slate-500">vs last week</span>
+                    </span>
+                  )}
+                  {m.subtext && <span className="text-[11px] font-normal text-gray-500 dark:text-slate-400">{m.subtext}</span>}
+                </dd>
               </div>
-            ))}
-          </div>
-        </Card>
-
-        {/* Chart */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white tracking-tight transition-colors">Responses Over Time</h2>
-              <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5 tabular-nums">
-                {rangeTotal} {rangeTotal === 1 ? 'response' : 'responses'} in the last {rangeDays} days
-              </p>
             </div>
-            {/* Range switch — the server already ships up to 30 days of per-day counts */}
+          ))}
+        </dl>
+
+        {!isPrivateForm && storageMode === 'api' && totalResponses > responses.length && Object.keys(fieldBreakdown).length > 0 && (
+          <p className="mb-3 text-xs leading-5 tabular-nums text-gray-500 dark:text-slate-400">
+            The breakdown of each field is based on the latest {responses.length} of {totalResponses} responses.
+          </p>
+        )}
+
+        {/* The chart and one panel for each field's breakdown, in as many columns as this box
+            has room for, each as tall as what it holds. */}
+        <div className="columns-1 gap-4 [&>*]:mb-4 [&>*]:break-inside-avoid @4xl/analytics:columns-2 @7xl/analytics:columns-3">
+        {/* Chart */}
+        <Panel
+          title="Responses over time"
+          description={<span className="tabular-nums">{rangeTotal} {rangeTotal === 1 ? 'response' : 'responses'} in the last {rangeDays} days</span>}
+          actions={
+            /* Range switch — the server already ships up to 30 days of per-day counts */
             <div className="flex flex-none items-center gap-0.5 rounded-lg border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/60 p-0.5" role="group" aria-label="Chart range">
               {CHART_RANGES.map((d) => (
                 <button
@@ -708,7 +708,7 @@ export default function FormAnalytics() {
                   onClick={() => setRangeDays(d)}
                   aria-pressed={rangeDays === d}
                   className={cn(
-                    'px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                    'px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 max-sm:min-h-11 max-sm:px-3',
                     rangeDays === d
                       ? 'bg-white dark:bg-slate-800 text-gray-900 dark:text-white shadow-sm'
                       : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
@@ -718,17 +718,17 @@ export default function FormAnalytics() {
                 </button>
               ))}
             </div>
-          </CardHeader>
-          <CardContent>
+          }
+        >
             {rangeTotal === 0 ? (
-              <div className="h-52 sm:h-64 flex flex-col items-center justify-center text-center text-gray-400 dark:text-slate-500">
+              <div className="flex h-44 flex-col items-center justify-center text-center text-gray-500 dark:text-slate-400 sm:h-52">
                 <BarChart3 className="mb-2 h-6 w-6 opacity-60" aria-hidden="true" />
                 <p className="text-sm">No responses in the last {rangeDays} days</p>
               </div>
             ) : (
               /* One labelled figure for AT — recharts' inner SVG isn't self-describing. */
               <div
-                className="h-52 sm:h-64"
+                className="h-44 sm:h-52"
                 role="img"
                 aria-label={`Responses over the last ${dailySeries.length} days. ${dailySeries.map((d) => `${d.day} ${d.count}`).join(', ')}.`}
               >
@@ -771,91 +771,71 @@ export default function FormAnalytics() {
                 </ResponsiveContainer>
               </div>
             )}
-          </CardContent>
-        </Card>
+        </Panel>
 
-        {/* Field Breakdown — hidden for private forms (answers are ciphertext). */}
-        {!isPrivateForm && Object.keys(fieldBreakdown).length > 0 && (
-          <Card>
-            <CardHeader className="flex flex-row items-center gap-2">
-              <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5 text-primary-500" />
-              <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white tracking-tight transition-colors">Field Breakdown</h2>
-              {storageMode === 'api' && totalResponses > responses.length && (
-                <span className="ml-auto text-xs text-gray-400 dark:text-slate-500">
-                  Based on the latest {responses.length} of {totalResponses}
-                </span>
-              )}
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-6 sm:space-y-8">
-                {Object.entries(fieldBreakdown).map(([fieldId, breakdown]) => (
-                  <div key={fieldId}>
-                    <div className="flex items-baseline gap-2 mb-2 sm:mb-3">
-                      {breakdown.type === 'rating' && <Star className="h-4 w-4 text-yellow-500 self-center flex-shrink-0" />}
-                      <h3 className="font-medium text-gray-900 dark:text-white text-sm sm:text-base transition-colors truncate" title={breakdown.label}>{breakdown.label}</h3>
-                      <span className="ml-auto flex-shrink-0 text-xs text-gray-400 dark:text-slate-500 tabular-nums">
-                        {breakdown.avg !== undefined && (
-                          <span className="font-medium text-gray-500 dark:text-slate-400">{breakdown.avg} avg · </span>
-                        )}
-                        {breakdown.total} {breakdown.total === 1 ? 'answer' : 'answers'}
-                      </span>
-                    </div>
-                    <div className="space-y-2.5">
-                      {breakdown.data.map((item, index) => (
-                        <div key={index} className="flex items-center gap-2 sm:gap-3">
-                          <div className="w-20 sm:w-32 md:w-40 text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate flex-shrink-0 transition-colors" title={item.label}>
-                            {item.label}
-                          </div>
-                          <div className="flex-1 h-2.5 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden transition-colors">
-                            {/* Width is the TRUE share of answers (a 4% option renders at 4%),
-                                not normalized to the largest option. A non-zero count keeps a
-                                visible 2% sliver even when it rounds to 0%. */}
-                            <div
-                              className="h-full bg-primary-500 rounded-full transition-all"
-                              style={{ width: `${Math.max(item.percentage, item.count > 0 ? 2 : 0)}%` }}
-                            />
-                          </div>
-                          <div className="w-16 sm:w-24 text-right flex-shrink-0 tabular-nums">
-                            <span className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white transition-colors">{item.percentage}%</span>
-                            <span className="text-xs text-gray-500 dark:text-slate-500 ml-1 hidden sm:inline transition-colors">({item.count})</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+        {/* Field breakdown: a panel for each field — hidden for private forms (answers are
+            ciphertext). An option's name is never cut short: it wraps beside its bar. */}
+        {!isPrivateForm && Object.entries(fieldBreakdown).map(([fieldId, breakdown]) => (
+          <Panel
+            key={fieldId}
+            title={<span className="[overflow-wrap:anywhere]">{breakdown.label}</span>}
+            icon={breakdown.type === 'rating' ? <Star className="h-4 w-4 text-yellow-500" /> : <BarChart3 className="h-4 w-4" />}
+            actions={
+              <span className="text-xs tabular-nums text-gray-500 dark:text-slate-400">
+                {breakdown.avg !== undefined && (
+                  <span className="font-medium">{breakdown.avg} avg · </span>
+                )}
+                {breakdown.total} {breakdown.total === 1 ? 'answer' : 'answers'}
+              </span>
+            }
+          >
+            <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] items-center gap-x-3 gap-y-1.5">
+              {breakdown.data.map((item, index) => (
+                <div key={index} className="contents">
+                  <div className="text-[13px] leading-5 text-gray-600 [overflow-wrap:anywhere] dark:text-slate-300">
+                    {item.label}
                   </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+                  <div className="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800">
+                    {/* Width is the TRUE share of answers (a 4% option renders at 4%),
+                        not normalized to the largest option. A non-zero count keeps a
+                        visible 2% sliver even when it rounds to 0%. */}
+                    <div
+                      className="h-full bg-primary-500 rounded-full transition-all"
+                      style={{ width: `${Math.max(item.percentage, item.count > 0 ? 2 : 0)}%` }}
+                    />
+                  </div>
+                  <div className="text-right text-[13px] leading-5 tabular-nums">
+                    <span className="font-medium text-gray-900 dark:text-white">{item.percentage}%</span>
+                    <span className="ml-1 text-xs text-gray-500 dark:text-slate-400">({item.count})</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        ))}
 
         {/* E2EE (§9.2): private-form placeholder for answer-derived analytics. */}
         {isPrivateForm && (
-          <Card>
-            <CardContent className="p-6 flex items-start gap-3">
-              <Lock className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
-              <div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">Private form — open records to view</p>
-                <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-                  Answers are end-to-end encrypted, so field breakdowns and answer previews aren't available here.
-                  Response counts and submission times above are unaffected.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+          <Panel title="Private form — open records to view" icon={<Lock className="h-4 w-4 text-green-600 dark:text-green-400" />}>
+            <p className="text-sm text-gray-500 dark:text-slate-400">
+              Answers are end-to-end encrypted, so field breakdowns and answer previews aren't available here.
+              Response counts and submission times above are unaffected.
+            </p>
+          </Panel>
         )}
+        </div>
 
-        {/* Recent Responses */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white tracking-tight transition-colors">Recent Responses</h2>
+        {/* Recent responses: the latest ten as a dense table (the look of the responses list),
+            and as cards where there is no room for columns. */}
+        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900/60">
+          <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-3 py-2 dark:border-slate-700">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Recent responses</h2>
             <Button variant="outline" size="sm" onClick={() => navigate(`/responses/${form.id}`)}>
-              View All
+              View all
             </Button>
-          </CardHeader>
-          <CardContent>
+          </div>
             {isLoading ? (
-              <div className="space-y-3" aria-busy="true" aria-label="Loading responses">
+              <div className="space-y-3 p-3" aria-busy="true" aria-label="Loading responses">
                 {Array.from({ length: 4 }).map((_, i) => <ListRowSkeleton key={i} />)}
               </div>
             ) : responses.length === 0 ? (
@@ -868,78 +848,86 @@ export default function FormAnalytics() {
             ) : (
               <div ref={previewRef}>
                 {previewCards ? (
-                  <ul className="space-y-2">
+                  <ul className="divide-y divide-gray-100 dark:divide-slate-800">
                     {responses.slice(0, 10).map((response) => (
-                      <li key={response.id} className="rounded-xl border border-gray-200/80 dark:border-slate-700/60">
+                      <li key={response.id}>
                         <button
                           type="button"
                           onClick={() => openResponse(response.id)}
                           title="Open this response"
-                          className="w-full p-4 text-left rounded-xl cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                          className="w-full cursor-pointer p-3 text-left transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 dark:hover:bg-white/[0.03]"
                         >
-                          <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">{formatDate(response.submittedAt)}</p>
-                          {previewFields.map((field) => (
-                            <p key={field.id} className="text-sm text-gray-600 dark:text-slate-300 truncate">
-                              <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
-                              {isPrivateForm
-                                ? '🔒'
-                                : field.type === 'linked_record'
-                                  ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
-                                  : formatPreviewValue(field, response.answers[field.id])}
-                            </p>
-                          ))}
+                          <p className="text-sm font-medium text-gray-900 dark:text-white">{formatDate(response.submittedAt)}</p>
+                          {/* Each answer's name over its value, two to a line, as on the responses list. */}
+                          <dl className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1.5">
+                            {previewFields.map((field) => (
+                              <div key={field.id} className="min-w-0">
+                                <dt className="truncate text-[11px] text-gray-500 dark:text-slate-400">{field.label}</dt>
+                                <dd className="truncate text-sm text-gray-700 dark:text-slate-200">
+                                  {isPrivateForm
+                                    ? '🔒'
+                                    : field.type === 'linked_record'
+                                      ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
+                                      : formatPreviewValue(field, response.answers[field.id])}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
                         </button>
                       </li>
                     ))}
                   </ul>
                 ) : (
                 <table className="w-full table-fixed">
-                  <thead>
-                    <tr className="border-b border-gray-200 dark:border-slate-800">
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500 w-28">ID</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500 w-44">Submitted</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500 w-20">Time</th>
+                  <thead className="border-b border-gray-200 bg-gray-50/50 dark:border-slate-800 dark:bg-slate-900/50">
+                    <tr>
+                      <th className="w-28 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">ID</th>
+                      <th className="w-44 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Submitted</th>
+                      <th className="w-16 px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Time</th>
                       {visiblePreview.map((field) => (
-                        <th key={field.id} className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500 truncate">
-                          {field.label}
+                        <th key={field.id} className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400" title={field.label}>
+                          <span className="block truncate">{field.label}</span>
                         </th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
                     {responses.slice(0, 10).map((response) => (
                       <tr
                         key={response.id}
                         onClick={() => openResponse(response.id)}
-                        className="border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer"
+                        className="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-white/[0.03]"
                       >
-                        <td className="py-3 px-4 text-sm truncate">
+                        <td className="truncate px-3 py-1.5 text-[13px]">
                           {/* Real button inside the row so keyboard users can open it too. */}
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); openResponse(response.id); }}
                             title="Open this response"
                             aria-label={`Open response ${response.id.slice(0, 8)}`}
-                            className="font-mono text-sm text-gray-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 rounded cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                            className="font-mono text-xs text-gray-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 rounded cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                           >
                             #{response.id.slice(0, 8)}
                           </button>
                         </td>
-                        <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate">
+                        <td className="truncate px-3 py-1.5 text-[13px] tabular-nums text-gray-600 dark:text-slate-300">
                           {formatDate(response.submittedAt)}
                         </td>
-                        <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400">
+                        <td className="px-3 py-1.5 text-right text-[13px] tabular-nums text-gray-600 dark:text-slate-300">
                           {Math.round((response.completionTime || 0) / 1000)}s
                         </td>
-                        {visiblePreview.map((field) => (
-                          <td key={field.id} className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate">
-                            {isPrivateForm
-                              ? '🔒'
-                              : field.type === 'linked_record'
-                                ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
-                                : formatPreviewValue(field, response.answers[field.id])}
-                          </td>
-                        ))}
+                        {visiblePreview.map((field) => {
+                          const text = isPrivateForm
+                            ? '🔒'
+                            : field.type === 'linked_record'
+                              ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
+                              : formatPreviewValue(field, response.answers[field.id]);
+                          return (
+                            <td key={field.id} className="truncate px-3 py-1.5 text-[13px] text-gray-600 dark:text-slate-300" title={text}>
+                              {text}
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))}
                   </tbody>
@@ -947,8 +935,7 @@ export default function FormAnalytics() {
                 )}
               </div>
             )}
-          </CardContent>
-        </Card>
+        </section>
       </div>
 
       {/* Embed Modal */}

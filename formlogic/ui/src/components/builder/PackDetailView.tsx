@@ -316,16 +316,20 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
           <PackIcon icon={pack.icon} className="h-6 w-6 text-primary-600 dark:text-primary-400" emojiClassName="text-4xl leading-none" />
         </span>
         <div className="flex-1 min-w-0">
-          <h2 className="text-lg font-bold text-gray-900 dark:text-white">{pack.name}</h2>
-          <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 dark:text-slate-400">
+          <h2 className="text-lg font-bold text-gray-900 [overflow-wrap:anywhere] dark:text-white">{pack.name}</h2>
+          {/* The line wraps: on a phone its last items ran off the dialog's edge. */}
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-slate-400">
             <span className="inline-flex items-center gap-1">
               <User className="h-3 w-3" />
               {pack.publisherName || 'Unknown'}
             </span>
-            <span className="inline-flex items-center gap-1">
-              <Calendar className="h-3 w-3" />
-              {parseServerDate(pack.createdAt).toLocaleDateString()}
-            </span>
+            {/* A template from the server's own catalogue carries no date: no "Invalid Date". */}
+            {Number.isFinite(parseServerDate(pack.createdAt).getTime()) && (
+              <span className="inline-flex items-center gap-1">
+                <Calendar className="h-3 w-3" />
+                {parseServerDate(pack.createdAt).toLocaleDateString()}
+              </span>
+            )}
             {pack.latestVersion && (
               <Badge variant="default" size="sm">v{pack.latestVersion}</Badge>
             )}
@@ -335,32 +339,35 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
         </div>
       </div>
 
-      {/* Dashboard preview(s) — one per app, click to enlarge */}
-      <PackScreenshots
-        shots={pack.screenshots?.length ? pack.screenshots : (pack.screenshot ? [{ label: pack.name, url: pack.screenshot }] : [])}
-        maxHeight="max-h-72"
-      />
-
-      {/* Stats bar */}
-      <div className="flex items-center gap-4 text-sm">
-        <div className="flex items-center gap-1.5">
-          {renderStars(Math.round(pack.avgRating))}
-          <span className="text-gray-600 dark:text-slate-400">
-            {pack.avgRating.toFixed(1)} ({pack.ratingCount})
-          </span>
-        </div>
-        <div className="flex items-center gap-1 text-gray-500 dark:text-slate-400">
-          <Download className="h-3.5 w-3.5" />
-          <span>{pack.downloadCount} downloads</span>
-        </div>
-        <div className="flex items-center gap-1 text-gray-500 dark:text-slate-400">
-          <FileJson className="h-3.5 w-3.5" />
-          <span>{pack.formCount} forms</span>
-        </div>
-        <div className="flex items-center gap-1 text-gray-500 dark:text-slate-400">
-          <Globe className="h-3.5 w-3.5" />
-          <span>{pack.appCount} apps</span>
-        </div>
+      {/* Stats bar. It wraps, and says only what there is: no row of empty stars or "0 downloads"
+          for a template nobody has rated or installed yet, no "0 forms" for an extension. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm tabular-nums">
+        {pack.ratingCount > 0 && (
+          <div className="flex items-center gap-1.5">
+            {renderStars(Math.round(pack.avgRating))}
+            <span className="text-gray-600 dark:text-slate-400">
+              {pack.avgRating.toFixed(1)} ({pack.ratingCount})
+            </span>
+          </div>
+        )}
+        {pack.downloadCount > 0 && (
+          <div className="flex items-center gap-1 text-gray-500 dark:text-slate-400">
+            <Download className="h-3.5 w-3.5" />
+            <span>{pack.downloadCount} {pack.downloadCount === 1 ? 'download' : 'downloads'}</span>
+          </div>
+        )}
+        {pack.formCount > 0 && (
+          <div className="flex items-center gap-1 text-gray-500 dark:text-slate-400">
+            <FileJson className="h-3.5 w-3.5" />
+            <span>{pack.formCount} {pack.formCount === 1 ? 'form' : 'forms'}</span>
+          </div>
+        )}
+        {pack.appCount > 0 && (
+          <div className="flex items-center gap-1 text-gray-500 dark:text-slate-400">
+            <Globe className="h-3.5 w-3.5" />
+            <span>{pack.appCount} {pack.appCount === 1 ? 'app' : 'apps'}</span>
+          </div>
+        )}
       </div>
 
       {/* Install button + pre-install capability review */}
@@ -559,6 +566,13 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
           ))}
         </div>
       )}
+
+      {/* Dashboard preview(s) — one per app, click to enlarge. Under what the template is and
+          the button that installs it: over them, it pushed the button below the dialog's fold. */}
+      <PackScreenshots
+        shots={pack.screenshots?.length ? pack.screenshots : (pack.screenshot ? [{ label: pack.name, url: pack.screenshot }] : [])}
+        maxHeight="max-h-72"
+      />
 
       {/* Version History */}
       {pack.versions && pack.versions.length > 0 && (

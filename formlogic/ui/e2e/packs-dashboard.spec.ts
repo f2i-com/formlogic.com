@@ -27,7 +27,8 @@ for (const mode of ['public', 'signed-in', 'demo']) {
         await expect(page.getByRole('heading', { name: 'Install a working business app' })).toBeVisible();
         await expect(page.getByRole('navigation', { name: 'Workspace', exact: true })).toHaveCount(0);
       } else {
-        await expect(page.getByRole('heading', { name: 'Templates for your workspace' })).toBeVisible();
+        // Inside the workspace the catalogue is a workspace page: the Header names it.
+        await expect(page.getByRole('heading', { name: 'Templates', exact: true })).toBeVisible();
         await expect(workspaceNavigation).toHaveCount(1);
         await expect(page.locator('footer')).toHaveCount(0);
       }
@@ -46,7 +47,9 @@ for (const mode of ['public', 'signed-in', 'demo']) {
       if (mode !== 'public') await expect(workspaceNavigation).toHaveCount(1);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath('detail.png'), fullPage: true });
-      await page.getByRole('link', { name: mode === 'public' ? 'Marketplace' : 'Templates', exact: true }).last().click();
+      // The public page leads back by its breadcrumb, the workspace page by its Header.
+      if (mode === 'public') await page.getByRole('link', { name: 'Marketplace', exact: true }).last().click();
+      else await page.getByRole('button', { name: 'Back to templates', exact: true }).click();
       await expect(page).toHaveURL(/\/packs$/);
       await page.goto('/packs/missing-template');
       await expect(page.getByText('Template not found', { exact: true })).toBeVisible();

@@ -2,12 +2,23 @@
 // (audit XR-02 — behavior-neutral split behind SelectionPanel.test.tsx).
 import { useEffect, useState } from 'react';
 import { readSelectionDraft, writeSelectionDraft, clearSelectionDraft } from './selectionDraft';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, X } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import type { BlueprintElement } from '../../types/blueprints';
 import { DIAGRAM_INPUT_CLS, SKETCH_FIELD_TYPES, sketchFields, type SketchField } from './sketch';
 
 const INPUT_CLS = DIAGRAM_INPUT_CLS;
+/** A field's name over its control. */
+const LABEL_CLS = 'mb-1 block text-xs font-medium text-gray-600 dark:text-slate-300';
+/** A line of help under a control. */
+const HELP_CLS = 'text-[11px] leading-4 text-gray-500 dark:text-slate-400';
+
+/** What is selected, in a word, for the panel's head. */
+const KIND_NAMES: Record<string, string> = {
+  form: 'Form', flow: 'Flow', actor: 'Actor', note: 'Note', text: 'Text',
+  ink: 'Ink stroke', image: 'Image', shape: 'Shape',
+  app: 'App', screen: 'Screen', event: 'Event', intelligence: 'Intelligence', service: 'Service', decision: 'Decision', group: 'Group',
+};
 
 /**
  * §11A D2: the selection editor — a right rail editing the selected element through the
@@ -24,6 +35,7 @@ export function SelectionPanel({
   linkedNoteText,
   onSave,
   onDelete,
+  onClose,
 }: {
   element: BlueprintElement;
   busy: boolean;
@@ -31,6 +43,8 @@ export function SelectionPanel({
   linkedNoteText: string | null;
   onSave: (properties: Record<string, unknown>, noteText?: string) => void;
   onDelete: () => void;
+  /** Lets go of the selection, which closes the panel; its head shows a close button for it. */
+  onClose?: () => void;
 }) {
   const isEdge = element.elementType === 'edge';
   const edgeProps = element.properties as { edgeType?: string; cardinality?: string; fkField?: string; label?: string };
@@ -91,13 +105,28 @@ export function SelectionPanel({
   // Desktop: a fixed right rail. Phones (audit FL-26): a bottom sheet — a 256px
   // side panel on a 390px viewport left ~134px of canvas, unusable.
   return (
-    <div className="scrollbar-thin border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900 max-md:fixed max-md:inset-x-0 max-md:bottom-[var(--fl-mobile-nav-h)] max-md:z-40 max-md:max-h-[45dvh] max-md:overflow-y-auto max-md:rounded-t-2xl max-md:pb-[calc(var(--fl-mobile-fab-h)+0.5rem)] max-md:border-t max-md:shadow-2xl md:w-64 md:flex-none md:overflow-y-auto md:border-l">
+    <div className="scrollbar-thin border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900 max-md:fixed max-md:inset-x-0 max-md:bottom-[var(--fl-mobile-nav-h)] max-md:z-40 max-md:max-h-[45dvh] max-md:overflow-y-auto max-md:rounded-t-2xl max-md:pb-[calc(var(--fl-mobile-fab-h)+0.5rem)] max-md:border-t max-md:shadow-2xl md:w-72 md:flex-none md:overflow-y-auto md:border-l">
+      {/* The panel's head: what is selected, and the way to close the panel (on a phone it
+          covers the foot of the canvas, where a tap to let go would otherwise have to land). */}
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+          {isEdge ? (isErRelation ? 'Relation' : 'Connector') : (KIND_NAMES[element.elementType] ?? 'Element')}
+        </p>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close the panel"
+            title="Close"
+            className="-my-1 -mr-1 flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white max-md:h-11 max-md:w-11"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        )}
+      </div>
       {isEdge ? (
         <>
-          <p className="mb-2 text-xs font-medium text-gray-500 dark:text-slate-400">
-            {isErRelation ? 'Relation' : 'Connector'}
-          </p>
-          <label className="mb-1 block text-[11px] text-gray-400 dark:text-slate-500">
+          <label className={LABEL_CLS}>
             What to call this link (shown on the line)
           </label>
           <input
@@ -109,7 +138,7 @@ export function SelectionPanel({
           />
           {isErRelation && (
             <>
-              <label className="mt-3 mb-1 block text-[11px] text-gray-400 dark:text-slate-500">How many of each?</label>
+              <label className={`mt-3 ${LABEL_CLS}`}>How many of each?</label>
               <select value={cardinality} onChange={(e) => setCardinality(e.target.value)} aria-label="How many records link to each other" className={INPUT_CLS + ' w-full cursor-pointer'}>
                 <option value="1:N">One of these has many of those</option>
                 <option value="1:1">Exactly one each way</option>
@@ -117,12 +146,12 @@ export function SelectionPanel({
               </select>
               {cardinality !== 'N:M' && (
                 <>
-                  <label className="mt-3 mb-1 block text-[11px] text-gray-400 dark:text-slate-500">Name of the question added to the other form</label>
+                  <label className={`mt-3 ${LABEL_CLS}`}>Name of the question added to the other form</label>
                   <input value={fkField} onChange={(e) => setFkField(e.target.value)} placeholder="customer" aria-label="Relation FK field" className={INPUT_CLS + ' w-full font-mono text-xs'} />
                 </>
               )}
               {cardinality === 'N:M' && (
-                <p className="mt-2 text-[10px] leading-snug text-gray-400 dark:text-slate-500">
+                <p className={`mt-2 ${HELP_CLS}`}>
                   Materialises as a junction form linking both sides.
                 </p>
               )}
@@ -130,12 +159,12 @@ export function SelectionPanel({
           )}
         </>
       ) : isDrawing ? (
-        <p className="text-xs text-gray-400 dark:text-slate-500">
+        <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
           {element.elementType === 'ink' ? 'An ink stroke.' : element.elementType === 'image' ? 'An attached image.' : 'A shape.'} Delete it below, or press Delete.
         </p>
       ) : isTexty ? (
         <>
-          <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">
+          <label className={LABEL_CLS}>
             {element.elementType === 'note' ? 'Note text' : 'Text'}
           </label>
           <textarea
@@ -149,13 +178,13 @@ export function SelectionPanel({
         </>
       ) : (
         <>
-          <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">
+          <label className={LABEL_CLS}>
             {isForm ? 'Form title' : 'Title'}
           </label>
           <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Entity title" className={INPUT_CLS + ' w-full'} />
           {!isForm && (
             <>
-              <label className="mt-3 mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">Notes</label>
+              <label className={`mt-3 ${LABEL_CLS}`}>Notes</label>
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
@@ -166,7 +195,7 @@ export function SelectionPanel({
                 aria-label="Concept notes"
                 className={INPUT_CLS + ' w-full resize-y text-xs leading-snug'}
               />
-              <p className="mt-1 text-[10px] leading-snug text-gray-400 dark:text-slate-500">
+              <p className={`mt-1 ${HELP_CLS}`}>
                 Saves as a sticky note linked beside this node — visible right on the diagram.
               </p>
             </>
@@ -174,7 +203,7 @@ export function SelectionPanel({
           {isForm && (
           <>
           <div className="mt-3 mb-1 flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-500 dark:text-slate-400">Fields</span>
+            <span className="text-xs font-medium text-gray-600 dark:text-slate-300">Fields</span>
             <Button
               variant="ghost"
               size="sm"
@@ -186,7 +215,7 @@ export function SelectionPanel({
           </div>
           <div className="space-y-1.5">
             {fields.length === 0 && (
-              <p className="text-[11px] text-gray-400 dark:text-slate-500">No fields sketched yet — the materialised form starts empty.</p>
+              <p className={HELP_CLS}>No fields sketched yet — the materialised form starts empty.</p>
             )}
             {fields.map((field, index) => (
               <div key={index} className="flex items-center gap-1.5">
@@ -201,13 +230,15 @@ export function SelectionPanel({
                   value={field.type}
                   onChange={(e) => setFields((rows) => rows.map((row, i) => (i === index ? { ...row, type: e.target.value } : row)))}
                   aria-label={`Field type ${index + 1}`}
-                  className={INPUT_CLS + ' w-24 flex-none cursor-pointer text-xs'}
+                  className={INPUT_CLS + ' w-28 flex-none cursor-pointer text-xs'}
                 >
                   {SKETCH_FIELD_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
                 </select>
+                {/* A finger's size on a phone; in the desktop rail it gives its room to the name. */}
                 <Button
                   variant="ghost"
                   size="iconOnly"
+                  className="h-11 w-11 flex-none md:h-8 md:w-8"
                   onClick={() => setFields((rows) => rows.filter((_, i) => i !== index))}
                   aria-label={`Remove field ${index + 1}`}
                 >

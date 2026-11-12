@@ -500,7 +500,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
           if (created.error) toast.info('Your app was created', created.error);
           else toast.success('SoftN app added', `${created.app.name} is ready to preview and publish.`);
           onClose();
-          navigate(softnWorkspacePath(created.app.id));
+          navigate(softnWorkspacePath(created.app.id, 'edit'));
         } catch (reason) {
           setUploadError(reason instanceof Error ? reason.message : 'Could not add that SoftN app.');
         } finally {
@@ -709,7 +709,8 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
     <button
       type="button"
       onClick={() => handleTabChange(tab)}
-      className={`px-2.5 sm:px-3 py-2.5 text-sm font-medium border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
+      aria-pressed={activeTab === tab}
+      className={`px-2.5 sm:px-3 py-2.5 max-sm:min-h-11 text-sm font-medium border-b-2 transition-colors cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
         activeTab === tab
           ? 'border-primary-600 text-primary-600 dark:text-primary-400 dark:border-primary-400'
           : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:border-gray-300'
@@ -738,16 +739,19 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
 
   return (
     <>
-      <Modal isOpen={isOpen} onClose={handleClose} title={forApps ? 'Import an app' : 'Pack Marketplace'} size="full">
+      {/* "Templates", as the page of the same catalogue is called (Home opens this with "Start
+          from a template"). A size wider than `full`: the catalogue shows four to a row. */}
+      <Modal isOpen={isOpen} onClose={handleClose} title={forApps ? 'Import an app' : 'Templates'} size="2xl">
         {/* Fixed-height flex column so the dialog stays one size across tabs:
-            tabs pinned, content scrolls in the middle, footer pinned. Taller on
-            mobile to use the available screen. */}
-        <div className="p-4 sm:p-6 flex flex-col h-[80vh] sm:h-[70vh]">
+            tabs pinned, content scrolls in the middle, footer pinned. */}
+        {/* On a phone the dialog is at most 85dvh tall with its title bar inside that: 80vh of
+            body ran 20px past it, and the Cancel and Import buttons were cut at the bottom edge. */}
+        <div className="p-4 sm:p-6 flex flex-col h-[80vh] max-sm:h-[calc(85dvh-4.5rem-env(safe-area-inset-bottom))]">
           {/* Tabs — wrap onto multiple rows on mobile instead of scrolling */}
           <div className="flex flex-wrap border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
             {tabButton('marketplace', <Package className="h-4 w-4" />, 'Marketplace')}
             {tabButton('installed', <Box className="h-4 w-4" />, 'Installed', installations.length)}
-            {tabButton('mypacks', <User className="h-4 w-4" />, 'My Packs')}
+            {tabButton('mypacks', <User className="h-4 w-4" />, 'My packs')}
             {tabButton('upload', <Upload className="h-4 w-4" />, 'Upload')}
           </div>
 
@@ -757,7 +761,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
           {importResult && (
             <div className="flex flex-col items-center justify-center py-8 space-y-3">
               <CheckCircle className="h-12 w-12 text-green-500" />
-              <p className="text-lg font-semibold text-gray-900 dark:text-white">Import Complete</p>
+              <p className="text-lg font-semibold text-gray-900 dark:text-white">Import complete</p>
               <p className="text-sm text-gray-500 dark:text-slate-400">
                 {importResult.forms.length} form(s) and {importResult.apps.length} app(s) imported.
               </p>
@@ -812,7 +816,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                   className="rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-white px-3 py-2.5 focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 transition-shadow"
                 >
                   <option value="popular">Popular</option>
-                  <option value="top_rated">Top Rated</option>
+                  <option value="top_rated">Top rated</option>
                   <option value="newest">Newest</option>
                   <option value="name">Name</option>
                 </select>
@@ -849,7 +853,8 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                   )}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                // As many columns as the dialog has room for, by its own width.
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,14rem),1fr))] gap-3">
                   {catalogPacks.map((pack) => {
                     const isInstalled = installedCatalogIds.has(pack.id);
                     return (
@@ -871,7 +876,8 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                             <PackIcon icon={pack.icon} className="h-4.5 w-4.5 text-primary-600 dark:text-primary-400" emojiClassName="text-2xl leading-none" />
                           </span>
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-semibold text-gray-900 dark:text-white transition-colors group-hover:text-primary-700 dark:group-hover:text-primary-300">
+                            {/* The name wraps: cut short, two templates of one family read the same. */}
+                            <p className="text-sm font-semibold leading-5 text-gray-900 [overflow-wrap:anywhere] dark:text-white transition-colors group-hover:text-primary-700 dark:group-hover:text-primary-300">
                               {pack.name}
                             </p>
                             <p className="truncate text-xs text-gray-500 dark:text-slate-400">
@@ -912,18 +918,25 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                                 </div>
                               ))}
                           </dl>
-                          {/* Social proof is context, not substance — quieter, and below. */}
-                          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-gray-500 dark:text-slate-400">
-                            <span className="inline-flex items-center gap-1">
-                              {renderStars(pack.avgRating)}
-                              {pack.ratingCount > 0 && <span className="ml-0.5">({pack.ratingCount})</span>}
-                            </span>
-                            <span aria-hidden="true" className="text-gray-300 dark:text-slate-700">&middot;</span>
-                            <span className="inline-flex items-center gap-0.5">
-                              <Download className="h-3 w-3" aria-hidden="true" />
-                              {pack.downloadCount}
-                            </span>
-                          </div>
+                          {/* Social proof is context, not substance — quieter, and below. And only
+                              what there is: five empty stars and "0" on every card said nothing. */}
+                          {(pack.ratingCount > 0 || pack.downloadCount > 0) && (
+                            <div className="mt-1.5 flex items-center gap-2 text-[11px] tabular-nums text-gray-500 dark:text-slate-400">
+                              {pack.ratingCount > 0 && (
+                                <span className="inline-flex items-center gap-1">
+                                  {renderStars(pack.avgRating)}
+                                  <span className="ml-0.5">({pack.ratingCount})</span>
+                                </span>
+                              )}
+                              {pack.ratingCount > 0 && pack.downloadCount > 0 && <span aria-hidden="true" className="text-gray-300 dark:text-slate-700">&middot;</span>}
+                              {pack.downloadCount > 0 && (
+                                <span className="inline-flex items-center gap-0.5" aria-label={`${pack.downloadCount} ${pack.downloadCount === 1 ? 'download' : 'downloads'}`}>
+                                  <Download className="h-3 w-3" aria-hidden="true" />
+                                  {pack.downloadCount}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
 
                         {/* Tags */}

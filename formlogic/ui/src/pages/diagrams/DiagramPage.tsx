@@ -4,8 +4,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
-import { ArrowLeft, History, Loader2, Map as MapIcon, Sparkles, User as UserIcon, Wand2 } from 'lucide-react';
+import { ArrowLeft, History, Loader2, Map as MapIcon, Sparkles, User as UserIcon, Wand2, X } from 'lucide-react';
 import { api } from '../../lib/api';
+import { cn } from '../../lib/utils';
 import { useReturnTo } from '../../hooks/useReturnTo';
 import { formatDateTimeInZone, useAccountTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
@@ -122,12 +123,16 @@ export default function DiagramPage() {
 
   // dvh, not vh (audit FL-26): mobile browser chrome shrinks the visual viewport —
   // 100vh clipped the bottom of the workspace behind the URL bar.
+  // The editor is a full-window tool with no Header of its own: it takes the window's whole
+  // height (less the demo bar when there is one), and on a phone stops at the bottom
+  // navigation. Subtracting a 4rem header that is not there left a dead band under the canvas.
   return (
-    <div className="flex h-[calc(100dvh-4rem)] min-h-0 flex-col">
-      <div className="flex flex-none items-center gap-3 border-b border-gray-200 bg-white px-4 py-2.5 dark:border-slate-700/60 dark:bg-slate-900">
+    <div className="flex h-[calc(100dvh-var(--fl-mobile-nav-h)-var(--fl-demo-banner-h,0px))] min-h-0 flex-col md:h-[calc(100dvh-var(--fl-demo-banner-h,0px))]">
+      {/* @container/bar: the Timeline's word gives way to its icon by the bar's own width. */}
+      <div className="@container/bar flex flex-none items-center gap-1.5 border-b border-gray-200 bg-white px-2 py-1.5 dark:border-slate-700/60 dark:bg-slate-900 sm:gap-3 sm:px-4 sm:py-2">
         <Link
           to={backTo.path}
-          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+          className="inline-flex flex-none items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white max-sm:min-h-11"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           {backTo.label ?? 'Diagrams'}
@@ -138,12 +143,19 @@ export default function DiagramPage() {
           title="Build timeline"
           aria-label="Toggle the build timeline"
           aria-pressed={showHistory}
-          className="order-last ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+          className={cn(
+            'order-last ml-auto inline-flex flex-none items-center justify-center gap-1 rounded-lg px-2 py-1 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 max-sm:min-h-11 max-sm:min-w-11',
+            showHistory
+              ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300'
+              : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white',
+          )}
         >
           <History className="h-3.5 w-3.5" />
-          Timeline
+          <span className="hidden @md/bar:inline">Timeline</span>
         </button>
-        <span className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+        {/* The name takes the room between the two: it is cut short only when the bar has no
+            more to give, and its title says it whole. */}
+        <span className="flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
           <MapIcon className="h-4 w-4 flex-none text-primary-600 dark:text-primary-300" />
           {diagram && renaming ? (
             <input
@@ -167,14 +179,15 @@ export default function DiagramPage() {
                   else toast.error('Rename failed', typeof res.error === 'string' ? res.error : undefined);
                 });
               }}
-              className="rounded-md border border-gray-300 bg-white px-2 py-0.5 text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+              className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white max-sm:min-h-11 sm:max-w-md"
             />
           ) : (
             <button
               type="button"
-              title={diagram ? 'Rename diagram' : undefined}
+              title={diagram ? `${diagram.name} (press to rename)` : undefined}
+              aria-label={diagram ? `Rename diagram ${diagram.name}` : undefined}
               onClick={() => { if (diagram) setRenaming(true); }}
-              className="rounded px-1 py-0.5 hover:bg-gray-100 dark:hover:bg-slate-800"
+              className="min-w-0 truncate rounded px-1 py-0.5 text-left hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:hover:bg-slate-800 max-sm:min-h-11"
             >
               {diagram?.name ?? (missing ? 'Not found' : 'Loading…')}
             </button>
@@ -183,7 +196,7 @@ export default function DiagramPage() {
       </div>
       <div className="relative flex min-h-0 flex-1 bg-gray-50 dark:bg-slate-950">
         {diagram && diagram.id !== '' && showHistory && (
-          <BuildTimeline blueprintId={diagram.id} semanticRevision={diagram.semanticRevision} />
+          <BuildTimeline blueprintId={diagram.id} semanticRevision={diagram.semanticRevision} onClose={() => setShowHistory(false)} />
         )}
         <div className="min-h-0 min-w-0 flex-1">
         {diagram ? (
@@ -191,6 +204,10 @@ export default function DiagramPage() {
             <DiagramCanvas
               key={diagram.id}
               blueprint={diagram}
+              // One side panel at a time: the timeline and the selection's panel give way to
+              // each other, so the canvas keeps its room.
+              sidePanelOpen={showHistory}
+              onSelect={() => setShowHistory(false)}
               onEnsureId={ensureId}
               onReload={load}
               onRevisions={(semantic, layout) =>
@@ -240,7 +257,7 @@ function summarizeOps(operations: Array<{ type: string; targetId: string | null 
  * operation, so this is a read-only projection of the shared command stream. Copilot
  * batches wear a sparkle, the launcher a wand, your own edits a person.
  */
-function BuildTimeline({ blueprintId, semanticRevision }: { blueprintId: string; semanticRevision: number }) {
+function BuildTimeline({ blueprintId, semanticRevision, onClose }: { blueprintId: string; semanticRevision: number; onClose: () => void }) {
   // Server timestamps are UTC — show each entry on the viewer's clock.
   const tz = useAccountTimezone();
   const [history, setHistory] = useState<Array<{
@@ -257,27 +274,42 @@ function BuildTimeline({ blueprintId, semanticRevision }: { blueprintId: string;
     };
   }, [blueprintId, semanticRevision]);
 
-  // Phones (audit FL-26): the timeline overlays the canvas instead of squeezing it.
+  // Desktop: a rail at the canvas's left. Phones (audit FL-26): a sheet over the foot of the
+  // canvas, as the selection's panel is, so the canvas keeps the screen's width.
   return (
-    <aside className="scrollbar-thin w-64 flex-none overflow-y-auto border-r border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900 max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:shadow-xl">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">Build timeline</p>
+    <aside
+      aria-label="Build timeline"
+      className="scrollbar-thin border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900 max-md:fixed max-md:inset-x-0 max-md:bottom-[var(--fl-mobile-nav-h)] max-md:z-40 max-md:max-h-[45dvh] max-md:overflow-y-auto max-md:rounded-t-2xl max-md:border-t max-md:pb-[calc(var(--fl-mobile-fab-h)+0.5rem)] max-md:shadow-2xl md:w-64 md:flex-none md:overflow-y-auto md:border-r"
+    >
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Build timeline</p>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close the build timeline"
+          title="Close"
+          className="-my-1 -mr-1 flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white max-md:h-11 max-md:w-11"
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
       {history.length === 0 ? (
-        <p className="text-xs text-gray-400 dark:text-slate-500">No changes yet — every edit (yours and the AI's) lands here.</p>
+        <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">No changes yet — every edit (yours and the AI's) lands here.</p>
       ) : (
-        <ol className="space-y-2">
+        <ol className="space-y-1.5">
           {history.map((entry) => (
-            <li key={entry.changeSetId} className="rounded-lg border border-gray-100 px-2.5 py-2 dark:border-slate-800">
-              <p className="flex items-center gap-1.5 text-[11px] font-medium text-gray-700 dark:text-slate-200">
+            <li key={entry.changeSetId} className="rounded-lg border border-gray-100 px-2.5 py-1.5 dark:border-slate-800">
+              <p className="flex items-start gap-1.5 text-xs font-medium text-gray-700 dark:text-slate-200">
                 {entry.origin === 'copilot' ? (
-                  <Sparkles className="h-3 w-3 flex-none text-primary-500" />
+                  <Sparkles className="mt-0.5 h-3 w-3 flex-none text-primary-500" />
                 ) : entry.origin === 'launcher' ? (
-                  <Wand2 className="h-3 w-3 flex-none text-primary-500" />
+                  <Wand2 className="mt-0.5 h-3 w-3 flex-none text-primary-500" />
                 ) : (
-                  <UserIcon className="h-3 w-3 flex-none text-gray-400" />
+                  <UserIcon className="mt-0.5 h-3 w-3 flex-none text-gray-400" />
                 )}
                 {summarizeOps(entry.operations)}
               </p>
-              <p className="mt-0.5 text-[10px] text-gray-400 dark:text-slate-500">
+              <p className="mt-0.5 text-[11px] tabular-nums text-gray-500 dark:text-slate-400">
                 {formatDateTimeInZone(entry.createdAt, tz)}
                 {entry.semanticRevision !== null ? ` · rev ${entry.semanticRevision}` : ''}
               </p>

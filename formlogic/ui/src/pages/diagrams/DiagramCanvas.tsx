@@ -54,6 +54,7 @@ import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { cn, generateId } from '../../lib/utils';
 import { Button } from '../../components/ui/Button';
+import { BottomSheet } from '../../components/ui/BottomSheet';
 import type { Blueprint, BlueprintElement, BlueprintOperation } from '../../types/blueprints';
 import { SelectionPanel } from './SelectionPanel';
 import { clearSelectionDraft } from './selectionDraft';
@@ -115,16 +116,23 @@ const ELEMENT_ICONS: Record<string, LucideIcon> = {
  * (branching belongs to flows), Group (needs REAL containment semantics first — a frame
  * that doesn't contain is a lie). Existing elements of those kinds still render.
  */
-const SKETCH_TOOLS: Array<{ elementType: string; label: string; title: string; icon?: LucideIcon; extra?: Record<string, unknown> }> = [
-  { elementType: 'form', label: 'Form', title: 'New form' },
-  { elementType: 'flow', label: 'Flow', title: 'New flow (concept)' },
-  { elementType: 'actor', label: 'Actor', title: 'New actor / role' },
-  { elementType: 'note', label: 'Note', title: 'New note' },
-  { elementType: 'text', label: 'Text', title: 'New text label' },
-  { elementType: 'shape', label: 'Box', title: 'New box', icon: Square, extra: { shape: 'rect' } },
-  { elementType: 'shape', label: 'Circle', title: 'New circle', icon: CircleIcon, extra: { shape: 'circle' } },
-  { elementType: 'shape', label: 'Triangle', title: 'New triangle', icon: Triangle, extra: { shape: 'triangle' } },
+const SKETCH_TOOLS: Array<{ elementType: string; label: string; title: string; /** One line of what it is, for the phone's list of tools. */ about: string; icon?: LucideIcon; extra?: Record<string, unknown> }> = [
+  { elementType: 'form', label: 'Form', title: 'New form', about: 'Becomes a real form when the app is created' },
+  { elementType: 'flow', label: 'Flow', title: 'New flow (concept)', about: 'An automation: what should happen, and when' },
+  { elementType: 'actor', label: 'Actor', title: 'New actor / role', about: 'A person or a system that takes part' },
+  { elementType: 'note', label: 'Note', title: 'New note', about: 'A sticky note; it is never built' },
+  { elementType: 'text', label: 'Text', title: 'New text label', about: 'A label on the canvas' },
+  { elementType: 'shape', label: 'Box', title: 'New box', about: 'An outline that other things can sit in', icon: Square, extra: { shape: 'rect' } },
+  { elementType: 'shape', label: 'Circle', title: 'New circle', about: 'An outlined circle', icon: CircleIcon, extra: { shape: 'circle' } },
+  { elementType: 'shape', label: 'Triangle', title: 'New triangle', about: 'An outlined triangle', icon: Triangle, extra: { shape: 'triangle' } },
 ];
+/** The tools that stand for something the app will have come first; the drawing aids follow. */
+const BUILT_TOOLS = 3;
+
+/** One tool of the toolbar's strip: 32px for a mouse. */
+const TOOL_BUTTON = 'flex h-8 min-w-8 cursor-pointer items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-gray-600 hover:bg-primary-50 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-300 dark:hover:bg-primary-500/10 dark:hover:text-primary-300';
+/** A toolbar button that stands alone on a phone: a finger's 44px there. */
+const TOUCH_TOOL = 'max-sm:h-11 max-sm:min-w-11';
 
 /** Left target + right source connection dots — EVERYTHING connectable gets them
  *  (owner direction: notes, images, shapes and text link up too; ink stays a stroke). */
@@ -480,12 +488,19 @@ export function DiagramCanvas({
   onEnsureId,
   onReload,
   onRevisions,
+  sidePanelOpen = false,
+  onSelect,
 }: {
   blueprint: Blueprint;
   /** Deferred drafts: creates the blueprint row on the first change (id '' until then). */
   onEnsureId?: () => Promise<string | null>;
   onReload: () => Promise<void>;
   onRevisions: (semantic: number, layout: number) => void;
+  /** The page's own side panel (its timeline) is open. Only one side panel stands beside the
+      canvas at a time, so when it opens the selection, and with it this canvas's panel, is let go. */
+  sidePanelOpen?: boolean;
+  /** Something was selected and its panel opened: the page closes its own. */
+  onSelect?: () => void;
 }) {
   const elements = useMemo(() => blueprint.elements ?? [], [blueprint.elements]);
   const initial = useMemo(() => toCanvas(elements), [elements]);
@@ -499,7 +514,25 @@ export function DiagramCanvas({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [materializing, setMaterializing] = useState(false);
+  // The phone's list of sketch tools (a sheet): the toolbar has no room for ten of them there.
+  const [toolsOpen, setToolsOpen] = useState(false);
   const navigate = useNavigate();
+
+  // Lets go of the selection: its panel closes (what was typed in it is kept as a draft).
+  const deselect = useCallback(() => {
+    setNodes((current) => (current.some((node) => node.selected) ? current.map((node) => (node.selected ? { ...node, selected: false } : node)) : current));
+    setRfEdges((current) => (current.some((edge) => edge.selected) ? current.map((edge) => (edge.selected ? { ...edge, selected: false } : edge)) : current));
+    setSelectedId(null);
+  }, []);
+  // The selection the page was last told of (see onSelectionChange).
+  const announcedSelectionRef = useRef<string | null>(null);
+  // The page's side panel opened: one side panel at a time (state derived during render, the
+  // sanctioned pattern, so the two never show together for a frame).
+  const [pagePanelWasOpen, setPagePanelWasOpen] = useState(sidePanelOpen);
+  if (pagePanelWasOpen !== sidePanelOpen) {
+    setPagePanelWasOpen(sidePanelOpen);
+    if (sidePanelOpen && selectedId !== null) deselect();
+  }
   // The CURRENT semantic revision (updated by every commit) — held in a ref so callbacks
   // never carry a stale precondition after a sibling commit in the same session.
   const semanticRef = useRef(blueprint.semanticRevision);
@@ -1179,50 +1212,55 @@ export function DiagramCanvas({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-white px-3 py-2 dark:border-slate-700/60 dark:bg-slate-900">
-        {/* Sketch tools (§11A): draw the app's shape before anything exists. */}
-        <div className="flex items-center gap-1 rounded-lg border border-gray-200 p-0.5 dark:border-slate-700">
-          {SKETCH_TOOLS.map((tool) => {
+      {/* The toolbar is one row. It sizes itself by its own width (@container/tools), which the
+          sidebar and a docked chat take their share of: with room every tool says its name;
+          with less they are icons; and where ten icons do not fit (a phone) they are a list
+          behind "Add", so no tool is ever dropped. */}
+      <div className="@container/tools flex-none border-b border-gray-200 bg-white px-2 py-1.5 dark:border-slate-700/60 dark:bg-slate-900 sm:px-3">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        {/* Narrow: the sketch tools as a list in a sheet, each with its name. */}
+        <button
+          type="button"
+          onClick={() => setToolsOpen(true)}
+          disabled={busy}
+          aria-haspopup="dialog"
+          aria-expanded={toolsOpen}
+          title="Add to the diagram"
+          className={cn(TOOL_BUTTON, TOUCH_TOOL, 'border border-gray-200 px-2.5 dark:border-slate-700 @xl/tools:hidden')}
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          Add
+        </button>
+        {/* Sketch tools (§11A): draw the app's shape before anything exists. First what the
+            app will have (form, flow, actor), then the drawing aids. */}
+        <div role="group" aria-label="Sketch tools" className="hidden items-center gap-0.5 rounded-lg border border-gray-200 p-0.5 dark:border-slate-700 @xl/tools:flex">
+          {SKETCH_TOOLS.map((tool, index) => {
             const Icon = tool.icon ?? ELEMENT_ICONS[tool.elementType] ?? Workflow;
             return (
-              <button
-                key={tool.title}
-                type="button"
-                title={`${tool.title} — click, or drag onto the canvas`}
-                aria-label={tool.title}
-                disabled={busy}
-                draggable
-                onDragStart={(event) => {
-                  event.dataTransfer.setData(
-                    'application/formlogic-diagram-tool',
-                    JSON.stringify({ elementType: tool.elementType, label: tool.label, extra: tool.extra ?? null }),
-                  );
-                  event.dataTransfer.effectAllowed = 'copy';
-                }}
-                onClick={() => sketchElement(tool.elementType, `New ${tool.label.toLowerCase()}`, tool.extra)}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-primary-50 hover:text-primary-700 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-300"
-              >
-                <Icon className="h-4 w-4" />
-              </button>
+              <span key={tool.title} className="contents">
+                {index === BUILT_TOOLS && <span className="mx-0.5 h-5 w-px flex-none bg-gray-200 dark:bg-slate-700" aria-hidden="true" />}
+                <button
+                  type="button"
+                  title={`${tool.title} — click, or drag onto the canvas`}
+                  aria-label={tool.title}
+                  disabled={busy}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData(
+                      'application/formlogic-diagram-tool',
+                      JSON.stringify({ elementType: tool.elementType, label: tool.label, extra: tool.extra ?? null }),
+                    );
+                    event.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onClick={() => sketchElement(tool.elementType, `New ${tool.label.toLowerCase()}`, tool.extra)}
+                  className={TOOL_BUTTON}
+                >
+                  <Icon className="h-4 w-4 flex-none" aria-hidden="true" />
+                  <span className="hidden @5xl/tools:inline">{tool.label}</span>
+                </button>
+              </span>
             );
           })}
-          {/* Pen: freehand ink over the top of everything. Toggle off to pan/select. */}
-          <button
-            type="button"
-            title="Draw (freehand ink)"
-            aria-label="Draw freehand ink"
-            aria-pressed={penMode}
-            disabled={busy}
-            onClick={() => setPenMode((mode) => !mode)}
-            className={cn(
-              'flex h-8 w-8 items-center justify-center rounded-md disabled:opacity-50',
-              penMode
-                ? 'bg-primary-600 text-primary-foreground'
-                : 'text-gray-500 hover:bg-primary-50 hover:text-primary-700 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-300',
-            )}
-          >
-            <Pencil className="h-4 w-4" />
-          </button>
           {/* Attach an image from disk (paste works anywhere too). */}
           <button
             type="button"
@@ -1230,35 +1268,52 @@ export function DiagramCanvas({
             aria-label="Attach image"
             disabled={busy}
             onClick={() => imageInputRef.current?.click()}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-primary-50 hover:text-primary-700 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-300"
+            className={TOOL_BUTTON}
           >
-            <ImagePlus className="h-4 w-4" />
+            <ImagePlus className="h-4 w-4 flex-none" aria-hidden="true" />
+            <span className="hidden @5xl/tools:inline">Image</span>
           </button>
-          <input
-            ref={imageInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            aria-hidden
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = '';
-              if (file) void attachImage(file);
-            }}
-          />
         </div>
-        <span className="h-6 w-px bg-gray-200 dark:bg-slate-700" />
-        <span className="mx-1 text-xs text-gray-400 dark:text-slate-500">
-          Double-click the canvas to add a form; drag one card onto another to link them.
-        </span>
-        <div className="ml-auto flex items-center gap-2">
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          aria-hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) void attachImage(file);
+          }}
+        />
+        {/* Pen: freehand ink over the top of everything. Toggle off to pan/select. It is a
+            mode, so it stands in the toolbar at every width: what turns it on turns it off. */}
+        <button
+          type="button"
+          title="Draw (freehand ink)"
+          aria-label="Draw freehand ink"
+          aria-pressed={penMode}
+          disabled={busy}
+          onClick={() => setPenMode((mode) => !mode)}
+          className={cn(
+            TOOL_BUTTON,
+            TOUCH_TOOL,
+            'border border-gray-200 dark:border-slate-700',
+            penMode && 'border-primary-600 bg-primary-600 text-primary-foreground hover:bg-primary-600 hover:text-primary-foreground dark:border-primary-600 dark:text-primary-foreground dark:hover:bg-primary-600 dark:hover:text-primary-foreground',
+          )}
+        >
+          <Pencil className="h-4 w-4 flex-none" aria-hidden="true" />
+          <span className="hidden @5xl/tools:inline">{penMode ? 'Drawing' : 'Draw'}</span>
+        </button>
+        <div className="ml-auto flex items-center gap-1 sm:gap-2">
           {busy && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
-          <span className="font-mono text-[10px] text-gray-400 dark:text-slate-500">
+          <span className="hidden font-mono text-[10px] text-gray-500 dark:text-slate-400 @xl/tools:inline" title="Revision: what the diagram says · how it is laid out">
             rev {blueprint.semanticRevision}·{blueprint.layoutRevision}
           </span>
           <Button
             variant="ghost"
             size="sm"
+            className="max-sm:min-w-11"
             disabled={busy}
             aria-label="Undo last change"
             title="Undo the last change"
@@ -1275,7 +1330,7 @@ export function DiagramCanvas({
           >
             <RotateCcw className="h-4 w-4 text-gray-400 hover:text-gray-700 dark:hover:text-slate-200" />
           </Button>
-          <Button variant="ghost" size="sm" disabled={busy || selectedId === null} onClick={deleteSelected} aria-label="Delete selected element">
+          <Button variant="ghost" size="sm" className="max-sm:min-w-11" disabled={busy || selectedId === null} onClick={deleteSelected} aria-label="Delete selected element" title="Delete what is selected">
             <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
           </Button>
           {/* §11A D3/D5: the sketch becomes real — and once linked, later sketching
@@ -1335,7 +1390,59 @@ export function DiagramCanvas({
             </Button>
           )}
         </div>
+        </div>
       </div>
+      {/* The sketch tools as a list (narrow toolbars): the name of each and one line of what it
+          is. Choosing one puts it on the canvas, as its button in the wide toolbar does. */}
+      <BottomSheet title="Add to the diagram" open={toolsOpen} onClose={() => setToolsOpen(false)}>
+        <div className="overflow-y-auto p-2">
+          <ul>
+            {SKETCH_TOOLS.map((tool) => {
+              const Icon = tool.icon ?? ELEMENT_ICONS[tool.elementType] ?? Workflow;
+              return (
+                <li key={tool.title}>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setToolsOpen(false);
+                      sketchElement(tool.elementType, `New ${tool.label.toLowerCase()}`, tool.extra);
+                    }}
+                    className="flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 text-left hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 disabled:opacity-50 dark:hover:bg-white/[0.04]"
+                  >
+                    <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300">
+                      <Icon className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium text-gray-900 dark:text-white">{tool.label}</span>
+                      <span className="block text-xs leading-4 text-gray-500 dark:text-slate-400">{tool.about}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+            <li>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setToolsOpen(false);
+                  imageInputRef.current?.click();
+                }}
+                className="flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 text-left hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 disabled:opacity-50 dark:hover:bg-white/[0.04]"
+              >
+                <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300">
+                  <ImagePlus className="h-4 w-4" aria-hidden="true" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-gray-900 dark:text-white">Image</span>
+                  <span className="block text-xs leading-4 text-gray-500 dark:text-slate-400">A picture from this device</span>
+                </span>
+              </button>
+            </li>
+          </ul>
+        </div>
+      </BottomSheet>
       <div className="flex min-h-0 flex-1">
         <div
           className="relative min-h-0 min-w-0 flex-1"
@@ -1397,15 +1504,33 @@ export function DiagramCanvas({
           zoomOnDoubleClick={false}
           deleteKeyCode={null}
           connectionMode={ConnectionMode.Loose}
-          onSelectionChange={({ nodes: selectedNodes, edges: selectedEdges }) =>
-            setSelectedId(selectedNodes[0]?.id ?? selectedEdges[0]?.id ?? null)
-          }
+          onSelectionChange={({ nodes: selectedNodes, edges: selectedEdges }) => {
+            const id = selectedNodes[0]?.id ?? selectedEdges[0]?.id ?? null;
+            setSelectedId(id);
+            // The canvas repeats the selection it already has on every render (this handler is
+            // new each time): the page is told only when something else becomes selected.
+            if (id !== announcedSelectionRef.current) {
+              announcedSelectionRef.current = id;
+              if (id !== null) onSelect?.();
+            }
+          }}
           fitView
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={20} />
-          <Controls showInteractive={false} />
+          {/* At the top left, as in the flow editor: the bottom corners belong to the desktop
+              chip and the chat button, which would sit over the zoom buttons. */}
+          <Controls position="top-left" orientation="horizontal" showInteractive={false} />
         </ReactFlow>
+        {/* How to sketch, as a quiet line over the canvas beside the zoom buttons: in the toolbar
+            it took a row of its own wherever the window was not wide, and three on a phone. */}
+        {!penMode && (
+          <p className="pointer-events-none absolute left-[6.5rem] right-3 top-[15px] z-[5] flex">
+            <span className="rounded-md bg-white/85 px-2 py-1 text-[11px] leading-4 text-gray-500 backdrop-blur-sm dark:bg-slate-950/70 dark:text-slate-400">
+              Double-click the canvas to add a form; drag one card onto another to link them.
+            </span>
+          </p>
+        )}
         {/* §12: the first pending AI proposal's approval bar — ghosts show above. */}
         {proposals.length > 0 && (
           <div className="absolute bottom-4 left-1/2 z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-xl border border-primary-200 bg-white/95 px-3 py-2 shadow-lg dark:border-primary-500/30 dark:bg-slate-900/95">
@@ -1467,6 +1592,7 @@ export function DiagramCanvas({
             linkedNoteText={linkedNoteText}
             onSave={saveSelectedProperties}
             onDelete={deleteSelected}
+            onClose={deselect}
           />
         )}
       </div>

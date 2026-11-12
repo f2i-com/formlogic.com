@@ -39,7 +39,6 @@ import { Lock } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent } from '../components/ui/Card';
-import { StatCard } from '../components/ui/StatCard';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Modal } from '../components/ui/Modal';
 import { Skeleton, ListRowSkeleton } from '../components/ui/Skeleton';
@@ -63,7 +62,8 @@ import type { Form, LocalFormResponse } from '../types/form';
 import { publicUnfillableFieldLabels } from '../lib/publicForm';
 import { csvEscapeCell } from '../lib/csv';
 
-const ITEMS_PER_PAGE = 10;
+/** Rows are about 40px tall, so a page of 25 is one screen of them (10 left most of it empty). */
+const ITEMS_PER_PAGE = 25;
 
 interface ResponseWithStatus extends LocalFormResponse {
   status?: string;
@@ -147,7 +147,7 @@ function rowErrorText(code: string | undefined): string {
 }
 
 // Stats card component for consistency
-// StatCard is the shared component (imported) — same metric tiles as Dashboard/Analytics.
+// The page's four counts are one strip of facts over the rows (see "The four counts" below).
 
 function FormResponses() {
   const { formId } = useParams<{ formId: string }>();
@@ -365,8 +365,8 @@ function FormResponses() {
   // collapse to stacked cards once it's phone-sized. Reserved px ≈ Date+Time+Status+Actions.
   const { ref: tableRef, count: visibleFieldCount, cards: cardMode } = useFittedColumns<HTMLDivElement>({
     itemCount: displayFields.length,
-    itemMinPx: 170,
-    reservedPx: 470,
+    itemMinPx: 150,
+    reservedPx: 456,
     cardBelowPx: 640,
   });
   const visibleFields = displayFields.slice(0, visibleFieldCount);
@@ -477,8 +477,14 @@ function FormResponses() {
   if (currentPage > Math.max(1, totalPages)) setCurrentPage(Math.max(1, totalPages));
 
   // Open the record's own page (the view modal is retired — records are full pages now).
+  // The record's page is handed the list as it stands (searched, filtered, in this order), so it
+  // can step to the one before and the one after without coming back here. Ids only, and no more
+  // than a few hundred around the one opened: router state is kept in the browser's history.
   const handleView = (response: ResponseWithStatus) => {
-    navigate(`/responses/${formId}/${response.id}`);
+    const at = filteredResponses.findIndex((each) => each.id === response.id);
+    const from = Math.max(0, at - 250);
+    const responseIds = at < 0 ? [] : filteredResponses.slice(from, at + 251).map((each) => each.id);
+    navigate(`/responses/${formId}/${response.id}`, { state: { responseIds } });
   };
 
   // Handle edit response
@@ -762,7 +768,7 @@ function FormResponses() {
     return (
       <div className="min-h-screen transition-colors">
         <Header title="Responses" />
-        <div className="flex-1 w-full p-4 sm:p-6 lg:p-8" aria-busy="true" aria-label="Loading responses">
+        <div className="flex-1 w-full px-4 pb-24 pt-4 sm:px-6" aria-busy="true" aria-label="Loading responses">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-4 flex items-center gap-3">
@@ -912,7 +918,7 @@ function FormResponses() {
         }
       />
 
-      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+      <div className="flex-1 w-full px-4 pb-24 pt-4 sm:px-6">
         <PageHeader
           title={form.title}
           subtitle={`Responses · ${stats.total} ${stats.total === 1 ? 'record' : 'records'}`}
@@ -947,41 +953,36 @@ function FormResponses() {
           </div>
         )}
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <StatCard
-            icon={Users}
-            label="Total Responses"
-            value={stats.total}
-            iconBg="bg-primary-500/10"
-            iconColor="text-primary-500"
-          />
-          <StatCard
-            icon={CalendarDays}
-            label="This Week"
-            value={stats.thisWeek}
-            trend={{ pct: stats.weeklyPct, label: 'vs last week' }}
-            iconBg="bg-green-500/10"
-            iconColor="text-green-500"
-          />
-          <StatCard
-            icon={Calendar}
-            label="Today"
-            value={stats.todayCount}
-            iconBg="bg-blue-500/10"
-            iconColor="text-blue-500"
-          />
-          <StatCard
-            icon={Timer}
-            label="Avg. Time"
-            value={formatDuration(stats.avgTime)}
-            iconBg="bg-amber-500/10"
-            iconColor="text-amber-500"
-          />
-        </div>
+        {/* The four counts as one strip of facts over the rows, not four tall tiles: on a phone
+            the tiles filled the first screen before a single response showed. The hairlines
+            between the facts are the strip's own background showing through the 1px gaps. */}
+        <dl className="mb-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 dark:border-slate-800 dark:bg-slate-800 lg:grid-cols-4">
+          {([
+            [Users, 'Total responses', stats.total, undefined],
+            [CalendarDays, 'This week', stats.thisWeek, stats.weeklyPct],
+            [Calendar, 'Today', stats.todayCount, undefined],
+            [Timer, 'Average time', formatDuration(stats.avgTime), undefined],
+          ] as const).map(([Icon, label, value, change]) => (
+            <div key={label} className="flex min-w-0 items-center gap-3 bg-white px-3 py-2.5 dark:bg-slate-900">
+              <Icon className="h-4 w-4 flex-none text-gray-400 dark:text-slate-500" aria-hidden="true" />
+              <div className="min-w-0">
+                <dt className="truncate text-[11px] font-medium uppercase tracking-wider text-gray-500 dark:text-slate-400">{label}</dt>
+                <dd className="flex flex-wrap items-baseline gap-x-2 text-lg font-semibold leading-6 tabular-nums text-gray-900 dark:text-white">
+                  {value}
+                  {/* Against the week before; "New" when there was no week before to compare with. */}
+                  {change !== undefined && (
+                    <span className={cn('text-[11px] font-semibold', change === null ? 'text-gray-500 dark:text-slate-400' : change >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
+                      {change === null ? 'New' : `${change >= 0 ? '+' : ''}${change}%`} <span className="font-normal text-gray-400 dark:text-slate-500">vs last week</span>
+                    </span>
+                  )}
+                </dd>
+              </div>
+            </div>
+          ))}
+        </dl>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row gap-4 mb-6">
+        <div className="flex flex-col sm:flex-row gap-2 mb-3">
           <div className="flex-1">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
@@ -1070,14 +1071,17 @@ function FormResponses() {
             {cardMode ? (
             <ul className="divide-y divide-gray-200 dark:divide-slate-800">
               {paginatedResponses.map((response) => (
-                <li key={response.id} className="p-4">
-                  <div className="flex items-start justify-between gap-3">
+                // The three actions stand at the card's top right, beside the date alone: the
+                // answers under them have the card's whole width. Beside the answers, the
+                // actions left them 190px of a 390px screen and cut every value short.
+                <li key={response.id} className="relative p-3">
+                  <div>
                     <button
                       type="button"
                       onClick={() => handleView(response)}
-                      className="min-w-0 flex-1 text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                      className="block w-full min-w-0 text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                     >
-                      <div className="flex items-center gap-2">
+                      <div className="flex min-h-11 flex-wrap items-center gap-x-2 gap-y-1 pr-[8.5rem]">
                         <p className="text-sm font-medium text-gray-900 dark:text-white">{formatDate(response.submittedAt)}</p>
                         <Badge variant={statusBadgeVariant(response.status || 'submitted')} className="rounded-full">
                           {formatStatusLabel(response.status || 'submitted')}
@@ -1090,24 +1094,29 @@ function FormResponses() {
                           ))}
                         </div>
                       )}
-                      {displayFields.slice(0, 4).map((field, fieldIndex) => (
-                        <p key={field.id} className="mt-1 text-sm text-gray-600 dark:text-slate-300 truncate">
-                          <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
-                          {/* Locked vault: rows render the lock text, never decrypted bytes. */}
-                          {isPrivateForm && vaultLocked
-                            ? (fieldIndex === 0 ? '🔒 Encrypted — unlock to view' : '—')
-                            : (response as { _decryptError?: string })._decryptError
-                              ? (fieldIndex === 0
-                                ? <span className="text-red-600 dark:text-red-400">{rowErrorText((response as { _decryptError?: string })._decryptError)}</span>
-                                : '—')
-                              : field.type === 'linked_record'
-                                ? linkedText(linksFor(response, field.id))
-                                : formatValue(response.answers[field.id], field.type, field.properties?.options, displayTz)}
-                        </p>
-                      ))}
-                      <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">{formatDuration(response.completionTime || 0)}</p>
+                      {/* Each answer's name over its value, two to a line, as the rows of an app's table are on a phone. */}
+                      <dl className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1.5">
+                        {displayFields.slice(0, 4).map((field, fieldIndex) => (
+                          <div key={field.id} className="min-w-0">
+                            <dt className="truncate text-[11px] text-gray-400 dark:text-slate-500">{field.label}</dt>
+                            <dd className="truncate text-sm text-gray-700 dark:text-slate-200">
+                              {/* Locked vault: rows render the lock text, never decrypted bytes. */}
+                              {isPrivateForm && vaultLocked
+                                ? (fieldIndex === 0 ? '🔒 Encrypted — unlock to view' : '—')
+                                : (response as { _decryptError?: string })._decryptError
+                                  ? (fieldIndex === 0
+                                    ? <span className="text-red-600 dark:text-red-400">{rowErrorText((response as { _decryptError?: string })._decryptError)}</span>
+                                    : '—')
+                                  : field.type === 'linked_record'
+                                    ? linkedText(linksFor(response, field.id))
+                                    : formatValue(response.answers[field.id], field.type, field.properties?.options, displayTz)}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                      <p className="mt-1.5 text-xs text-gray-400 dark:text-slate-500">{formatDuration(response.completionTime || 0)}</p>
                     </button>
-                    <div className="flex gap-1 flex-shrink-0">
+                    <div className="absolute right-1.5 top-1.5 flex flex-shrink-0">
                       <button onClick={() => handleView(response)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10" aria-label="View response details">
                         <Eye className="h-4 w-4" />
                       </button>
@@ -1135,12 +1144,12 @@ function FormResponses() {
                   <tr>
                     <th
                       aria-sort={sortField === 'submittedAt' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : undefined}
-                      className="px-4 py-3 text-left w-44"
+                      className="px-3 py-2 text-left w-44"
                     >
                       <button
                         type="button"
                         onClick={() => toggleSort('submittedAt')}
-                        className="group inline-flex items-center gap-1 rounded text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider hover:text-gray-700 dark:hover:text-slate-300 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                        className="group inline-flex items-center gap-1 rounded text-[11px] font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider hover:text-gray-700 dark:hover:text-slate-300 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                       >
                         Date
                         {sortField === 'submittedAt' ? (
@@ -1153,7 +1162,7 @@ function FormResponses() {
                     {visibleFields.map((field) => (
                       <th
                         key={field.id}
-                        className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider"
+                        className="px-3 py-2 text-left text-[11px] font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider"
                         title={field.label}
                       >
                         <span className="truncate block">{field.label}</span>
@@ -1161,12 +1170,12 @@ function FormResponses() {
                     ))}
                     <th
                       aria-sort={sortField === 'completionTime' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : undefined}
-                      className="px-4 py-3 text-left w-20"
+                      className="px-3 py-2 text-left w-20"
                     >
                       <button
                         type="button"
                         onClick={() => toggleSort('completionTime')}
-                        className="group inline-flex items-center gap-1 rounded text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider hover:text-gray-700 dark:hover:text-slate-300 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                        className="group inline-flex items-center gap-1 rounded text-[11px] font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider hover:text-gray-700 dark:hover:text-slate-300 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                       >
                         Time
                         {sortField === 'completionTime' ? (
@@ -1176,10 +1185,11 @@ function FormResponses() {
                         )}
                       </button>
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider w-28">
+                    <th className="px-3 py-2 text-left text-[11px] font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider w-28">
                       Status
                     </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider w-28">
+                    {/* Three 32px buttons and their gaps: narrower, they ran over the status beside them. */}
+                    <th className="px-3 py-2 text-right text-[11px] font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider w-32">
                       Actions
                     </th>
                   </tr>
@@ -1192,7 +1202,8 @@ function FormResponses() {
                       title="Open this response"
                       className="even:bg-gray-50/60 dark:even:bg-slate-800/20 hover:bg-gray-100/80 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
                     >
-                      <td className="px-4 py-4 text-sm text-gray-900 dark:text-white">
+                      {/* A row is about 40px tall: twice as many responses to a screen as the 77px rows gave. */}
+                      <td className="px-3 py-1.5 text-[13px] text-gray-900 dark:text-white">
                         <span className="whitespace-nowrap">{formatDate(response.submittedAt)}</span>
                         {response.tags && response.tags.length > 0 && (
                           <span className="mt-1 flex flex-wrap gap-1">
@@ -1220,7 +1231,7 @@ function FormResponses() {
                           <td
                             key={field.id}
                             className={cn(
-                              'px-4 py-4 text-sm',
+                              'px-3 py-1.5 text-[13px]',
                               // The first answer column is the row's de-facto title — give it primary ink.
                               fieldIndex === 0 && !isEmpty ? 'font-medium text-gray-900 dark:text-white' : 'text-gray-600 dark:text-slate-300',
                               isLinked ? 'align-middle overflow-hidden' : 'truncate'
@@ -1238,21 +1249,21 @@ function FormResponses() {
                           </td>
                         );
                       })}
-                      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-500">
+                      <td className="px-3 py-1.5 whitespace-nowrap text-[13px] tabular-nums text-gray-500 dark:text-slate-500">
                         {formatDuration(response.completionTime || 0)}
                       </td>
-                      <td className="px-4 py-4 whitespace-nowrap">
+                      <td className="px-3 py-1.5 whitespace-nowrap">
                         <Badge variant={statusBadgeVariant(response.status || 'submitted')} className="rounded-full">
                           {formatStatusLabel(response.status || 'submitted')}
                         </Badge>
                       </td>
-                      <td className="px-4 py-4 whitespace-nowrap text-right">
+                      <td className="px-3 py-1 whitespace-nowrap text-right">
                         {/* The row itself opens the record — the buttons stop propagation so
                             edit/delete never ALSO trigger the row's view handler. */}
                         <div className="flex justify-end gap-1">
                           <button
                             onClick={(e) => { e.stopPropagation(); handleView(response); }}
-                            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10"
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10"
                             title="View details"
                             aria-label="View response details"
                           >
@@ -1261,7 +1272,7 @@ function FormResponses() {
                           <button
                             onClick={(e) => { e.stopPropagation(); handleEdit(response); }}
                             disabled={isPrivateForm && vaultLocked}
-                            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-500 dark:hover:bg-blue-500/10"
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-500 dark:hover:bg-blue-500/10"
                             title={isPrivateForm && vaultLocked ? 'Unlock your vault to edit' : 'Edit response'}
                             aria-label="Edit response"
                           >
@@ -1269,7 +1280,7 @@ function FormResponses() {
                           </button>
                           <button
                             onClick={(e) => { e.stopPropagation(); handleDeleteConfirm(response); }}
-                            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 cursor-pointer dark:hover:bg-red-500/10"
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 cursor-pointer dark:hover:bg-red-500/10"
                             title="Delete response"
                             aria-label="Delete response"
                           >

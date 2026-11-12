@@ -16,6 +16,10 @@ const h = vi.hoisted(() => ({
 vi.mock('../../lib/api', () => ({
   api: { listBlueprints: h.listBlueprints, deleteBlueprint: h.deleteBlueprint, isDemoMode: h.isDemoMode },
 }));
+// The workspace Header (theme, account menu, vault) is not what this list is about.
+vi.mock('../../components/layout/Header', () => ({
+  Header: ({ title, actions }: { title: string; actions?: React.ReactNode }) => <header><h1>{title}</h1>{actions}</header>,
+}));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,8 +61,9 @@ async function renderIndex() {
   });
 }
 
+// Each diagram is a table row whose header cell is its name.
 function rowNames(): string[] {
-  return Array.from(container.querySelectorAll('.group p.truncate')).map((el) => el.textContent ?? '');
+  return Array.from(container.querySelectorAll('tbody th[scope="row"]')).map((el) => el.textContent ?? '');
 }
 
 function pagerLabel(): string | null {
@@ -75,27 +80,27 @@ async function setSearch(value: string) {
 }
 
 describe('DiagramsIndex', () => {
-  it('paginates past 10 rows with a working pager', async () => {
+  it('paginates past 20 rows with a working pager', async () => {
     h.listBlueprints.mockResolvedValue({
-      data: { blueprints: Array.from({ length: 12 }, (_, i) => bp(`d${i}`, `Diagram ${String(i).padStart(2, '0')}`)) },
+      data: { blueprints: Array.from({ length: 22 }, (_, i) => bp(`d${i}`, `Diagram ${String(i).padStart(2, '0')}`)) },
     });
     await renderIndex();
 
-    expect(rowNames()).toHaveLength(10);
+    expect(rowNames()).toHaveLength(20);
     expect(rowNames()[0]).toBe('Diagram 00');
     expect(pagerLabel()).toBe('1 / 2');
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="Next page"]')!.click();
     });
-    expect(rowNames()).toEqual(['Diagram 10', 'Diagram 11']);
+    expect(rowNames()).toEqual(['Diagram 20', 'Diagram 21']);
     expect(pagerLabel()).toBe('2 / 2');
     expect(container.querySelector<HTMLButtonElement>('button[aria-label="Next page"]')!.disabled).toBe(true);
   });
 
   it('searches by name (case-insensitive) and resets to page 1', async () => {
     const rows = [
-      ...Array.from({ length: 11 }, (_, i) => bp(`d${i}`, `Diagram ${String(i).padStart(2, '0')}`)),
+      ...Array.from({ length: 21 }, (_, i) => bp(`d${i}`, `Diagram ${String(i).padStart(2, '0')}`)),
       bp('crm', 'Client CRM sketch'),
     ];
     h.listBlueprints.mockResolvedValue({ data: { blueprints: rows } });
