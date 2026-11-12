@@ -50,10 +50,10 @@ export function AdminSiteAiDesktop() {
   const current = state.current;
   const engine = state.engineProvider ?? 'oaiy-engine';
   return (
-    <div className="space-y-3 rounded-xl border border-gray-200 p-4 dark:border-slate-700">
+    <div className="space-y-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
       <div>
-        <strong className="flex items-center gap-2 text-sm"><Monitor className="h-4 w-4" aria-hidden="true" />Serve it from your OAIY</strong>
-        <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
+        <strong className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-white"><Monitor className="h-4 w-4 flex-none" aria-hidden="true" />Serve it from your OAIY</strong>
+        <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">
           Members&apos; Site AI requests go to one of your computers running OAIY, instead of the provider in your server settings.
           It answers one request at a time, so members wait their turn or are told it&apos;s busy. It never runs tools or flows for them:
           chat works, without the actions the site&apos;s own AI can take.
@@ -81,7 +81,7 @@ export function AdminSiteAiDesktop() {
         </div>
       ) : null}
       {state.candidates.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-slate-400">
+        <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
           None of your linked computers has published its chat key. Link OAIY on your computer in Settings → AI &amp; devices, open it, and come back.
         </p>
       ) : (

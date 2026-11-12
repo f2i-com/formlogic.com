@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
+import { CreditCard } from "lucide-react";
 import { api, type PlatformPlans } from "../../lib/api";
 import { deferEffect } from "../../lib/deferredEffect";
 import { announceSiteAiChanged, onSiteAiChanged } from "../../lib/siteAiEvents";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
-import { Card, CardContent } from "../../components/ui/Card";
+import { Panel } from "../../components/ui/Panel";
 import { AdminSiteAiDesktop } from "./AdminSiteAiDesktop";
 
 export function AdminPlansCard() {
@@ -82,30 +83,26 @@ export function AdminPlansCard() {
     setMessage('');
   };
   return (
-    <Card>
-      <CardContent className="space-y-5 p-5 sm:p-6">
-        <div>
-          <h3 className="text-lg font-semibold">
-            Plans &amp; bring your own AI
-          </h3>
-          <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-            Free access stays available. Optional support is prepaid in 30-day
-            periods, with no auto-renewal. Changes affect new orders; existing
-            orders retain their agreed price.
-          </p>
-        </div>
+    // The panel sizes its own fields: two across once it is wide enough, whatever the screen.
+    <Panel
+      className="@container"
+      title="Plans & bring your own AI"
+      icon={<CreditCard className="h-4 w-4" />}
+      description="Free access stays available. Optional support is prepaid in 30-day periods, with no auto-renewal. Changes affect new orders; existing orders retain their agreed price."
+    >
+      <div className="space-y-4">
         {error && (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
             {error}
           </p>
         )}
         {!plans && loading ? <p role="status" className="text-sm text-gray-500 dark:text-slate-400">Loading plan settings…</p> : !plans ? (
-          <Button variant="outline" onClick={() => void load()}>
+          <Button variant="outline" size="sm" onClick={() => void load()}>
             Retry loading plans
           </Button>
         ) : (
-          <fieldset disabled={busy} onChange={() => setMessage('')} className="min-w-0 space-y-5">
-            <div className="grid gap-5 sm:grid-cols-2">
+          <fieldset disabled={busy} onChange={() => setMessage('')} className="min-w-0 space-y-4">
+            <div className="grid gap-x-4 gap-y-3 @md:grid-cols-2">
               <Input
                 label="Free plan name"
                 value={plans.freeName}
@@ -145,39 +142,39 @@ export function AdminPlansCard() {
                 onChange={(e) => setPrice(e.target.value)}
               />
             </div>
-            <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-4 dark:border-slate-700">
+            <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
               <input
                 type="checkbox"
-                className="mt-1 h-4 w-4"
+                className="mt-0.5 h-4 w-4 flex-none"
                 checked={plans.paymentsEnabled}
                 onChange={(e) =>
                   setPlans({ ...plans, paymentsEnabled: e.target.checked })
                 }
               />
               <span>
-                <strong className="block text-sm">
+                <strong className="block text-sm font-medium text-gray-900 dark:text-white">
                   Enable optional paid plan
                 </strong>
-                <span className="text-sm text-gray-500 dark:text-slate-400">
+                <span className="block text-xs leading-5 text-gray-500 dark:text-slate-400">
                   Off by default. Checkout also requires configured PayPal
                   credentials. Public beta mode keeps checkout disabled.
                 </span>
               </span>
             </label>
-            <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-4 dark:border-slate-700">
+            <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
               <input
                 type="checkbox"
-                className="mt-1 h-4 w-4"
+                className="mt-0.5 h-4 w-4 flex-none"
                 checked={plans.siteAiEnabled}
                 onChange={(e) =>
                   setPlans({ ...plans, siteAiEnabled: e.target.checked })
                 }
               />
               <span>
-                <strong className="block text-sm">
+                <strong className="block text-sm font-medium text-gray-900 dark:text-white">
                   Offer operator-funded Site AI
                 </strong>
-                <span className="text-sm text-gray-500 dark:text-slate-400">
+                <span className="block text-xs leading-5 text-gray-500 dark:text-slate-400">
                   Off by default. Users bring their own AI. Enabling this
                   permits use of your configured server AI provider and may
                   incur provider charges.
@@ -185,9 +182,9 @@ export function AdminPlansCard() {
               </span>
             </label>
             <AdminSiteAiDesktop />
-            <div className="flex flex-wrap items-center gap-3">
-              <Button onClick={() => void save()} isLoading={busy} disabled={!dirty}>Save plan settings</Button>
-              {dirty && <Button variant="ghost" onClick={reset}>Discard changes</Button>}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <Button size="sm" onClick={() => void save()} isLoading={busy} disabled={!dirty}>Save plan settings</Button>
+              {dirty && <Button size="sm" variant="ghost" onClick={reset}>Discard changes</Button>}
               {dirty && <span className="text-xs text-amber-700 dark:text-amber-300">Unsaved changes</span>}
             </div>
             {message && (
@@ -200,7 +197,7 @@ export function AdminPlansCard() {
             )}
           </fieldset>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   );
 }

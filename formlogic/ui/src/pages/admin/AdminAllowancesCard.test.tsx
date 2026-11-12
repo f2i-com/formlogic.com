@@ -45,8 +45,10 @@ function setInputValue(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+// Each allowance is a row marked with its plan and metric (the rows share one box now, so
+// there is no border of their own to find them by).
 function rowOf(container: HTMLElement, plan: string): HTMLElement {
-  const row = Array.from(container.querySelectorAll<HTMLElement>('div.rounded-lg.border')).find((el) =>
+  const row = Array.from(container.querySelectorAll<HTMLElement>('[data-allowance]')).find((el) =>
     el.textContent?.includes(plan),
   );
   if (!row) throw new Error(`row for plan ${plan} not found`);

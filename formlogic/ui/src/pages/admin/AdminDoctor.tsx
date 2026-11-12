@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { CheckCircle2, AlertTriangle, XCircle, RefreshCw, Stethoscope } from 'lucide-react';
-import { Card } from '../../components/ui/Card';
+import { CheckCircle2, AlertTriangle, XCircle, RefreshCw } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { api, type DeepHealth, type DeepHealthCheck } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
+import { cn } from '../../lib/utils';
+import { LIST_BODY, LIST_BOX, LIST_CELL, LIST_HEAD, LIST_ROW, LIST_TABLE, LIST_TH } from '../../components/ui/listLook';
 
 /**
  * /admin/doctor — system diagnostics (GET /api/health/deep, platform admins
@@ -74,79 +75,92 @@ export function AdminDoctor() {
     { ok: 0, warn: 0, fail: 0 } as Record<Severity, number>
   );
 
-  const styles: Record<Severity, { ring: string; chip: string; Icon: typeof CheckCircle2 }> = {
-    fail: { ring: 'border-red-300 dark:border-red-500/40', chip: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300', Icon: XCircle },
-    warn: { ring: 'border-amber-300 dark:border-amber-500/40', chip: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300', Icon: AlertTriangle },
-    ok: { ring: 'border-gray-200/80 dark:border-slate-700/60', chip: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300', Icon: CheckCircle2 },
+  const styles: Record<Severity, { chip: string; Icon: typeof CheckCircle2 }> = {
+    fail: { chip: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300', Icon: XCircle },
+    warn: { chip: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300', Icon: AlertTriangle },
+    ok: { chip: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300', Icon: CheckCircle2 },
   };
 
   return (
-    <div>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <Stethoscope className="h-5 w-5 text-primary-600 dark:text-primary-400 shrink-0" />
-          <p className="text-sm text-gray-500 dark:text-slate-400">
-            Checks for database access, storage, and connected services.
-          </p>
-        </div>
+    <div className="@container/list space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <p className="min-w-0 text-sm text-gray-500 dark:text-slate-400">
+          Checks for database access, storage, and connected services.
+          {data?.timestamp && <> Checked {formatDateTimeInZone(data.timestamp, tz)}.</>}
+        </p>
         <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
         </Button>
       </div>
 
       {loading && !data ? (
-        <div className="flex items-center justify-center py-16">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500" role="status" aria-label="Running diagnostics" />
+        <div className="flex items-center gap-2.5 py-2 text-sm text-gray-500 dark:text-slate-400">
+          <div className="h-5 w-5 flex-none animate-spin rounded-full border-b-2 border-primary-500" role="status" aria-label="Running diagnostics" />
+          <span aria-hidden="true">Running diagnostics…</span>
         </div>
       ) : error ? (
-        <Card className="p-6 text-center">
-          <p role="alert" className="text-red-600 dark:text-red-400 mb-3">Couldn't load diagnostics.</p>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-red-200 bg-red-50/60 px-3 py-2.5 dark:border-red-500/30 dark:bg-red-500/10">
+          <p role="alert" className="text-sm text-red-700 dark:text-red-300">Couldn't load diagnostics.</p>
           <Button variant="secondary" size="sm" onClick={refresh}>Try again</Button>
-        </Card>
+        </div>
       ) : data ? (
         <>
+          {/* The verdict in one line: what state the installation is in, and how many checks say what. */}
           <div
-            className={`mb-6 rounded-xl border p-4 flex items-center gap-3 ${data.status === 'ok' ? 'border-emerald-300 dark:border-emerald-500/40 bg-emerald-50/60 dark:bg-emerald-500/10' : 'border-red-300 dark:border-red-500/40 bg-red-50/60 dark:bg-red-500/10'}`}
+            className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border px-3 py-2 ${data.status === 'ok' ? 'border-emerald-300 dark:border-emerald-500/40 bg-emerald-50/60 dark:bg-emerald-500/10' : 'border-red-300 dark:border-red-500/40 bg-red-50/60 dark:bg-red-500/10'}`}
             role="status"
           >
-            {data.status === 'ok'
-              ? <CheckCircle2 className="h-6 w-6 text-emerald-600 dark:text-emerald-400 shrink-0" />
-              : <XCircle className="h-6 w-6 text-red-600 dark:text-red-400 shrink-0" />}
-            <div className="min-w-0">
-              <p className="font-semibold text-gray-900 dark:text-white">
+            <span className="flex min-w-0 items-center gap-2">
+              {data.status === 'ok'
+                ? <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" aria-hidden="true" />
+                : <XCircle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0" aria-hidden="true" />}
+              <span className="text-sm font-semibold text-gray-900 dark:text-white">
                 {data.status === 'ok' ? 'All critical checks passing' : 'Degraded — a critical check is failing'}
-              </p>
-              <p className="text-xs text-gray-500 dark:text-slate-400 tabular-nums">
-                {counts.fail} failing · {counts.warn} warnings · {counts.ok} ok
-              </p>
-            </div>
+              </span>
+            </span>
+            <span className="text-xs text-gray-600 dark:text-slate-300 tabular-nums">
+              {counts.fail} failing · {counts.warn} warnings · {counts.ok} ok
+            </span>
           </div>
 
-          <div className="grid sm:grid-cols-2 gap-3">
-            {checks.map(([key, c]) => {
-              const sev = severityOf(c);
-              const s = styles[sev];
-              return (
-                <Card key={key} className={`p-4 border ${s.ring}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <h3 className="font-medium text-gray-900 dark:text-white text-sm min-w-0 truncate">{humanize(key)}</h3>
-                    <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${s.chip}`}>
-                      <s.Icon className="h-3 w-3" /> {sev === 'ok' ? 'OK' : sev === 'warn' ? 'Warn' : 'Fail'}
-                    </span>
-                  </div>
-                  <p className="mt-1.5 text-sm text-gray-600 dark:text-slate-300 break-words">{c.detail}</p>
-                  {c.warning && <p className="mt-1 text-xs text-amber-700 dark:text-amber-400 break-words">{c.warning}</p>}
-                  {sev !== 'ok' && REMEDIATION[key] && (
-                    <p className="mt-1 text-xs text-gray-400 dark:text-slate-500 break-words">{REMEDIATION[key]}</p>
-                  )}
-                </Card>
-              );
-            })}
+          {/* Every check as a row, the ones that need attention first. Wide: a table whose last
+              column takes the room for what was found. Narrow: the name and its state on one line,
+              what was found under them. */}
+          <div className={LIST_BOX}>
+            <table className={LIST_TABLE}>
+              <caption className="sr-only">System checks</caption>
+              <thead className={LIST_HEAD}>
+                <tr>
+                  <th scope="col" className={cn(LIST_TH, 'w-56 pl-3 @4xl/list:w-72')}>Check</th>
+                  <th scope="col" className={cn(LIST_TH, 'w-20')}>State</th>
+                  <th scope="col" className={cn(LIST_TH, 'pr-3')}>What it found</th>
+                </tr>
+              </thead>
+              <tbody className={LIST_BODY}>
+                {checks.map(([key, c]) => {
+                  const sev = severityOf(c);
+                  const s = styles[sev];
+                  return (
+                    <tr key={key} className={cn(LIST_ROW, 'grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1')}>
+                      <th scope="row" className={cn(LIST_CELL, 'font-medium text-gray-900 [overflow-wrap:anywhere] dark:text-white @xl/list:py-2 @xl/list:pl-3 @xl/list:align-top')}>{humanize(key)}</th>
+                      <td className={cn(LIST_CELL, '@xl/list:py-[7px] @xl/list:align-top')}>
+                        <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 ${s.chip}`}>
+                          <s.Icon className="h-3 w-3" aria-hidden="true" /> {sev === 'ok' ? 'OK' : sev === 'warn' ? 'Warn' : 'Fail'}
+                        </span>
+                      </td>
+                      <td className={cn(LIST_CELL, 'col-span-2 @xl/list:py-2 @xl/list:pr-3 @xl/list:align-top')}>
+                        <p className="break-words text-gray-600 dark:text-slate-300">{c.detail}</p>
+                        {c.warning && <p className="break-words text-xs leading-5 text-amber-700 dark:text-amber-400">{c.warning}</p>}
+                        {sev !== 'ok' && REMEDIATION[key] && (
+                          <p className="break-words text-xs leading-5 text-gray-500 dark:text-slate-400">{REMEDIATION[key]}</p>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-
-          {data.timestamp && (
-            <p className="mt-6 text-xs text-gray-400 dark:text-slate-500">Checked {formatDateTimeInZone(data.timestamp, tz)}</p>
-          )}
         </>
       ) : null}
     </div>

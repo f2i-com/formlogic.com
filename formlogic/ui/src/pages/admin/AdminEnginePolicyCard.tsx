@@ -10,12 +10,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { Cpu } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { Card, CardContent } from '../../components/ui/Card';
+import { Panel } from '../../components/ui/Panel';
 import { Switch } from '../../components/ui/Switch';
 import { api, type ClientEngineId, type EnginePolicy } from '../../lib/api';
 import { ENGINE_DESCRIPTIONS, ENGINE_LABELS, REQUIRED_ENGINE, ZIPP_ENGINES } from '../../lib/clientEngines';
+import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { AdminError, AdminSpinner } from './adminUi';
+import { HELP, ROW_BOX } from '../../components/ui/listLook';
 
 /** Enough of the policy to drive the card: anything less is a malformed answer, not a policy. */
 function isEnginePolicy(value: unknown): value is EnginePolicy {
@@ -94,19 +96,13 @@ export function AdminEnginePolicyCard() {
   );
 
   return (
-    <Card>
-      <CardContent className="p-5 space-y-4">
-        <div>
-          <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-            <Cpu className="h-4 w-4" /> App engine
-            {policy && <Badge variant="default">revision {policy.revision}</Badge>}
-          </h3>
-          <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
-            Which engine embedded apps run on. Owners choose per app from what you allow here; the server
-            decides the engine on every load, so changes apply the next time an app opens.
-          </p>
-        </div>
-
+    <Panel
+      title="App engine"
+      icon={<Cpu className="h-4 w-4" />}
+      description="Which engine embedded apps run on. Owners choose per app from what you allow here; the server decides the engine on every load, so changes apply the next time an app opens."
+      actions={policy && <Badge variant="default">revision {policy.revision}</Badge>}
+    >
+      <div className="space-y-4">
         {policy === null && !loadError && <AdminSpinner label="Loading the app engine policy" />}
         {loadError && <AdminError message={loadError} onRetry={retry} />}
 
@@ -114,7 +110,7 @@ export function AdminEnginePolicyCard() {
           <>
             <div>
               <label htmlFor="engine-default" className="block text-sm font-medium text-gray-700 dark:text-slate-300">Site default</label>
-              <p className="text-xs text-gray-500 dark:text-slate-400 mt-1 mb-2">
+              <p className={cn(HELP, 'mb-2')}>
                 What an app runs on when its owner has not chosen. Only a ZIPP engine can be the default, so every
                 other choice always has somewhere to fall back to.
               </p>
@@ -123,7 +119,7 @@ export function AdminEnginePolicyCard() {
                 value={draft.default}
                 disabled={saving}
                 onChange={(e) => setDraft({ ...draft, default: e.target.value as ClientEngineId })}
-                className="max-w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm p-2 text-gray-900 dark:text-slate-100"
+                className="min-h-10 max-w-full rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 max-sm:min-h-11"
               >
                 {engines.filter((e) => (ZIPP_ENGINES as readonly string[]).includes(e) && draft.allowed.includes(e)).map((e) => (
                   <option key={e} value={e}>{ENGINE_LABELS[e]}</option>
@@ -131,30 +127,32 @@ export function AdminEnginePolicyCard() {
               </select>
             </div>
 
-            <div className="space-y-1.5">
-              <p className="text-sm font-medium text-gray-700 dark:text-slate-300">Engines owners may choose</p>
-              {engines.map((engine) => {
-                const locked = engine === REQUIRED_ENGINE;
-                return (
-                  <div key={engine} className="flex flex-wrap items-start gap-3 rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-gray-900 dark:text-white">
-                        {ENGINE_LABELS[engine]}
-                        {locked && <span className="ml-2 text-xs font-normal text-gray-500 dark:text-slate-400">always available</span>}
-                        {!installed.includes(engine) && <Badge variant="warning" className="ml-2">not in the installed runtime</Badge>}
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-slate-400">{ENGINE_DESCRIPTIONS[engine]}</p>
+            <div>
+              <p className="mb-2 text-sm font-medium text-gray-700 dark:text-slate-300">Engines owners may choose</p>
+              <div className={ROW_BOX}>
+                {engines.map((engine) => {
+                  const locked = engine === REQUIRED_ENGINE;
+                  return (
+                    <div key={engine} className="flex items-start gap-3 px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-gray-900 dark:text-white">
+                          {ENGINE_LABELS[engine]}
+                          {locked && <span className="text-xs font-normal text-gray-500 dark:text-slate-400">always available</span>}
+                          {!installed.includes(engine) && <Badge variant="warning">not in the installed runtime</Badge>}
+                        </p>
+                        <p className={HELP}>{ENGINE_DESCRIPTIONS[engine]}</p>
+                      </div>
+                      <Switch
+                        size="sm"
+                        checked={draft.allowed.includes(engine)}
+                        disabled={saving || locked}
+                        onChange={(on) => toggleAllowed(engine, on)}
+                        ariaLabel={`Allow ${ENGINE_LABELS[engine]}`}
+                      />
                     </div>
-                    <Switch
-                      size="sm"
-                      checked={draft.allowed.includes(engine)}
-                      disabled={saving || locked}
-                      onChange={(on) => toggleAllowed(engine, on)}
-                      ariaLabel={`Allow ${ENGINE_LABELS[engine]}`}
-                    />
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
 
             {draft.allowed.includes('host-js') && (
@@ -166,7 +164,7 @@ export function AdminEnginePolicyCard() {
               </p>
             )}
 
-            <div className="rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2">
+            <div className="rounded-xl border border-gray-200 px-3 py-2 dark:border-slate-700">
               <Switch
                 checked={draft.torch}
                 disabled={saving}
@@ -179,13 +177,13 @@ export function AdminEnginePolicyCard() {
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" onClick={() => void save()} disabled={!dirty || saving} isLoading={saving}>Save</Button>
               {dirty ? <Badge variant="warning">unsaved</Badge> : null}
-              <span className="text-xs text-gray-500 dark:text-slate-400">
+              <span className={HELP}>
                 Installed runtime serves: {installed.map((e) => ENGINE_LABELS[e]).join(', ')}
               </span>
             </div>
           </>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   );
 }

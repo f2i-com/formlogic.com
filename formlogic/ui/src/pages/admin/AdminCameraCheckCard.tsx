@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Camera } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
-import { Card, CardContent } from '../../components/ui/Card';
+import { Panel } from '../../components/ui/Panel';
 import { CameraCheckPanel } from '../../components/plugins/CameraCheckPanel';
 import { OaiyTargetPicker, type OaiyTarget } from '../../components/admin/OaiyTargetPicker';
 import { api, type AdminCameraCheckState } from '../../lib/api';
@@ -73,18 +73,15 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
   const chosenPlugin = plugins.find((p) => p.manifestId === plugin) ?? plugins[0];
 
   return (
-    <Card>
-      <CardContent className="p-5 sm:p-6 space-y-4">
-        <div>
-          <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2"><Camera className="h-4 w-4" aria-hidden="true" />Camera checks</h3>
-          <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-            {plugins.map((p) => p.name).join(', ')} use{plugins.length === 1 ? 's' : ''} the camera. The pictures are read by an AI on one of your computers running OAIY:
-            sealed to it, deleted once read, and never seen by the plugin. Choose a model that reads images.
-            Where that OAIY has its Age check installed (from its Get models page: MiVOLO v2 and YuNet), it reads the ages
-            itself, loading them for each check, with this AI as the backup; &quot;Does it read images?&quot; says whether it does.
-            Some OAIY engines keep a model&apos;s working state on disk; turning on OAIY&apos;s privacy (incognito) setting stops that.
-          </p>
-        </div>
+    <Panel title="Camera checks" icon={<Camera className="h-4 w-4" />}>
+      <div className="space-y-3">
+        <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
+          {plugins.map((p) => p.name).join(', ')} use{plugins.length === 1 ? 's' : ''} the camera. The pictures are read by an AI on one of your computers running OAIY:
+          sealed to it, deleted once read, and never seen by the plugin. Choose a model that reads images.
+          Where that OAIY has its Age check installed (from its Get models page: MiVOLO v2 and YuNet), it reads the ages
+          itself, loading them for each check, with this AI as the backup; &quot;Does it read images?&quot; says whether it does.
+          Some OAIY engines keep a model&apos;s working state on disk; turning on OAIY&apos;s privacy (incognito) setting stops that.
+        </p>
         {current && (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm dark:bg-green-500/10">
             <span className="text-green-900 dark:text-green-200">
@@ -95,7 +92,7 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
           </div>
         )}
         {state.candidates.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-slate-400">None of your linked computers has published its chat key. Link OAIY on your computer in Settings → AI &amp; devices, open it, and come back.</p>
+          <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">None of your linked computers has published its chat key. Link OAIY on your computer in Settings → AI &amp; devices, open it, and come back.</p>
         ) : (
           <div className="space-y-2">
             <p className="text-sm font-medium text-gray-700 dark:text-slate-300">{current ? 'Change where they are read' : 'Where the pictures are read'}</p>
@@ -108,7 +105,7 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
           <div className="space-y-2 border-t border-gray-200 pt-4 dark:border-slate-700">
             {plugins.length > 1 && (
               <select aria-label="Plugin to try" value={plugin} onChange={(e) => setPlugin(e.target.value)}
-                className="block min-h-10 rounded-lg border border-gray-300 bg-white px-2.5 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
+                className="block min-h-10 max-w-full rounded-lg border border-gray-300 bg-white px-2.5 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white max-sm:min-h-11">
                 {plugins.map((p) => <option key={p.manifestId} value={p.manifestId}>{p.name}</option>)}
               </select>
             )}
@@ -125,7 +122,7 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
             start={() => api.adminTrialCameraCheck(chosenPlugin.manifestId, chosenPlugin.grants[0]?.default)}
             onClose={() => setTrial(false)} />
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   );
 }

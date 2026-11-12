@@ -5,9 +5,12 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Badge } from '../../components/ui/Badge';
+import { Panel } from '../../components/ui/Panel';
 import { api } from '../../lib/api';
 import { formatDateTimeInZone, formatDateInZone, useAdminTimezone } from '../../lib/timezone';
+import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
+import { HELP, ROW_BOX, TOOL_ROW } from '../../components/ui/listLook';
 
 /**
  * Support tools on the admin user page: password reset (a link to the user, or
@@ -15,6 +18,8 @@ import { toast } from '../../stores/toastStore';
  * access toggle, and — heavily gated behind a type-the-email confirmation —
  * full account deletion through the same truthful erasure engine as
  * self-service deletion.
+ *
+ * Three panels, drawn among the user page's own (it lays them out in columns).
  */
 export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }: {
   userId: string;
@@ -120,15 +125,12 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
 
   return (
     <>
-      <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-1.5">
-          <KeyRound className="h-4 w-4" /> Account tools
-        </h3>
-        <div className="rounded-lg border border-gray-200 dark:border-slate-700 divide-y divide-gray-100 dark:divide-slate-800">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2.5">
-            <div className="min-w-0">
+      <Panel title="Account tools" icon={<KeyRound className="h-4 w-4" />}>
+        <div className={ROW_BOX}>
+          <div className={TOOL_ROW}>
+            <div className="min-w-0 flex-1 basis-48">
               <p className="text-sm text-gray-900 dark:text-white">Password</p>
-              <p className="text-xs text-gray-500 dark:text-slate-400">Email the user a link to choose a new password. A server that can't send mail shows a temporary password instead.</p>
+              <p className={HELP}>Email the user a link to choose a new password. A server that can't send mail shows a temporary password instead.</p>
             </div>
             <Button size="sm" variant="outline" onClick={() => setPwOpen(true)}>Reset password</Button>
           </div>
@@ -143,7 +145,7 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
                   type="button"
                   onClick={() => { void navigator.clipboard.writeText(tempPassword).then(() => toast.success('Copied')).catch(() => toast.error('Could not copy', 'Select and copy the temporary password manually.')); }}
                   aria-label="Copy temporary password"
-                  className="p-1.5 rounded-lg text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-500/20 cursor-pointer"
+                  className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-amber-700 hover:bg-amber-100 dark:text-amber-400 dark:hover:bg-amber-500/20 max-sm:h-11 max-sm:w-11"
                 >
                   <Copy className="h-4 w-4" />
                 </button>
@@ -151,24 +153,20 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
               </div>
             </div>
           )}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2.5">
-            <div className="min-w-0">
-              <p className="break-all text-sm text-gray-900 dark:text-white flex items-center gap-1.5"><Mail className="h-3.5 w-3.5 text-gray-400" /> {email}</p>
-              <p className="text-xs text-gray-500 dark:text-slate-400">Change the account's sign-in email address.</p>
+          <div className={TOOL_ROW}>
+            <div className="min-w-0 flex-1 basis-48">
+              <p className="break-all text-sm text-gray-900 dark:text-white flex items-center gap-1.5"><Mail className="h-3.5 w-3.5 flex-none text-gray-400" /> {email}</p>
+              <p className={HELP}>Change the account's sign-in email address.</p>
             </div>
             <Button size="sm" variant="outline" onClick={() => { setNewEmail(''); setEmailOpen(true); }}>Change email</Button>
           </div>
         </div>
-      </section>
+      </Panel>
 
-      <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-1.5">
-          <Wallet className="h-4 w-4" /> Payments
-          {payments?.complimentary && <Badge variant="success">complimentary</Badge>}
-        </h3>
-        <div className="rounded-lg border border-gray-200 dark:border-slate-700">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2.5 border-b border-gray-100 dark:border-slate-800">
-            <p className="text-xs text-gray-500 dark:text-slate-400">
+      <Panel title="Payments" icon={<Wallet className="h-4 w-4" />} actions={payments?.complimentary && <Badge variant="success">complimentary</Badge>}>
+        <div className={ROW_BOX}>
+          <div className={TOOL_ROW}>
+            <p className="min-w-0 flex-1 basis-48 text-xs leading-5 text-gray-500 dark:text-slate-400">
               Plan <span className="font-medium text-gray-700 dark:text-slate-300">{payments?.plan ?? '…'}</span>
               {' · '}cloud access {payments?.complimentary
                 ? 'complimentary (no payments required)'
@@ -180,29 +178,29 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
               {payments?.complimentary ? 'Remove complimentary access' : 'Make complimentary (free)'}
             </Button>
           </div>
-          {payments && paymentsFailed && <p role="alert" className="px-3 py-3 text-sm text-amber-700 dark:text-amber-300">Could not refresh payments. <button type="button" className="underline" onClick={() => setPayTick(n => n + 1)}>Try again</button></p>}
+          {payments && paymentsFailed && <p role="alert" className="px-3 py-2.5 text-sm text-amber-700 dark:text-amber-300">Could not refresh payments. <button type="button" className="underline" onClick={() => setPayTick(n => n + 1)}>Try again</button></p>}
           {!payments ? (
             paymentsFailed ? (
-              <p className="px-3 py-3 text-xs text-amber-700 dark:text-amber-300">
+              <p className="px-3 py-2.5 text-xs text-amber-700 dark:text-amber-300">
                 Couldn&apos;t load payments.{' '}
                 <button type="button" onClick={() => { setPaymentsFailed(false); setPayTick((n) => n + 1); }} className="cursor-pointer font-medium underline">Try again</button>
               </p>
             ) : (
-              <p className="px-3 py-3 text-xs text-gray-400 dark:text-slate-500">Loading payments…</p>
+              <p className={cn(HELP, 'px-3 py-2.5')}>Loading payments…</p>
             )
           ) : payments.payments.length === 0 ? (
-            <p className="px-3 py-3 text-xs text-gray-400 dark:text-slate-500">No payments on record.</p>
+            <p className={cn(HELP, 'px-3 py-2.5')}>No payments on record.</p>
           ) : (
             <ul className="divide-y divide-gray-100 dark:divide-slate-800">
               {payments.payments.map((p) => (
-                <li key={p.id} className="px-3 py-2 flex items-center gap-3">
+                <li key={p.id} className="px-3 py-1.5 flex items-center gap-3">
                   <CreditCard className="h-4 w-4 text-gray-400 dark:text-slate-500 flex-none" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm text-gray-900 dark:text-white">
+                    <p className="text-sm tabular-nums text-gray-900 dark:text-white">
                       {money(p.amountCents, p.currency)} · {p.months} month{p.months === 1 ? '' : 's'} · {p.provider}
                     </p>
-                    <p className="break-all text-xs text-gray-400 dark:text-slate-500">
-                      {formatDateTimeInZone(p.createdAt, tz)} · order {p.orderId}
+                    <p className="break-all text-xs text-gray-500 dark:text-slate-400">
+                      {formatDateTimeInZone(p.createdAt, tz)} · order <span className="font-mono">{p.orderId}</span>
                     </p>
                   </div>
                   <Badge variant={p.status === 'completed' ? 'success' : p.status === 'failed' ? 'error' : 'default'}>{p.status}</Badge>
@@ -211,17 +209,14 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
             </ul>
           )}
         </div>
-      </section>
+      </Panel>
 
       {!isSelf && (
-        <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
-          <h3 className="text-sm font-semibold text-red-700 dark:text-red-400 mb-2 flex items-center gap-1.5">
-            <AlertTriangle className="h-4 w-4" /> Danger zone
-          </h3>
-          <div className="rounded-lg border border-red-200 dark:border-red-500/30 bg-red-50/40 dark:bg-red-500/5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2.5">
-            <div className="min-w-0">
+        <Panel title={<span className="text-red-700 dark:text-red-400">Danger zone</span>} icon={<AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400" />}>
+          <div className={cn(TOOL_ROW, 'rounded-xl border border-red-200 bg-red-50/40 dark:border-red-500/30 dark:bg-red-500/5')}>
+            <div className="min-w-0 flex-1 basis-48">
               <p className="text-sm text-gray-900 dark:text-white">Delete this account</p>
-              <p className="text-xs text-gray-500 dark:text-slate-400">
+              <p className={HELP}>
                 Permanently erases the account and ALL its data — apps, forms, records, files, recycle bin.
                 {isAdmin && ' This user is an administrator: remove their admin access first.'}
               </p>
@@ -230,7 +225,7 @@ export function AdminAccountTools({ userId, email, isAdmin, isSelf, onChanged }:
               Delete account…
             </Button>
           </div>
-        </section>
+        </Panel>
       )}
 
       <ConfirmDialog

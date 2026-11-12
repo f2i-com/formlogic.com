@@ -8,11 +8,12 @@ import { useEffect, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { Card, CardContent } from '../../components/ui/Card';
+import { Panel } from '../../components/ui/Panel';
 import { Switch } from '../../components/ui/Switch';
 import { api, type PlanAllowance } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { AdminError, AdminSpinner } from './adminUi';
+import { ROW_BOX } from '../../components/ui/listLook';
 
 interface AllowanceRow {
   plan: string;
@@ -102,17 +103,12 @@ export function AdminAllowancesCard() {
   };
 
   return (
-    <Card>
-      <CardContent className="p-5 space-y-4">
-        <div>
-          <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-            <Sparkles className="h-4 w-4" /> AI &amp; credits allowances
-          </h3>
-          <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
-            Monthly caps for metered AI and cloud-flow usage, per plan. A disabled metric is never blocked; changes apply on Save.
-          </p>
-        </div>
-
+    <Panel
+      title="AI & credits allowances"
+      icon={<Sparkles className="h-4 w-4" />}
+      description="Monthly caps for metered AI and cloud-flow usage, per plan. A disabled metric is never blocked; changes apply on Save."
+    >
+      <div className="space-y-3">
         {rows === null && !loadError && <AdminSpinner label="Loading AI allowances" />}
         {loadError && <AdminError message={loadError} onRetry={retry} />}
 
@@ -121,15 +117,14 @@ export function AdminAllowancesCard() {
         )}
 
         {rows !== null && rows.length > 0 && (
-          <div className="space-y-1.5">
+          <div className={ROW_BOX}>
             {rows.map((row) => {
               const key = rowKey(row);
               return (
-                <div
-                  key={key}
-                  className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2"
-                >
-                  <div className="min-w-0 flex-1">
+                // The plan and what is capped at the left; the cap, its switch and Save at the
+                // right, moving under the names where the panel is narrow.
+                <div key={key} data-allowance={key} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5">
+                  <div className="min-w-0 flex-1 basis-36">
                     <p className="text-sm font-medium text-gray-900 dark:text-white capitalize">{row.plan}</p>
                     <p className="text-xs text-gray-500 dark:text-slate-400">{metricLabel(row.metric)}</p>
                   </div>
@@ -142,7 +137,7 @@ export function AdminAllowancesCard() {
                       value={row.monthlyValue}
                       disabled={row.saving}
                       onChange={(e) => patchRow(key, { monthlyValue: e.target.value, dirty: true })}
-                      className="w-28 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm p-2 text-gray-900 dark:text-slate-100"
+                      className="h-9 w-24 rounded-lg border border-gray-300 bg-white px-2 text-sm tabular-nums text-gray-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 max-sm:h-11"
                     />
                     <Switch
                       size="sm"
@@ -167,7 +162,7 @@ export function AdminAllowancesCard() {
             })}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   );
 }

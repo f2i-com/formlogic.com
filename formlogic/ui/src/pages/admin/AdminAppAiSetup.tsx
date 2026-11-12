@@ -34,7 +34,7 @@ const PROVIDER = 'the AI provider in your server settings';
 const SITE_AI_SWITCH = '“Offer operator-funded Site AI”';
 const muted = 'text-sm text-gray-600 dark:text-slate-300';
 const small = 'text-xs text-gray-500 dark:text-slate-400';
-const field = 'block min-h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white';
+const field = 'block min-h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white max-sm:min-h-11';
 
 function Step({ number, title, done, next, children }: { number: number; title: string; done: boolean; next: boolean; children: ReactNode }) {
   return (
@@ -236,7 +236,7 @@ export function AdminAppAiSetup({ setup, settings, desktop, onReload, onSaved }:
           {source !== 'computer' && others.length === 0 && <ConnectOaiyServer compact onLinked={linked} />}
           {watching && <p className={small} role="status">Looking for the new computer. It appears here once OAIY has started on it.</p>}
           {source === 'none' && others.length === 0 && (
-            <p className={small}>Using OAIY on your own desktop? Link it in <Link className="font-medium text-indigo-600 underline underline-offset-2 dark:text-indigo-300" to="/settings#local-runtime">Settings → AI &amp; devices</Link> instead; it then shows here.</p>
+            <p className={small}>Using OAIY on your own desktop? Link it in <Link className="font-medium text-primary-600 underline underline-offset-2 dark:text-primary-300" to="/settings#local-runtime">Settings → AI &amp; devices</Link> instead; it then shows here.</p>
           )}
         </Step>
 
@@ -259,7 +259,7 @@ export function AdminAppAiSetup({ setup, settings, desktop, onReload, onSaved }:
               {computerChoices('Use this computer', !step2)}
               {source === 'env' && !setup.provider.on && (
                 <p className={small}>
-                  Or use {PROVIDER}: <button type="button" className="font-medium text-indigo-600 underline underline-offset-2 dark:text-indigo-300" disabled={busy !== null} onClick={() => void turnOnSiteAi()}>turn on Site AI</button>. It may charge you for each request, and members can use it too.
+                  Or use {PROVIDER}: <button type="button" className="font-medium text-primary-600 underline underline-offset-2 dark:text-primary-300" disabled={busy !== null} onClick={() => void turnOnSiteAi()}>turn on Site AI</button>. It may charge you for each request, and members can use it too.
                 </p>
               )}
             </>

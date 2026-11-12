@@ -5,12 +5,15 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Input } from '../../components/ui/Input';
+import { Panel, PANEL_COLUMNS } from '../../components/ui/Panel';
 import { api, type ScheduledBackupRun } from '../../lib/api';
 import { engineLabel } from '../../lib/clientEngines';
 import { formatDateInZone, formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
+import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
 import { AdminError, AdminSpinner } from './adminUi';
+import { HELP, LINK_ROW, ROW_BOX, TOOL_ROW } from '../../components/ui/listLook';
 import { useAdminQuery } from './useAdminQuery';
 import { AdminAccountTools } from './AdminAccountTools';
 
@@ -20,6 +23,9 @@ import { AdminAccountTools } from './AdminAccountTools';
  * (acting-as routes): apps → the app manager, forms → the form builder,
  * flows → the flows workspace. Counts only here — record data is never shown
  * to platform admins.
+ *
+ * The page is panels in columns (one on a phone, two on a laptop, three on a wide
+ * screen): access, what the account owns, recovery, then the support tools.
  */
 export function AdminUserDetail() {
   const { userId = '' } = useParams();
@@ -144,199 +150,218 @@ function AdminUserDetailPage({ userId }: { userId: string }) {
     }
   };
 
-  const rowClass = 'w-full text-left rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800 block focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50';
-
   return (
-    <div className="space-y-5">
-      <Link to="/admin/users" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200">
-        <ArrowLeft className="h-4 w-4" /> All users
+    <div>
+      <Link to="/admin/users" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200 max-sm:min-h-11">
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" /> All users
       </Link>
 
       {error ? (
-        <AdminError message={error} onRetry={load} />
+        <div className="mt-3"><AdminError message={error} onRetry={load} /></div>
       ) : !user ? (
         <AdminSpinner label="Loading user" />
       ) : (
         <>
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white break-all">{user.email}</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-gray-600 dark:text-slate-300">
+          {/* Who this is, in two lines; everything to do with the account is in the panels under it. */}
+          <div className="mt-1">
+            <h2 className="break-all text-base font-semibold text-gray-900 dark:text-white">{user.email}</h2>
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-600 dark:text-slate-300">
               <span>{user.name || 'No name'}</span>
               <span>· plan {user.plan}</span>
               <span>· joined {user.createdAt ? formatDateInZone(user.createdAt, tz) : '—'}</span>
               {user.online
                 ? <Badge variant="success">online</Badge>
                 : <span>· last seen {user.lastSeenAt ? formatDateTimeInZone(user.lastSeenAt, tz) : 'never'}</span>}
-              {!user.isDemo && user.id !== me?.id && (
-                <Button size="sm" variant={user.isAdmin ? 'outline' : 'secondary'} onClick={() => setConfirmAdmin(!user.isAdmin)} leftIcon={<ShieldCheck className="h-3.5 w-3.5" />}>
-                  {user.isAdmin ? 'Remove admin' : 'Make admin'}
-                </Button>
-              )}
-              <Button size="sm" variant="outline" onClick={downloadManifest} leftIcon={<FileJson className="h-3.5 w-3.5" />}
-                title="Schemas + sqlite file paths per form — never record data">
-                Backup manifest
-              </Button>
-              {user.mfaEnabled && (
-                <Button size="sm" variant="outline" onClick={() => setConfirmMfaReset(true)} leftIcon={<KeyRound className="h-3.5 w-3.5" />}
-                  title="Lockout recovery: turns two-factor off so the user can sign in and re-enroll">
-                  Reset 2FA
-                </Button>
-              )}
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-gray-600 dark:text-slate-300">
-              {user.codeTrustVerified
-                ? <Badge variant="success">verified for host JavaScript</Badge>
-                : <span className="text-xs text-gray-500 dark:text-slate-400">Not verified for host JavaScript</span>}
-              {user.codeTrustVerified && user.codeTrustVerifiedAt && (
-                <span className="text-xs text-gray-500 dark:text-slate-400">
-                  since {formatDateTimeInZone(user.codeTrustVerifiedAt, tz)}
-                  {user.codeTrustVerifiedBy ? ` · by ${user.codeTrustVerifiedBy === me?.id ? 'you' : user.codeTrustVerifiedBy}` : ''}
-                </span>
-              )}
-              {!user.isDemo && (
-                <Button
-                  size="sm"
-                  variant={user.codeTrustVerified ? 'outline' : 'secondary'}
-                  disabled={!user.codeTrustVerified && !user.mfaEnabled}
-                  title={!user.codeTrustVerified && !user.mfaEnabled
-                    ? 'This account needs two-factor authentication switched on before it can be verified'
-                    : 'Lets this account choose host JavaScript for its apps'}
-                  onClick={() => setConfirmCodeTrust(!user.codeTrustVerified)}
-                  leftIcon={<Cpu className="h-3.5 w-3.5" />}
-                >
-                  {user.codeTrustVerified ? 'Revoke code trust' : 'Verify for host JavaScript'}
-                </Button>
-              )}
-            </div>
+            </p>
           </div>
 
-          <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-1.5">
-              <Boxes className="h-4 w-4" /> Apps ({user.apps.length})
-            </h3>
-            {user.apps.length === 0 ? <p className="text-xs text-gray-400 dark:text-slate-500">None</p> : (
-              <div className="space-y-1.5">
-                {user.apps.map((a) => (
-                  <Link key={a.id} to={`/admin/apps/${a.id}/settings`} className={rowClass}>
-                    <span className="text-sm font-medium text-gray-900 dark:text-white">{a.name}</span>
-                    <span className="ml-2 text-xs text-gray-500 dark:text-slate-400">
-                      {a.status} · {a.formCount} forms · {a.flowCount} flows · {a.memberCount} members
-                    </span>
-                    {/* Requested vs effective: the same answer this app's runtime GET would give. */}
-                    {a.engine && (
-                      <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">
-                        engine {engineLabel(a.engine.id)}
-                        {a.engine.stored && a.engine.stored !== a.engine.id
-                          ? ` · owner asked for ${engineLabel(a.engine.stored)}${a.engine.reason ? ` (${a.engine.reason})` : ''}`
-                          : a.engine.stored === null ? ' · site default' : ''}
-                      </span>
+          <div className={cn('mt-4', PANEL_COLUMNS)}>
+            <Panel title="Access" icon={<ShieldCheck className="h-4 w-4" />}>
+              <div className={ROW_BOX}>
+                {!user.isDemo && user.id !== me?.id && (
+                  <div className={TOOL_ROW}>
+                    <div className="min-w-0 flex-1 basis-48">
+                      <p className="text-sm text-gray-900 dark:text-white">Administrator</p>
+                      <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">{user.isAdmin ? 'Can manage every account, close the site and apply upgrades.' : 'Not an administrator.'}</p>
+                    </div>
+                    <Button size="sm" variant={user.isAdmin ? 'outline' : 'secondary'} onClick={() => setConfirmAdmin(!user.isAdmin)} leftIcon={<ShieldCheck className="h-3.5 w-3.5" />}>
+                      {user.isAdmin ? 'Remove admin' : 'Make admin'}
+                    </Button>
+                  </div>
+                )}
+                <div className={TOOL_ROW}>
+                  <div className="min-w-0 flex-1 basis-48">
+                    <p className="text-sm text-gray-900 dark:text-white">Two-factor authentication</p>
+                    <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">{user.mfaEnabled ? 'On. Resetting it turns it off, so a locked-out user can sign in and set it up again.' : 'Off.'}</p>
+                  </div>
+                  {user.mfaEnabled && (
+                    <Button size="sm" variant="outline" onClick={() => setConfirmMfaReset(true)} leftIcon={<KeyRound className="h-3.5 w-3.5" />}
+                      title="Lockout recovery: turns two-factor off so the user can sign in and re-enroll">
+                      Reset 2FA
+                    </Button>
+                  )}
+                </div>
+                <div className={TOOL_ROW}>
+                  <div className="min-w-0 flex-1 basis-48">
+                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-900 dark:text-white">
+                      Host JavaScript
+                      {user.codeTrustVerified
+                        ? <Badge variant="success">verified for host JavaScript</Badge>
+                        : <span className="text-xs text-gray-500 dark:text-slate-400">Not verified for host JavaScript</span>}
+                    </p>
+                    {user.codeTrustVerified && user.codeTrustVerifiedAt && (
+                      <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
+                        since {formatDateTimeInZone(user.codeTrustVerifiedAt, tz)}
+                        {user.codeTrustVerifiedBy ? ` · by ${user.codeTrustVerifiedBy === me?.id ? 'you' : user.codeTrustVerifiedBy}` : ''}
+                      </p>
                     )}
-                  </Link>
-                ))}
+                  </div>
+                  {!user.isDemo && (
+                    <Button
+                      size="sm"
+                      variant={user.codeTrustVerified ? 'outline' : 'secondary'}
+                      disabled={!user.codeTrustVerified && !user.mfaEnabled}
+                      title={!user.codeTrustVerified && !user.mfaEnabled
+                        ? 'This account needs two-factor authentication switched on before it can be verified'
+                        : 'Lets this account choose host JavaScript for its apps'}
+                      onClick={() => setConfirmCodeTrust(!user.codeTrustVerified)}
+                      leftIcon={<Cpu className="h-3.5 w-3.5" />}
+                    >
+                      {user.codeTrustVerified ? 'Revoke code trust' : 'Verify for host JavaScript'}
+                    </Button>
+                  )}
+                </div>
+                <div className={TOOL_ROW}>
+                  <div className="min-w-0 flex-1 basis-48">
+                    <p className="text-sm text-gray-900 dark:text-white">Backup manifest</p>
+                    <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">Schemas and the database file paths of each form. Never record data.</p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={downloadManifest} leftIcon={<FileJson className="h-3.5 w-3.5" />}
+                    title="Schemas + sqlite file paths per form — never record data">
+                    Backup manifest
+                  </Button>
+                </div>
               </div>
-            )}
-          </section>
+            </Panel>
 
-          <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-1.5">
-              <FileText className="h-4 w-4" /> Forms ({user.forms.length})
-            </h3>
-            {user.forms.length === 0 ? <p className="text-xs text-gray-400 dark:text-slate-500">None</p> : (
-              <div className="space-y-1.5">
-                {user.forms.map((f) => (
-                  <Link key={f.id} to={`/admin/builder/${f.id}`} className={rowClass}>
-                    <span className="text-sm font-medium text-gray-900 dark:text-white">{f.title}</span>
-                    <span className="ml-2 text-xs text-gray-500 dark:text-slate-400">
-                      {f.status} · {f.responseCount === null ? '?' : f.responseCount} records{f.apps ? ` · in ${f.apps}` : ''}
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </section>
+            <Panel title={`Apps (${user.apps.length})`} icon={<Boxes className="h-4 w-4" />}>
+              {user.apps.length === 0 ? <p className={HELP}>None</p> : (
+                <div className={ROW_BOX}>
+                  {user.apps.map((a) => (
+                    <Link key={a.id} to={`/admin/apps/${a.id}/settings`} className={LINK_ROW}>
+                      <span className="flex items-baseline justify-between gap-3">
+                        <span className="min-w-0 text-sm font-medium text-gray-900 [overflow-wrap:anywhere] dark:text-white">{a.name}</span>
+                        <span className="flex-none text-xs text-gray-500 dark:text-slate-400">{a.status}</span>
+                      </span>
+                      <span className="block text-xs leading-5 text-gray-500 dark:text-slate-400">
+                        {a.formCount} forms · {a.flowCount} flows · {a.memberCount} members
+                        {/* Requested vs effective: the same answer this app's runtime GET would give. */}
+                        {a.engine && <>
+                          {' · '}engine {engineLabel(a.engine.id)}
+                          {a.engine.stored && a.engine.stored !== a.engine.id
+                            ? ` · owner asked for ${engineLabel(a.engine.stored)}${a.engine.reason ? ` (${a.engine.reason})` : ''}`
+                            : a.engine.stored === null ? ' · site default' : ''}
+                        </>}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </Panel>
 
-          <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-1.5">
-                <Workflow className="h-4 w-4" /> Flows ({user.flows.length})
-              </h3>
-              {user.flows.length > 0 && (
+            <Panel title={`Forms (${user.forms.length})`} icon={<FileText className="h-4 w-4" />}>
+              {user.forms.length === 0 ? <p className={HELP}>None</p> : (
+                <div className={ROW_BOX}>
+                  {user.forms.map((f) => (
+                    <Link key={f.id} to={`/admin/builder/${f.id}`} className={LINK_ROW}>
+                      <span className="flex items-baseline justify-between gap-3">
+                        <span className="min-w-0 text-sm font-medium text-gray-900 [overflow-wrap:anywhere] dark:text-white">{f.title}</span>
+                        <span className="flex-none text-xs text-gray-500 dark:text-slate-400">{f.status}</span>
+                      </span>
+                      <span className="block text-xs leading-5 text-gray-500 dark:text-slate-400">
+                        {f.responseCount === null ? '?' : f.responseCount} records{f.apps ? ` · in ${f.apps}` : ''}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </Panel>
+
+            <Panel title={`Flows (${user.flows.length})`} icon={<Workflow className="h-4 w-4" />}
+              actions={user.flows.length > 0 && (
                 <Button size="sm" variant="outline" onClick={() => navigate(`/admin/users/${userId}/flows`)}>
                   Open flows workspace
                 </Button>
+              )}>
+              {user.flows.length === 0 ? <p className={HELP}>None</p> : (
+                <div className={ROW_BOX}>
+                  {user.flows.map((f) => (
+                    <Link key={f.id} to={`/admin/users/${userId}/flows?flow=${encodeURIComponent(f.id)}`} className={LINK_ROW}>
+                      <span className="flex items-baseline justify-between gap-3">
+                        <span className="min-w-0 text-sm font-medium text-gray-900 [overflow-wrap:anywhere] dark:text-white">{f.name}</span>
+                        <span className="flex-none text-xs text-gray-500 dark:text-slate-400">{f.enabled ? 'enabled' : 'disabled'}</span>
+                      </span>
+                      <span className="block text-xs leading-5 text-gray-500 dark:text-slate-400">
+                        {f.appName ? `app: ${f.appName}` : 'workspace'} · v{f.version}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
               )}
-            </div>
-            {user.flows.length === 0 ? <p className="text-xs text-gray-400 dark:text-slate-500">None</p> : (
-              <div className="space-y-1.5">
-                {user.flows.map((f) => (
-                  <Link key={f.id} to={`/admin/users/${userId}/flows?flow=${encodeURIComponent(f.id)}`} className={rowClass}>
-                    <span className="text-sm font-medium text-gray-900 dark:text-white">{f.name}</span>
-                    <span className="ml-2 text-xs text-gray-500 dark:text-slate-400">
-                      {f.appName ? `app: ${f.appName}` : 'workspace'} · v{f.version} · {f.enabled ? 'enabled' : 'disabled'}
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </section>
-          <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-1.5">
-                <Recycle className="h-4 w-4" /> Recycle bin
-              </h3>
-              <Button size="sm" variant="outline" onClick={() => navigate(`/admin/users/${userId}/trash`)}>
-                Open recycle bin
-              </Button>
-            </div>
-            <p className="text-xs text-gray-400 dark:text-slate-500">
-              Things this user deleted in the last 30 days — restorable on their behalf (names and counts only; snapshot contents stay private).
-            </p>
-          </section>
-          <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 dark:border-slate-800 dark:bg-slate-900">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-1.5">
-              <Archive className="h-4 w-4" /> Restore from backup
-            </h3>
-            {backupError ? <AdminError message={backupError} onRetry={reloadBackups} /> : backupDays === null ? (
-              <p className="text-xs text-gray-400 dark:text-slate-500">Loading backups…</p>
-            ) : backupDays.length === 0 ? (
-              <p className="text-xs text-gray-400 dark:text-slate-500">
-                No scheduled backups contain this account yet — the nightly job (or Platform → Run backup now) creates them.
-              </p>
-            ) : (
-              <div className="space-y-1.5">
-                <p className="text-xs text-gray-500 dark:text-slate-400">
-                  Restores the chosen day&apos;s backup INTO this account as new copies — nothing existing is overwritten.
-                </p>
-                {backupDays.map((run) => {
-                  const entry = run.accounts.find((a) => a.id === userId);
-                  return (
-                    <div key={run.date} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2">
-                      <div className="min-w-0 text-sm">
-                        <span className="font-medium text-gray-900 dark:text-white">{run.date}</span>
-                        <span className="ml-2 text-xs text-gray-500 dark:text-slate-400">
-                          {((entry?.sizeBytes ?? 0) / (1024 * 1024)).toFixed(1)} MB
-                        </span>
-                      </div>
-                      <Button size="sm" variant="outline" disabled={restoring} onClick={() => setRestoreDate(run.date)}>
-                        Restore
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
+            </Panel>
 
-          {/* Support tools: password reset, email change, payments/complimentary,
-              and the heavily-gated full account deletion. */}
-          <AdminAccountTools
-            key={userId}
-            userId={userId}
-            email={user.email}
-            isAdmin={!!user.isAdmin}
-            isSelf={user.id === me?.id}
-            onChanged={load}
-          />
+            <Panel title="Recycle bin" icon={<Recycle className="h-4 w-4" />}
+              actions={<Button size="sm" variant="outline" onClick={() => navigate(`/admin/users/${userId}/trash`)}>Open recycle bin</Button>}>
+              <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
+                Things this user deleted in the last 30 days — restorable on their behalf (names and counts only; snapshot contents stay private).
+              </p>
+            </Panel>
+
+            <Panel title="Restore from backup" icon={<Archive className="h-4 w-4" />}>
+              {backupError ? <AdminError message={backupError} onRetry={reloadBackups} /> : backupDays === null ? (
+                <p className={HELP}>Loading backups…</p>
+              ) : backupDays.length === 0 ? (
+                <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
+                  No scheduled backups contain this account yet — the nightly job (or Platform → Run backup now) creates them.
+                </p>
+              ) : (
+                <>
+                  <p className="mb-2 text-xs leading-5 text-gray-500 dark:text-slate-400">
+                    Restores the chosen day&apos;s backup INTO this account as new copies — nothing existing is overwritten.
+                  </p>
+                  <div className={ROW_BOX}>
+                    {backupDays.map((run) => {
+                      const entry = run.accounts.find((a) => a.id === userId);
+                      return (
+                        <div key={run.date} className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5">
+                          <div className="min-w-0 text-sm">
+                            <span className="font-medium tabular-nums text-gray-900 dark:text-white">{run.date}</span>
+                            <span className="ml-2 text-xs tabular-nums text-gray-500 dark:text-slate-400">
+                              {((entry?.sizeBytes ?? 0) / (1024 * 1024)).toFixed(1)} MB
+                            </span>
+                          </div>
+                          <Button size="sm" variant="outline" disabled={restoring} onClick={() => setRestoreDate(run.date)}>
+                            Restore
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </Panel>
+
+            {/* Support tools: password reset, email change, payments/complimentary,
+                and the heavily-gated full account deletion. */}
+            <AdminAccountTools
+              key={userId}
+              userId={userId}
+              email={user.email}
+              isAdmin={!!user.isAdmin}
+              isSelf={user.id === me?.id}
+              onChanged={load}
+            />
+          </div>
         </>
       )}
 

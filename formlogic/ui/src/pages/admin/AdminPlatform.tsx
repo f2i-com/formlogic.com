@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { Activity, Archive, LogOut, Megaphone, RefreshCw, Wrench } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { Card, CardContent } from '../../components/ui/Card';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { Panel, PANEL_COLUMNS } from '../../components/ui/Panel';
 import { api, type MaintenanceStatus, type ScheduledBackupRun } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
+import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { AdminPlansCard } from './AdminPlansCard';
 import { AdminAllowancesCard } from './AdminAllowancesCard';
@@ -15,7 +16,20 @@ import { AdminSoftnDirectoryCard } from './AdminSoftnDirectoryCard';
 import { AdminAppAiCard } from './AdminAppAiCard';
 import { AdminAppPaymentsCard } from './AdminAppPaymentsCard';
 import { AdminError, AdminSpinner } from './adminUi';
+import { HELP, ROW_BOX } from '../../components/ui/listLook';
 import { useAdminQuery } from './useAdminQuery';
+
+// The page's parts, in the order they stand on it: the id a link lands on, and its name in the
+// line of links at the top.
+const PARTS = [
+  ['plans', 'Plans & AI'], ['app-engine', 'App engine'], ['plugins', 'Plugins'], ['softn-directory', 'SoftN directory'],
+  ['availability', 'Site availability'], ['notices', 'Notices'], ['backups', 'Backups'], ['allowances', 'Usage limits'],
+  ['app-ai', 'AI for apps'], ['app-payments', 'App payments'],
+] as const;
+/** Around a part drawn by its own card: where a link lands, clear of the sticky header. */
+const PART = 'min-w-0 scroll-mt-24';
+const TEXT_FIELD = 'block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
+const SELECT_FIELD = 'min-h-9 max-w-full rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 max-sm:min-h-11';
 
 /**
  * /admin/platform — maintenance mode (close the site), global session boot,
@@ -167,166 +181,166 @@ export function AdminPlatform() {
   }
 
   return (
-    <div className="space-y-6">
-      <nav aria-label="Platform settings" className="flex flex-wrap gap-2">
-        {[['plans', 'Plans & AI'], ['app-ai', 'AI for apps'], ['app-payments', 'App payments'], ['app-engine', 'App engine'], ['plugins', 'Plugins'], ['availability', 'Site availability'], ['notices', 'Notices'], ['backups', 'Backups'], ['allowances', 'Usage limits']].map(([id, label]) => <a key={id} href={`#${id}`} className="inline-flex min-h-11 items-center rounded-full border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-white focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">{label}</a>)}
+    <div>
+      {/* The page is long: one line of links to its parts, each an address a link elsewhere can use
+          (/admin/platform#app-ai). Plain anchors: the browser goes to the part named. On a phone
+          the line stays one line and scrolls sideways, to the screen's edges, as the sections'
+          row above it does: wrapped, ten finger-tall links would be three rows before the page. */}
+      <nav aria-label="Platform settings" className="scrollbar-hide flex gap-x-4 gap-y-1 text-xs max-sm:-mx-4 max-sm:overflow-x-auto max-sm:px-4 sm:flex-wrap">
+        {PARTS.map(([id, label]) => <a key={id} href={`#${id}`} className="inline-flex flex-none items-center whitespace-nowrap font-medium text-primary-700 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-300 max-sm:min-h-11">{label}</a>)}
       </nav>
-      <section id="plans" className="scroll-mt-24"><AdminPlansCard /></section>
-      <section id="app-ai" className="scroll-mt-24"><AdminAppAiCard /></section>
-      <section id="app-payments" className="scroll-mt-24"><AdminAppPaymentsCard /></section>
-      <section id="app-engine" className="scroll-mt-24"><AdminEnginePolicyCard /></section>
-      <section id="plugins" className="scroll-mt-24"><AdminPluginsCard /></section>
-          <section id="softn-directory" className="scroll-mt-24"><AdminSoftnDirectoryCard /></section>
-      <Card id="availability" className="scroll-mt-24">
-        <CardContent className="p-5 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
+
+      {/* The parts fill the page's width in as many columns as fit, each as tall as what it holds:
+          one column on a phone, two on a laptop, three on a wide screen. The two that end in a
+          table (AI for apps, App payments) come last and take every column. */}
+      <div className={cn('mt-3', PANEL_COLUMNS)}>
+        <div id="plans" className={PART}><AdminPlansCard /></div>
+        <div id="app-engine" className={PART}><AdminEnginePolicyCard /></div>
+        <div id="plugins" className={PART}><AdminPluginsCard /></div>
+        <div id="softn-directory" className={PART}><AdminSoftnDirectoryCard /></div>
+
+        <Panel
+          id="availability"
+          title="Maintenance mode"
+          icon={<Wrench className="h-4 w-4" />}
+          description="Closes the whole site (dashboards, APIs and embedded forms show your message). Administrators keep full access."
+          actions={status?.enabled ? <Badge variant="warning">ON — site closed</Badge> : <Badge variant="default">off</Badge>}
+        >
+          <div className="space-y-3">
+            <p className="flex items-center gap-2 text-xs text-gray-600 dark:text-slate-300">
+              <Activity className="h-4 w-4 flex-none text-emerald-500" aria-hidden="true" /> {online} user{online === 1 ? '' : 's'} online now
+            </p>
             <div>
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                <Wrench className="h-4 w-4" /> Maintenance mode
-                {status?.enabled ? <Badge variant="warning">ON — site closed</Badge> : <Badge variant="default">off</Badge>}
-              </h3>
-              <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
-                Closes the whole site (dashboards, APIs and embedded forms show your message). Administrators keep full access.
-              </p>
+              <label htmlFor="maintenance-message" className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">Visitor-facing message (shown on dashboards and embedded forms)</label>
+              <textarea
+                id="maintenance-message"
+                disabled={maintenanceBusy}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                rows={2}
+                maxLength={500}
+                className={TEXT_FIELD}
+                placeholder="We are briefly down for maintenance. Please check back in a few minutes."
+              />
             </div>
-            <div className="text-sm text-gray-600 dark:text-slate-300 flex items-center gap-2">
-              <Activity className="h-4 w-4 text-emerald-500" /> {online} user{online === 1 ? '' : 's'} online now
+            <div className="flex flex-wrap gap-2">
+              {status?.enabled ? (
+                <>
+                  <Button size="sm" disabled={maintenanceBusy} onClick={() => toggle(false)} leftIcon={<RefreshCw className="h-4 w-4" />}>Reopen the site</Button>
+                  <Button size="sm" variant="outline" isLoading={maintenanceBusy} onClick={() => toggle(true)}>Update message</Button>
+                </>
+              ) : (
+                <Button size="sm" variant="danger" disabled={maintenanceBusy} onClick={() => setConfirmMaintenance(true)} leftIcon={<Wrench className="h-4 w-4" />}>Close site for maintenance</Button>
+              )}
+              <Button size="sm" variant="outline" disabled={bootBusy} onClick={() => setConfirmBoot(true)} leftIcon={<LogOut className="h-4 w-4" />}>
+                Sign everyone out
+              </Button>
             </div>
           </div>
-          <div>
-            <label htmlFor="maintenance-message" className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Visitor-facing message (shown on dashboards and embedded forms)</label>
-            <textarea
-              id="maintenance-message"
-              disabled={maintenanceBusy}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              rows={2}
-              maxLength={500}
-              className="w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-slate-100 p-3"
-              placeholder="We are briefly down for maintenance. Please check back in a few minutes."
-            />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {status?.enabled ? (
-              <>
-                <Button disabled={maintenanceBusy} onClick={() => toggle(false)} leftIcon={<RefreshCw className="h-4 w-4" />}>Reopen the site</Button>
-                <Button variant="outline" isLoading={maintenanceBusy} onClick={() => toggle(true)}>Update message</Button>
-              </>
-            ) : (
-              <Button variant="danger" disabled={maintenanceBusy} onClick={() => setConfirmMaintenance(true)} leftIcon={<Wrench className="h-4 w-4" />}>Close site for maintenance</Button>
+        </Panel>
+
+        <Panel
+          id="notices"
+          title="Broadcast a message"
+          icon={<Megaphone className="h-4 w-4" />}
+          description={<>Pops up as a toast on users&apos; dashboards. <strong>Signed-in now</strong> reaches current sessions (expires in an hour); <strong>all users</strong> stays live for a week so everyone sees it once.</>}
+        >
+          <div className="space-y-3">
+            <div>
+              <label htmlFor="broadcast-message" className="mb-1 block text-xs font-medium text-gray-500 dark:text-slate-400">Notice message</label>
+              <textarea
+                id="broadcast-message"
+                disabled={noticeBusy}
+                value={noticeText}
+                onChange={(e) => setNoticeText(e.target.value)}
+                rows={2}
+                maxLength={500}
+                className={TEXT_FIELD}
+                placeholder="e.g. Heads up — we're upgrading tonight at 10pm, expect a short outage."
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select aria-label="Notice style" disabled={noticeBusy} value={noticeLevel} onChange={(e) => setNoticeLevel(e.target.value as typeof noticeLevel)} className={SELECT_FIELD}>
+                <option value="info">Info</option>
+                <option value="warning">Warning (stays until dismissed)</option>
+                <option value="success">Success</option>
+              </select>
+              <select aria-label="Notice audience" disabled={noticeBusy} value={noticeAudience} onChange={(e) => setNoticeAudience(e.target.value as typeof noticeAudience)} className={SELECT_FIELD}>
+                <option value="online">Users signed in now</option>
+                <option value="all">All users</option>
+              </select>
+              <Button size="sm" onClick={sendNotice} isLoading={noticeBusy} disabled={!noticeText.trim()} leftIcon={<Megaphone className="h-4 w-4" />}>Send notice</Button>
+            </div>
+            {noticeError && <AdminError message={noticeError} onRetry={reloadNotices} />}
+            {noticesLoading && <p role="status" className={HELP}>Loading notices…</p>}
+            {!noticesLoading && !noticeError && notices.length === 0 && <p className={HELP}>No notices yet.</p>}
+            {notices.length > 0 && (
+              <div className={ROW_BOX}>
+                {notices.slice(0, 8).map((n) => (
+                  <div key={n.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                    <div className="min-w-0 text-sm">
+                      <p className="text-gray-900 dark:text-white break-words">{n.message}</p>
+                      <p className="text-xs text-gray-500 dark:text-slate-400">
+                        {n.level} · {n.audience === 'online' ? 'signed-in users' : 'all users'} · {formatDateTimeInZone(n.createdAt, tz)}
+                        {!n.active && ' · ended'}
+                      </p>
+                    </div>
+                    {n.active && (
+                      <Button size="sm" variant="outline" disabled={retracting !== null || noticesLoading} isLoading={retracting === n.id} onClick={() => void retractNotice(n.id)}>Retract</Button>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
-            <Button variant="outline" disabled={bootBusy} onClick={() => setConfirmBoot(true)} leftIcon={<LogOut className="h-4 w-4" />}>
-              Sign everyone out
-            </Button>
           </div>
-        </CardContent>
-      </Card>
+        </Panel>
 
-      <Card id="notices" className="scroll-mt-24">
-        <CardContent className="p-5 sm:p-6 space-y-4">
-          <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-            <Megaphone className="h-4 w-4" /> Broadcast a message
-          </h3>
-          <p className="text-sm text-gray-500 dark:text-slate-400">
-            Pops up as a toast on users&apos; dashboards. <strong>Signed-in now</strong> reaches current sessions
-            (expires in an hour); <strong>all users</strong> stays live for a week so everyone sees it once.
-          </p>
-          <label htmlFor="broadcast-message" className="block text-sm font-medium text-gray-700 dark:text-slate-300">Notice message</label>
-          <textarea
-            id="broadcast-message"
-            disabled={noticeBusy}
-            value={noticeText}
-            onChange={(e) => setNoticeText(e.target.value)}
-            rows={2}
-            maxLength={500}
-            className="w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-slate-100 p-3"
-            placeholder="e.g. Heads up — we're upgrading tonight at 10pm, expect a short outage."
-          />
-          <div className="flex flex-wrap items-center gap-3">
-            <select aria-label="Notice style" disabled={noticeBusy} value={noticeLevel} onChange={(e) => setNoticeLevel(e.target.value as typeof noticeLevel)}
-              className="max-w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm p-2 text-gray-900 dark:text-slate-100">
-              <option value="info">Info</option>
-              <option value="warning">Warning (stays until dismissed)</option>
-              <option value="success">Success</option>
-            </select>
-            <select aria-label="Notice audience" disabled={noticeBusy} value={noticeAudience} onChange={(e) => setNoticeAudience(e.target.value as typeof noticeAudience)}
-              className="max-w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm p-2 text-gray-900 dark:text-slate-100">
-              <option value="online">Users signed in now</option>
-              <option value="all">All users</option>
-            </select>
-            <Button onClick={sendNotice} isLoading={noticeBusy} disabled={!noticeText.trim()} leftIcon={<Megaphone className="h-4 w-4" />}>Send notice</Button>
-          </div>
-          {noticeError && <AdminError message={noticeError} onRetry={reloadNotices} />}
-          {noticesLoading && <p role="status" className="text-sm text-gray-500 dark:text-slate-400">Loading notices…</p>}
-          {!noticesLoading && !noticeError && notices.length === 0 && <p className="text-sm text-gray-500 dark:text-slate-400">No notices yet.</p>}
-          {notices.length > 0 && (
-            <div className="space-y-1.5">
-              {notices.slice(0, 8).map((n) => (
-                <div key={n.id} className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2">
-                  <div className="min-w-0 text-sm">
-                    <p className="text-gray-900 dark:text-white break-words">{n.message}</p>
-                    <p className="text-xs text-gray-500 dark:text-slate-400">
-                      {n.level} · {n.audience === 'online' ? 'signed-in users' : 'all users'} · {formatDateTimeInZone(n.createdAt, tz)}
-                      {!n.active && ' · ended'}
-                    </p>
-                  </div>
-                  {n.active && (
-                    <Button size="sm" variant="outline" disabled={retracting !== null || noticesLoading} isLoading={retracting === n.id} onClick={() => void retractNotice(n.id)}>Retract</Button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card id="backups" className="scroll-mt-24">
-        <CardContent className="p-5 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div>
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                <Archive className="h-4 w-4" /> Scheduled backups
-              </h3>
-              <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
-                Nightly site backup: one restorable zip per account + a full database dump, kept for the retention window.
-                Restore an account from its page in <strong>Users</strong>.
+        <Panel
+          id="backups"
+          title="Scheduled backups"
+          icon={<Archive className="h-4 w-4" />}
+          description={<>Nightly site backup: one restorable zip per account + a full database dump, kept for the retention window. Restore an account from its page in <strong>Users</strong>.</>}
+        >
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+              <p className="min-w-0 flex-1 basis-48 text-xs leading-5 text-gray-500 dark:text-slate-400">
+                {backupReadFailed
+                  ? <>Couldn&apos;t read the backup history — this says nothing about whether backups ran. <button type="button" onClick={loadBackups} className="cursor-pointer font-medium text-primary-600 hover:underline dark:text-primary-400">Try again</button></>
+                  : backupRuns === null
+                    ? <>Loading backup history…</>
+                  : backupLastRun
+                    ? <>Last run {formatDateTimeInZone(backupLastRun, tz)}</>
+                    : <>Never run — schedule <code className="fl-mono">bin/backup-accounts.php</code> daily (cron or Task Scheduler), or run one now.</>}
               </p>
+              <Button variant="outline" size="sm" onClick={runBackupNow} isLoading={runningBackup} leftIcon={<Archive className="h-4 w-4" />}>
+                {runningBackup ? 'Backing up…' : 'Run backup now'}
+              </Button>
             </div>
-            <Button variant="outline" size="sm" onClick={runBackupNow} isLoading={runningBackup} leftIcon={<Archive className="h-4 w-4" />}>
-              {runningBackup ? 'Backing up…' : 'Run backup now'}
-            </Button>
-          </div>
-          <p className="text-xs text-gray-500 dark:text-slate-400">
-            {backupReadFailed
-              ? <>Couldn&apos;t read the backup history — this says nothing about whether backups ran. <button type="button" onClick={loadBackups} className="cursor-pointer font-medium text-primary-600 hover:underline dark:text-primary-400">Try again</button></>
-              : backupRuns === null
-                ? <>Loading backup history…</>
-              : backupLastRun
-                ? <>Last run {formatDateTimeInZone(backupLastRun, tz)}</>
-                : <>Never run — schedule <code className="fl-mono">bin/backup-accounts.php</code> daily (cron or Task Scheduler), or run one now.</>}
-          </p>
-          {backupRuns !== null && backupRuns.length > 0 && (
-            <div className="space-y-1.5">
-              {backupRuns.map((run) => (
-                <div key={run.date} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-slate-700 px-3 py-2 text-sm">
-                  <div className="min-w-0">
-                    <span className="font-medium text-gray-900 dark:text-white">{run.date}</span>
-                    <span className="ml-2 text-xs text-gray-500 dark:text-slate-400">
-                      {run.users} account{run.users === 1 ? '' : 's'} · {(run.totalBytes / (1024 * 1024)).toFixed(1)} MB
-                      {!run.includeFiles && ' · records only'}
-                    </span>
+            {backupRuns !== null && backupRuns.length > 0 && (
+              <div className={ROW_BOX}>
+                {backupRuns.map((run) => (
+                  <div key={run.date} className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 text-sm">
+                    <div className="min-w-0">
+                      <span className="font-medium tabular-nums text-gray-900 dark:text-white">{run.date}</span>
+                      <span className="ml-2 text-xs tabular-nums text-gray-500 dark:text-slate-400">
+                        {run.users} account{run.users === 1 ? '' : 's'} · {(run.totalBytes / (1024 * 1024)).toFixed(1)} MB
+                        {!run.includeFiles && ' · records only'}
+                      </span>
+                    </div>
+                    {run.failed > 0
+                      ? <Badge variant="warning">{run.failed} failed</Badge>
+                      : <Badge variant="success">ok</Badge>}
                   </div>
-                  {run.failed > 0
-                    ? <Badge variant="warning">{run.failed} failed</Badge>
-                    : <Badge variant="success">ok</Badge>}
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        </Panel>
 
-      <section id="allowances" className="scroll-mt-24"><AdminAllowancesCard /></section>
+        <div id="allowances" className={PART}><AdminAllowancesCard /></div>
+        <div id="app-ai" className={cn(PART, '[column-span:all]')}><AdminAppAiCard /></div>
+        <div id="app-payments" className={cn(PART, '[column-span:all]')}><AdminAppPaymentsCard /></div>
+      </div>
 
       <ConfirmDialog
         isOpen={confirmMaintenance}

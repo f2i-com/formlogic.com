@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Puzzle, Upload } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
-import { Card, CardContent } from '../../components/ui/Card';
+import { Panel } from '../../components/ui/Panel';
 import { Switch } from '../../components/ui/Switch';
 import { api } from '../../lib/api';
 import { importNativeProject } from '../../lib/nativeHosting';
@@ -9,6 +9,7 @@ import { STRENGTH_WORDS } from '../../lib/passes';
 import { toast } from '../../stores/toastStore';
 import type { AvailablePlugin, InstalledPlugin, PluginPass, PluginReview, PluginSetting, UploadedPlugin } from '../../types/app';
 import { AdminCameraCheckCard } from './AdminCameraCheckCard';
+import { HELP } from '../../components/ui/listLook';
 
 /** What else of the site a plugin may use, in words. */
 const USES: Record<string, string> = {
@@ -51,10 +52,10 @@ function PluginSettings({ plugin, onSaved }: { plugin: InstalledPlugin; onSaved:
         {setting.type === 'integer' ? (
           <input id={id} type="number" min={setting.min} max={setting.max} value={Number(value)}
             onChange={(e) => setValues({ ...values, [setting.key]: Math.round(Number(e.target.value)) })}
-            className="block w-24 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white" />
+            className="block w-24 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white max-sm:min-h-11" />
         ) : (
           <select id={id} value={String(value)} onChange={(e) => setValues({ ...values, [setting.key]: e.target.value })}
-            className="block min-h-10 rounded-lg border border-gray-300 bg-white px-2.5 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
+            className="block min-h-10 max-w-full rounded-lg border border-gray-300 bg-white px-2.5 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white max-sm:min-h-11">
             {(setting.options ?? []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
         )}
@@ -71,8 +72,8 @@ function PluginSettings({ plugin, onSaved }: { plugin: InstalledPlugin; onSaved:
     onSaved();
   };
   return (
-    <details className="rounded-lg border border-gray-200 p-3 dark:border-slate-700">
-      <summary className="cursor-pointer text-sm font-medium text-gray-900 dark:text-white">Settings</summary>
+    <details className="rounded-lg border border-gray-200 px-3 py-2 dark:border-slate-700">
+      <summary className="cursor-pointer text-sm font-medium text-gray-900 dark:text-white max-sm:py-2.5">Settings</summary>
       <div className="mt-3 space-y-3">
         {plugin.settingsSchema.map(field)}
         <Button size="sm" isLoading={busy} onClick={() => void save()}>Save settings</Button>
@@ -135,23 +136,23 @@ export function AdminPluginsCard() {
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardContent className="p-5 sm:p-6 space-y-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2"><Puzzle className="h-4 w-4" aria-hidden="true" />Plugins</h3>
-              <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-                Plugins are SoftN apps that add to the site. Their code runs sandboxed, with no network, and can do only what it was granted when installed, listed under it.
-                App owners choose whether their apps ask for what a plugin issues. Turning one off closes the apps that ask for it; removing it also withdraws everything it issued.
-              </p>
-            </div>
-            <input ref={file} type="file" accept=".softn,.zip" className="hidden" aria-label="Plugin file" onChange={(e) => void read(e.target.files?.[0])} />
-            <Button size="sm" variant="outline" leftIcon={<Upload className="h-4 w-4" />} onClick={() => file.current?.click()}>Upload a plugin</Button>
-          </div>
+      <Panel
+        title="Plugins"
+        icon={<Puzzle className="h-4 w-4" />}
+        actions={<>
+          <input ref={file} type="file" accept=".softn,.zip" className="hidden" aria-label="Plugin file" onChange={(e) => void read(e.target.files?.[0])} />
+          <Button size="sm" variant="outline" leftIcon={<Upload className="h-4 w-4" />} onClick={() => file.current?.click()}>Upload a plugin</Button>
+        </>}
+      >
+        <div className="space-y-3">
+          <p className={HELP}>
+            Plugins are SoftN apps that add to the site. Their code runs sandboxed, with no network, and can do only what it was granted when installed, listed under it.
+            App owners choose whether their apps ask for what a plugin issues. Turning one off closes the apps that ask for it; removing it also withdraws everything it issued.
+          </p>
 
           {upload && (
-            <div role="region" aria-label="Plugin to install" className="space-y-2 rounded-xl border border-primary-300 bg-primary-50 p-4 dark:border-primary-500/40 dark:bg-primary-500/10">
-              <p className="font-medium text-gray-900 dark:text-white">{upload.plugin.name} <span className="text-xs font-normal text-gray-500">v{upload.plugin.version} · {upload.plugin.id}</span></p>
+            <div role="region" aria-label="Plugin to install" className="space-y-2 rounded-xl border border-primary-300 bg-primary-50 p-3 dark:border-primary-500/40 dark:bg-primary-500/10">
+              <p className="text-sm font-medium text-gray-900 dark:text-white">{upload.plugin.name} <span className="text-xs font-normal text-gray-500 dark:text-slate-400">v{upload.plugin.version} · <span className="font-mono">{upload.plugin.id}</span></span></p>
               {upload.plugin.description && <p className="text-sm text-gray-600 dark:text-slate-300">{upload.plugin.description}</p>}
               <p className="text-xs font-medium text-gray-700 dark:text-slate-300">{upload.plugin.updates ? `This updates v${upload.plugin.updates.version}. Updating grants it:` : 'Installing it grants it:'}</p>
               <Grants review={upload.plugin} />
@@ -165,16 +166,16 @@ export function AdminPluginsCard() {
           )}
 
           {!state ? (
-            error ? <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p> : <p role="status" className="text-sm text-gray-500">Loading…</p>
+            error ? <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p> : <p role="status" className="text-sm text-gray-500 dark:text-slate-400">Loading…</p>
           ) : (
             <>
               {state.installed.length === 0 && <p className="text-sm text-gray-500 dark:text-slate-400">No plugins are installed.</p>}
               <ul className="space-y-3">
                 {state.installed.map((plugin) => (
-                  <li key={plugin.id} className="space-y-2 rounded-xl border border-gray-200 p-4 dark:border-slate-700">
+                  <li key={plugin.id} className="space-y-2 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="font-medium text-gray-900 dark:text-white">{plugin.name} <span className="text-xs font-normal text-gray-500">v{plugin.version}{plugin.source === 'upload' ? ' · uploaded' : ''}</span></p>
+                      <div className="min-w-0 flex-1 basis-56">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">{plugin.name} <span className="text-xs font-normal text-gray-500 dark:text-slate-400">v{plugin.version}{plugin.source === 'upload' ? ' · uploaded' : ''}</span></p>
                         <Grants review={{ passes: plugin.grants, uses: plugin.uses, sandbox: [] }} />
                       </div>
                       <Switch
@@ -206,9 +207,9 @@ export function AdminPluginsCard() {
                   <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Included with FormLogic</h4>
                   <ul className="space-y-3">
                     {state.available.map((plugin) => (
-                      <li key={plugin.id} className="space-y-2 rounded-xl border border-dashed border-gray-300 p-4 dark:border-slate-600">
-                        <p className="font-medium text-gray-900 dark:text-white">{plugin.name} <span className="text-xs font-normal text-gray-500">v{plugin.version}</span></p>
-                        {plugin.description && <p className="text-sm text-gray-500 dark:text-slate-400">{plugin.description}</p>}
+                      <li key={plugin.id} className="space-y-2 rounded-xl border border-dashed border-gray-300 p-3 dark:border-slate-600">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">{plugin.name} <span className="text-xs font-normal text-gray-500 dark:text-slate-400">v{plugin.version}</span></p>
+                        {plugin.description && <p className={HELP}>{plugin.description}</p>}
                         <p className="text-xs font-medium text-gray-700 dark:text-slate-300">Installing it grants it:</p>
                         <Grants review={plugin} />
                         <Button size="sm" isLoading={busy === plugin.id} onClick={() => void act(plugin.id, () => api.adminInstallPlugin(plugin.id), `${plugin.name} is installed`)}>Install</Button>
@@ -219,8 +220,8 @@ export function AdminPluginsCard() {
               )}
             </>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </Panel>
       {cameraPlugins.length > 0 && <AdminCameraCheckCard plugins={cameraPlugins} />}
     </div>
   );
