@@ -10,9 +10,10 @@ App Studio → Screens → **App hosting** hosts a text app bundle with private 
 A **SoftN app** is an app whose interface, private backend and database are its SoftN project,
 with no forms needed (`settings.softnApp: true`). Create one with **Create app → SoftN app**, by
 dropping a `.softn` file on **Apps → Import**, or by asking the chat (its `create_softn_app` tool
-creates the app and takes the person to AI Studio, which builds it from their request; an MCP
-client is told to build it with the native project tools, or to send the person to the app's
-workspace). Its first
+creates the app and takes the person to AI Studio, which builds it from their request, and
+`edit_softn_app` hands a change to an app that exists to AI Studio the same way; an MCP client
+builds and changes it with the SoftN app tools, taught by `get_softn_guide`:
+[MCP.md](MCP.md#softn-apps-over-mcp)). Its first
 version is the working starter (`POST /api/apps/{id}/native/starter`, refused once anything is
 installed) or the uploaded file; both are for members only and open at the app's address until
 the owner changes that.

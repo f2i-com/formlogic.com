@@ -313,6 +313,91 @@ delegates to it, threading the token session (scopes, app/creator confinement, `
 through an explicit caller context — **MCP behavior, scopes, wire shapes and audit rows are
 unchanged**; the extraction only gives the two surfaces one implementation that cannot drift.
 
+### SoftN apps over MCP
+
+A SoftN app is the other kind of app: a website, tool or web app of its own, with its own pages and
+logic, a private backend and a SQLite database, and no forms ([Hosted apps](HOSTED_APPS.md#softn-apps)).
+An AI that connects can make one, change its source, read and correct its data, and see to its
+members. The server's opening instructions say so, and `list_apps` marks each app `kind: "softn"` or
+`"forms"`.
+
+**What the AI is told.** SoftN is a language of its own, so the tools carry its reference:
+
+| Tool | Scope | What it gives |
+|---|---|---|
+| `get_softn_guide` | `apps:read` | With no topic: FormLogic's own page (`backend/resources/softn-on-formlogic.md`): the tools in the order a build uses them, what a project is made of, what a hosted app may use, the backend's rules, and a complete worked app. `topic: "language"`: SoftN's own guide, "How to build a SoftN app", the text SoftN Studio's agent is taught by (`language-python` where page logic is Python; `language#<section>` for one section). `topic: "components"`: every component, one line each. Any published SoftN guide by its name, or one section (`ui-language#bindings`). |
+| `lookup_softn_components` | `apps:read` | The props, events and a usage line of up to twelve components by name. |
+
+The language guide is a copy of `softn.com`'s `apps/softn-studio/src/lib/agent/guide.ts`
+(`backend/resources/softn-guide.json`, committed; `SOFTN_REPO=… node scripts/softn-guide.mjs`
+regenerates it when a Softn release is adopted, and stops when a sentence about Studio's own tools
+has been rewritten). The component reference and the published guides are the installed Softn
+release's own, read out of its Studio by `scripts/softn-knowledge.mjs` into
+`backend/resources/softn-knowledge.json` (generated, not in Git, written by
+`fetch-softn-release.mjs` at every install and shipped in the package), so they are always those of
+the SoftN the site runs. A server without them says so and still serves FormLogic's page.
+
+**The app and its source.**
+
+| Tool | Scope | What it does |
+|---|---|---|
+| `create_softn_app` | `apps:write`, `screens:write` | A new app with the working starter (a page, a backend with two routes, one table) as version 1. Answers `appUrl` and `workspaceUrl`. Not for an app-scoped token. |
+| `get_softn_app` | `apps:read` | How one stands: version, where it runs, whether it is published and who can open it, its page and routes, its database (each table's row count only for a connection with `responses:read`), its member counts. |
+| `get_native_app_project` | `apps:read` | The version, and every source and media file by path and size, with the source itself when the project is small. `files: [paths]` (up to 20) or `file` reads source. Media are listed, never sent. |
+| `update_native_app_files` | `apps:write`, `screens:write` | Writes files whole (`files`), removes files (`remove`), adds or replaces media as base64 (`media`), removes media (`removeMedia`), and changes `access` or `home`. Everything else stays, the database included. `expectedVersion` is the version read. |
+| `publish_native_app_project` | `apps:write`, `screens:write` | Installs a complete project (`expectedVersion: 0` for the first). Media are kept when `assets` is left out; `assets: {}` is none. |
+| `get_native_app_template` | `apps:read` | The starter, to read. |
+
+An install validates the project and **starts its backend on the new version before keeping it**: a
+version whose backend does not start, whose route names a function that is not there, or that
+changes a migration that has run is refused with what to fix, and the app stays as it was. A page
+is drawn only in a browser, so no tool can say a page is right: the install's answer says so, and
+the AI is told to have the person open `appUrl`. An install is the app's next version at once (there
+is no draft over these tools), and [whoever has the app open is shown it](HOSTED_APPS.md) within a
+minute. Opening a members-only app to everyone (`access: "application"`) also needs `responses:read`.
+
+**Its data** is the app's own SQLite database, read and written as its owner's Data section does
+it (`NativeRecordStore`): columns that look like credentials are never shown, searched or written.
+
+| Tool | Scope | What it does |
+|---|---|---|
+| `list_native_app_records` | `responses:read` | With no table: the tables and their row counts. With one: a page of rows (`limit` 1 to 250, `offset`), with `search`, `filter` (up to 8 of `{column, op, value}`; `eq ne gt gte lt lte contains starts empty notEmpty`), `sort` and `dir`; answers `total`, `matching`, the columns, the rows and each row's key. `view: "structure"` gives columns, indexes and foreign keys. |
+| `get_native_app_record` | `responses:read` | One record whole (values up to 100 KB each) and its `revision`. |
+| `change_native_app_record` | `responses:write` | `create`, `update` or `delete` one record. An update or a delete names the `revision` the record was read at, so one that changed since is not overwritten unseen. The database's own rules apply and the table's automations run; the app's backend functions do not. |
+
+**Its people** (an app that asks for FormLogic membership):
+
+| Tool | Scope | What it does |
+|---|---|---|
+| `list_app_members` | `responses:read` | Names, email addresses, roles and status, and open invitations (never an invitation's token). |
+| `update_app_member` | `apps:write` | Suspend, let in or back in, or change a role. The owner is not changed. |
+| `remove_app_member` | `apps:write` | Take a member out. |
+
+Moderating an app is these together: suspend a member, correct or delete a record, and take the app
+out of public reach with `update_app {status: "draft"}`.
+
+A source file is read whole or not at all when several are asked for (`files`); one `file` longer
+than an answer carries comes in parts (`whole: false`, `nextOffset`, read on with `offset`), each
+saying it is a part, because a file is written back whole and a part written back would cut the
+live page short. `publish_native_app_project` keeps `access`, `home` and the media when they are
+left out. A record's `revision` is keyed with a secret of the installation's, so it says nothing
+about the hidden columns it covers.
+
+**FormLogic's own chat** has the same tools with these differences, each because what the model
+does there can be steered by text a stranger wrote into the very records (or the member's own
+name) it reads, and a turn has six steps: it does not delete a record or remove a member; it
+suspends a member and does not let one in or change a role (someone waiting for approval chose
+their own name); it does not open a members-only app to everyone; it does not rewrite a file too
+long to read in one answer; and it does not write an app file by file. A new app goes to AI Studio with
+`create_softn_app`, and a change to one that exists with `edit_softn_app` (chat only): the person is
+taken to the app's workspace, AI Studio makes the change while they watch, and they review it
+before it is published. One answer there carries 22,000 characters, so the guide is read a section
+at a time and a long file in parts.
+
+Proved end to end in `ui/e2e/mcp-softn-app.spec.ts`, which installs the worked example exactly as
+FormLogic's page writes it, uses it in a browser and reads its data back, and in
+`ui/e2e/softn-apps.spec.ts` for the chat's two hand-offs.
+
 ### Portable projects and Aokie via MCP
 
 These tools use the same project, composition and role services as App Studio.

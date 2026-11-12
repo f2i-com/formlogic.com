@@ -1515,6 +1515,20 @@ class NativeAppService
     }
 
     /**
+     * The app's media files and how large each is, as its media pack lists them; [] when it has
+     * none. For what names an app's media without sending them (an AI reading the project).
+     *
+     * @return array<string, int> path to size in bytes
+     */
+    public function mediaSizes(string $appId): array
+    {
+        $stream = $this->runtimeProject($appId, true)['media']['stream'] ?? null;
+        if (!is_resource($stream)) return [];
+        try { return array_map(static fn (array $at): int => $at[1], self::packIndex($stream)['files'] ?? []); }
+        finally { fclose($stream); }
+    }
+
+    /**
      * One of the app's media files, byte for byte as it was installed, read from its media pack
      * under the app's lock; null when it has no such file. For what is drawn from it, such as the
      * icon a page and a home screen show (AppLookService).
@@ -2586,6 +2600,20 @@ class NativeAppService
         } finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
+    /**
+     * What a record's revision is keyed with (NativeRecordStore): a key of its own, derived from the
+     * installation's key, which only this server holds and which stays the same from version to
+     * version, so a revision read before an update of the app still names the record after it. Null
+     * where the installation has no key to read: the revision is then unkeyed, as it was.
+     */
+    private static function revisionKey(string $configPath): ?string
+    {
+        if (!is_file($configPath)) return null;
+        $config = json_decode((string) @file_get_contents($configPath), true);
+        $key = is_array($config) && is_string($config['keyHex'] ?? null) && preg_match('/^[a-f0-9]{64}$/Di', $config['keyHex']) ? hex2bin($config['keyHex']) : false;
+        return $key === false ? null : hash_hmac('sha256', 'formlogic:record-revision:v1', $key, true);
+    }
+
     public function manageRecord(string $appId, array $input, array $subscriptions = [], ?int $generation = null): array
     {
         [$root, $lock] = $this->openShared($appId, $generation);
@@ -2594,7 +2622,7 @@ class NativeAppService
             if (!is_file($path)) throw new RuntimeException('App database not found', 404);
             self::assertOwnDatabase($path);
             $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-            return (new NativeRecordStore($db))->operate($input, $subscriptions);
+            return (new NativeRecordStore($db, self::revisionKey($root . '/private/config.json')))->operate($input, $subscriptions);
         } finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 

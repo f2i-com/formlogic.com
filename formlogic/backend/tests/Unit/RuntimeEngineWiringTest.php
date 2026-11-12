@@ -129,11 +129,12 @@ class RuntimeEngineWiringTest extends TestCase
     public function testTheAdminControllerIsGivenTheEngineServiceExplicitly(): void
     {
         // AdminController is registered by hand, so its optional parameters are only filled if the
-        // registration passes them.
-        $this->assertMatchesRegularExpression(
-            '/\$c->get\(\\\\FormLogic\\\\Services\\\\RuntimeEngineService::class\)\s*\);\s*\}\);/',
-            self::$source
-        );
+        // registration passes them. Read out of its own registration: this used to look for the
+        // engine service as the last argument of any registration, which another service's
+        // happened to be, and so held nothing about this one.
+        $this->assertSame(1, preg_match('/\$container->set\(\\\\FormLogic\\\\Controllers\\\\AdminController::class, function \(Container \$c\) \{(.*?)\n\}\);/s', self::$source, $registration));
+        $this->assertStringContainsString('$c->get(\FormLogic\Services\RuntimeEngineService::class)', $registration[1]);
+        $this->assertStringNotContainsString('$container->set(', $registration[1], 'the registration read is the admin controller\'s alone');
     }
 
     public function testTheAdminEndpointsRideTheAdminGateAndTheStepUpLimiter(): void

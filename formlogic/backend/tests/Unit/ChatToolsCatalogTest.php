@@ -37,6 +37,10 @@ class ChatToolsCatalogTest extends TestCase
             'get_workspace_template', 'get_app_project', 'publish_app_project',
             'get_native_app_template', 'get_native_app_project', 'publish_native_app_project', 'update_native_app_files', 'list_native_app_records',
             'create_softn_app',
+            'edit_softn_app',
+            'get_softn_app', 'get_softn_guide', 'lookup_softn_components',
+            'get_native_app_record', 'change_native_app_record',
+            'list_app_members', 'update_app_member',
         ], array_column($catalog, 'name'));
         foreach ($catalog as $tool) {
             $this->assertSame(['name', 'description', 'inputSchema'], array_keys($tool));

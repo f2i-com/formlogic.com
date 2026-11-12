@@ -23,6 +23,9 @@ final class RecordEventRouterWiringTest extends TestCase
         // App AI's worker catches up on the events of apps with AI on, every few seconds, and takes
         // the follow-up job a delivery asked for as soon as the delivery is made (contract §0.13).
         'src/Services/AppAiWorker.php' => 2,
+        // A record an AI created, corrected or deleted with change_native_app_record (over MCP, or
+        // from the chat): its table's automations follow it as they follow the owner's own edit.
+        'src/Services/SoftnAppTools.php' => 1,
     ];
 
     public function testEveryDispatcherGoesThroughTheRouter(): void

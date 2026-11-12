@@ -38,6 +38,14 @@ class ChatToolsService
         'get_native_app_template' => 'apps:read', 'get_native_app_project' => 'apps:read', 'create_softn_app' => 'apps:write',
         'publish_native_app_project' => 'apps:write', 'update_native_app_files' => 'apps:write',
         'list_native_app_records' => 'responses:read',
+        // A hosted SoftN app beyond its source (SoftnAppTools). What an AI is told about writing one
+        // and how an app stands are reads of the app. Its records are records: reading them, and
+        // the people who use it (names and email addresses), takes the records scope, and changing
+        // a record the explicit write scope, as for a form's. Members are managed as roles are.
+        'get_softn_guide' => 'apps:read', 'lookup_softn_components' => 'apps:read', 'get_softn_app' => 'apps:read',
+        'edit_softn_app' => 'apps:write',
+        'get_native_app_record' => 'responses:read', 'change_native_app_record' => 'responses:write',
+        'list_app_members' => 'responses:read', 'update_app_member' => 'apps:write', 'remove_app_member' => 'apps:write',
         'list_app_roles' => 'apps:read', 'create_app_role' => 'apps:write',
         'set_app_role_permissions' => 'apps:write', 'set_app_role_connector_grants' => 'apps:write',
         'get_aokie_starter' => 'apps:read', 'install_aokie_starter' => 'apps:write',
@@ -90,7 +98,18 @@ class ChatToolsService
         'get_native_app_template', 'get_native_app_project', 'publish_native_app_project', 'update_native_app_files', 'list_native_app_records',
         // A hosted SoftN app in one step; the chat then takes the person to AI Studio to build it.
         'create_softn_app',
+        // …and a change to one that exists, handed to AI Studio the same way.
+        'edit_softn_app',
+        // Looking after a SoftN app from chat: how it stands, how its language is written, a
+        // record whole, a record created or corrected, and who can use it. Deleting a record and
+        // removing a member are not done from chat (callChatTool; remove_app_member is not here).
+        'get_softn_app', 'get_softn_guide', 'lookup_softn_components',
+        'get_native_app_record', 'change_native_app_record',
+        'list_app_members', 'update_app_member',
     ];
+
+    /** Tools only FormLogic's own chat has: an MCP client is not shown them. */
+    public const CHAT_ONLY_TOOLS = ['edit_softn_app'];
 
     public function __construct(
         private FormService $formService,
@@ -114,7 +133,25 @@ class ChatToolsService
         private ?RuntimeEngineService $engines = null,
         // Publishing hosted SoftN apps to a public SoftN directory. Null: the softn_* tools say it is not set up.
         private ?SoftnDirectoryService $softnDirectory = null,
+        // Delivers the automations a record write queued (App AI's jobs among them). Null: the
+        // write is made and they wait for the next delivery.
+        private ?NativeRecordEventRouter $recordEvents = null,
+        // What an AI is told about writing a SoftN app (get_softn_guide, lookup_softn_components).
+        private ?SoftnKnowledge $softnKnowledge = null,
     ) {}
+
+    /** The tools for a hosted SoftN app (SoftnAppTools), over the services this was built with. */
+    private function softnApps(): SoftnAppTools
+    {
+        return $this->softnAppTools ??= new SoftnAppTools($this->appService, $this->native ??= new NativeAppService(), $this->appUsers, $this->flowService, $this->recordEvents, $this->engines);
+    }
+
+    private ?SoftnAppTools $softnAppTools = null;
+
+    private function softnKnowledge(): SoftnKnowledge
+    {
+        return $this->softnKnowledge ??= new SoftnKnowledge();
+    }
 
     // ── Chat-surface entry (subset-restricted) ──────────────────────────────────────────
 
@@ -163,6 +200,52 @@ class ChatToolsService
                     'native_access_refused'
                 );
             }
+        }
+        // …and changed by the smaller tool, which can now say who may open the app too.
+        if ($name === 'update_native_app_files' && ($args['access'] ?? null) === 'application') {
+            $stored = $this->appService->getApp((string) ($args['appId'] ?? ''));
+            if (is_array($stored) && ($stored['ownerId'] ?? null) === $ctx->userId
+                && self::opensNativeApp(['access' => 'application'], ($this->native ??= new NativeAppService())->summary((string) $stored['id']))) {
+                throw new ChatToolDeniedException(
+                    'A members-only app is not opened to everyone from chat — change who can open it in the app\'s settings.',
+                    'native_access_refused'
+                );
+            }
+        }
+        // Letting one person in is opening the app to them: someone waiting for the owner's approval
+        // chose their own name, which the model has just read in the list of members. From chat a
+        // member is suspended; approving one, letting one back in and changing a role are the
+        // owner's, on the app's Members page.
+        if ($name === 'update_app_member' && (array_key_exists('roleId', $args) || ($args['status'] ?? null) !== 'suspended')) {
+            throw new ChatToolDeniedException(
+                'From chat a member can be suspended, not let in or given another role — approve them, let them back in or change their role on the app\'s Members page.',
+                'member_refused'
+            );
+        }
+        // A file is written whole, and a chat turn is handed only part of a long one: writing it back
+        // from that part would cut the live page short. A long file's change goes to AI Studio.
+        if ($name === 'update_native_app_files' && is_array($args['files'] ?? null)) {
+            $stored = $this->appService->getApp((string) ($args['appId'] ?? ''));
+            if (is_array($stored) && ($stored['ownerId'] ?? null) === $ctx->userId) {
+                $installed = ($this->native ??= new NativeAppService())->summary((string) $stored['id']);
+                foreach ($args['files'] as $path => $content) {
+                    $was = is_array($installed) && is_string($path) ? ($installed['files'][$path] ?? null) : null;
+                    if (is_string($was) && strlen((string) json_encode($was, JSON_UNESCAPED_SLASHES)) > SoftnAppTools::READ_CHARS_CHAT) {
+                        throw new ChatToolDeniedException(
+                            $path . ' is longer than a chat turn can read in one piece, so it is not rewritten from chat — hand the change to AI Studio with edit_softn_app.',
+                            'file_too_long'
+                        );
+                    }
+                }
+            }
+        }
+        // What chat does not undo: a deleted record is gone, and what the model does can be steered
+        // by text a stranger wrote into the very records it is reading. Chat adds and corrects.
+        if ($name === 'change_native_app_record' && ($args['action'] ?? null) === 'delete') {
+            throw new ChatToolDeniedException(
+                'Deleting a record is not done from chat — delete it in the app\'s Data section, where it is confirmed. From chat a record can be added or corrected.',
+                'delete_refused'
+            );
         }
         // The same line for app logic: a script that holds a connector permission texts and calls
         // when the app's events fire. Chat may edit logic around a permission the person gave; it
@@ -314,7 +397,8 @@ class ChatToolsService
                     $mine = $ctx->createdApps;
                     $apps = array_values(array_filter($apps, static fn ($a) => in_array($a['id'], $mine, true)));
                 }
-                $data = array_map(static fn ($a) => ['id' => $a['id'], 'name' => $a['name'], 'slug' => $a['slug'] ?? null, 'status' => $a['status'] ?? 'draft'], $apps);
+                // kind: a SoftN app's interface, backend and data are its SoftN project (get_softn_app); a forms app's are its forms.
+                $data = array_map(static fn ($a) => ['id' => $a['id'], 'name' => $a['name'], 'slug' => $a['slug'] ?? null, 'status' => $a['status'] ?? 'draft', 'kind' => !empty($a['settings']['softnApp']) ? 'softn' : 'forms'], $apps);
                 break;
             case 'create_app':
                 if ($scopedApp !== null) {
@@ -375,7 +459,10 @@ class ChatToolsService
                 $id = (string)($args['appId'] ?? $scopedApp ?? '');
                 $this->assertAppScope($ctx, $id);
                 $app = $this->ownApp($id, $userId);
-                if ($name === 'get_app') $data = ['app' => $app, 'forms' => $this->appService->getAppForms($id)];
+                if ($name === 'get_app') {
+                    $data = ['app' => $app, 'forms' => $this->appService->getAppForms($id)];
+                    if (!empty($app['settings']['softnApp'])) $data += ['kind' => 'softn', 'next' => 'This is a SoftN app: its interface, backend and data are its SoftN project, not forms. get_softn_app says how it stands; get_native_app_project reads its source.'];
+                }
                 else {
                     if (!$this->hosting) throw new \RuntimeException('Hosting is unavailable.');
                     $data = ['deployment' => $this->hosting->get($id, true)];
@@ -475,13 +562,15 @@ class ChatToolsService
                     'app' => ['id' => $appId, 'name' => $app['name'] ?? $appName, 'slug' => $app['slug'] ?? null],
                     'version' => $version,
                     'request' => $requestText,
-                    'workspaceUrl' => '/apps/' . $appId . '/softn',
+                    'workspaceUrl' => SoftnAppTools::addresses(['id' => $appId, 'slug' => $app['slug'] ?? null], null, $ctx)['workspaceUrl'],
+                    // Where it runs. For its owner alone until it is published (update_app {status: "published"}).
+                    'appUrl' => SoftnAppTools::addresses(['id' => $appId, 'slug' => $app['slug'] ?? null], null, $ctx)['appUrl'],
                     // Only FormLogic's own chat takes the person to AI Studio with the request; an MCP
                     // client builds it itself, or sends the person to the workspace to have Studio do it.
                     'next' => $installError !== null
                         ? 'Created, but its starter could not be installed: ' . $installError
                         : ($ctx->source === 'mcp'
-                            ? 'Created with a working starter. Build what was asked: read it with get_native_app_project, then change it with update_native_app_files (a schema change is a new numbered migration listed in manifest.json). Or send the person to ' . '/apps/' . $appId . '/softn' . ', where AI Studio can build it with them.'
+                            ? 'Created with a working starter. Build what was asked: read get_softn_guide (and its "language" topic) before writing anything, read the starter with get_native_app_project, then change it with update_native_app_files (a schema change is a new numbered migration listed in manifest.json). Or send the person to ' . '/apps/' . $appId . '/softn' . ', where AI Studio can build it with them.'
                             : 'Created with a working starter. FormLogic takes the person to AI Studio, which builds the app from the request while they watch; do not change its files yourself.'),
                 ];
                 $ctx->audit('create_softn_app', ['appId' => $appId, 'version' => $version]);
@@ -496,38 +585,114 @@ class ChatToolsService
             case 'get_native_app_template':
                 $data = ['project' => json_decode(file_get_contents(dirname(__DIR__, 2) . '/resources/native-app-starter.json'), true, 64, JSON_THROW_ON_ERROR)];
                 break;
+            // What an AI is told about writing a SoftN app: FormLogic's own page first, then SoftN's
+            // guide and reference by topic. A chat turn is handed less than an MCP client is.
+            case 'get_softn_guide': {
+                $limit = $ctx->source === 'mcp' ? SoftnKnowledge::FULL_LIMIT : SoftnKnowledge::CHAT_LIMIT;
+                $found = $this->softnKnowledge()->topic(is_string($args['topic'] ?? null) ? $args['topic'] : '', $limit);
+                if (!$found['ok']) throw new \InvalidArgumentException($found['text']);
+                $data = ['guide' => $found['text']];
+                break;
+            }
+            case 'lookup_softn_components': {
+                if (!is_array($args['names'] ?? null) || !array_is_list($args['names'])) throw new \InvalidArgumentException('names is a list of component names, for example ["Button", "Table"].');
+                $found = $this->softnKnowledge()->components($args['names']);
+                if (!$found['ok']) throw new \InvalidArgumentException($found['text']);
+                $data = ['components' => $found['text']];
+                break;
+            }
+            case 'get_softn_app':
+            case 'edit_softn_app':
             case 'get_native_app_project':
             case 'publish_native_app_project':
             case 'update_native_app_files':
-            case 'list_native_app_records': {
+            case 'list_native_app_records':
+            case 'get_native_app_record':
+            case 'change_native_app_record':
+            case 'list_app_members':
+            case 'update_app_member':
+            case 'remove_app_member': {
                 $id = (string) ($args['appId'] ?? $scopedApp ?? '');
                 $this->assertAppScope($ctx, $id);
                 $owned = $this->ownApp($id, $userId);
                 $native = $this->native ??= new NativeAppService();
-                if ($name === 'list_native_app_records') {
+                $softn = $this->softnApps();
+                $named = ['appId' => $id, 'softnApp' => !empty($owned['settings']['softnApp'])];
+                if ($name === 'get_softn_app') {
+                    // How many rows each table holds is something about the app's data: said to a
+                    // connection that may read records, and to the chat (which acts as the person).
+                    // One that may not is told how many tables there are and how large the database is.
+                    $mayReadRecords = true;
+                    try { $ctx->requireScope('responses:read'); } catch (ChatToolDeniedException) { $mayReadRecords = false; }
+                    $data = $softn->overview($owned, $ctx, $mayReadRecords);
+                } elseif ($name === 'edit_softn_app') {
+                    // A change to an existing SoftN app, handed to AI Studio as a new one is: only
+                    // FormLogic's own chat can take the person there, so only it offers this.
+                    if ($ctx->source === 'mcp') throw new \InvalidArgumentException('edit_softn_app is FormLogic\'s own chat taking the person to AI Studio. Over MCP, change the app yourself: get_native_app_project, then update_native_app_files.');
+                    $ctx->requireScope('screens:write');
+                    $requestText = trim((string) ($args['request'] ?? ''));
+                    if ($requestText === '' || mb_strlen($requestText) > 8000) throw new \InvalidArgumentException('Say what to change, in up to 8,000 characters.');
+                    $installed = $native->summary($id);
+                    if ($installed === null) throw new \InvalidArgumentException('Nothing is installed in this app yet, so there is nothing for AI Studio to change. Open its workspace to give it a first version.');
+                    $data = [
+                        'app' => ['id' => $id, 'name' => $owned['name'] ?? null, 'slug' => $owned['slug'] ?? null],
+                        'version' => $installed['version'] ?? null,
+                        'request' => $requestText,
+                        'edit' => true,
+                        'next' => 'FormLogic takes the person to this app\'s workspace, where AI Studio makes the change from the request while they watch, and they review it before it is published. Nothing has changed yet; do not change its files yourself as well.',
+                    ] + SoftnAppTools::addresses($owned, $installed, $ctx);
+                    $ctx->audit('edit_softn_app', ['appId' => $id]);
+                } elseif ($name === 'list_native_app_records') {
                     $ctx->requireScope('apps:read');
-                    $data = $native->records($id, isset($args['table']) ? (string) $args['table'] : null, (int) ($args['offset'] ?? 0));
+                    // The app's id and whether it is a SoftN app go with each answer: FormLogic's chat links what it
+                    // did to the app's own page, which only a SoftN app has (a forms app that hosts a project has none).
+                    $data = $named + $softn->records($owned, $args);
+                } elseif ($name === 'get_native_app_record') {
+                    $data = $named + ['table' => $args['table'] ?? null] + $softn->record($owned, $args);
+                } elseif ($name === 'change_native_app_record') {
+                    $data = $named + $softn->changeRecord($owned, $args);
+                    $ctx->audit('change_native_app_record', ['appId' => $id, 'table' => $args['table'] ?? null, 'action' => $args['action'] ?? null]);
+                } elseif ($name === 'list_app_members') {
+                    $data = $named + $softn->members($owned);
+                } elseif ($name === 'update_app_member') {
+                    $data = $named + $softn->updateMember($owned, $args, $userId);
+                    $ctx->audit('update_app_member', ['appId' => $id, 'memberId' => $data['memberId']] + array_intersect_key($data, ['status' => 1, 'roleId' => 1]));
+                } elseif ($name === 'remove_app_member') {
+                    $data = $named + $softn->removeMember($owned, $args, $userId);
+                    $ctx->audit('remove_app_member', ['appId' => $id, 'memberId' => $data['memberId']]);
                 } elseif ($name === 'get_native_app_project') {
-                    $project = $native->get($id);
-                    if (isset($args['file'])) {
-                        if (!$project || !is_string($args['file']) || !isset($project['files'][$args['file']])) throw new \InvalidArgumentException('Project file not found');
-                        $data = ['version' => $project['version'], 'file' => $args['file'], 'source' => $project['files'][$args['file']], 'files' => array_keys($project['files'])];
-                    } else $data = ['project' => $project];
+                    $data = $softn->read($owned, $args, $ctx);
                 } else {
                     $ctx->requireScope('screens:write');
                     if (!is_int($args['expectedVersion'] ?? null) || $args['expectedVersion'] < 0) throw new \InvalidArgumentException('Provide the last read expectedVersion (0 for first installation)');
-                    $project = $args['project'] ?? null;
+                    $installed = $native->get($id);
                     if ($name === 'update_native_app_files') {
-                        $project = $native->get($id);
-                        if (!$project || !is_array($args['files'] ?? null) || !$args['files']) throw new \InvalidArgumentException('Provide changed source files for an installed project');
-                        $project['files'] = array_merge($project['files'], $args['files']);
+                        if (!$installed) throw new \InvalidArgumentException('Nothing is installed in this app yet: install a first version with publish_native_app_project (expectedVersion 0).');
+                        $project = $softn->changed($installed, $args);
+                    } else {
+                        $project = $args['project'] ?? null;
+                        if (!is_array($project)) throw new \InvalidArgumentException('Provide the complete native app project');
+                        // Said here, in words, before anything reads the files by name.
+                        if (!is_array($project['files'] ?? null) || ($project['files'] !== [] && array_is_list($project['files']))) throw new \InvalidArgumentException('project.files is an object of path to the file\'s text, with manifest.json among them: {"manifest.json": "…", "index.html": "…"}.');
+                        // Media are not read back to an AI, so a project sent without any (or with
+                        // null for them) keeps the app's own; `assets: {}` is how a project says it has none.
+                        if (!isset($project['assets']) && is_array($installed['assets'] ?? null)) $project['assets'] = $installed['assets'];
+                        // Where the app opens is kept too, as who can open it is (install keeps `access`):
+                        // a project that does not say would otherwise be taken off the app's own address.
+                        if (!array_key_exists('home', $project)) $project['home'] = $installed !== null ? !empty($installed['home']) : !empty($owned['settings']['softnApp']);
                     }
-                    if (!is_array($project)) throw new \InvalidArgumentException('Provide the complete native app project');
-                    if (self::opensNativeApp($project, $native->get($id))) $ctx->requireScope('responses:read');
+                    if (self::opensNativeApp($project, $installed)) $ctx->requireScope('responses:read');
                     $torch = $this->engines?->torchRefusal($owned, NativeAppService::clientFiles($project));
                     if ($torch !== null) throw new \InvalidArgumentException($torch);
+                    $installedVersion = (int) ($installed['version'] ?? 0);
+                    // Said for an AI before the install would say it for a person at a page ("Reload before importing").
+                    if ($installedVersion !== $args['expectedVersion']) {
+                        throw new \InvalidArgumentException($installedVersion === 0
+                            ? 'Nothing is installed in this app yet, so a first version is expectedVersion 0.'
+                            : 'The app is at version ' . $installedVersion . ', not ' . $args['expectedVersion'] . ': it changed since you read it, or this is not the version you read. Read it again with get_native_app_project and make the change on what is there now. Nothing was installed.');
+                    }
                     $saved = $native->install($id, $project, $args['expectedVersion']);
-                    $data = ['appId' => $id, 'version' => $saved['version'], 'files' => array_keys($saved['files']), 'access' => $saved['access'], 'home' => $saved['home'] ?? false, 'editorUrl' => '/apps/' . $id . '/studio/screens'];
+                    $data = $softn->installed($owned, $saved, $ctx);
                     $ctx->audit($name, ['appId' => $id, 'version' => $saved['version']]);
                 }
                 break;
@@ -1599,11 +1764,20 @@ class ChatToolsService
             ['name' => 'install_aokie_starter', 'scope' => 'apps:write', 'description' => 'Install the bundled Aokie forms, screens and flows as a new app. Requires forms:write and screens:write; non-empty connector grants also require connector:command. Explicit approvedConnectorGrants is mandatory; unapproved grants stay withheld. Honors verified-package policy and form quotas. Then use compose_apps to integrate into an existing app. Native OAIY plugin installation and device pairing are separate steps.', 'inputSchema' => $obj(['approvedConnectorGrants' => ['type' => 'array', 'items' => ['type' => 'string']]], ['approvedConnectorGrants'])],
             ['name' => 'get_app', 'scope' => 'apps:read', 'description' => 'Read an owned app including its settings, custom logic, dashboard and attached form identities. Read before editing or composing.', 'inputSchema' => $obj(['appId' => ['type' => 'string']], ['appId'])],
             ['name' => 'create_softn_app', 'scope' => 'apps:write', 'description' => 'Create a hosted SoftN app in one step: an app of its own with a working interface, private backend and SQLite database, open at the app’s address. Use it when the person wants a website, tool or web app built for them rather than forms. Put everything they asked for in request, in their words, with any detail they gave. In FormLogic’s chat the person is then taken to AI Studio, which builds the app from it while they watch; over MCP, build it with get_native_app_project and update_native_app_files, or send the person to the returned workspaceUrl. Requires apps and screen editing.', 'inputSchema' => $obj(['name' => ['type' => 'string', 'description' => 'The app name, 1 to 120 characters.'], 'request' => ['type' => 'string', 'description' => 'What to build, in the person’s words: pages, data, behaviour and style. Up to 8,000 characters.'], 'description' => ['type' => 'string', 'description' => 'One sentence shown with the app.']], ['name', 'request'])],
-            ['name' => 'get_native_app_template', 'scope' => 'apps:read', 'description' => 'Start here to create a portable .softn app with an editable interface, private ZIPP .logic backend and SQLite. Returns a working notes project. Create an app container, customize this project, then publish_native_app_project. Membership is required by default; application access preserves an existing app sign-in.', 'inputSchema' => $obj([])],
-            ['name' => 'get_native_app_project', 'scope' => 'apps:read', 'description' => 'Read a native .softn project and its current version. Optional file reads just one source file plus the file list. Backend files are private. Read before changing source; records and server credentials are not part of the project.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'file' => ['type' => 'string']], ['appId'])],
-            ['name' => 'publish_native_app_project', 'scope' => 'apps:write', 'description' => 'Install or update a complete native app project: {files:{path:source},assets:{path:base64},access:members|application,home:boolean}. Requires apps and screen editing permission. Backend .logic runs in ZIPP; SQLite records survive updates. Read current version first; expectedVersion=0 only for first installation. This does not publish the parent app to visitors. The interface can then be edited with Visual Builder or AI Studio in FormLogic.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'expectedVersion' => ['type' => 'integer', 'minimum' => 0], 'project' => ['type' => 'object']], ['appId','expectedVersion','project'])],
-            ['name' => 'update_native_app_files', 'scope' => 'apps:write', 'description' => 'Update only named source files in an installed native app, preserving other files, assets, access and records. Read the source and version first. Existing SQL migrations are immutable: add a numbered migration and update manifest.json to change schema. Provide files as {path:source}.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'expectedVersion' => ['type' => 'integer', 'minimum' => 1], 'files' => ['type' => 'object', 'additionalProperties' => ['type' => 'string']]], ['appId','expectedVersion','files'])],
-            ['name' => 'list_native_app_records', 'scope' => 'responses:read', 'description' => 'List native SQLite tables, or read a table page (50 rows, offset). Uses the app owner record permissions. Common secret columns are hidden and long values are previews. Record triggers use app.record.created.TABLE, app.record.updated.TABLE or app.record.deleted.TABLE with create_flow_binding.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'table' => ['type' => 'string'], 'offset' => ['type' => 'integer', 'minimum' => 0]], ['appId'])],
+            ['name' => 'get_softn_guide', 'scope' => 'apps:read', 'description' => 'READ THIS BEFORE WRITING OR CHANGING A SOFTN APP. With no topic: how a SoftN app is hosted here (its files, backend, database, who can open it, what it may use, limits), which tool does what, and the list of everything else there is to read. topic "language" is SoftN’s own guide to writing pages, logic and a private backend, with a complete example ("language-python" where the page logic is Python; "language#<section>" for one section). topic "components" lists every component. Any published guide by its name, or one section of it ("ui-language#bindings").', 'inputSchema' => $obj(['topic' => ['type' => 'string', 'description' => 'Leave out for the first page. Otherwise language, language-python, components, a section such as language#backend, or a guide’s name.']])],
+            ['name' => 'lookup_softn_components', 'scope' => 'apps:read', 'description' => 'The props, events and a usage line of SoftN components by name (up to 12 in a call), from the reference of the SoftN release this site runs. Look a component up before using it: its props cannot be guessed, and a prop it does not have is ignored without an error.', 'inputSchema' => $obj(['names' => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => 'Component names, such as ["Button", "Table", "Modal"].']], ['names'])],
+            ['name' => 'get_softn_app', 'scope' => 'apps:read', 'description' => 'How one SoftN app stands: the installed version, where it runs (appUrl) and where its owner manages it (workspaceUrl), whether it is published and who can open it, its main page and backend routes, its database (how many rows each table holds, where the connection may read records), and how many members it has. Start here when asked about a SoftN app that exists (list_apps marks them kind "softn").', 'inputSchema' => $obj(['appId' => ['type' => 'string']], ['appId'])],
+            ['name' => 'edit_softn_app', 'scope' => 'apps:write', 'description' => 'Change a SoftN app that exists by handing the request to AI Studio: FormLogic takes the person to the app’s workspace, where AI Studio makes the change while they watch, and they review it before it is published. Use it for any change to how the app looks or behaves: its pages, logic, backend or database. Put everything they asked for in request, in their words, with any detail they gave. Nothing changes until they publish what Studio made.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'request' => ['type' => 'string', 'description' => 'What to change, in the person’s words. Up to 8,000 characters.']], ['appId', 'request'])],
+            ['name' => 'get_native_app_template', 'scope' => 'apps:read', 'description' => 'The working starter a new SoftN app begins as (create_softn_app installs it for you): a page, a private backend with two routes, and one database table. Useful to see a complete small project; the app it describes is the one get_softn_guide explains.', 'inputSchema' => $obj([])],
+            ['name' => 'get_native_app_project', 'scope' => 'apps:read', 'description' => 'Read a SoftN app’s project: its version, who can open it, and every source file and media file by path and size, with the source itself when the project is small. Read source by name with files (up to 20 paths in a call; each comes whole or is named as not sent) or one file (which comes in parts with offset when it is longer than an answer carries; a file is written back whole, so read all of it before changing it). Media are listed and never sent. Backend files are the owner’s to read, and never served to a browser. Read before every change: an update names the version you read. Records and server credentials are not part of the project.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'file' => ['type' => 'string', 'description' => 'One source file to read. A file longer than one answer carries comes in parts: the answer says whole: false and nextOffset.'], 'offset' => ['type' => 'integer', 'minimum' => 0, 'description' => 'With file: the byte to read on from (the nextOffset of the part before).'], 'files' => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => 'Source files to read, by path.']], ['appId'])],
+            ['name' => 'publish_native_app_project', 'scope' => 'apps:write', 'description' => 'Install a COMPLETE SoftN project as the app’s next version, or its first (expectedVersion 0): {files:{path:text}, assets:{path:base64}, access:"members"|"application", home:boolean}. Every source file must be in it: one left out is gone from the new version. Media are kept as they are when assets is left out (send assets: {} for none), and so are access and home when they are left out. To change a few files of an installed app, use update_native_app_files. Requires apps and screen editing. The backend is started on the new version before it is kept, and a version that does not start is refused with what to fix. The database’s records survive updates. This does not publish the app to visitors: update_app does.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'expectedVersion' => ['type' => 'integer', 'minimum' => 0], 'project' => ['type' => 'object']], ['appId','expectedVersion','project'])],
+            ['name' => 'update_native_app_files', 'scope' => 'apps:write', 'description' => 'Change an installed SoftN app. Write source files whole (files: {path: text}), take files out (remove: [paths]), add or replace media (media: {path: base64}, under assets/), take media out (removeMedia: [paths]), and say who may open it (access) or whether it opens at the app’s address (home). Everything not named stays as it is, the database and its records included. expectedVersion is the version you read. The backend is started on the new version before it is kept: one that does not start is refused with what to fix, and nothing changes. A SQL migration that has run cannot change: add the next numbered one and list it in manifest.json. A mistake in a page shows only in the browser, so open appUrl, or ask the person to, before calling a change done.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'expectedVersion' => ['type' => 'integer', 'minimum' => 1], 'files' => ['type' => 'object', 'additionalProperties' => ['type' => 'string'], 'description' => 'Source files to write, each whole: {"ui/main.ui": "…"}.'], 'remove' => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => 'Source files to take out.'], 'media' => ['type' => 'object', 'additionalProperties' => ['type' => 'string'], 'description' => 'Media to add or replace, base64: {"assets/logo.png": "…"}.'], 'removeMedia' => ['type' => 'array', 'items' => ['type' => 'string']], 'access' => ['type' => 'string', 'enum' => ['members', 'application'], 'description' => 'members: FormLogic membership. application: the app’s own sign-in, or open to anyone.'], 'home' => ['type' => 'boolean']], ['appId','expectedVersion'])],
+            ['name' => 'list_native_app_records', 'scope' => 'responses:read', 'description' => 'A SoftN app’s database. With no table: its tables and how many rows each has. With a table: a page of rows (limit 1 to 250, 50 unless said; offset), which can be searched (search: text found in any shown column), filtered (filter: up to 8 of {column, op, value}, all of which must hold; op is eq, ne, gt, gte, lt, lte, contains, starts, empty or notEmpty) and sorted (sort: a column; dir: asc or desc). It answers how many rows the table has (total) and how many match (matching), the columns, the rows, and each row’s key. view: "structure" gives the table’s columns, indexes and foreign keys instead. Long values are 400-character previews (get_native_app_record gives a row whole), and columns that look like credentials are never shown. Record triggers use app.record.created.TABLE, app.record.updated.TABLE or app.record.deleted.TABLE with create_flow_binding.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'table' => ['type' => 'string'], 'offset' => ['type' => 'integer', 'minimum' => 0], 'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 250], 'search' => ['type' => 'string'], 'filter' => ['type' => 'array', 'items' => $obj(['column' => ['type' => 'string'], 'op' => ['type' => 'string', 'enum' => ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains', 'starts', 'empty', 'notEmpty']], 'value' => ['type' => 'string']], ['column', 'op'])], 'sort' => ['type' => 'string'], 'dir' => ['type' => 'string', 'enum' => ['asc', 'desc']], 'view' => ['type' => 'string', 'enum' => ['structure']]], ['appId'])],
+            ['name' => 'get_native_app_record', 'scope' => 'responses:read', 'description' => 'One record of a SoftN app’s table, whole (each value up to 100 KB), with its revision. key is the row’s key as list_native_app_records gave it, such as {"id": "12"}. Its values are text, a number as its digits, so a large number is exact (a list’s previews give numbers as numbers). Read a record before changing or deleting it: the change names this revision.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'table' => ['type' => 'string'], 'key' => ['type' => 'object']], ['appId', 'table', 'key'])],
+            ['name' => 'change_native_app_record', 'scope' => 'responses:write', 'description' => 'Create, update or delete one record in a SoftN app’s database, as its owner does in the app’s Data section. The database’s own rules apply (required, unique, references) and the automations bound to the table run, but the app’s backend functions do NOT: use it to correct or moderate data, not as the app’s own API. create: {table, values}. update: {table, key, revision, values}, with only the fields that change. delete: {table, key, revision}, which cannot be undone and takes with it what the database cascades to. revision comes from get_native_app_record. Keys, generated and binary fields, and credential columns are not written.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'action' => ['type' => 'string', 'enum' => ['create', 'update', 'delete']], 'table' => ['type' => 'string'], 'key' => ['type' => 'object'], 'revision' => ['type' => 'string'], 'values' => ['type' => 'object']], ['appId', 'action', 'table'])],
+            ['name' => 'list_app_members', 'scope' => 'responses:read', 'description' => 'The people who can use an app that asks for FormLogic membership: each one’s name, email, role, status (active, pending or suspended) and when they joined, with the invitations still open. An app with its own sign-in keeps its accounts in its own database instead: read those with list_native_app_records.', 'inputSchema' => $obj(['appId' => ['type' => 'string']], ['appId'])],
+            ['name' => 'update_app_member', 'scope' => 'apps:write', 'description' => 'Suspend a member (status "suspended": they can no longer open the app), let one in or back in (status "active"), or give one another role (roleId, from list_app_roles). memberId comes from list_app_members. The owner is not changed, and nothing is sent to the member.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'memberId' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['active', 'suspended']], 'roleId' => ['type' => 'string']], ['appId', 'memberId'])],
+            ['name' => 'remove_app_member', 'scope' => 'apps:write', 'description' => 'Take a member out of an app. Their account on this site is untouched, what they saved in the app’s database stays, and they can be invited again. To keep someone out without removing them, suspend them with update_app_member.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'memberId' => ['type' => 'string']], ['appId', 'memberId'])],
             ['name' => 'get_app_project', 'scope' => 'apps:read', 'description' => 'Read the editable hosted app project: public .ui/.logic client, PRIVATE backend actions and current deployment version. Never place private actions or credentials in client files.', 'inputSchema' => $obj(['appId' => ['type' => 'string']], ['appId'])],
             ['name' => 'get_workspace_template', 'scope' => 'apps:read', 'description' => 'Get an editable Softn dashboard package connected to the current app forms, records and Aokie tools. Publish the returned package with publish_app_project. The workspaceInfo/workspaceRecords/workspaceOpen host callbacks are scoped to that app.', 'inputSchema' => $obj(['template' => ['type' => 'string', 'enum' => ['workspace', 'aokie'], 'description' => 'Choose a generic dashboard or the Aokie front desk with calls, transcripts, logs and appointments.']])],
             ['name' => 'publish_app_project', 'scope' => 'apps:write', 'description' => 'Publish a Softn client and private .logic backend actions with per-app SQLite. Also requires screens:write. Read get_app_project first; expectedVersion prevents overwriting newer work (0 for first publish). Package: {version:1,client:{"manifest.json":"...","ui/main.ui":"...","logic/main.logic":"..."},actions:{name:{source:"function onRequest(ctx) {...}",access:"owner|member",mode:"read|write"}}}. Private actions use ctx.db.get/list/put/remove. Open /app/<slug>/project after publishing.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'expectedVersion' => ['type' => 'integer', 'minimum' => 0], 'package' => ['type' => 'object']], ['appId', 'expectedVersion', 'package'])],
@@ -1676,15 +1850,32 @@ class ChatToolsService
         // What callChatTool() refuses, said where the model reads it, so it tells the person rather
         // than trying.
         $publicRecords = ' From chat, an existing form keeps its public records as they are: publicRecords is not turned on and publicRecordFields gains no field (the person does that in the form\'s screen studio).';
+        // A turn here has a few steps and is handed part of a long file: how a SoftN app looks and
+        // behaves is AI Studio's to change, and chat's own edits are small ones.
+        $toStudio = ' From chat this is for a small correction to a file you have just read. For anything more (a new page, new behaviour, a change to the backend or the database), use edit_softn_app, which hands the request to AI Studio.';
         $refusals = [
             'update_form' => $publicRecords . ' A form whose public records are on is not published from chat either.',
             'set_form_screen' => $publicRecords,
             'update_app' => ' From chat, app logic gains no connector.* permission: the person adds it in the app\'s logic editor.',
+            'update_native_app_files' => $toStudio . ' From chat a members-only app is not opened to everyone (access "application"): the person does that in the app\'s settings.',
+            'publish_native_app_project' => ' From chat, prefer edit_softn_app for a change to an existing app.',
+            'change_native_app_record' => ' From chat a record is created or corrected, not deleted: the person deletes it in the app\'s Data section, where it is confirmed.',
+            'get_softn_guide' => ' One answer here carries a section at a time: ask for "language#<section>" by the names the first page lists.',
+            'update_app_member' => ' From chat a member is suspended and nothing else: letting someone in (approving one who is waiting, or one who was suspended) and changing a role are the person\'s to do on the app\'s Members page.',
+            'get_native_app_project' => ' From chat a file that comes in parts is not rewritten: its change goes to AI Studio with edit_softn_app.',
         ];
         $out = [];
         foreach (self::CHAT_TOOL_NAMES as $name) {
             $def = $byName[$name];
             $schema = $def['inputSchema'];
+            if ($name === 'change_native_app_record' && isset($schema['properties']['action']['enum'])) {
+                $schema['properties']['action']['enum'] = ['create', 'update'];
+            }
+            if ($name === 'update_native_app_files') unset($schema['properties']['access']);
+            if ($name === 'update_app_member') {
+                unset($schema['properties']['roleId']);
+                $schema['properties']['status']['enum'] = ['suspended'];
+            }
             if ($name === 'update_form' && isset($schema['properties']['status']['enum'])) {
                 $schema['properties']['status']['enum'] = ['draft', 'published'];
             }

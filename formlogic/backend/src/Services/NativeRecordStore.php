@@ -9,7 +9,15 @@ use InvalidArgumentException;
 /** Owner database maintenance. App-specific validation remains in the app's routes. */
 final class NativeRecordStore
 {
-    public function __construct(private PDO $db) {}
+    /**
+     * `$revisionKey`: a secret of the installation's, which a record's revision is keyed with. The
+     * revision is made from the whole row, hidden columns included (a change to a credential is a
+     * change), and it is handed to whoever reads the record. Unkeyed it was a plain SHA-256 of the
+     * row: someone who may read records and not the backend (an AI's connection with the records
+     * scope) could try every four-digit PIN against it offline. Null keeps the unkeyed revision,
+     * for a caller with no installation behind it.
+     */
+    public function __construct(private PDO $db, private ?string $revisionKey = null) {}
 
     /**
      * Column names that hold a credential or sealed data: never listed, returned, searched,
@@ -531,7 +539,10 @@ final class NativeRecordStore
         return [$rows[0], $where, $values];
     }
 
-    private function revision(array $row): string { return hash('sha256', serialize($row)); }
+    private function revision(array $row): string
+    {
+        return $this->revisionKey === null ? hash('sha256', serialize($row)) : hash_hmac('sha256', serialize($row), $this->revisionKey);
+    }
 
     public function operate(array $input, array $subscriptions = []): array
     {

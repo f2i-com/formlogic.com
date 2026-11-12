@@ -35,12 +35,27 @@ Private actions define onRequest(ctx); ctx.db provides get/list/put/remove over 
 app's SQLite records. Keep private action source in package.actions, not client files.
 Downloaded client projects require a compatible authenticated host for backend calls.
 
-## Native projects, editors and SQLite records
-Use get_native_app_template for a working starter. Read get_native_app_project before
-editing; publish_native_app_project and update_native_app_files require the current
-expectedVersion. Native projects include .ui screens, private .logic route handlers,
-manifest routes and numbered SQL migrations. Keep the app's own authentication or
-choose FormLogic membership explicitly; owner administration is separate from visitors.
+## SoftN apps: a website, tool or web app of its own
+A SoftN app has its own pages and logic, a private backend and a SQLite database, and
+no forms. list_apps marks each app kind "softn" or "forms".
+1. create_softn_app {name, request}: a new app with a working starter.
+2. get_softn_guide (no topic), then get_softn_guide {topic: "language"}: READ BOTH
+   BEFORE WRITING A FILE. SoftN is its own language, not React, Vue or plain web pages.
+   lookup_softn_components {names} gives a component's props and events.
+3. get_native_app_project {appId}: the files and the version; files: [paths] reads them.
+4. update_native_app_files {appId, expectedVersion, files, remove, media, removeMedia}:
+   installs the next version. Its backend is started first, and a version that does
+   not start is refused with what to fix. A page is checked only in a browser: give
+   the person appUrl and ask what they see.
+5. update_app {appId, status: "published"} lets other people in.
+Look after one: get_softn_app (how it stands); list_native_app_records (search, filter,
+sort), get_native_app_record and change_native_app_record (its data; these need the
+records permissions); list_app_members and update_app_member (its people).
+A project's pages are .html (or .ui), their logic .js (or .logic), with .css, a backend
+in server/*.logic and numbered server/migrations/*.sql; media go under assets/.
+publish_native_app_project and update_native_app_files require the current
+expectedVersion. Keep the app's own authentication or choose FormLogic membership
+explicitly; owner administration is separate from visitors.
 
 In App Studio, open Screens > Hosting & app tools > Native app hosting. Open Visual
 Builder for layout or Open AI Studio for source/AI work. Review changes returns an

@@ -762,7 +762,8 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         $c->get(\FormLogic\Services\PackService::class),
         $c->get(\FormLogic\Services\AppUserService::class),
         $c->get(\FormLogic\Services\RuntimeEngineService::class),
-        softnDirectory: $c->get(\FormLogic\Services\SoftnDirectoryService::class)
+        softnDirectory: $c->get(\FormLogic\Services\SoftnDirectoryService::class),
+        recordEvents: $c->get(\FormLogic\Services\NativeRecordEventRouter::class)
     );
 });
 // MCP OAuth 2.1: discovery metadata + client registration (DCR/CIMD) + code/refresh grants, so
@@ -1195,7 +1196,9 @@ $container->set(\FormLogic\Services\ChatToolsService::class, function (Container
         $c->get(\FormLogic\Services\AppCompositionService::class),
         $c->get(\FormLogic\Services\PackService::class),
         $c->get(\FormLogic\Services\AppUserService::class),
-        engines: $c->get(\FormLogic\Services\RuntimeEngineService::class)
+        engines: $c->get(\FormLogic\Services\RuntimeEngineService::class),
+        // A record the chat adds or corrects in a SoftN app runs the automations bound to its table.
+        recordEvents: $c->get(\FormLogic\Services\NativeRecordEventRouter::class)
     );
 });
 // Chat tool grants (plan Phase 6 section 6): per-turn hashed tokens bound to user + desktop
