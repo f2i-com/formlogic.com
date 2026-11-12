@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ShieldCheck } from 'lucide-react';
+import { BadgeCheck } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { Panel } from '../ui/Panel';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { STRENGTH_WORDS } from '../../lib/passes';
@@ -12,7 +13,7 @@ const valueOf = (receipt: AccessReceipt) => `${receipt.label} ${receipt.value}+`
 /**
  * The member's passes on this site, from its plugins: what each says, which plugin issued it, and a
  * way to withdraw it. What is kept is only what is listed here; withdrawing one closes the apps it
- * opened until they get it again.
+ * opened until they get it again. One of Settings' Security panels, at …/settings#passes.
  */
 export function PassesPanel() {
   const [receipts, setReceipts] = useState<AccessReceipt[] | null>(null);
@@ -37,16 +38,13 @@ export function PassesPanel() {
 
   const live = (receipts ?? []).filter((r) => r.live);
   return (
-    <div>
-      <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-        <ShieldCheck className="h-4 w-4" aria-hidden="true" />Passes
-      </h3>
-      <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
+    <Panel id="passes" title="Passes" icon={<BadgeCheck className="h-4 w-4" />}>
+      <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
         Apps on this site that ask for something before they open ask you once, through one of the site&apos;s plugins.
         Only what is listed here is kept: what it says, how it was shown, which plugin and when.
       </p>
       {receipts === null ? (
-        <p role="status" className="mt-2 text-sm text-gray-400">Loading…</p>
+        <p role="status" className="mt-2 text-sm text-gray-500 dark:text-slate-400">Loading…</p>
       ) : live.length === 0 ? (
         <p className="mt-2 text-sm text-gray-500 dark:text-slate-400">You have none.</p>
       ) : (
@@ -61,6 +59,6 @@ export function PassesPanel() {
           ))}
         </ul>
       )}
-    </div>
+    </Panel>
   );
 }

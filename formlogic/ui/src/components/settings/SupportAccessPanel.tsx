@@ -4,12 +4,14 @@ import { api } from '../../lib/api';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { Button } from '../ui/Button';
+import { Panel } from '../ui/Panel';
 
 const when = (iso: string) => new Date(iso).toLocaleString();
 
 /**
  * Settings, Security: whether site administrators may edit this account's automations, logic and
  * screens, a day at a time, and what they have done here. Hidden for the shared demo.
+ * One of the section's panels, at …/settings#support-access.
  */
 export function SupportAccessPanel() {
   const isDemo = useAuthStore((s) => !!s.user?.isDemo);
@@ -44,12 +46,9 @@ export function SupportAccessPanel() {
   };
 
   return (
+    <Panel id="support-access" title="Support access" icon={<LifeBuoy className="h-4 w-4" />}>
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <LifeBuoy className="h-4 w-4 text-gray-500 dark:text-slate-400" />
-        <h3 className="font-medium text-gray-900 dark:text-white">Support access</h3>
-      </div>
-      <p className="text-sm text-gray-500 dark:text-slate-400">
+      <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
         Site administrators can look at how your apps and forms are built when they help you. Editing your automations, logic or screens needs your permission, because that code runs on your records.
       </p>
       {failed ? (
@@ -69,9 +68,9 @@ export function SupportAccessPanel() {
             )}
           </div>
           <div>
-            <h4 className="text-sm font-medium text-gray-900 dark:text-white">Administrator activity</h4>
+            <h3 className="text-sm font-medium text-gray-900 dark:text-white">Administrator activity</h3>
             {state.activity.length === 0 ? (
-              <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">No administrator has been in your account.</p>
+              <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">No administrator has been in your account.</p>
             ) : (
               <ul className="mt-1 divide-y divide-gray-100 dark:divide-slate-800">
                 {state.activity.map((row, index) => (
@@ -86,5 +85,6 @@ export function SupportAccessPanel() {
         </>
       )}
     </div>
+    </Panel>
   );
 }

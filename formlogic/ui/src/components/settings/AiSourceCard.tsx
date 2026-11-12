@@ -405,7 +405,7 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
             <span className="block text-sm text-gray-500 dark:text-slate-400">
               Hosted by FormLogic Cloud — works with no desktop connected.
             </span>
-            <span className="block text-xs fl-mono text-gray-400 dark:text-slate-500 mt-1">{usageLine(loaded?.usage)}</span>
+            <span className="block text-xs fl-mono text-gray-500 dark:text-slate-400 mt-1">{usageLine(loaded?.usage)}</span>
           </span>
         </label>
 
@@ -678,7 +678,7 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
                 void autoSave({ chatToolMode: mode });
               }}
               className={cn(
-                'px-4 py-2 text-sm font-medium transition-colors',
+                'px-4 py-2 text-sm font-medium transition-colors max-sm:min-h-11',
                 chatToolMode === mode
                   ? 'bg-primary-600 text-primary-foreground'
                   : 'bg-white dark:bg-slate-900/60 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800',
@@ -696,10 +696,10 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
         </p>
       </div>
 
-      <p className="text-xs text-gray-400 dark:text-slate-500">Default flows use this too.</p>
+      <p className="text-xs text-gray-500 dark:text-slate-400">Default flows use this too.</p>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={() => void save()} disabled={!isDirty || saving || readOnly} isLoading={saving}>
+        <Button className="max-sm:min-h-11" onClick={() => void save()} disabled={!isDirty || saving || readOnly} isLoading={saving}>
           Save AI settings
         </Button>
         {saving ? (
@@ -711,11 +711,11 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
             <Check className="h-3.5 w-3.5" /> Saved
           </span>
         ) : null}
-        <Button variant="outline" onClick={() => setShowAiServices(true)} leftIcon={<Settings2 className="h-4 w-4" />}>
+        <Button className="max-sm:min-h-11" variant="outline" onClick={() => setShowAiServices(true)} leftIcon={<Settings2 className="h-4 w-4" />}>
           Manage AI services
         </Button>
         {desktopPresence.kind === 'local' && (
-          <span className="text-xs text-gray-400 dark:text-slate-500 inline-flex items-center gap-1">
+          <span className="text-xs text-gray-500 dark:text-slate-400 inline-flex items-center gap-1">
             <Laptop className="h-3.5 w-3.5" /> Desktop connected
           </span>
         )}

@@ -38,16 +38,22 @@ async function openYourData(isDemo: boolean) {
   });
 }
 
+/** The links to the panels of the Your data section, which stand above them. */
+const panelLinks = () => [...host.querySelectorAll('nav[aria-label="Your data on this page"] a')].map((a) => a.textContent);
+
 describe('the recycle bin in Settings', () => {
   it('is offered to an account', async () => {
     await openYourData(false);
-    expect(host.textContent).toContain('Open recycle bin');
-    expect([...host.querySelectorAll('nav a')].map((a) => a.textContent)).toContain('Recycle bin');
+    expect(host.querySelector('#trash')?.textContent).toContain('Open recycle bin');
+    expect(panelLinks()).toContain('Recycle bin');
   });
 
   it('is not offered in the demo, which has no such page', async () => {
     await openYourData(true);
     expect(host.textContent).not.toContain('Open recycle bin');
-    expect([...host.querySelectorAll('nav a')].map((a) => a.textContent)).not.toContain('Recycle bin');
+    expect(host.querySelector('#trash')).toBeNull();
+    expect(panelLinks()).not.toContain('Recycle bin');
+    // The section's other panels are all there.
+    expect(panelLinks()).toEqual(['Export a copy', 'Backup & restore', 'Delete account']);
   });
 });

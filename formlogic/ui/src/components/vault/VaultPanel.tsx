@@ -12,7 +12,8 @@ import { toast } from '../../stores/toastStore';
 import { VaultSetupWizard } from './VaultSetupWizard';
 import { VaultUnlockDialog } from './VaultUnlockDialog';
 
-export function VaultPanel() {
+/** `heading` false: where the page draws the panel's title itself (Settings' "Encryption vault" panel). */
+export function VaultPanel({ heading = true }: { heading?: boolean } = {}) {
   const user = useAuthStore((s) => s.user);
   const status = useVaultStore((s) => s.status);
   const lock = useVaultStore((s) => s.lock);
@@ -70,10 +71,10 @@ export function VaultPanel() {
 
   return (
     <div>
-      <div className="flex items-center gap-2 mb-2">
+      {heading && <div className="flex items-center gap-2 mb-2">
         <LockKeyhole className="h-4 w-4 text-gray-500 dark:text-slate-400" />
         <h3 className="font-medium text-gray-900 dark:text-white">Encryption vault</h3>
-      </div>
+      </div>}
       <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">
         Private forms are end-to-end encrypted (beta): responses are sealed in the submitter's browser and
         only your vault can open them. FormLogic stores ciphertext and cannot read the answers. If you lose

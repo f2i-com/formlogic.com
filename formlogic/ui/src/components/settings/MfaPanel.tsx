@@ -8,6 +8,7 @@ import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { PasswordInput } from '../ui/PasswordInput';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { Panel } from '../ui/Panel';
 import { useAccountTimezone, formatDateTimeInZone } from '../../lib/timezone';
 
 type MfaStatus = {
@@ -34,12 +35,12 @@ function browserLabel(ua: string): string {
   return os ? `${browser} on ${os}` : browser;
 }
 
-const rowClass = 'flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60';
-
 /**
  * Two-factor authentication management (Settings → Security): enrollment wizard
  * (QR + verify), one-time recovery codes, and the remembered-browser list with
  * per-device revocation. Optional — accounts work fine without it.
+ * It is one of the Security section's panels, at …/settings#two-factor, and draws
+ * its own so that the shared demo, which has none of this, gets no empty box.
  */
 export function MfaPanel() {
   const user = useAuthStore((s) => s.user);
@@ -158,26 +159,25 @@ export function MfaPanel() {
   if (user?.isDemo) return null;
 
   return (
+    <Panel
+      id="two-factor"
+      icon={status?.enabled ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
+      title={<>
+        Two-factor authentication
+        {status?.enabled && (
+          <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30">On</span>
+        )}
+      </>}
+    >
     <div className="space-y-3">
-      {/* Status / entry row */}
-      <div className={rowClass}>
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-2">
-            {status?.enabled
-              ? <ShieldCheck className="h-4 w-4 text-emerald-500" />
-              : <ShieldOff className="h-4 w-4 text-gray-400 dark:text-slate-500" />}
-            Two-factor authentication
-            {status?.enabled && (
-              <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30">On</span>
-            )}
-          </p>
-          <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
-            {status?.enabled
-              ? `One-time codes from your authenticator app protect sign-ins on unknown browsers. ${status.recoveryCodesRemaining} recovery code${status.recoveryCodesRemaining === 1 ? '' : 's'} left.`
-              : 'Add a one-time code from Google Authenticator (or any TOTP app) to sign-ins from unknown browsers. Optional, recommended.'}
-          </p>
-        </div>
-        <div className="flex flex-none items-center gap-2">
+      {/* What it is, and the ways in and out of it */}
+      <div>
+        <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
+          {status?.enabled
+            ? `One-time codes from your authenticator app protect sign-ins on unknown browsers. ${status.recoveryCodesRemaining} recovery code${status.recoveryCodesRemaining === 1 ? '' : 's'} left.`
+            : 'Add a one-time code from Google Authenticator (or any TOTP app) to sign-ins from unknown browsers. Optional, recommended.'}
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2 empty:hidden">
           {status?.enabled ? (
             <>
               <Button variant="outline" size="sm" onClick={() => { setRegenOpen(true); setRegenCode(''); }} leftIcon={<RefreshCcw className="h-4 w-4" />}>
@@ -195,13 +195,13 @@ export function MfaPanel() {
         </div>
       </div>
 
-      {/* Enrollment wizard */}
+      {/* Enrollment wizard. Its rows follow the panel's width, which is a column's, not the screen's. */}
       {setup && !status?.enabled && (
-        <div className="p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 space-y-4">
+        <div className="@container p-3 rounded-xl border border-gray-200 dark:border-slate-700 space-y-4">
           <p className="text-sm text-gray-700 dark:text-slate-300">
             <span className="font-medium">1.</span> Scan this QR code with Google Authenticator (or any TOTP app):
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 items-start">
+          <div className="flex flex-col @md:flex-row gap-4 items-start">
             <div className="inline-block rounded-xl bg-white p-3 border border-gray-200/80 dark:border-slate-700/60">
               <QRCodeSVG value={setup.uri} size={148} level="M" aria-label="Authenticator enrollment QR code" />
             </div>
@@ -214,8 +214,8 @@ export function MfaPanel() {
           <p className="text-sm text-gray-700 dark:text-slate-300">
             <span className="font-medium">2.</span> Enter the 6-digit code the app shows to finish:
           </p>
-          <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
-            <div className="w-full sm:w-52">
+          <div className="flex flex-col @md:flex-row gap-2 @md:items-end">
+            <div className="w-full @md:w-52">
               <Input
                 label="Verification code"
                 value={enableCode}
@@ -239,14 +239,14 @@ export function MfaPanel() {
 
       {/* Recovery codes — shown exactly once after enable/regenerate */}
       {recoveryCodes && (
-        <div className="p-4 rounded-xl border border-amber-200/80 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 space-y-3">
+        <div className="@container p-3 rounded-xl border border-amber-200/80 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/10 space-y-3">
           <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
             Save these recovery codes — they're shown only once
           </p>
           <p className="text-xs text-amber-700/90 dark:text-amber-400/80">
             Each code signs you in once if you lose access to your authenticator.
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-sm text-gray-900 dark:text-white">
+          <div className="grid grid-cols-2 @md:grid-cols-4 gap-2 font-mono text-sm text-gray-900 dark:text-white">
             {recoveryCodes.map((c) => (
               <span key={c} className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900/60 border border-amber-200/80 dark:border-amber-500/20 text-center select-all">{c}</span>
             ))}
@@ -264,8 +264,8 @@ export function MfaPanel() {
 
       {/* Remembered browsers */}
       {status?.enabled && status.trustedBrowsers.length > 0 && (
-        <div className="p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
-          <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">Remembered browsers</p>
+        <div className="p-3 rounded-xl border border-gray-200 dark:border-slate-700">
+          <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-1">Remembered browsers</h3>
           <p className="text-xs text-gray-500 dark:text-slate-400 mb-3">
             These skip the code prompt for 60 days. Forget any you don't recognize.
           </p>
@@ -278,7 +278,7 @@ export function MfaPanel() {
                     {browserLabel(b.label)}
                     {b.current && <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-primary-600 dark:text-primary-400">This browser</span>}
                   </p>
-                  <p className="text-xs text-gray-400 dark:text-slate-500">
+                  <p className="text-xs text-gray-500 dark:text-slate-400">
                     Last used {formatDateTimeInZone(b.lastUsedAt, tz)}
                   </p>
                 </div>
@@ -286,7 +286,7 @@ export function MfaPanel() {
                   type="button"
                   onClick={() => { void revokeBrowser(b.id); }}
                   aria-label={`Forget ${browserLabel(b.label)}`}
-                  className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
+                  className="inline-flex h-8 w-8 flex-none items-center justify-center rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer max-sm:h-11 max-sm:w-11"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
@@ -297,7 +297,7 @@ export function MfaPanel() {
       )}
 
       {status === null && (
-        <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-slate-500 px-1">
+        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading two-factor status…
         </div>
       )}
@@ -370,5 +370,6 @@ export function MfaPanel() {
         />
       </ConfirmDialog>
     </div>
+    </Panel>
   );
 }

@@ -1,15 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { deferEffect } from '../lib/deferredEffect';
 import { useCurrentTime } from '../hooks/useCurrentTime';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Header } from '../components/layout/Header';
-import { Card, CardContent } from '../components/ui/Card';
+import { PageBody } from '../components/layout/PageBody';
+import { SectionNav } from '../components/ui/SectionNav';
+import { Panel, PANEL_COLUMNS } from '../components/ui/Panel';
 import { Modal } from '../components/ui/Modal';
 import { Input } from '../components/ui/Input';
 import { PasswordInput } from '../components/ui/PasswordInput';
 import { Button } from '../components/ui/Button';
 import { Spinner } from '../components/ui/Spinner';
-import { EmptyState } from '../components/ui/EmptyState';
 import { Switch } from '../components/ui/Switch';
 import { TimezoneSelect } from '../components/ui/TimezoneSelect';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -20,20 +21,18 @@ import { ConnectorRoutingPanel } from '../components/desktop/ConnectorRoutingPan
 import { DataNodesPanel } from '../components/desktop/DataNodesPanel';
 import { ConnectOaiyServer } from '../components/desktop/ConnectOaiyServer';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
-import { parseServerDate, formatRelativeTime } from '../lib/utils';
+import { cn, parseServerDate } from '../lib/utils';
 import {
   User,
   Bell,
   Settings2,
-  Mail,
-  LayoutGrid,
-  ArrowLeft,
   Shield,
   Plug,
   ShieldCheck,
   Palette,
   Check,
   Lock,
+  LockKeyhole,
   Key,
   Laptop,
   Copy,
@@ -44,9 +43,11 @@ import {
   Archive,
   UploadCloud,
   Recycle,
+  ScrollText,
   Sparkles,
   Sun,
   Moon,
+  type LucideIcon,
 } from 'lucide-react';
 import { useUIStore, type ThemeColor } from '../stores/uiStore';
 import { api } from '../lib/api';
@@ -57,6 +58,8 @@ import { SupportAccessPanel } from '../components/settings/SupportAccessPanel';
 import { PassesPanel } from '../components/settings/PassesPanel';
 import { VaultPanel } from '../components/vault/VaultPanel';
 import { AiSourceCard } from '../components/settings/AiSourceCard';
+import { ApiKeysList } from '../components/settings/ApiKeysList';
+import { LinkedDesktopsList } from '../components/settings/LinkedDesktopsList';
 import { passwordError as getPasswordError } from '../lib/passwordPolicy';
 
 // Local preferences stored in localStorage
@@ -86,20 +89,34 @@ function savePreferences(prefs: UserPreferences): void {
   localStorage.setItem('formlogic_user_preferences', JSON.stringify(prefs));
 }
 
-// Keep section hashes stable for links from setup wizards and other pages.
-const SETTINGS_TABS = [
-  { id: 'account', label: 'Account', icon: User, description: 'Your profile, timezone and notification preferences.', sections: ['profile', 'notifications'] },
-  { id: 'workspace', label: 'Workspace', icon: Palette, description: 'Make FormLogic comfortable to use and choose defaults for new forms.', sections: ['appearance', 'form-defaults'] },
-  { id: 'connections', label: 'AI & devices', icon: Plug, description: 'Choose your AI, connect OAIY and manage access for external assistants.', sections: ['ai', 'local-runtime', 'linked-desktops', 'mcp'] },
-  { id: 'security', label: 'Security', icon: Shield, description: 'Protect your account, manage API keys and check your audit trail.', sections: ['security', 'api-keys', 'audit'] },
-  { id: 'data', label: 'Your data', icon: Archive, description: 'Download your data, restore a backup or recover deleted items.', sections: ['your-data', 'backup', 'trash', 'danger'] },
+// The page's five sections and the panels each one holds, by the panel's id.
+// The section is the address's `#hash`. A section's own address is the hash of its first panel,
+// as it has been since these were tabs, so the links setup wizards and other pages hold
+// (/settings#ai, #security, #your-data) keep landing. A hash that names a later panel
+// (#local-runtime, #linked-desktops, #backup) opens its section and brings that panel into view.
+interface SettingsSection {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  panels: readonly string[];
+}
+const SECTIONS: readonly SettingsSection[] = [
+  { id: 'account', label: 'Account', icon: User, panels: ['profile', 'notifications'] },
+  { id: 'workspace', label: 'Workspace', icon: Palette, panels: ['appearance', 'form-defaults'] },
+  { id: 'connections', label: 'AI & devices', icon: Plug, panels: ['ai', 'local-runtime', 'linked-desktops', 'mcp'] },
+  { id: 'security', label: 'Security', icon: Shield, panels: ['security', 'two-factor', 'support-access', 'passes', 'vault', 'audit', 'api-keys'] },
+  { id: 'data', label: 'Your data', icon: Archive, panels: ['your-data', 'backup', 'trash', 'danger'] },
 ];
-const SECTION_LABELS: Record<string, string> = {
+/** What a link to a panel is called. */
+const PANEL_LABELS: Record<string, string> = {
   profile: 'Profile', notifications: 'Notifications', appearance: 'Appearance', 'form-defaults': 'Form defaults',
-  ai: 'AI assistant', 'local-runtime': 'OAIY connection', 'linked-desktops': 'Linked desktops', mcp: 'External AI access',
-  security: 'Account protection', 'api-keys': 'API keys', audit: 'Audit trail',
+  ai: 'AI assistant', 'local-runtime': 'Local runtime', 'linked-desktops': 'Linked desktops', mcp: 'External AI access',
+  security: 'Password', 'two-factor': 'Two-factor authentication', 'support-access': 'Support access', passes: 'Passes', vault: 'Encryption vault',
+  audit: 'Audit trail', 'api-keys': 'API keys',
   'your-data': 'Export a copy', backup: 'Backup & restore', trash: 'Recycle bin', danger: 'Delete account',
 };
+/** What the shared demo account is not shown: it has no sign-in of its own to protect, and its route table has no /trash. */
+const NOT_IN_THE_DEMO: readonly string[] = ['two-factor', 'support-access', 'passes', 'vault', 'trash'];
 
 // API-key expiry choices (days; 'never' = no expiresAt sent)
 const EXPIRY_OPTIONS = [
@@ -109,51 +126,74 @@ const EXPIRY_OPTIONS = [
   { value: '365', label: '365 days' },
 ] as const;
 
-// Section Header Component
-function SectionHeader({
-  icon: Icon,
-  title,
-  description,
-  iconBg = 'bg-gray-100 dark:bg-slate-800',
-  iconColor = 'text-gray-500 dark:text-slate-400',
-}: {
-  icon: React.ElementType;
-  title: string;
-  description?: string;
-  iconBg?: string;
-  iconColor?: string;
-}) {
+// A line of help under a control, and a native select drawn as the text fields are.
+const HELP = 'text-xs leading-5 text-gray-500 dark:text-slate-400';
+const SELECT = 'block w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900/60 dark:text-white max-sm:min-h-11';
+const TEXT_LINK = 'cursor-pointer font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-300';
+// A section's address is its first panel's hash, and when a page loads the browser brings the
+// element its hash names into view by itself. For those five panels that has to be the top of
+// the page, with the row of sections in sight, so they ask for more room above them than there
+// is: the page stays at its top.
+const SECTION_TOP = 'scroll-mt-[100vh]';
+/** What ends "keep the panel asked for in view": the person moving the page themselves. */
+const OWN_SCROLL = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
+
+/** One of the page's sections: a line of links to its panels where it has more than two (it
+    runs past a screen), then the panels. Every section stays mounted, as every tab did, so what
+    is typed in one is still there after a look at another and nothing is fetched twice; only
+    the open one shows. */
+function Section({ section, open, links, children }: { section: SettingsSection; open: boolean; links: readonly string[]; children: ReactNode }) {
   return (
-    <div className="mb-5 flex items-start gap-3 border-b border-gray-100 pb-5 dark:border-white/[0.06]">
-      <div className={`shrink-0 rounded-xl p-2.5 ${iconBg}`}>
-        <Icon className={`h-5 w-5 ${iconColor}`} />
-      </div>
-      <div>
-        <h3 className="text-base font-semibold text-gray-900 dark:text-white tracking-tight sm:text-lg">{title}</h3>
-        {description && (
-          <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">{description}</p>
-        )}
-      </div>
-    </div>
+    <section aria-label={section.label} hidden={!open} data-settings-section={section.id} className="mt-4">
+      {links.length > 2 && (
+        <nav aria-label={`${section.label} on this page`} className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+          {links.map((id) => (
+            <Link key={id} to={{ hash: `#${id}` }} replace className="inline-flex items-center font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-300 max-sm:min-h-11">{PANEL_LABELS[id]}</Link>
+          ))}
+        </nav>
+      )}
+      {children}
+    </section>
   );
 }
 
 export function Settings() {
   useDocumentTitle('Settings');
   const navigate = useNavigate();
-  // Deep links like /settings#ai (Connect-AI wizard): SPA navigation doesn't fire
-  // the browser's native fragment scroll, so address the card ourselves.
-  const { hash } = useLocation();
-  const requestedSection = hash.slice(1);
-  const activeTab = SETTINGS_TABS.find(tab => tab.sections.includes(requestedSection)) ?? SETTINGS_TABS[0];
-  const activeSection = activeTab.sections.includes(requestedSection) ? requestedSection : activeTab.sections[0];
+  const location = useLocation();
+  const requested = location.hash.slice(1);
+  const section = SECTIONS.find((candidate) => candidate.id === requested || candidate.panels.includes(requested)) ?? SECTIONS[0];
+  // The first panel's hash is the section's own address: it opens the section from its top.
+  const panel = section.panels.indexOf(requested) > 0 ? requested : null;
+  // Deep links like /settings#linked-desktops: SPA navigation doesn't fire the browser's native
+  // fragment scroll, so bring the panel into view ourselves. `location.key` is new on every
+  // press of a link, so pressing the link of the panel already in the address returns to it.
   useEffect(() => {
-    if (!hash) { window.scrollTo(0, 0); return; }
-    const target = !requestedSection || requestedSection === activeTab.sections[0] ? 'settings-navigation' : activeSection;
-    document.getElementById(target)?.scrollIntoView({ block: 'start' });
-  }, [hash, requestedSection, activeSection, activeTab]);
+    // No panel named, or one this account is not shown (the demo's recycle bin): the section from its top.
+    const target = panel ? document.getElementById(panel) : null;
+    if (!target) { window.scrollTo(0, 0); return; }
+    const show = () => target.scrollIntoView?.({ block: 'start' });
+    show();
+    // The panels fetch what they show after the first paint, and one that grows moves those after
+    // it, into another column even. Until that settles, or the person moves the page themselves,
+    // the panel asked for is kept where it was put.
+    const block = target.closest('[data-settings-section]');
+    if (typeof ResizeObserver === 'undefined' || !block) return;
+    const observer = new ResizeObserver(show);
+    observer.observe(block);
+    const stop = () => {
+      observer.disconnect();
+      window.clearTimeout(timer);
+      OWN_SCROLL.forEach((event) => window.removeEventListener(event, stop));
+    };
+    const timer = window.setTimeout(stop, 3000);
+    OWN_SCROLL.forEach((event) => window.addEventListener(event, stop, { passive: true }));
+    return stop;
+  }, [location.key, panel]);
   const user = useAuthStore((state) => state.user);
   const updateProfile = useAuthStore((state) => state.updateProfile);
+  const isDemo = !!user?.isDemo;
+  const shown = (id: string) => !isDemo || !NOT_IN_THE_DEMO.includes(id);
 
   // Profile form state
   const [name, setName] = useState(user?.name || '');
@@ -205,6 +245,8 @@ export function Settings() {
   const [desktopLoadError, setDesktopLoadError] = useState<string | null>(null);
   const [revokeDesktopTarget, setRevokeDesktopTarget] = useState<{ id: string; name: string } | null>(null);
   const [isRevokingDesktop, setIsRevokingDesktop] = useState(false);
+  // "Online now" is a freshness window on when a computer was last heard from.
+  const isDesktopOnline = (conn: DesktopConnection) => conn.lastSeenAt !== null && now - parseServerDate(conn.lastSeenAt).getTime() < 90_000;
 
   // Update form when user changes
   const [profileUser, setProfileUser] = useState(user);
@@ -306,7 +348,7 @@ export function Settings() {
   const [restorePassphrase, setRestorePassphrase] = useState('');
   const [backupResult, setBackupResult] = useState<AccountBackupImportResult | null>(null);
 
-  // ── Recycle bin (count for the card; the /trash page is the real surface) ──
+  // ── Recycle bin (count for the panel; the /trash page is the real surface) ──
   const [trashCount, setTrashCount] = useState<number | null>(null);
   useEffect(() => {
     let active = true;
@@ -555,676 +597,334 @@ export function Settings() {
     { id: 'connector:relay', label: 'Connector: Relay', description: 'Act as a desktop runtime for relayed connector commands (FormLogic Desktop)' },
   ];
 
+  const sectionProps = (id: string) => {
+    const found = SECTIONS.find((candidate) => candidate.id === id) ?? SECTIONS[0];
+    return { section: found, open: section.id === found.id, links: found.panels.filter(shown) };
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
+    <div className="min-h-screen">
       <Header title="Settings" />
 
-      <div className="@container/settings mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6 lg:p-8">
-        <div className="rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm sm:p-6 dark:border-white/[0.08] dark:bg-slate-900/60">
-          <p className="text-xs font-semibold uppercase tracking-wider text-primary-600 dark:text-primary-400">Your FormLogic workspace</p>
-          <h2 className="mt-2 text-xl font-semibold text-gray-900 sm:text-2xl dark:text-white">Make it yours</h2>
-          <p className="mt-2 text-sm leading-relaxed text-gray-500 dark:text-slate-400">Manage your account, appearance, AI connections and data in one place.</p>
-        </div>
-        <div id="settings-navigation" role="tablist" aria-label="Settings categories" className="grid scroll-mt-24 grid-cols-3 gap-2 rounded-2xl border border-gray-200/80 bg-white p-2 shadow-sm @3xl/settings:grid-cols-5 dark:border-white/[0.08] dark:bg-slate-900/60">
-          {SETTINGS_TABS.map((tab, index) => (
-            <button key={tab.id} id={`settings-tab-${tab.id}`} type="button" role="tab" aria-controls={`settings-panel-${tab.id}`} aria-selected={activeTab.id === tab.id} tabIndex={activeTab.id === tab.id ? 0 : -1}
-              onClick={() => navigate(`#${tab.sections[0]}`)}
-              onKeyDown={event => {
-                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-                event.preventDefault();
-                const next = event.key === 'Home' ? 0 : event.key === 'End' ? SETTINGS_TABS.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + SETTINGS_TABS.length) % SETTINGS_TABS.length;
-                const destination = SETTINGS_TABS[next];
-                navigate(`#${destination.sections[0]}`);
-                document.getElementById(`settings-tab-${destination.id}`)?.focus();
-              }}
-              className={`flex min-h-16 min-w-0 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl px-2 py-3 text-xs font-semibold transition focus-visible:outline-2 focus-visible:outline-primary-500 @3xl/settings:flex-row @3xl/settings:text-sm ${activeTab.id === tab.id ? 'bg-primary-50 text-primary-700 ring-1 ring-inset ring-primary-200 dark:bg-primary-500/15 dark:text-primary-300 dark:ring-primary-500/30' : 'text-gray-600 hover:bg-gray-50 dark:text-slate-300 dark:hover:bg-white/[0.04]'}`}>
-              <tab.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </div>
-        <div className="px-1">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{activeTab.label}</h2>
-          <p className="mt-1 text-sm leading-relaxed text-gray-500 dark:text-slate-400">{activeTab.description}</p>
-          <nav aria-label="Settings sections" className="mt-3 flex flex-wrap gap-2">
-            {activeTab.sections.filter(section => section !== 'trash' || !user?.isDemo).map(section => <Link key={section} to={`#${section}`} aria-current={activeSection === section ? 'location' : undefined} className={`inline-flex min-h-11 items-center rounded-lg border px-3 text-xs font-medium focus-visible:outline-2 focus-visible:outline-primary-500 ${activeSection === section ? 'border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300' : 'border-gray-200 bg-white text-gray-600 hover:border-primary-300 dark:border-white/10 dark:bg-slate-900/50 dark:text-slate-300'}`}>{SECTION_LABELS[section]}</Link>)}
-          </nav>
-        </div>
-        <div id="settings-panel-account" role="tabpanel" aria-labelledby="settings-tab-account" hidden={activeTab.id !== 'account'} className="space-y-5" tabIndex={0}>
-        <Card id="profile" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={User}
-              title="Profile"
-              description="Manage your personal information"
-              iconBg="bg-primary-50 dark:bg-primary-500/10"
-              iconColor="text-primary-600 dark:text-primary-400"
-            />
-            <div className="space-y-4 min-w-0">
-              <Input
-                label="Name"
-                placeholder="Your name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={isSavingProfile}
-              />
-              <Input
-                label="Email"
-                type="email"
-                placeholder="your@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={isSavingProfile}
-              />
-              {emailChanged && (
-                <PasswordInput
-                  label="Current password"
-                  placeholder="Required to change your email"
-                  value={profilePassword}
-                  onChange={(e) => setProfilePassword(e.target.value)}
-                  autoComplete="current-password"
+      {/* The sections are links under the header, and each one's panels start at the page's left
+          and fill its width: one column on a phone, two on a laptop, three on a wide screen. */}
+      <PageBody>
+        <SectionNav label="Settings sections" current={section.id}
+          // A section adds a step to the history, as an app page's sections do: Back returns to
+          // the one before. (The links to a panel inside a section replace the step they are on.)
+          items={SECTIONS.map(({ id, label, icon, panels }) => ({ value: id, label, icon, to: { hash: `#${panels[0]}` } }))} />
+
+        <Section {...sectionProps('account')}>
+          <div className={PANEL_COLUMNS}>
+            <Panel id="profile" className={SECTION_TOP} title="Profile" icon={<User className="h-4 w-4" />}>
+              <div className="space-y-3">
+                <Input
+                  label="Name"
+                  placeholder="Your name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                   disabled={isSavingProfile}
                 />
-              )}
-              <div>
-                <label htmlFor="account-timezone" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Timezone</label>
-                <TimezoneSelect
-                  id="account-timezone"
-                  value={timezone}
-                  onChange={setTimezone}
+                <Input
+                  label="Email"
+                  type="email"
+                  placeholder="your@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   disabled={isSavingProfile}
-                  emptyLabel="Use each app's timezone"
-                  className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
-                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">Record times (call logs, submissions) show in this zone across every app you use. Leave unset to follow each app's own timezone.</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4 dark:border-white/[0.06]">
-                <Button
-                  onClick={handleSaveProfile}
-                  disabled={!hasProfileChanges || isSavingProfile}
-                  isLoading={isSavingProfile}
-                >
-                  Save profile
-                </Button>
-                <p role="status" className="text-xs text-gray-500 dark:text-slate-400">{hasProfileChanges ? 'You have unsaved profile changes.' : 'Your profile is up to date.'}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card id="notifications" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={Bell}
-              title="Notifications"
-              description="Configure how you receive updates"
-              iconBg="bg-blue-50 dark:bg-blue-500/10"
-              iconColor="text-blue-600 dark:text-blue-400"
-            />
-            <div className="min-w-0">
-              <div className="flex items-start gap-3 py-3 text-sm">
-                <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg shrink-0">
-                  <Mail className="h-4 w-4 text-gray-500 dark:text-slate-400" />
+                {emailChanged && (
+                  <PasswordInput
+                    label="Current password"
+                    placeholder="Required to change your email"
+                    value={profilePassword}
+                    onChange={(e) => setProfilePassword(e.target.value)}
+                    autoComplete="current-password"
+                    disabled={isSavingProfile}
+                  />
+                )}
+                <div>
+                  <label htmlFor="account-timezone" className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-slate-300">Timezone</label>
+                  <TimezoneSelect
+                    id="account-timezone"
+                    value={timezone}
+                    onChange={setTimezone}
+                    disabled={isSavingProfile}
+                    emptyLabel="Use each app's timezone"
+                    className={SELECT}
+                  />
+                  <p className={cn('mt-1', HELP)}>Record times (call logs, submissions) show in this zone across every app you use. Leave unset to follow each app's own timezone.</p>
                 </div>
-                <p className="text-gray-500 dark:text-slate-400">
-                  Response emails are set per form, so they live with the form itself. Open{' '}
-                  <Link to="/forms" className="font-medium text-primary-600 hover:underline dark:text-primary-400">Forms</Link>,
-                  pick a form, then{' '}
-                  <span className="font-medium text-gray-700 dark:text-slate-300">Settings → Notifications</span>{' '}
-                  to choose who gets an email when someone replies.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        </div>
-        <div id="settings-panel-workspace" role="tabpanel" aria-labelledby="settings-tab-workspace" hidden={activeTab.id !== 'workspace'} className="space-y-5" tabIndex={0}>
-        <Card id="appearance" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={Palette}
-              title="Appearance"
-              description="Customize the look and feel of your workspace"
-              iconBg="bg-pink-50 dark:bg-pink-500/10"
-              iconColor="text-pink-600 dark:text-pink-400"
-            />
-            <div className="space-y-4 min-w-0">
-              <div>
-                <p className="text-sm font-medium text-gray-700 dark:text-slate-300">Display mode</p>
-                <div className="mt-3 grid grid-cols-2 gap-3" role="group" aria-label="Display mode">
-                  {([{ id: 'light', label: 'Light', icon: Sun }, { id: 'dark', label: 'Dark', icon: Moon }] as const).map(mode => (
-                    <button key={mode.id} type="button" aria-pressed={currentTheme === mode.id} onClick={() => useUIStore.getState().setTheme(mode.id)} className={`flex min-h-16 cursor-pointer items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary-500 ${currentTheme === mode.id ? 'border-primary-400 bg-primary-50 text-primary-700 dark:border-primary-500/50 dark:bg-primary-500/10 dark:text-primary-300' : 'border-gray-200 text-gray-600 dark:border-white/10 dark:text-slate-300'}`}>
-                      <mode.icon className="h-5 w-5" aria-hidden="true" />{mode.label}
-                    </button>
-                  ))}
+                <div className="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-3 dark:border-white/[0.06]">
+                  <Button
+                    className="max-sm:min-h-11"
+                    onClick={handleSaveProfile}
+                    disabled={!hasProfileChanges || isSavingProfile}
+                    isLoading={isSavingProfile}
+                  >
+                    Save profile
+                  </Button>
+                  <p role="status" className="text-xs text-gray-500 dark:text-slate-400">{hasProfileChanges ? 'You have unsaved profile changes.' : 'Your profile is up to date.'}</p>
                 </div>
-                <p className="mt-2 text-xs text-gray-500 dark:text-slate-400">Appearance changes are saved automatically in this browser.</p>
               </div>
+            </Panel>
 
-              <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2 block">
-                  Accent Color
-                </label>
-                <p className="text-xs text-gray-500 dark:text-slate-400 -mt-1 mb-3">
-                  Default adapts automatically — Indigo in light mode, Lime in dark mode.
-                </p>
-                <div className="grid grid-cols-3 @2xl/settings:grid-cols-4 @4xl/settings:grid-cols-7 gap-3">
-                  {[
-                    { id: 'default', color: 'bg-gradient-to-br from-indigo-500 to-lime-400', label: 'Default', check: 'text-gray-900' },
-                    { id: 'indigo', color: 'bg-indigo-500', label: 'Indigo', check: 'text-white' },
-                    { id: 'lime', color: 'bg-lime-500', label: 'Lime', check: 'text-gray-900' },
-                    { id: 'rose', color: 'bg-rose-500', label: 'Rose', check: 'text-white' },
-                    { id: 'orange', color: 'bg-orange-500', label: 'Orange', check: 'text-gray-900' },
-                    { id: 'cyan', color: 'bg-cyan-500', label: 'Cyan', check: 'text-gray-900' },
-                    { id: 'violet', color: 'bg-violet-500', label: 'Violet', check: 'text-white' },
-                  ].map((theme) => {
-                    const isSelected = themeColor === theme.id;
-                    return (
-                      <button
-                        key={theme.id}
-                        aria-label={`Select ${theme.label} accent color`}
-                        aria-pressed={isSelected}
-                        onClick={() => {
-                          useUIStore.getState().setThemeColor(theme.id as ThemeColor);
-                          toast.success('Theme Updated', `Accent color changed to ${theme.label}`);
-                        }}
-                        className={`group relative flex flex-col items-center gap-2 p-3 rounded-xl border transition-all duration-200 cursor-pointer ${isSelected
-                          ? 'border-primary-500 bg-primary-500/5 ring-1 ring-primary-500/50'
-                          : 'border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
-                          }`}
-                      >
-                        <div className={`w-8 h-8 rounded-full ${theme.color} shadow-sm flex items-center justify-center`}>
-                          {isSelected && <Check className={`w-4 h-4 ${theme.check}`} />}
-                        </div>
-                        <span className={`text-xs font-medium ${isSelected ? 'text-primary-600 dark:text-primary-400' : 'text-gray-600 dark:text-slate-400'
-                          }`}>
-                          {theme.label}
-                        </span>
+            <Panel id="notifications" title="Notifications" icon={<Bell className="h-4 w-4" />}>
+              <p className="text-sm leading-6 text-gray-600 dark:text-slate-300">
+                Response emails are set per form, so they live with the form itself. Open{' '}
+                <Link to="/forms" className={TEXT_LINK}>Forms</Link>,
+                pick a form, then{' '}
+                <span className="font-medium text-gray-900 dark:text-white">Settings → Notifications</span>{' '}
+                to choose who gets an email when someone replies.
+              </p>
+            </Panel>
+          </div>
+        </Section>
+
+        <Section {...sectionProps('workspace')}>
+          <div className={PANEL_COLUMNS}>
+            <Panel id="appearance" className={SECTION_TOP} title="Appearance" icon={<Palette className="h-4 w-4" />} description="Saved automatically in this browser.">
+              {/* The swatches follow the panel's width, which is a column's, not the screen's. */}
+              <div className="@container space-y-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-700 dark:text-slate-300">Display mode</p>
+                  <div className="mt-2 grid grid-cols-2 gap-2" role="group" aria-label="Display mode">
+                    {([{ id: 'light', label: 'Light', icon: Sun }, { id: 'dark', label: 'Dark', icon: Moon }] as const).map(mode => (
+                      <button key={mode.id} type="button" aria-pressed={currentTheme === mode.id} onClick={() => useUIStore.getState().setTheme(mode.id)} className={`flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary-500 ${currentTheme === mode.id ? 'border-primary-400 bg-primary-50 text-primary-700 dark:border-primary-500/50 dark:bg-primary-500/10 dark:text-primary-300' : 'border-gray-200 text-gray-600 hover:border-gray-300 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-600'}`}>
+                        <mode.icon className="h-4 w-4" aria-hidden="true" />{mode.label}
                       </button>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
 
-        <Card id="form-defaults" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={Settings2}
-              title="Default Form Settings"
-              description="Set defaults for new forms you create"
-              iconBg="bg-green-50 dark:bg-green-500/10"
-              iconColor="text-green-600 dark:text-green-400"
-            />
-            <div className="space-y-1 min-w-0">
-              <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-slate-800">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg">
-                    <LayoutGrid className="h-4 w-4 text-gray-500 dark:text-slate-400" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-white">Show progress bar</p>
-                    <p className="text-sm text-gray-500 dark:text-slate-400">Display progress bar on forms by default</p>
-                  </div>
-                </div>
-                <Switch
-                  checked={preferences.showProgressBar}
-                  onChange={(checked) => handlePreferenceChange('showProgressBar', checked)}
-                  ariaLabel="Show progress bar on forms by default"
-                />
-              </div>
-              <div className="flex items-center justify-between py-3">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg">
-                    <ArrowLeft className="h-4 w-4 text-gray-500 dark:text-slate-400" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-white">Allow back navigation</p>
-                    <p className="text-sm text-gray-500 dark:text-slate-400">Allow respondents to go back to previous questions</p>
-                  </div>
-                </div>
-                <Switch
-                  checked={preferences.allowBackNavigation}
-                  onChange={(checked) => handlePreferenceChange('allowBackNavigation', checked)}
-                  ariaLabel="Allow respondents to go back to previous questions"
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        </div>
-        <div id="settings-panel-connections" role="tabpanel" aria-labelledby="settings-tab-connections" hidden={activeTab.id !== 'connections'} className="space-y-5" tabIndex={0}>
-        <Card id="ai" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={Sparkles}
-              title="AI assistant"
-              description="Choose which AI answers your chats and automations"
-              iconBg="bg-indigo-50 dark:bg-indigo-500/10"
-              iconColor="text-indigo-600 dark:text-indigo-400"
-            />
-            <div className="min-w-0">
-              <Link to="/connect-ai" className="mb-5 inline-flex min-h-11 items-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-primary-foreground">Start guided AI setup</Link>
-              <AiSourceCard />
-            </div>
-          </CardContent>
-        </Card>
-
-        <section id="local-runtime" className="scroll-mt-24" aria-label="Local desktop connection"><LocalRuntimePanel /></section>
-
-        <Card id="linked-desktops" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={Laptop}
-              title="Linked Desktops"
-              description="OAIY computers linked to your FormLogic account. Use their AI, plugins, and flows from another computer while OAIY stays running."
-              iconBg="bg-primary-50 dark:bg-primary-500/10"
-              iconColor="text-primary-600 dark:text-primary-400"
-            />
-            <div className="space-y-4 min-w-0">
-              {isLoadingDesktops ? (
-                <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400 py-4">
-                  <Spinner size="sm" /> <span>Loading linked desktops…</span>
-                </div>
-              ) : desktopLoadError ? (
-                <div className="py-6 text-center text-sm">
-                  <p className="text-gray-600 dark:text-slate-300">{desktopLoadError}</p>
-                  <button type="button" onClick={() => loadDesktopConnections()} className="mt-2 text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">Try again</button>
-                </div>
-              ) : desktopConnections.length === 0 ? (
-                <EmptyState
-                  icon={Laptop}
-                  title="No desktops linked yet"
-                  description="Link the account from the computer running OAIY. A local browser connection alone will not add a computer here."
-                  action={(
-                    <div className="max-w-lg space-y-4 text-left text-sm text-gray-600 dark:text-slate-300">
-                      <ol className="list-decimal space-y-2 pl-5">
-                        <li>Open OAIY Desktop → Connections → Linked account.</li>
-                        <li>Set the address to this FormLogic site and click <strong>Link account</strong>.</li>
-                        <li>Approve in the browser on that computer, using the same FormLogic account you use here.</li>
-                        <li>Return to OAIY and confirm it shows a linked account, then check again below.</li>
-                      </ol>
-                      <Button variant="outline" onClick={() => loadDesktopConnections()}>Check linked computers</Button>
-                    </div>
-                  )}
-                  className="py-8"
-                />
-              ) : (
-                <div className="space-y-2">
-                  {desktopConnections.map((conn) => {
-                    const isOnline = conn.lastSeenAt !== null && now - parseServerDate(conn.lastSeenAt).getTime() < 90_000;
-                    return (
-                      <div
-                        key={conn.id}
-                        className="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="text-sm font-medium text-gray-900 dark:text-white">{conn.deviceName}</p>
-                            {conn.aiOnly && (
-                              <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 font-medium" title="Linked for AI only: it answers AI requests and takes no commands, flows or backups">
-                                AI only
-                              </span>
-                            )}
-                            {isOnline && (
-                              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-300 font-medium">
-                                <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                                Online now
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-                            {!isOnline && (
-                              <>
-                                {conn.lastSeenAt ? `Last seen ${formatRelativeTime(conn.lastSeenAt)}` : 'Never connected'}
-                                {' · '}
-                              </>
-                            )}
-                            Linked {formatRelativeTime(conn.createdAt)}
-                          </p>
-                        </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-700 dark:text-slate-300">Accent color</p>
+                  <p className={cn('mt-0.5', HELP)}>
+                    Default adapts automatically — Indigo in light mode, Lime in dark mode.
+                  </p>
+                  <div className="mt-2 grid grid-cols-4 gap-2 @md:grid-cols-7">
+                    {[
+                      // Swatches show the colour they offer, whatever the accent is now: these two name indigo.
+                      { id: 'default', color: 'bg-gradient-to-br from-indigo-500 to-lime-400', label: 'Default', check: 'text-gray-900' },
+                      { id: 'indigo', color: 'bg-indigo-500', label: 'Indigo', check: 'text-white' },
+                      { id: 'lime', color: 'bg-lime-500', label: 'Lime', check: 'text-gray-900' },
+                      { id: 'rose', color: 'bg-rose-500', label: 'Rose', check: 'text-white' },
+                      { id: 'orange', color: 'bg-orange-500', label: 'Orange', check: 'text-gray-900' },
+                      { id: 'cyan', color: 'bg-cyan-500', label: 'Cyan', check: 'text-gray-900' },
+                      { id: 'violet', color: 'bg-violet-500', label: 'Violet', check: 'text-white' },
+                    ].map((theme) => {
+                      const isSelected = themeColor === theme.id;
+                      return (
                         <button
-                          onClick={() => setRevokeDesktopTarget({ id: conn.id, name: conn.deviceName })}
-                          className="flex-shrink-0 p-2 rounded-lg text-gray-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors ml-2"
-                          title="Unlink desktop"
+                          key={theme.id}
+                          type="button"
+                          aria-label={`Select ${theme.label} accent color`}
+                          aria-pressed={isSelected}
+                          onClick={() => {
+                            useUIStore.getState().setThemeColor(theme.id as ThemeColor);
+                            toast.success('Theme Updated', `Accent color changed to ${theme.label}`);
+                          }}
+                          className={`flex min-w-0 cursor-pointer flex-col items-center gap-1.5 rounded-lg border px-1 py-2 transition-colors focus-visible:outline-2 focus-visible:outline-primary-500 ${isSelected
+                            ? 'border-primary-500 bg-primary-500/5 ring-1 ring-primary-500/50'
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800'
+                            }`}
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <span className={`flex h-7 w-7 items-center justify-center rounded-full shadow-sm ${theme.color}`}>
+                            {isSelected && <Check className={`h-4 w-4 ${theme.check}`} />}
+                          </span>
+                          <span className={`max-w-full truncate text-xs font-medium ${isSelected ? 'text-primary-700 dark:text-primary-300' : 'text-gray-600 dark:text-slate-400'}`}>
+                            {theme.label}
+                          </span>
                         </button>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              )}
-              {/* An always-on OAIY server links with a one-time code (App AI contract §2). */}
-              {!isLoadingDesktops && !desktopLoadError && <ConnectOaiyServer onLinked={() => void loadDesktopConnections(true)} />}
-              {/* ROUTE-001: pick which machine services each connector's remote commands. */}
-              {!isLoadingDesktops && !desktopLoadError && desktopConnections.length > 0 && (
-                <ConnectorRoutingPanel />
-              )}
-              {/* Encrypted data nodes (docs/FORMLOGIC_DATA_NODES.md §11): enrolment roster +
-                  owner approval. Hides itself while the DATA_NODES flag is off. */}
-              <DataNodesPanel
-                desktops={desktopConnections.filter((conn) => !conn.aiOnly).map((conn) => ({
-                  id: conn.id,
-                  deviceName: conn.deviceName,
-                  online: conn.lastSeenAt !== null && now - parseServerDate(conn.lastSeenAt).getTime() < 90_000,
-                }))}
-              />
-            </div>
-          </CardContent>
-        </Card>
+              </div>
+            </Panel>
 
-        <Card id="mcp" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={Plug}
-              title="External AI access"
-              description="Let an AI app you use elsewhere (Claude, Cursor, …) build and edit your apps"
-              iconBg="bg-primary-50 dark:bg-primary-500/10"
-              iconColor="text-primary-600 dark:text-primary-400"
-            />
-            <div className="min-w-0">
-              <Button variant="outline" onClick={() => setShowMcp(true)} leftIcon={<Plug className="h-4 w-4" />}>
+            <Panel id="form-defaults" title="Form defaults" icon={<Settings2 className="h-4 w-4" />} description="Set defaults for new forms you create">
+              <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
+                <div className="flex items-center justify-between gap-3 pb-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">Show progress bar</p>
+                    <p className={HELP}>Display progress bar on forms by default</p>
+                  </div>
+                  <Switch
+                    checked={preferences.showProgressBar}
+                    onChange={(checked) => handlePreferenceChange('showProgressBar', checked)}
+                    ariaLabel="Show progress bar on forms by default"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3 pt-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">Allow back navigation</p>
+                    <p className={HELP}>Allow respondents to go back to previous questions</p>
+                  </div>
+                  <Switch
+                    checked={preferences.allowBackNavigation}
+                    onChange={(checked) => handlePreferenceChange('allowBackNavigation', checked)}
+                    ariaLabel="Allow respondents to go back to previous questions"
+                  />
+                </div>
+              </div>
+            </Panel>
+          </div>
+        </Section>
+
+        <Section {...sectionProps('connections')}>
+          <div className={PANEL_COLUMNS}>
+            <Panel id="ai" className={SECTION_TOP} title="AI assistant" icon={<Sparkles className="h-4 w-4" />} description="Choose which AI answers your chats and automations">
+              <Link to="/connect-ai" className="mb-4 inline-flex min-h-9 items-center rounded-lg bg-primary-600 px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary-700 dark:hover:bg-primary-500 max-sm:min-h-11">Start guided AI setup</Link>
+              <AiSourceCard />
+            </Panel>
+
+            {/* This one draws its own box and heading (it is shared with the AI setup pages, where it
+                stands alone). Here its box takes the measure of the panels beside it, so their
+                edges and titles line up. */}
+            <section id="local-runtime" aria-label="Local desktop connection"
+              className="min-w-0 scroll-mt-[calc(6rem+var(--fl-demo-banner-h,0px))] [&>div]:border-gray-200 [&>div]:p-4 [&>div]:shadow-sm dark:[&>div]:border-slate-700 dark:[&>div]:bg-slate-900">
+              <LocalRuntimePanel />
+            </section>
+
+            <Panel id="linked-desktops" title="Linked desktops" icon={<Laptop className="h-4 w-4" />}
+              description="OAIY computers linked to your FormLogic account. Use their AI, plugins, and flows from another computer while OAIY stays running.">
+              <div className="space-y-3">
+                {isLoadingDesktops ? (
+                  <div className="flex items-center gap-2 py-2 text-sm text-gray-500 dark:text-slate-400">
+                    <Spinner size="sm" /> <span>Loading linked desktops…</span>
+                  </div>
+                ) : desktopLoadError ? (
+                  <p className="text-sm text-gray-600 dark:text-slate-300">
+                    {desktopLoadError}{' '}
+                    <button type="button" onClick={() => loadDesktopConnections()} className={cn(TEXT_LINK, 'max-sm:min-h-11')}>Try again</button>
+                  </p>
+                ) : desktopConnections.length === 0 ? (
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-900 dark:text-white">No desktops linked yet</h3>
+                    <p className={cn('mt-1', HELP)}>Link the account from the computer running OAIY. A local browser connection alone will not add a computer here.</p>
+                    <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-gray-600 dark:text-slate-300">
+                      <li>Open OAIY Desktop → Connections → Linked account.</li>
+                      <li>Set the address to this FormLogic site and click <strong>Link account</strong>.</li>
+                      <li>Approve in the browser on that computer, using the same FormLogic account you use here.</li>
+                      <li>Return to OAIY and confirm it shows a linked account, then check again below.</li>
+                    </ol>
+                    <Button className="mt-3" size="sm" variant="outline" onClick={() => loadDesktopConnections()}>Check linked computers</Button>
+                  </div>
+                ) : (
+                  <LinkedDesktopsList
+                    connections={desktopConnections}
+                    isOnline={isDesktopOnline}
+                    onUnlink={(conn) => setRevokeDesktopTarget({ id: conn.id, name: conn.deviceName })}
+                  />
+                )}
+                {/* An always-on OAIY server links with a one-time code (App AI contract §2). */}
+                {!isLoadingDesktops && !desktopLoadError && <ConnectOaiyServer compact onLinked={() => void loadDesktopConnections(true)} />}
+                {/* ROUTE-001: pick which machine services each connector's remote commands. */}
+                {!isLoadingDesktops && !desktopLoadError && desktopConnections.length > 0 && (
+                  <ConnectorRoutingPanel />
+                )}
+                {/* Encrypted data nodes (docs/FORMLOGIC_DATA_NODES.md §11): enrolment roster +
+                    owner approval. Hides itself while the DATA_NODES flag is off. */}
+                <DataNodesPanel
+                  desktops={desktopConnections.filter((conn) => !conn.aiOnly).map((conn) => ({
+                    id: conn.id,
+                    deviceName: conn.deviceName,
+                    online: isDesktopOnline(conn),
+                  }))}
+                />
+              </div>
+            </Panel>
+
+            <Panel id="mcp" title="External AI access" icon={<Plug className="h-4 w-4" />} description="Let an AI app you use elsewhere (Claude, Cursor, …) build and edit your apps">
+              <Button variant="outline" size="sm" onClick={() => setShowMcp(true)} leftIcon={<Plug className="h-4 w-4" />}>
                 Manage AI connections
               </Button>
-            </div>
-          </CardContent>
-        </Card>
-        </div>
-        <div id="settings-panel-security" role="tabpanel" aria-labelledby="settings-tab-security" hidden={activeTab.id !== 'security'} className="space-y-5" tabIndex={0}>
-        <Card id="security" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={Shield}
-              title="Security"
-              description="Manage your account security"
-              iconBg="bg-purple-50 dark:bg-purple-500/10"
-              iconColor="text-purple-600 dark:text-purple-400"
-            />
-            <div className="space-y-4 min-w-0">
-              <div className="flex items-center gap-2 mb-2">
-                <Lock className="h-4 w-4 text-gray-500 dark:text-slate-400" />
-                <h3 className="font-medium text-gray-900 dark:text-white">Change Password</h3>
-              </div>
-              <PasswordInput
-                label="Current Password"
-                placeholder="Enter current password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                autoComplete="current-password"
-                disabled={isChangingPassword}
-              />
-              <PasswordInput
-                label="New Password"
-                placeholder="Enter new password (min 10 characters)"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                autoComplete="new-password"
-                error={newPassword ? newPasswordError || undefined : undefined}
-                disabled={isChangingPassword}
-              />
-              <PasswordInput
-                label="Confirm New Password"
-                placeholder="Confirm new password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                autoComplete="new-password"
-                error={confirmPasswordMismatch ? 'Passwords do not match' : undefined}
-                disabled={isChangingPassword}
-              />
-              <div className="pt-2">
+            </Panel>
+          </div>
+        </Section>
+
+        <Section {...sectionProps('security')}>
+          {/* Side by side, the tallest column ends flush with the block (a column's last margin
+              is dropped), so the gap to the keys under it is the block's own; in one column the
+              last panel's margin is that gap already. */}
+          <div className={cn(PANEL_COLUMNS, 'lg:pb-4')}>
+            <Panel id="security" className={SECTION_TOP} title="Password" icon={<Lock className="h-4 w-4" />}>
+              <div className="space-y-3">
+                <PasswordInput
+                  label="Current password"
+                  placeholder="Enter current password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  autoComplete="current-password"
+                  disabled={isChangingPassword}
+                />
+                <PasswordInput
+                  label="New password"
+                  placeholder="Enter new password (min 10 characters)"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
+                  error={newPassword ? newPasswordError || undefined : undefined}
+                  disabled={isChangingPassword}
+                />
+                <PasswordInput
+                  label="Confirm new password"
+                  placeholder="Confirm new password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
+                  error={confirmPasswordMismatch ? 'Passwords do not match' : undefined}
+                  disabled={isChangingPassword}
+                />
                 <Button
+                  className="max-sm:min-h-11"
                   onClick={handleChangePassword}
                   disabled={!currentPassword || !newPassword || !confirmPassword || isChangingPassword || !!newPasswordError || confirmPasswordMismatch}
                   isLoading={isChangingPassword}
                 >
-                  Change Password
+                  Change password
                 </Button>
               </div>
+            </Panel>
 
-              {/* Two-factor authentication (TOTP): enrollment, recovery codes,
-                  remembered browsers. Optional; hidden for the shared demo. */}
-              <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
-                <MfaPanel />
-              </div>
+            {/* Two-factor authentication (TOTP): enrollment, recovery codes,
+                remembered browsers. Optional; hidden for the shared demo. */}
+            <MfaPanel />
 
-              {/* Whether administrators may edit this account's code, and what they've done here. */}
-              <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
-                <SupportAccessPanel />
-              </div>
+            {/* Whether administrators may edit this account's code, and what they've done here. */}
+            <SupportAccessPanel />
 
-              {/* Age checks made for apps with an age gate, each one withdrawable. */}
-              {!user?.isDemo && (
-                <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
-                  <PassesPanel />
-                </div>
-              )}
+            {/* Age checks made for apps with an age gate, each one withdrawable. */}
+            {!isDemo && <PassesPanel />}
 
-              {/* E2EE encryption vault (Private forms): create/unlock/lock +
-                  passphrase change. Hidden for the shared demo. */}
-              <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
-                <VaultPanel />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            {/* E2EE encryption vault (Private forms): create/unlock/lock + passphrase change.
+                Hidden for the shared demo. The vault's own component (components/vault) opens with
+                a heading of the same words; the panel's title stands for it, and that heading is
+                put away only while it is still the first thing the component draws. */}
+            {user && !isDemo && (
+              <Panel id="vault" title="Encryption vault" icon={<LockKeyhole className="h-4 w-4" />}>
+                <VaultPanel heading={false} />
+              </Panel>
+            )}
 
-        <Card id="api-keys" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={Key}
-              title="API Keys"
-              description="Manage API keys for external integrations"
-              iconBg="bg-primary-50 dark:bg-primary-500/10"
-              iconColor="text-primary-600 dark:text-primary-400"
-            />
-            <div className="space-y-4 min-w-0">
-              {/* Created key display (one-time) */}
-              {createdKey && (
-                <div className="p-4 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10">
-                  <div className="flex items-start gap-2 mb-2">
-                    <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
-                    <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                      Copy your API key now. It won't be shown again.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 mt-2">
-                    <code className="flex-1 text-xs bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-600/30 rounded px-3 py-2 font-mono text-gray-900 dark:text-white break-all">
-                      {createdKey.key}
-                    </code>
-                    <button
-                      onClick={() => handleCopyKey(createdKey.key)}
-                      className="flex-shrink-0 p-2 rounded-lg border border-amber-200 dark:border-amber-600/30 bg-white dark:bg-slate-900 hover:bg-amber-50 dark:hover:bg-slate-800 transition-colors"
-                      title="Copy to clipboard"
-                    >
-                      {copiedKey ? (
-                        <Check className="h-4 w-4 text-green-600 dark:text-green-400" />
-                      ) : (
-                        <Copy className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                      )}
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => setCreatedKey(null)}
-                    className="mt-2 text-xs text-amber-700 dark:text-amber-400 hover:underline"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              )}
-
-              {/* Create key form */}
-              {showCreateKey ? (
-                <div className="p-4 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 space-y-4">
-                  <Input
-                    label="Key Name"
-                    placeholder="e.g., CRM Integration"
-                    value={newKeyName}
-                    onChange={(e) => setNewKeyName(e.target.value)}
-                  />
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2 block">
-                      Scopes
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {AVAILABLE_SCOPES.map((scope) => (
-                        <label
-                          key={scope.id}
-                          className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                            newKeyScopes.includes(scope.id)
-                              ? 'border-primary-400 dark:border-primary-500/50 bg-primary-50 dark:bg-primary-500/10'
-                              : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={newKeyScopes.includes(scope.id)}
-                            onChange={() => toggleScope(scope.id)}
-                            className="mt-0.5 rounded border-gray-300 dark:border-slate-600 text-primary-600 accent-primary-600 focus:ring-primary-500"
-                          />
-                          <div>
-                            <p className="text-sm font-medium text-gray-900 dark:text-white">{scope.label}</p>
-                            <p className="text-xs text-gray-500 dark:text-slate-400">{scope.description}</p>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <label htmlFor="api-key-expiry" className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5 block">
-                      Expiration
-                    </label>
-                    <select
-                      id="api-key-expiry"
-                      value={newKeyExpiry}
-                      onChange={(e) => setNewKeyExpiry(e.target.value)}
-                      className="block w-full sm:max-w-xs rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/60 px-3.5 py-2.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all"
-                    >
-                      {EXPIRY_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={handleCreateApiKey}
-                      disabled={!newKeyName.trim() || newKeyScopes.length === 0 || isCreatingKey}
-                      isLoading={isCreatingKey}
-                    >
-                      Create Key
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={() => { setShowCreateKey(false); setNewKeyName(''); setNewKeyScopes([]); setNewKeyExpiry('never'); }}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <Button
-                  variant="secondary"
-                  onClick={() => setShowCreateKey(true)}
-                >
-                  <Plus className="h-4 w-4 mr-1.5" />
-                  Create API Key
-                </Button>
-              )}
-
-              {/* Key list */}
-              {isLoadingKeys ? (
-                <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400 py-4">
-                  <Spinner size="sm" /> <span>Loading keys…</span>
-                </div>
-              ) : keyLoadError ? (
-                <div className="py-6 text-center text-sm">
-                  <p className="text-gray-600 dark:text-slate-300">{keyLoadError}</p>
-                  <button type="button" onClick={loadApiKeys} className="mt-2 text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">Try again</button>
-                </div>
-              ) : apiKeys.length === 0 ? (
-                <EmptyState
-                  icon={Key}
-                  title="No API keys yet"
-                  description="Create a key to integrate with the FormLogic API."
-                  className="py-8"
-                />
-              ) : (
-                <div className="space-y-2">
-                  {apiKeys.map((key) => (
-                    <div
-                      key={key.id}
-                      className="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-medium text-gray-900 dark:text-white">{key.name}</p>
-                          <code className="text-xs bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 px-1.5 py-0.5 rounded font-mono">
-                            {key.keyPrefix}...
-                          </code>
-                        </div>
-                        <div className="flex items-center gap-2 mt-1 flex-wrap">
-                          {key.scopes.map((scope) => (
-                            <span
-                              key={scope}
-                              className="text-[10px] px-1.5 py-0.5 rounded bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 font-medium"
-                            >
-                              {scope}
-                            </span>
-                          ))}
-                        </div>
-                        <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-                          {key.lastUsedAt
-                            ? `Last used ${parseServerDate(key.lastUsedAt).toLocaleDateString()}${key.lastUsedIp ? ` from ${key.lastUsedIp}` : ''}`
-                            : 'Never used'}
-                          {' · '}Created {parseServerDate(key.createdAt).toLocaleDateString()}
-                          {' · '}{key.expiresAt
-                            ? `Expires ${parseServerDate(key.expiresAt).toLocaleDateString()}`
-                            : 'Never expires'}
-                          {' · '}{key.formIds && key.formIds.length > 0
-                            ? `${key.formIds.length} ${key.formIds.length === 1 ? 'form' : 'forms'}`
-                            : 'All forms'}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => setRevokeTarget({ id: key.id, name: key.name })}
-                        className="flex-shrink-0 p-2 rounded-lg text-gray-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors ml-2"
-                        title="Revoke key"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card id="audit" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={Shield}
-              title="Audit trail"
-              description="Verify the integrity of your audit trail"
-              iconBg="bg-emerald-50 dark:bg-emerald-500/10"
-              iconColor="text-emerald-600 dark:text-emerald-400"
-            />
-            <div className="space-y-4 min-w-0">
-              <p className="text-sm text-gray-500 dark:text-slate-500">
+            <Panel id="audit" title="Audit trail" icon={<ScrollText className="h-4 w-4" />}>
+              <p className={HELP}>
                 The audit log uses cryptographic hash chaining to ensure entries cannot be tampered with.
                 Run a verification to confirm the chain is intact.
               </p>
               <Button
+                className="mt-3"
+                size="sm"
+                variant="outline"
                 onClick={handleVerifyAudit}
                 disabled={isVerifyingAudit}
                 isLoading={isVerifyingAudit}
               >
-                Verify Audit Integrity
+                Verify audit integrity
               </Button>
               {auditResult && (
-                <div role="status" className={`flex items-start gap-3 p-4 rounded-lg border ${
+                <div role="status" className={`mt-3 flex items-start gap-3 rounded-xl border p-3 ${
                   auditResult.intact
                     ? 'bg-green-50 dark:bg-green-500/10 border-green-200 dark:border-green-500/30'
                     : 'bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/30'
@@ -1252,52 +952,168 @@ export function Settings() {
                   </div>
                 </div>
               )}
-            </div>
-          </CardContent>
-        </Card>
-        </div>
-        <div id="settings-panel-data" role="tabpanel" aria-labelledby="settings-tab-data" hidden={activeTab.id !== 'data'} className="space-y-5" tabIndex={0}>
-        <Card id="your-data" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={Download}
-              title="Your data"
-              description="A readable copy for your own records — not a restorable backup"
-              iconBg="bg-sky-50 dark:bg-sky-500/10"
-              iconColor="text-sky-600 dark:text-sky-400"
-            />
-            <div className="min-w-0">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
-                <div>
-                  <p className="font-medium text-gray-900 dark:text-white">Download my data</p>
-                  <p className="text-sm text-gray-500 dark:text-slate-400">
-                    Profile, forms, apps, and API-key metadata as JSON — for reading, or for taking elsewhere.
-                    It cannot be restored back into FormLogic; use <span className="font-medium">Backup &amp; restore</span> below for that.
-                    Records export from each form separately; secrets are never included.
-                  </p>
-                </div>
-                <Button variant="outline" onClick={handleExportData} isLoading={isExportingData} leftIcon={<Download className="h-4 w-4" />}>
-                  Export
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </Panel>
+          </div>
 
-        <Card id="backup" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={Archive}
-              title="Backup & restore"
-              description="A file you can restore later — this is the one to keep"
-              iconBg="bg-indigo-50 dark:bg-indigo-500/10"
-              iconColor="text-indigo-600 dark:text-indigo-400"
-            />
-            <div className="min-w-0 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
+          {/* The keys are a table: it takes the page's whole width, under the panels. */}
+          <Panel id="api-keys" title="API keys" icon={<Key className="h-4 w-4" />} description="Manage API keys for external integrations"
+            actions={!showCreateKey && (
+              <Button size="sm" variant="secondary" onClick={() => setShowCreateKey(true)} leftIcon={<Plus className="h-4 w-4" />}>
+                Create API key
+              </Button>
+            )}>
+            <div className="@container space-y-3">
+              {/* Created key display (one-time) */}
+              {createdKey && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 dark:border-amber-500/40 dark:bg-amber-500/10">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+                    <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                      Copy your API key now. It won't be shown again.
+                    </p>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <code className="min-w-0 flex-1 break-all rounded-lg border border-amber-200 bg-white px-3 py-2 font-mono text-xs text-gray-900 dark:border-amber-600/30 dark:bg-slate-900 dark:text-white">
+                      {createdKey.key}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyKey(createdKey.key)}
+                      className="inline-flex h-10 w-10 flex-shrink-0 cursor-pointer items-center justify-center rounded-lg border border-amber-200 bg-white transition-colors hover:bg-amber-50 dark:border-amber-600/30 dark:bg-slate-900 dark:hover:bg-slate-800 max-sm:h-11 max-sm:w-11"
+                      title="Copy to clipboard"
+                      aria-label="Copy to clipboard"
+                    >
+                      {copiedKey ? (
+                        <Check className="h-4 w-4 text-green-600 dark:text-green-400" />
+                      ) : (
+                        <Copy className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                      )}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCreatedKey(null)}
+                    className="mt-2 inline-flex cursor-pointer items-center text-xs text-amber-700 hover:underline dark:text-amber-400 max-sm:min-h-11"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              {/* Create key form */}
+              {showCreateKey && (
+                <div className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                  <div className="max-w-sm">
+                    <Input
+                      label="Key name"
+                      placeholder="e.g., CRM Integration"
+                      value={newKeyName}
+                      onChange={(e) => setNewKeyName(e.target.value)}
+                    />
+                  </div>
+                  <fieldset className="m-0 min-w-0 border-0 p-0">
+                    <legend className="mb-1.5 block p-0 text-sm font-medium text-gray-700 dark:text-slate-300">
+                      Scopes
+                    </legend>
+                    <div className="grid grid-cols-1 gap-2 @lg:grid-cols-2 @4xl:grid-cols-3">
+                      {AVAILABLE_SCOPES.map((scope) => (
+                        <label
+                          key={scope.id}
+                          className={`flex cursor-pointer items-start gap-3 rounded-lg border p-2.5 transition-colors ${
+                            newKeyScopes.includes(scope.id)
+                              ? 'border-primary-400 dark:border-primary-500/50 bg-primary-50 dark:bg-primary-500/10'
+                              : 'border-gray-200 bg-white hover:bg-gray-50 dark:border-slate-700 dark:bg-transparent dark:hover:bg-slate-800'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={newKeyScopes.includes(scope.id)}
+                            onChange={() => toggleScope(scope.id)}
+                            className="mt-0.5 rounded border-gray-300 dark:border-slate-600 text-primary-600 accent-primary-600 focus:ring-primary-500"
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-medium text-gray-900 dark:text-white">{scope.label}</span>
+                            <span className={cn('block', HELP)}>{scope.description}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <div className="max-w-xs">
+                    <label htmlFor="api-key-expiry" className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-slate-300">
+                      Expiration
+                    </label>
+                    <select
+                      id="api-key-expiry"
+                      value={newKeyExpiry}
+                      onChange={(e) => setNewKeyExpiry(e.target.value)}
+                      className={SELECT}
+                    >
+                      {EXPIRY_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      className="max-sm:min-h-11"
+                      onClick={handleCreateApiKey}
+                      disabled={!newKeyName.trim() || newKeyScopes.length === 0 || isCreatingKey}
+                      isLoading={isCreatingKey}
+                    >
+                      Create key
+                    </Button>
+                    <Button
+                      className="max-sm:min-h-11"
+                      variant="secondary"
+                      onClick={() => { setShowCreateKey(false); setNewKeyName(''); setNewKeyScopes([]); setNewKeyExpiry('never'); }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Key list */}
+              {isLoadingKeys ? (
+                <div className="flex items-center gap-2 py-2 text-sm text-gray-500 dark:text-slate-400">
+                  <Spinner size="sm" /> <span>Loading keys…</span>
+                </div>
+              ) : keyLoadError ? (
+                <p className="text-sm text-gray-600 dark:text-slate-300">
+                  {keyLoadError}{' '}
+                  <button type="button" onClick={loadApiKeys} className={cn(TEXT_LINK, 'max-sm:min-h-11')}>Try again</button>
+                </p>
+              ) : apiKeys.length === 0 ? (
+                <p className="text-sm text-gray-600 dark:text-slate-300">
+                  <span className="font-medium text-gray-900 dark:text-white">No API keys yet.</span>{' '}
+                  Create a key to integrate with the FormLogic API.
+                </p>
+              ) : (
+                <ApiKeysList keys={apiKeys} onRevoke={(key) => setRevokeTarget({ id: key.id, name: key.name })} />
+              )}
+            </div>
+          </Panel>
+        </Section>
+
+        <Section {...sectionProps('data')}>
+          <div className={PANEL_COLUMNS}>
+            <Panel id="your-data" className={SECTION_TOP} title="Export a copy" icon={<Download className="h-4 w-4" />} description="A readable copy for your own records — not a restorable backup">
+              <p className={HELP}>
+                Profile, forms, apps, and API-key metadata as JSON — for reading, or for taking elsewhere.
+                It cannot be restored back into FormLogic; use <span className="font-medium text-gray-700 dark:text-slate-200">Backup &amp; restore</span> for that.
+                Records export from each form separately; secrets are never included.
+              </p>
+              <Button className="mt-3" size="sm" variant="outline" onClick={handleExportData} isLoading={isExportingData} leftIcon={<Download className="h-4 w-4" />}>
+                Export
+              </Button>
+            </Panel>
+
+            <Panel id="backup" title="Backup & restore" icon={<Archive className="h-4 w-4" />} description="A file you can restore later — this is the one to keep">
+              <div className="space-y-4">
                 <div>
-                  <p className="font-medium text-gray-900 dark:text-white">Download full backup</p>
-                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                  <h3 className="text-sm font-medium text-gray-900 dark:text-white">Download full backup</h3>
+                  <p className={cn('mt-1', HELP)}>
                     Everything in one zip: apps, forms and flows (schemas), a consistent snapshot of every form&apos;s record database, uploaded files,
                     and each hosted native app&apos;s source, media and private database.
                     Webhook secrets, members, API keys and native app host keys are not included — a restore from this download re-issues native app keys.
@@ -1310,109 +1126,80 @@ export function Settings() {
                       placeholder="At least 12 characters"
                       autoComplete="new-password"
                     />
-                    <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+                    <p className={cn('mt-1', HELP)}>
                       Encrypts the file. Without the passphrase nobody can open it, and we can&apos;t recover it for you.
                     </p>
                   </div>
+                  <Button
+                    className="mt-3"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleExportBackup}
+                    isLoading={isExportingBackup}
+                    disabled={backupPassphrase.length > 0 && backupPassphrase.length < 12}
+                    leftIcon={<Archive className="h-4 w-4" />}
+                  >
+                    Download backup
+                  </Button>
                 </div>
-                <Button
-                  variant="outline"
-                  onClick={handleExportBackup}
-                  isLoading={isExportingBackup}
-                  disabled={backupPassphrase.length > 0 && backupPassphrase.length < 12}
-                  leftIcon={<Archive className="h-4 w-4" />}
-                >
-                  Download backup
-                </Button>
-              </div>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
-                <div>
-                  <p className="font-medium text-gray-900 dark:text-white">Restore from backup</p>
-                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                <div className="border-t border-gray-100 pt-4 dark:border-white/[0.06]">
+                  <h3 className="text-sm font-medium text-gray-900 dark:text-white">Restore from backup</h3>
+                  <p className={cn('mt-1', HELP)}>
                     Creates new copies of everything in the backup — nothing is overwritten. Re-importing the same backup creates duplicates.
                   </p>
+                  <label className="mt-3 inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary-500 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 max-sm:min-h-11">
+                    <UploadCloud className="h-4 w-4" />
+                    {isImportingBackup ? 'Restoring…' : 'Restore backup'}
+                    <input
+                      type="file"
+                      accept=".zip,.flbk,application/zip"
+                      className="hidden"
+                      disabled={isImportingBackup}
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) setPendingBackupFile(f); e.target.value = ''; }}
+                    />
+                  </label>
                 </div>
-                <label className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 dark:border-slate-600 px-4 py-2 text-sm font-medium text-gray-700 dark:text-slate-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800 shrink-0">
-                  <UploadCloud className="h-4 w-4" />
-                  {isImportingBackup ? 'Restoring…' : 'Restore backup'}
-                  <input
-                    type="file"
-                    accept=".zip,.flbk,application/zip"
-                    className="hidden"
-                    disabled={isImportingBackup}
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) setPendingBackupFile(f); e.target.value = ''; }}
-                  />
-                </label>
+                {backupResult && (
+                  <div className="space-y-1 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 text-sm dark:border-emerald-500/30 dark:bg-emerald-500/10">
+                    <p className="font-medium text-gray-900 dark:text-white">Restore complete</p>
+                    <p className="text-gray-600 dark:text-slate-300">
+                      {backupResult.apps.length} apps · {backupResult.forms.length} forms · {backupResult.flows} flows · {backupResult.bindings} bindings · {backupResult.responses.toLocaleString()} records · {backupResult.files} files{(backupResult.nativeApps?.length ?? 0) > 0 ? ` · ${backupResult.nativeApps!.length} native apps` : ''}
+                    </p>
+                    {(backupResult.warnings ?? []).map((w, i) => (
+                      <p key={i} className="text-amber-700 dark:text-amber-400 text-xs">{w}</p>
+                    ))}
+                  </div>
+                )}
               </div>
-              {backupResult && (
-                <div className="p-4 rounded-xl border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-500/10 text-sm space-y-1">
-                  <p className="font-medium text-gray-900 dark:text-white">Restore complete</p>
-                  <p className="text-gray-600 dark:text-slate-300">
-                    {backupResult.apps.length} apps · {backupResult.forms.length} forms · {backupResult.flows} flows · {backupResult.bindings} bindings · {backupResult.responses.toLocaleString()} records · {backupResult.files} files{(backupResult.nativeApps?.length ?? 0) > 0 ? ` · ${backupResult.nativeApps!.length} native apps` : ''}
-                  </p>
-                  {(backupResult.warnings ?? []).map((w, i) => (
-                    <p key={i} className="text-amber-700 dark:text-amber-400 text-xs">{w}</p>
-                  ))}
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+            </Panel>
 
-        {/* The demo's route table has no /trash, and the shared account has nothing of its own to restore. */}
-        {!user?.isDemo && (
-        <Card id="trash" className="overflow-hidden rounded-2xl scroll-mt-24">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={Recycle}
-              title="Recycle bin"
-              description="Deleted forms, apps and flows stay restorable for 30 days"
-              iconBg="bg-emerald-50 dark:bg-emerald-500/10"
-              iconColor="text-emerald-600 dark:text-emerald-400"
-            />
-            <div className="min-w-0">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
-                <div>
-                  <p className="font-medium text-gray-900 dark:text-white">
-                    {trashCount === null ? 'Recycle bin' : trashCount === 0 ? 'The recycle bin is empty' : `${trashCount} item${trashCount === 1 ? '' : 's'} in the recycle bin`}
+            {/* The demo's route table has no /trash, and the shared account has nothing of its own to restore. */}
+            {!isDemo && (
+              <Panel id="trash" title="Recycle bin" icon={<Recycle className="h-4 w-4" />} description="Deleted forms, apps and flows stay restorable for 30 days">
+                {trashCount !== null && (
+                  <p className="mb-1 text-sm font-medium text-gray-900 dark:text-white">
+                    {trashCount === 0 ? 'The recycle bin is empty' : `${trashCount} item${trashCount === 1 ? '' : 's'} in the recycle bin`}
                   </p>
-                  <p className="text-sm text-gray-500 dark:text-slate-400">
-                    Deleting a form, app or flow keeps a snapshot (records and files included) for 30 days — restore it anytime before then.
-                  </p>
-                </div>
-                <Button variant="outline" onClick={() => navigate('/trash')} leftIcon={<Recycle className="h-4 w-4" />}>
+                )}
+                <p className={HELP}>
+                  Deleting a form, app or flow keeps a snapshot (records and files included) for 30 days — restore it anytime before then.
+                </p>
+                <Button className="mt-3" size="sm" variant="outline" onClick={() => navigate('/trash')} leftIcon={<Recycle className="h-4 w-4" />}>
                   Open recycle bin
                 </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        )}
+              </Panel>
+            )}
 
-        <Card id="danger" className="overflow-hidden rounded-2xl scroll-mt-24 border-red-200/70 dark:border-red-500/30">
-          <CardContent className="p-5 sm:p-6">
-            <SectionHeader
-              icon={AlertTriangle}
-              title="Delete account"
-              description="Permanently delete your account and everything in it"
-              iconBg="bg-red-50 dark:bg-red-500/10"
-              iconColor="text-red-600 dark:text-red-400"
-            />
-            <div className="min-w-0">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-red-200/70 dark:border-red-500/30 bg-red-50/40 dark:bg-red-500/5">
-                <div>
-                  <p className="font-medium text-gray-900 dark:text-white">Delete account</p>
-                  <p className="text-sm text-gray-500 dark:text-slate-400">Permanently deletes your account, forms, and responses. This can't be undone.</p>
-                </div>
-                <Button variant="danger" onClick={() => { setDeleteAccountOpen(true); setDeletePassword(''); }} leftIcon={<Trash2 className="h-4 w-4" />}>
-                  Delete account
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        </div>
-      </div>
+            <Panel id="danger" title="Delete account" icon={<AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400" />} className="border-red-200 dark:border-red-500/30">
+              <p className={HELP}>Permanently deletes your account, forms, and responses. This can't be undone.</p>
+              {/* The danger button's own red is short of readable on its tint at this size: a shade darker in the light theme, lighter in the dark one. */}
+              <Button className="mt-3 text-red-700 dark:text-red-400" size="sm" variant="danger" onClick={() => { setDeleteAccountOpen(true); setDeletePassword(''); }} leftIcon={<Trash2 className="h-4 w-4" />}>
+                Delete account
+              </Button>
+            </Panel>
+          </div>
+        </Section>
+      </PageBody>
 
       <ConfirmDialog
         isOpen={pendingBackupFile !== null}
