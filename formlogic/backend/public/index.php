@@ -1038,7 +1038,8 @@ $container->set(AppController::class, function (Container $c) {
         $c->get(AuditService::class),
         $c->get(\FormLogic\Services\AppReportService::class),
         $c->get(\FormLogic\Services\TrashService::class),
-        $c->get(AppUserService::class)
+        $c->get(AppUserService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class)
     );
 });
 
@@ -3557,7 +3558,9 @@ $app->post('/api/apps/{id}/native/{operation:starter}', function ($request, $res
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
 // Record maintenance has its own bounded budget; browsing must not consume deployment capacity.
-$nativeRecordLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'native_records', true, true);
+// 180 a minute for each owner (it was 30): the data manager asks again for every sort, search,
+// filter and page, and reads then saves a record for each cell edited in place.
+$nativeRecordLimiter = new RateLimitMiddleware($rateLimiter, 180, 60, 'native_records', true, true);
 $app->map(['GET', 'POST'], '/api/apps/{id}/native/{operation:records}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($nativeRecordLimiter)->add($authRequired);
@@ -3694,6 +3697,12 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     // swallowed by the id route.
     $group->get('/form-usage', function ($request, $response) use ($container) {
         return $container->get(AppController::class)->formUsage($request, $response);
+    });
+    // What the apps list shows of each app the caller owns beyond the list itself (its SoftN
+    // project, database, domain and members), in one round trip. Static path, registered
+    // before /{id} for the same reason.
+    $group->get('/summary', function ($request, $response) use ($container) {
+        return $container->get(AppController::class)->summary($request, $response);
     });
     $group->get('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppController::class)->show($request, $response, $getArgs($request));

@@ -313,10 +313,23 @@ final class NativeAppControllerTest extends TestCase
         $this->assertSame(403, $install->getStatusCode());
         $this->assertSame('demo_readonly', self::body($install)['code']);
         $this->assertStringContainsString('The shared demo is read-only', self::body($install)['message']);
-        foreach (['read', 'create', 'update', 'delete'] as $action) {
+        foreach (['read', 'create', 'update', 'delete', 'deleteMany'] as $action) {
             $record = $controller->manage($this->request('POST', true)->withParsedBody(['table' => 'notes', 'action' => $action]), new Response(), ['id' => 'notes', 'operation' => 'records']);
             $this->assertSame(403, $record->getStatusCode(), $action);
             $this->assertSame('demo_readonly', self::body($record)['code'], $action);
+        }
+    }
+
+    /** Any visitor holds the demo's session: it browses the tables, and downloads none of them. */
+    public function testTheDemoCannotExportATable(): void
+    {
+        [$controller, , $native] = $this->fixture('application');
+        $native->expects($this->never())->method('exportRecords');
+        foreach ([['table' => 'notes', 'export' => 'csv'], ['table' => '*', 'export' => 'json']] as $query) {
+            $response = $controller->manage($this->request('GET', true)->withQueryParams($query), new Response(), ['id' => 'notes', 'operation' => 'records']);
+            $this->assertSame(403, $response->getStatusCode(), $query['export']);
+            $this->assertSame('Data export is disabled on the shared live demo.', self::body($response)['message']);
+            $this->assertSame('', $response->getHeaderLine('Content-Disposition'));
         }
     }
 
@@ -601,6 +614,184 @@ final class NativeAppControllerTest extends TestCase
         $this->assertArrayHasKey('server/migrations/001.sql', $project['files']);
         $this->assertSame(0, $project['version']);
         $this->assertSame('My app', json_decode(NativeAppService::starterProject("\t ", 'a')['files']['manifest.json'], true)['name']);
+    }
+
+    // ── The data manager: browse parameters, export, deleteMany ───────────────
+
+    /**
+     * A controller over mocks whose plan and automations a test sets.
+     *
+     * @return array{0: NativeAppController, 1: NativeAppService&\PHPUnit\Framework\MockObject\MockObject, 2: PlanService&\PHPUnit\Framework\MockObject\MockObject, 3: FlowService&\PHPUnit\Framework\MockObject\MockObject}
+     */
+    private function recordsFixture(string $slug = 'notes-app'): array
+    {
+        $apps = $this->createMock(AppService::class);
+        $apps->method('getApp')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'slug' => $slug, 'status' => 'published', 'settings' => ['softnApp' => true]]);
+        $native = $this->createMock(NativeAppService::class);
+        $plans = $this->createMock(PlanService::class);
+        $flows = $this->createMock(FlowService::class);
+        return [new NativeAppController($apps, $this->createMock(AppUserService::class), $native, $plans, $flows, $this->engines()), $native, $plans, $flows];
+    }
+
+    /** A controller over a real service and an installation that holds this database. Records need no runtime. */
+    private function withDatabase(string $sql, string $slug = 'notes-app'): NativeAppController
+    {
+        $root = $this->installation();
+        mkdir($root . '/private/data', 0700, true);
+        file_put_contents($root . '/project.json', json_encode(['home' => false, 'version' => 1, 'files' => ['manifest.json' => '{"id":"notes","server":{"entry":"server/main.logic"}}'], 'assets' => [], 'access' => 'application']));
+        (new \PDO('sqlite:' . $root . '/private/data/application.sqlite', null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]))->exec($sql);
+        $apps = $this->createMock(AppService::class);
+        $apps->method('getApp')->willReturn(['id' => 'notes', 'ownerId' => 'owner', 'name' => 'Notes', 'slug' => $slug, 'status' => 'published', 'settings' => ['softnApp' => true]]);
+        return new NativeAppController($apps, $this->createMock(AppUserService::class), new NativeAppService($this->storage, $this->storage . '/no-runtime'), $this->createMock(PlanService::class), $this->createMock(FlowService::class), $this->engines());
+    }
+
+    private function records(NativeAppController $controller, array $query, bool $demo = false): ResponseInterface
+    {
+        return $controller->manage($this->request('GET', $demo)->withQueryParams($query), new Response(), ['id' => 'notes', 'operation' => 'records']);
+    }
+
+    public function testTheRecordsGetHandsTheDataManagersQuestionsToTheService(): void
+    {
+        [$controller, $native] = $this->recordsFixture();
+        $native->method('get')->willReturn(['version' => 1]);
+        $asked = [];
+        $native->method('records')->willReturnCallback(function (...$arguments) use (&$asked): array { $asked[] = $arguments; return ['tables' => ['notes']]; });
+        $this->assertSame(['tables' => ['notes'], 'readOnly' => false], self::body($this->records($controller, ['table' => 'notes', 'offset' => '50'])));
+        $this->records($controller, ['table' => 'notes', 'offset' => '100', 'limit' => '250', 'sort' => 'title', 'dir' => 'desc', 'q' => '50%', 'filter' => '[{"column":"title","op":"empty"}]']);
+        $this->records($controller, ['table' => 'notes', 'view' => 'structure']);
+        $this->records($controller, ['summary' => '1']);
+        $this->records($controller, ['summary' => 'yes', 'limit' => 'many', 'unknown' => 'x']);
+        $this->assertSame([
+            // A caller that sends nothing new: its table, its offset, and no options.
+            ['notes', 'notes', 50, null, []],
+            ['notes', 'notes', 100, null, ['sort' => 'title', 'dir' => 'desc', 'q' => '50%', 'filter' => '[{"column":"title","op":"empty"}]', 'limit' => 250]],
+            ['notes', 'notes', 0, null, ['view' => 'structure']],
+            ['notes', null, 0, null, ['summary' => true]],
+            ['notes', null, 0, null, ['limit' => 0]],
+        ], $asked);
+    }
+
+    public function testWhatTheStoreRefusesIsA400WithItsSentence(): void
+    {
+        [$controller, $native] = $this->recordsFixture();
+        $native->method('get')->willReturn(['version' => 1]);
+        $native->method('records')->willThrowException(new \InvalidArgumentException('Unknown column'));
+        $response = $this->records($controller, ['table' => 'notes', 'sort' => 'session_token']);
+        $this->assertSame(400, $response->getStatusCode());
+        $this->assertSame(['error' => true, 'message' => 'Unknown column'], self::body($response));
+    }
+
+    public function testBrowsingAndDeletingSeveralRowsThroughTheController(): void
+    {
+        $controller = $this->withDatabase("CREATE TABLE notes(id INTEGER PRIMARY KEY, title TEXT, session_token TEXT); INSERT INTO notes(title, session_token) VALUES ('One', 'tok-1'), ('Two', 'tok-2'), ('Three', 'tok-3')");
+        $summary = self::body($this->records($controller, ['summary' => '1']));
+        $this->assertSame([['name' => 'notes', 'rows' => 3, 'columns' => 2]], $summary['summary']['tables']);
+        $this->assertSame([true, ['notes'], false, 0], [$summary['installed'], $summary['tables'], $summary['readOnly'], $summary['summary']['hiddenTables']]);
+        $this->assertArrayNotHasKey('summary', self::body($this->records($controller, [])));
+
+        $response = $this->records($controller, ['table' => 'notes', 'sort' => 'title', 'dir' => 'desc', 'limit' => '25']);
+        $page = self::body($response);
+        $this->assertSame([['id' => 2, 'title' => 'Two'], ['id' => 3, 'title' => 'Three'], ['id' => 1, 'title' => 'One']], $page['rows']);
+        $this->assertSame([3, 3, 25, ['column' => 'title', 'dir' => 'desc'], 1, false], [$page['total'], $page['matching'], $page['limit'], $page['sort'], $page['hiddenColumns'], $page['readOnly']]);
+        $this->assertStringContainsString('"cut":{}', (string) $response->getBody(), 'an object in JSON, with nothing in it');
+        $this->assertStringNotContainsString('tok-', (string) $response->getBody());
+        $this->assertTrue(self::body($this->records($controller, ['table' => 'notes'], true))['readOnly'], 'the demo browses, read-only');
+        $this->assertSame(400, $this->records($controller, ['table' => 'notes', 'sort' => 'session_token'])->getStatusCode());
+        $this->assertSame(['error' => true, 'message' => 'Unknown column'], self::body($this->records($controller, ['table' => 'notes', 'sort' => 'session_token'])));
+        $this->assertSame('Filter 1 names an unknown column.', self::body($this->records($controller, ['table' => 'notes', 'filter' => '[{"column":"session_token","op":"notEmpty"}]']))['message']);
+        $this->assertSame(['id', 'title', 'session_token'], array_column(self::body($this->records($controller, ['table' => 'notes', 'view' => 'structure']))['columns'], 'name'));
+
+        $rows = array_map(static fn($key, $stamp) => ['key' => $key, 'stamp' => $stamp], $page['keys'], $page['stamps']);
+        $delete = fn(array $rows) => $controller->manage($this->request('POST')->withParsedBody(['table' => 'notes', 'action' => 'deleteMany', 'rows' => $rows]), new Response(), ['id' => 'notes', 'operation' => 'records']);
+        $stale = $delete([$rows[0], ['key' => $rows[1]['key'], 'stamp' => $rows[2]['stamp']]]);
+        $this->assertSame(409, $stale->getStatusCode());
+        $this->assertSame('1 record has changed or gone since the list was loaded, so nothing was deleted. Refresh the records and try again.', self::body($stale)['message']);
+        $this->assertSame(400, $delete([])->getStatusCode());
+        $this->assertSame(3, self::body($this->records($controller, ['table' => 'notes']))['total']);
+        $deleted = $delete([$rows[0], $rows[1]]);
+        $this->assertSame([200, ['saved' => true, 'deleted' => 2]], [$deleted->getStatusCode(), self::body($deleted)]);
+        $this->assertSame([['id' => 1, 'title' => 'One']], self::body($this->records($controller, ['table' => 'notes']))['rows']);
+    }
+
+    public function testAnExportIsAFileNotThisControllersJson(): void
+    {
+        // A slug and a table's name that would end the quoted file name and start a header of their own.
+        $controller = $this->withDatabase("CREATE TABLE \"we\"\"ird\r\nname.csv\"(id INTEGER PRIMARY KEY, label TEXT, api_key TEXT); INSERT INTO \"we\"\"ird\r\nname.csv\"(label, api_key) VALUES ('a, b', 'k-1'), (NULL, 'k-2'); CREATE TABLE plain(id INTEGER PRIMARY KEY)", "my\"app\r\nX-Evil: 1");
+        $csv = $this->records($controller, ['table' => "we\"ird\r\nname.csv", 'export' => 'csv', 'sort' => 'id', 'dir' => 'desc']);
+        $body = (string) $csv->getBody();
+        $this->assertSame(200, $csv->getStatusCode());
+        $this->assertSame("\xEF\xBB\xBF" . "id,label\r\n2,\r\n1,\"a, b\"\r\n", $body);
+        $this->assertSame([
+            'Content-Type' => 'text/csv; charset=utf-8',
+            'Content-Disposition' => 'attachment; filename="my-app-X-Evil-1-we-ird-name-csv.csv"',
+            'Content-Length' => (string) strlen($body),
+            'Cache-Control' => 'no-store',
+            'X-Content-Type-Options' => 'nosniff',
+        ], array_map(static fn(array $values): string => implode(', ', $values), $csv->getHeaders()));
+
+        $all = $this->records($controller, ['table' => '*', 'export' => 'json']);
+        $this->assertSame('{"tables":{"plain":[],"we\"ird\r\nname.csv":[{"id":1,"label":"a, b"},{"id":2,"label":null}]}}', (string) $all->getBody());
+        $this->assertSame(['application/json; charset=utf-8', 'attachment; filename="my-app-X-Evil-1-all-tables.json"', false], [$all->getHeaderLine('Content-Type'), $all->getHeaderLine('Content-Disposition'), $all->hasHeader('X-FormLogic-Export-Truncated')]);
+        $this->assertSame('attachment; filename="my-app-X-Evil-1-plain.json"', $this->records($controller, ['table' => 'plain', 'export' => 'json'])->getHeaderLine('Content-Disposition'));
+
+        // What cannot be exported is refused as every other request here is: JSON, with a sentence.
+        foreach ([
+            [['table' => 'plain', 'export' => 'xml'], 400, 'Export as csv or json.'],
+            [['table' => '*', 'export' => 'csv'], 400, 'Every table at once is exported as json.'],
+            [['export' => 'csv'], 400, 'Choose a table to export, or * for every table.'],
+            [['table' => 'plain', 'export' => 'csv', 'sort' => 'nope'], 400, 'Unknown column'],
+            [['table' => 'nowhere', 'export' => 'csv'], 404, 'Table not found'],
+        ] as [$query, $status, $message]) {
+            $refused = $this->records($controller, $query);
+            $this->assertSame([$status, 'application/json', ['error' => true, 'message' => $message]], [$refused->getStatusCode(), $refused->getHeaderLine('Content-Type'), self::body($refused)], json_encode($query));
+            $this->assertFalse($refused->hasHeader('Content-Disposition'));
+        }
+    }
+
+    public function testAnExportThatALimitCutSaysSoInAHeader(): void
+    {
+        [$controller, $native] = $this->recordsFixture('');
+        $cut = true;
+        $native->method('exportRecords')->willReturnCallback(function (string $appId, ?string $table, string $format, array $options) use (&$cut): array {
+            $this->assertSame(['notes', 'notes', 'json', ['q' => 'x', 'limit' => 25]], [$appId, $table, $format, $options]);
+            $stream = fopen('php://temp', 'w+b');
+            fwrite($stream, '[]');
+            rewind($stream);
+            return ['stream' => $stream, 'truncated' => $cut];
+        });
+        $response = $this->records($controller, ['table' => 'notes', 'export' => 'json', 'q' => 'x', 'limit' => '25']);
+        $this->assertSame(['1', '[]', 'attachment; filename="app-notes.json"'], [$response->getHeaderLine('X-FormLogic-Export-Truncated'), (string) $response->getBody(), $response->getHeaderLine('Content-Disposition')]);
+        $cut = false;
+        $this->assertFalse($this->records($controller, ['table' => 'notes', 'export' => 'json', 'q' => 'x', 'limit' => '25'])->hasHeader('X-FormLogic-Export-Truncated'));
+    }
+
+    public function testDeleteManyIsAWriteRefusedWhenThePlanHasLapsedAndFollowedByItsAutomations(): void
+    {
+        [$controller, $native, $plans, $flows] = $this->recordsFixture();
+        $subscriptions = [['event' => 'app.record.deleted.notes', 'bindings' => ['binding-1']]];
+        $flows->method('nativeRecordSubscriptions')->willReturn($subscriptions);
+        $input = ['table' => 'notes', 'action' => 'deleteMany', 'rows' => [['key' => ['id' => '1'], 'stamp' => str_repeat('a', 64)]]];
+        $post = fn(array $body) => $controller->manage($this->request('POST')->withParsedBody($body), new Response(), ['id' => 'notes', 'operation' => 'records']);
+        $managed = [];
+        $native->method('manageRecord')->willReturnCallback(function (string $appId, array $body, array $given) use (&$managed, $subscriptions): array {
+            $this->assertSame(['notes', $subscriptions], [$appId, $given]);
+            $managed[] = $body['action'];
+            return $body['action'] === 'read' ? ['record' => []] : ['saved' => true, 'deleted' => 1];
+        });
+        // The automations are delivered after a deleteMany as after any other write, and not after a read.
+        $native->expects($this->once())->method('dispatchRecordEvents')->with('notes', $this->callback('is_callable'));
+        $deleted = $post($input);
+        $this->assertSame([200, ['saved' => true, 'deleted' => 1]], [$deleted->getStatusCode(), self::body($deleted)]);
+        $this->assertSame(['record' => []], self::body($post(['action' => 'read'] + $input)));
+        $this->assertSame(['deleteMany', 'read'], $managed);
+
+        // With the plan lapsed: no write, deleteMany among them; a read still answers.
+        $plans->method('isEnforced')->willReturn(true);
+        $plans->method('isCloudActive')->willReturn(false);
+        $refused = $post($input);
+        $this->assertSame([402, 'Cloud access has expired. Records remain available to read.'], [$refused->getStatusCode(), self::body($refused)['message']]);
+        $this->assertSame(200, $post(['action' => 'read'] + $input)->getStatusCode());
+        $this->assertSame(['deleteMany', 'read', 'read'], $managed);
     }
 
     public function testAHostThatStoppedSaysWhatTheAuthorCanDo(): void

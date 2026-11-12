@@ -117,9 +117,9 @@ class NativeAppService
     private const SQLITE_OWN = ['sqlite_sequence', 'sqlite_stat1', 'sqlite_stat2', 'sqlite_stat3', 'sqlite_stat4'];
 
 
-    /** Records browsing: rows per page, and the furthest offset a page may start at. */
-    public const RECORD_PAGE = 50;
-    public const RECORD_OFFSET_LIMIT = 100000;
+    /** Records browsing: rows per page unless another size is asked for, and the furthest offset a page may start at (NativeRecordStore::browse). */
+    public const RECORD_PAGE = NativeRecordStore::PAGE;
+    public const RECORD_OFFSET_LIMIT = NativeRecordStore::OFFSET_LIMIT;
 
     /** The longest a request runs, and so how long an update waits for those already running. */
     private const UPDATE_WAIT_SECONDS = 30;
@@ -2470,8 +2470,17 @@ class NativeAppService
         }
     }
 
-    /** Browse the same database used by ZIPP; host metadata and auth secrets are excluded from the table view. */
-    public function records(string $appId, ?string $table = null, int $offset = 0, ?int $generation = null): array
+    /**
+     * Browse the same database used by ZIPP; host metadata and auth secrets are excluded from the table view.
+     *
+     * $options is what the data manager asks beyond a table and an offset. With no table,
+     * `summary` adds each table's row count, the database's size and how many tables are not
+     * listed. With one, `view` => 'structure' answers how the table is made, and `limit`, `sort`,
+     * `dir`, `q` and `filter` are NativeRecordStore::browse()'s. Null is the answer as it was
+     * before the data manager, for a caller that reads rows and nothing else (the AI's tool:
+     * a page of stamps is some 1,500 tokens no model has a use for).
+     */
+    public function records(string $appId, ?string $table = null, int $offset = 0, ?int $generation = null, ?array $options = null): array
     {
         [$root, $lock, $project] = $this->openShared($appId, $generation);
         try {
@@ -2481,9 +2490,80 @@ class NativeAppService
                 if ($table !== null) throw new RuntimeException('This app has no database', 404);
                 return ['installed' => true, 'tables' => [], 'backend' => false];
             }
-            return $this->readRecords($root, $table, $offset);
+            $answer = $this->readRecords($root, $table, $offset, $options ?? []);
+            return $options === null ? array_diff_key($answer, ['total' => 0, 'matching' => 0, 'stamps' => 0, 'cut' => 0, 'sort' => 0, 'hiddenColumns' => 0]) : $answer;
         }
         finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /**
+     * A table as a file (`csv` or `json`), or every shown table as JSON with no table named, built
+     * under the shared lock into a temporary stream the caller sends and closes: whether a limit
+     * cut it short is only known at its end, and the answer's headers must say so. $options are a
+     * list's search, filters and sort (NativeRecordStore::export()).
+     *
+     * @return array{stream: resource, truncated: bool}
+     */
+    public function exportRecords(string $appId, ?string $table, string $format, array $options = [], ?int $generation = null): array
+    {
+        [$root, $lock, $project] = $this->openShared($appId, $generation);
+        try {
+            $path = $root . '/private/data/application.sqlite';
+            if (!is_file($path)) throw new RuntimeException(self::hasBackend($project ?? []) ? 'App database not found' : 'This app has no database', 404);
+            self::assertOwnDatabase($path);
+            $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+            $stream = null;
+            try {
+                $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=1500; BEGIN');
+                // In memory up to PHP's two megabytes, then a temporary file that goes when the stream is closed.
+                $stream = fopen('php://temp', 'w+b');
+                if ($stream === false) throw new RuntimeException('The export could not be started');
+                $truncated = (new NativeRecordStore($db))->export($stream, $table, $format, $options);
+                rewind($stream);
+                return ['stream' => $stream, 'truncated' => $truncated];
+            } catch (\Throwable $error) {
+                if (is_resource($stream)) fclose($stream);
+                throw $error;
+            } finally {
+                // Closed before the lock is given up: an installer that takes it next may replace the file.
+                $db = null;
+            }
+        } finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /**
+     * What a list of apps shows of an installation, kept cheap, because the apps list asks it of
+     * every app an owner has: the project without its media (summary(), as an app's entry reads
+     * it), and of its database the file's size and how many tables it lists, read under the shared
+     * management lock as every read of it is. No row is counted and no runtime started. Null when
+     * nothing is installed. `tables` and `bytes` are null without a database, and when the
+     * installation is being updated or its database cannot be read just now: a list is not failed
+     * for one app.
+     *
+     * @return array{version: int|null, access: string|null, backend: bool, tables: int|null, bytes: int|null}|null
+     */
+    public function glance(string $appId): ?array
+    {
+        $project = $this->summary($appId);
+        if ($project === null) return null;
+        $glance = ['version' => is_int($project['version'] ?? null) ? $project['version'] : null, 'access' => is_string($project['access'] ?? null) ? $project['access'] : null,
+            'backend' => self::hasBackend($project), 'tables' => null, 'bytes' => null];
+        try { [$root, $lock] = $this->openShared($appId, null, false); }
+        catch (RuntimeException) { return $glance; }
+        if ($lock === null) return $glance;
+        try {
+            $path = $root . '/private/data/application.sqlite';
+            if (!is_file($path) || self::linkedDatabase($path)) return $glance;
+            $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            try {
+                $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=250');
+                $tables = count((new NativeRecordStore($db))->tables());
+            } finally { $db = null; }
+            clearstatcache(true, $path);
+            return ['tables' => $tables, 'bytes' => (int) filesize($path)] + $glance;
+        } catch (\PDOException) {
+            return $glance;
+        } finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
     public function manageRecord(string $appId, array $input, array $subscriptions = [], ?int $generation = null): array
@@ -2498,51 +2578,28 @@ class NativeAppService
         } finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
-    /** Caller holds the shared lock from openShared(), which has already required the project. */
-    private function readRecords(string $root, ?string $table, int $offset): array
+    /**
+     * Caller holds the shared lock from openShared(), which has already required the project.
+     * Read-only, in one transaction, so a page's rows, counts and keys are of one moment.
+     */
+    private function readRecords(string $root, ?string $table, int $offset, array $options): array
     {
         $path = $root . '/private/data/application.sqlite';
         if (!is_file($path)) throw new RuntimeException('App database not found', 404);
         self::assertOwnDatabase($path);
         $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
         $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=1500; BEGIN');
-        $tables = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND substr(name,1,1) != '_' ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
-        if ($table === null) return ['installed' => true, 'tables' => $tables];
-        if (!in_array($table, $tables, true)) throw new RuntimeException('Table not found', 404);
-        $quoted = '"' . str_replace('"', '""', $table) . '"';
-        $columns = $db->query('PRAGMA table_info(' . $quoted . ')')->fetchAll();
-        $hidden = NativeRecordStore::HIDDEN_COLUMNS;
-        $visible = array_slice(array_values(array_filter(array_column($columns, 'name'), static fn($name) => !preg_match($hidden, $name))), 0, 100);
-        // Paging contract (FL-S06): the response says which offset it actually used and why it
-        // stops. A requested offset past the window is clamped to it and reported, never
-        // silently repeated under a new page number: `end` is 'more' (a next page exists inside
-        // the window), 'limit' (rows exist beyond the window; the browser is bounded) or 'end'.
-        $effective = min(self::RECORD_OFFSET_LIMIT, max(0, $offset));
-        $paging = ['offset' => $effective, 'limit' => self::RECORD_PAGE, 'offsetLimit' => self::RECORD_OFFSET_LIMIT];
-        if (!$visible) return ['tables' => $tables, 'columns' => [], 'rows' => [], 'hasMore' => false, 'end' => 'end'] + $paging;
-        $select = implode(',', array_map(static function ($name) {
-            $column = '"' . str_replace('"', '""', $name) . '"';
-            return "CASE WHEN typeof($column)='blob' THEN '[binary]' WHEN typeof($column)='text' THEN substr($column,1,400) ELSE $column END AS $column";
-        }, $visible));
-        $primary = array_values(array_filter($columns, static fn($column) => $column['pk'] > 0));
-        usort($primary, static fn($a, $b) => $a['pk'] <=> $b['pk']);
-        // Ordered by the TABLE's columns (t."id"), never by an output alias: the previews and the
-        // keys alias every column, and an ORDER BY on a bare name would sort by the alias — the
-        // CAST(... AS TEXT) key, as text — and put the keys out of step with the rows.
-        $order = $primary ? implode(',', array_map(static fn($column) => 't."' . str_replace('"', '""', $column['name']) . '"', $primary)) : 't.rowid';
-        $statement = $db->query('SELECT ' . $select . ' FROM ' . $quoted . ' AS t ORDER BY ' . $order . ' LIMIT ' . (self::RECORD_PAGE + 1) . ' OFFSET ' . $effective);
-        $rows = $statement->fetchAll();
-        $more = count($rows) > self::RECORD_PAGE;
-        $rows = array_slice($rows, 0, self::RECORD_PAGE);
-        $end = !$more ? 'end' : ($effective + self::RECORD_PAGE > self::RECORD_OFFSET_LIMIT ? 'limit' : 'more');
-        foreach ($rows as &$row) foreach ($row as &$value) if (is_string($value) && strlen($value) > 4000) $value = mb_strcut($value, 0, 4000) . '…';
-        $schema = (new NativeRecordStore($db))->schema($table);
-        $keys = [];
-        if ($schema['primaryKey']) {
-            $keySelect = implode(',', array_map(static fn($name) => 'CAST("' . str_replace('"', '""', $name) . '" AS TEXT) AS "' . str_replace('"', '""', $name) . '"', $schema['primaryKey']));
-            $keys = $db->query('SELECT ' . $keySelect . ' FROM ' . $quoted . ' AS t ORDER BY ' . $order . ' LIMIT ' . self::RECORD_PAGE . ' OFFSET ' . $effective)->fetchAll();
-            $keys = array_map(static fn($key) => in_array(null, $key, true) ? null : $key, $keys);
+        $store = new NativeRecordStore($db);
+        if ($table === null) {
+            $answer = ['installed' => true, 'tables' => $store->tables()];
+            if (!empty($options['summary'])) {
+                $overview = $store->overview();
+                clearstatcache(true, $path);
+                // The database's file, as glance() measures it for the apps list.
+                $answer['summary'] = ['tables' => $overview['tables'], 'bytes' => (int) filesize($path), 'hiddenTables' => $overview['hiddenTables']];
+            }
+            return $answer;
         }
-        return ['tables' => $tables, 'columns' => $visible, 'rows' => $rows, 'hasMore' => $end === 'more', 'end' => $end, 'schema' => $schema, 'keys' => $keys] + $paging;
+        return ($options['view'] ?? null) === 'structure' ? $store->structure($table) : $store->browse($table, $offset, $options);
     }
 }

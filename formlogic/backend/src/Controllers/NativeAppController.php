@@ -38,7 +38,7 @@ class NativeAppController
         // first, with its own demo_readonly text; this is the second guard, should that ever change.
         $readOnly = $this->isDemoRequest($request);
         if ($request->getMethod() !== 'GET' && ($blocked = $this->blockIfDemo($request, $response, self::DEMO_READ_ONLY))) return $blocked;
-        return $this->respond($response, function () use ($request, $app, $args, $readOnly) {
+        return $this->respond($response, function () use ($request, $response, $app, $args, $readOnly) {
             // Phone sign-in codes through the owner's Twilio Verify (NativePhoneVerification): the
             // two ids are shown back, the token never is.
             if (($args['operation'] ?? '') === 'verification') {
@@ -97,6 +97,8 @@ class NativeAppController
                 if ($request->getMethod() === 'POST') {
                     $input = $request->getParsedBody();
                     if (!is_array($input)) throw new \InvalidArgumentException('Provide a record action');
+                    // Every action but `read` writes (create, update, delete, deleteMany): refused once
+                    // the plan has lapsed, and followed by the automations its writes queued.
                     if (($input['action'] ?? '') !== 'read' && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) throw new \RuntimeException('Cloud access has expired. Records remain available to read.', 402);
                     $result = $this->native->manageRecord($app['id'], $input, $this->flows->nativeRecordSubscriptions($app['id']));
                     if (($input['action'] ?? '') !== 'read') {
@@ -106,10 +108,32 @@ class NativeAppController
                     return $result;
                 }
                 $query = $request->getQueryParams();
+                $table = isset($query['table']) && is_string($query['table']) ? $query['table'] : null;
+                // What the data manager asks beyond a table and an offset, as it was sent: the
+                // store refuses what it cannot read. A caller that sends none of it is answered as before.
+                $options = array_intersect_key($query, ['sort' => 1, 'dir' => 1, 'q' => 1, 'filter' => 1, 'view' => 1]);
+                if (isset($query['limit']) && is_scalar($query['limit'])) $options['limit'] = (int) $query['limit'];
+                if (($query['summary'] ?? null) === '1') $options['summary'] = true;
+                // A file, not this controller's JSON: `table=*` is every shown table.
+                if (isset($query['export'])) {
+                    // Any visitor holds the shared demo's session: it browses, and takes nothing away
+                    // (AppDataExportController refuses the same, in the same words).
+                    if ($readOnly) throw new \RuntimeException('Data export is disabled on the shared live demo.', 403);
+                    if ($table === null) throw new \InvalidArgumentException('Choose a table to export, or * for every table.');
+                    $format = is_string($query['export']) ? $query['export'] : '';
+                    $file = $this->native->exportRecords($app['id'], $table === '*' ? null : $table, $format, $options);
+                    $name = self::fileName((string) ($app['slug'] ?? ''), 'app') . '-' . ($table === '*' ? 'all-tables' : self::fileName($table, 'table')) . ($format === 'csv' ? '.csv' : '.json');
+                    $download = $response->withBody(new \Slim\Psr7\Stream($file['stream']))
+                        ->withHeader('Content-Type', $format === 'csv' ? 'text/csv; charset=utf-8' : 'application/json; charset=utf-8')
+                        ->withHeader('Content-Disposition', 'attachment; filename="' . $name . '"')
+                        ->withHeader('Content-Length', (string) (fstat($file['stream'])['size'] ?? 0))
+                        ->withHeader('Cache-Control', 'no-store')->withHeader('X-Content-Type-Options', 'nosniff');
+                    return $file['truncated'] ? $download->withHeader('X-FormLogic-Export-Truncated', '1') : $download;
+                }
                 $notInstalled = ['installed' => false, 'tables' => [], 'readOnly' => $readOnly];
                 if (!$this->native->get($app['id']) && !isset($query['table'])) return $notInstalled;
                 try {
-                    return $this->native->records($app['id'], isset($query['table']) && is_string($query['table']) ? $query['table'] : null, (int) ($query['offset'] ?? 0)) + ['readOnly' => $readOnly];
+                    return $this->native->records($app['id'], $table, (int) ($query['offset'] ?? 0), null, $options) + ['readOnly' => $readOnly];
                 } catch (\RuntimeException $missing) {
                     // The unlocked get() saw the project.json of a first install a terminated process
                     // left unfinished; records() settled it under the lock, which removed it.
@@ -142,6 +166,16 @@ class NativeAppController
             $installed = $this->native->install($app['id'], $body['project'], $body['expectedVersion']);
             return ['project' => $installed] + $this->engineAfterInstall($app['id'], RuntimeEngineService::languagesOf(NativeAppService::clientFiles($installed)));
         }, !$readOnly);
+    }
+
+    /**
+     * One part of a download's file name (the app's slug, a table's name): letters, digits, `_`
+     * and `-` alone, so nothing in it can end the quoted name or begin another header.
+     */
+    private static function fileName(string $name, string $fallback): string
+    {
+        $safe = trim(substr((string) preg_replace('/[^A-Za-z0-9_-]+/', '-', $name), 0, 60), '-');
+        return $safe === '' ? $fallback : $safe;
     }
 
     /**

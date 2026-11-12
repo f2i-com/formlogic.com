@@ -315,6 +315,61 @@ class AppService
         return $apps;
     }
 
+    /**
+     * What the apps list shows of each app $ownerId owns beyond the app itself (GET /api/apps/summary),
+     * keyed by app id: whether its settings say it is a SoftN app; its first connected custom domain
+     * (status 'active', the only one the public resolvers serve; the oldest of them), or null; and how
+     * many people besides the owner are ACTIVE members, as getAllApps counts a membership. Three
+     * queries whatever the number of apps.
+     *
+     * @return array<string, array{softn: bool, domain: string|null, members: int}>
+     */
+    public function ownerSummaries(string $ownerId): array
+    {
+        $stmt = $this->mysql->prepare("SELECT id, settings FROM apps WHERE owner_id = :owner");
+        $stmt->execute(['owner' => $ownerId]);
+        $apps = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $settings = is_string($row['settings'] ?? null) ? json_decode($row['settings'], true) : null;
+            $apps[(string) $row['id']] = [
+                'softn' => is_array($settings) && ($settings['softnApp'] ?? null) === true,
+                'domain' => null,
+                'members' => 0,
+            ];
+        }
+        if ($apps === []) {
+            return [];
+        }
+
+        $stmt = $this->mysql->prepare(
+            "SELECT app_id, domain FROM app_domains WHERE owner_id = :owner AND status = 'active' ORDER BY created_at ASC, id ASC"
+        );
+        $stmt->execute(['owner' => $ownerId]);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $appId = (string) $row['app_id'];
+            if (isset($apps[$appId])) {
+                $apps[$appId]['domain'] ??= (string) $row['domain'];
+            }
+        }
+
+        $stmt = $this->mysql->prepare("
+            SELECT au.app_id, COUNT(*) AS members
+            FROM app_users au
+            JOIN apps a ON a.id = au.app_id
+            WHERE a.owner_id = :owner AND au.status = 'active' AND au.user_id <> a.owner_id
+            GROUP BY au.app_id
+        ");
+        $stmt->execute(['owner' => $ownerId]);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $appId = (string) $row['app_id'];
+            if (isset($apps[$appId])) {
+                $apps[$appId]['members'] = (int) $row['members'];
+            }
+        }
+
+        return $apps;
+    }
+
     /** Cheap boolean membership check — avoids the getAppForms JOIN + settings decode. */
     public function formBelongsToApp(string $appId, string $formId): bool
     {

@@ -97,6 +97,26 @@ final class RateLimitMiddlewareTest extends TestCase
         $this->assertSame(['native_records:u:' . hash('sha256', 'account-1')], array_keys($this->hits));
     }
 
+    /**
+     * The records budget: 180 requests a minute for each owner (it was 30). The data manager asks
+     * again for every sort, search, filter and page, and reads then saves a record for each cell
+     * edited in place.
+     */
+    public function testTheRecordsBudgetIsOneHundredAndEightyAMinuteForEachOwner(): void
+    {
+        $index = (string) file_get_contents(dirname(__DIR__, 2) . '/public/index.php');
+        $this->assertStringContainsString("\$nativeRecordLimiter = new RateLimitMiddleware(\$rateLimiter, 180, 60, 'native_records', true, true);", $index);
+        $this->assertSame(1, substr_count($index, '->add($nativeRecordLimiter)'), 'the records route alone draws on it');
+        $this->assertStringContainsString("\$app->map(['GET', 'POST'], '/api/apps/{id}/native/{operation:records}'", $index);
+
+        $limit = $this->middleware(180);
+        for ($request = 1; $request <= 180; $request++) {
+            $this->assertSame(200, $this->answer($limit, 'owner@example.com', '203.0.113.10', $request % 3 === 0 ? 'POST' : 'GET'), "request $request");
+        }
+        $this->assertSame(429, $this->answer($limit, 'owner@example.com', '203.0.113.10'), 'the 181st in the minute');
+        $this->assertSame(429, $this->answer($limit, 'owner@example.com', '203.0.113.20', 'POST'), 'reads and writes, from any address, are one budget');
+    }
+
     public function testARequestWithoutAnAccountIsKeyedByAddress(): void
     {
         $limit = $this->middleware(1);

@@ -25,7 +25,7 @@ class AppController
     private ?AuditService $auditService;
     private ?AppReportService $reportValidator;
 
-    public function __construct(AppService $appService, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?AppReportService $reportValidator = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\AppUserService $appUserService = null)
+    public function __construct(AppService $appService, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?AppReportService $reportValidator = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\AppUserService $appUserService = null, private ?\FormLogic\Services\NativeAppService $native = null)
     {
         $this->appService = $appService;
         $this->logger = $logger ?? new NullLogger();
@@ -172,6 +172,46 @@ class AppController
             $apps[] = $entry;
         }
         return $this->jsonResponse($response, ['apps' => $apps]);
+    }
+
+    /**
+     * GET /api/apps/summary — what the apps list shows of each app the CALLER owns beyond the
+     * app itself, keyed by app id, in one round trip: whether it is a SoftN app and what is
+     * installed (the project's version and access, whether it has a server side, how many tables
+     * its database lists and the file's size), its first connected custom domain, and how many
+     * members it has. Kept cheap (NativeAppService::glance): no row is counted and no runtime
+     * started. An installation that cannot be read just now is shown as none, not as an error
+     * for the whole list.
+     */
+    public function summary(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $apps = [];
+        foreach ($this->appService->ownerSummaries($userId) as $appId => $app) {
+            $project = null;
+            try {
+                $project = $this->native?->glance((string) $appId);
+            } catch (\Throwable $e) {
+                $this->logger->warning('App summary: installation unreadable', ['appId' => (string) $appId, 'error' => get_class($e)]);
+            }
+            $apps[(string) $appId] = [
+                'softn' => $app['softn'] || $project !== null,
+                'installed' => $project !== null,
+                'version' => $project['version'] ?? null,
+                'access' => $project['access'] ?? null,
+                'backend' => $project['backend'] ?? false,
+                'tables' => $project['tables'] ?? null,
+                'bytes' => $project['bytes'] ?? null,
+                'domain' => $app['domain'],
+                'members' => $app['members'],
+            ];
+        }
+        // An object in JSON for an owner with no apps too.
+        return $this->jsonResponse($response, ['apps' => (object) $apps]);
     }
 
     /**
