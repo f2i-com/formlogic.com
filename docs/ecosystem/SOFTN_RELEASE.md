@@ -63,6 +63,20 @@ and its `.sha256`, built once by Softn's release workflow and verified there.
 without the network. `--sync-adapter` rewrites the vendored adapter from the
 release when it changed; that is a FormLogic change to review and commit.
 
+**What an AI is told about SoftN** comes with the release too. After an install
+the fetcher reads SoftN's own AI reference (every component, the published
+guides) out of the installed Studio and writes it for the MCP and chat tools
+(`scripts/softn-knowledge.mjs` → `formlogic/backend/resources/softn-knowledge.json`,
+generated, not in Git, shipped in the package); `--check` holds it to the
+installed Studio. One part is not in a release and is a committed copy:
+SoftN Studio's agent guide, "How to build a SoftN app"
+(`formlogic/backend/resources/softn-guide.json`). When adopting a release,
+regenerate it from a checkout of softn.com at that release and commit it:
+`SOFTN_REPO=/path/to/softn.com node scripts/softn-guide.mjs` (`--check`
+compares). It stops, naming the sentence, when SoftN has rewritten one of the
+few sentences about Studio's own tools that FormLogic replaces with its own.
+See [MCP.md](../MCP.md#softn-apps-over-mcp).
+
 ## The engine
 
 The expected identity is derived from the release, never from this tree:

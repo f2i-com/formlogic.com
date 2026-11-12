@@ -95,6 +95,7 @@ import { fileURLToPath } from 'node:url';
 import { readArchive } from './lib/archive.mjs';
 import { runtimeIdentity, assertMatchingRuntime, checkEntryDocuments, checkRuntimeArtifact, checkZippTree, checkZippVariantTree, checkZippTorchTree, checkTorchCopies, isZippEngineWasm, isZippTorchWasm, zippReleaseIdentity, zippVariantIdentity, zippTorchIdentity, artifactFiles, LINKED_ASSET } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 import { checkAppEditors } from '../formlogic/ui/scripts/check-app-editors.mjs';
+import { KnowledgeError, KnowledgeMissingError, checkSoftnKnowledge, writeSoftnKnowledge } from './softn-knowledge.mjs';
 import { checkNativeRuntime, nativeImportProblems } from './release-runtime.mjs';
 import { writeAdapter, adapterDigest, ADAPTER_SOURCE } from '../formlogic/ui/scripts/sync-softn.mjs';
 import { checkSiteZipp, installSiteZipp, SiteZippError } from './site-zipp.mjs';
@@ -1167,13 +1168,27 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       await checkInstalled({ frozen: frozenArg || process.env.SOFTN_FROZEN || null });
       const { site, differs } = await checkSiteZipp({ root });
       console.log(`The site runs ZIPP ${site.release} (${site.sha256.slice(0, 12)})${differs ? ', its own (zipp-release.json)' : ', the Softn release\'s'}.`);
+      // What the MCP and chat tools tell an AI about SoftN is the installed release's own reference.
+      // An install from before the reference was written has none yet: said, not failed (the trees are intact).
+      // One that is there and is not the installed Studio's is a failure.
+      try {
+        const knowledge = await checkSoftnKnowledge({ root });
+        console.log(`SoftN's AI reference is the installed Studio's: ${Object.keys(knowledge.components).length} components, ${knowledge.docs.length} guides.`);
+      } catch (error) {
+        if (!(error instanceof KnowledgeMissingError)) throw error;
+        console.warn(`fetch-softn-release: ${error.message}`);
+      }
     } else {
       await fetchSoftnRelease({ syncAdapter: args.includes('--sync-adapter'), frozen: frozenArg || process.env.SOFTN_FROZEN || null });
       await installSiteZipp({ root });
+      // SoftN's own AI reference (its components and guides), read out of the Studio just installed
+      // for the MCP and chat tools (softn-knowledge.mjs): it moves with every release, as the trees do.
+      await writeSoftnKnowledge({ root, log: console.log });
     }
   } catch (error) {
     if (error instanceof ReleaseError) { console.error(`fetch-softn-release: ${error.message}`); process.exit(1); }
     if (error instanceof SiteZippError) { console.error(`fetch-softn-release: ${error.message}`); process.exit(1); }
+    if (error instanceof KnowledgeError) { console.error(`fetch-softn-release: ${error.message}`); process.exit(1); }
     throw error;
   }
 }

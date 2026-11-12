@@ -272,7 +272,7 @@ jobs:
       # the manifest never re-pinning ZIPP, source-mode sync, package-dist's engine checks,
       # the sandbox's ZIPP source, generated lock and provenance, and the parity comparator.
       - name: Engine sourcing script tests
-        run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs scripts/zipp-source.test.mjs scripts/runtime-provenance.test.mjs scripts/check-expression-parity.test.mjs scripts/prepare-sandbox-runtime.test.mjs scripts/package-oaiy-plugin.test.mjs
+        run: node --test scripts/fetch-softn-release.test.mjs scripts/softn-knowledge.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs scripts/zipp-source.test.mjs scripts/runtime-provenance.test.mjs scripts/check-expression-parity.test.mjs scripts/prepare-sandbox-runtime.test.mjs scripts/package-oaiy-plugin.test.mjs
 
       - name: Frontend gates (lint, tests, build, budget, invariants, audit)
         working-directory: formlogic/ui

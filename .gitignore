@@ -35,6 +35,9 @@ formlogic/backend/storage/booking-test/
 
 # Generated shared native app runtime; rebuild with node scripts/prepare-native-runtime.mjs
 /formlogic/backend/resources/softn-native/
+# SoftN's AI reference for the MCP and chat tools, read out of the installed Softn release's Studio
+# (scripts/softn-knowledge.mjs; fetch-softn-release.mjs writes it after every install).
+/formlogic/backend/resources/softn-knowledge.json
 /formlogic/backend/storage/native-apps/
 
 /formlogic/ui/public/app-editors/

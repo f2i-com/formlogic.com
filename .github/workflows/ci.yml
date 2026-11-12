@@ -240,7 +240,7 @@ jobs:
       # generated lock, its provenance, and the parity legs tied to one ZIPP release.
       - name: Engine sourcing script tests
         working-directory: ${{ github.workspace }}
-        run: node --test scripts/fetch-softn-release.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs scripts/zipp-source.test.mjs scripts/runtime-provenance.test.mjs scripts/check-expression-parity.test.mjs scripts/prepare-sandbox-runtime.test.mjs scripts/fetch-oaiy-cli.test.mjs scripts/package-oaiy-plugin.test.mjs
+        run: node --test scripts/fetch-softn-release.test.mjs scripts/softn-knowledge.test.mjs scripts/prepare-hosted-runtime.test.mjs scripts/engine-provenance-guard.test.mjs scripts/ecosystem-manifest.test.mjs scripts/sync-zipp-from-softn.test.mjs scripts/release-runtime.test.mjs scripts/zipp-source.test.mjs scripts/runtime-provenance.test.mjs scripts/check-expression-parity.test.mjs scripts/prepare-sandbox-runtime.test.mjs scripts/fetch-oaiy-cli.test.mjs scripts/package-oaiy-plugin.test.mjs
 
       # The build's prebuild step syncs prelude.js into the backend and regenerates the served
       # leaf-script profile; if either produced a diff, the committed backend copy was stale
