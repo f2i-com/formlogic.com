@@ -49,26 +49,36 @@ test('Native source highlighting and full-record CRUD work on desktop and mobile
   expect(await hosting.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   await page.screenshot({ path: '../../../ecosystem-audit/native-source-editor-mobile.png' });
   await hosting.getByRole('tab', { name: 'records', exact: true }).click();
+  // The dialog's records are the data manager the app's own page has. On a phone its tables are
+  // one list to choose from, its rows are cards, and a row opens as a sheet over the page.
   const browser = hosting.getByRole('region', { name: 'Database records browser' });
-  await browser.getByLabel('Database table', { exact: true }).selectOption('items');
-  await browser.getByRole('button', { name: 'Add record', exact: true }).click();
+  await browser.getByRole('combobox', { name: 'Table', exact: true }).selectOption('items');
+  await browser.getByRole('button', { name: 'Add row', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'Create database record', exact: true });
-  const title = `CRUD review ${Date.now()} ${'Full source text '.repeat(40)}`;
+  const stamp = `CRUD review ${Date.now()}`;
+  const title = `${stamp} ${'Full source text '.repeat(40)}`;
   await editor.getByLabel('title', { exact: true }).fill(title);
   expect(await editor.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   await page.screenshot({ path: '../../../ecosystem-audit/native-record-create-mobile.png' });
   await editor.getByRole('button', { name: 'Create record', exact: true }).click();
-  await expect(browser.getByText('Record created.', { exact: true })).toBeVisible();
-  await browser.getByRole('button', { name: 'View details', exact: true }).last().click();
-  await browser.getByRole('button', { name: 'Edit record', exact: true }).click();
+  await expect(browser.getByText('Row added.', { exact: true })).toBeVisible();
+  // The row just added, found by a search over the whole table and opened from its card.
+  await browser.getByRole('searchbox', { name: 'Search this table' }).fill(stamp);
+  const cards = browser.getByRole('list', { name: 'Rows of items' }).getByRole('listitem');
+  await expect(cards).toHaveCount(1);
+  await cards.first().getByRole('button', { name: /^Open row / }).click();
+  const sheet = page.getByRole('dialog', { name: /^Row id \d+ of items$/ });
+  await sheet.getByRole('button', { name: 'Edit', exact: true }).click();
   const edit = page.getByRole('dialog', { name: 'Edit database record', exact: true });
   await expect(edit.getByLabel('title', { exact: true })).toHaveValue(title);
   await edit.getByLabel('title', { exact: true }).fill(title + ' Edited');
   await edit.getByRole('button', { name: 'Save record', exact: true }).click();
-  await expect(browser.getByText('Record updated.', { exact: true })).toBeVisible();
+  // The open row is read again after the change: it shows the whole new value.
+  await expect(sheet.locator('[data-column="title"] dd')).toContainText('Full source text Edited');
+  // Wide, the same open row stands beside the rows.
   await page.setViewportSize({ width: 1440, height: 900 });
-  await browser.getByRole('button', { name: /^View record / }).last().click();
-  await browser.getByRole('button', { name: 'Edit record', exact: true }).click();
+  const details = browser.getByRole('complementary', { name: /^Row id \d+ of items$/ });
+  await details.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(edit.getByLabel('title', { exact: true })).toHaveValue(title + ' Edited');
   await page.screenshot({ path: '../../../ecosystem-audit/native-record-edit-desktop.png' });
   await edit.getByRole('button', { name: 'Delete record', exact: true }).click();
@@ -77,7 +87,7 @@ test('Native source highlighting and full-record CRUD work on desktop and mobile
   await expect(edit).toBeVisible();
   await edit.getByRole('button', { name: 'Delete record', exact: true }).click();
   await confirm.getByRole('button', { name: 'Delete permanently', exact: true }).click();
-  await expect(browser.getByText('Record deleted.', { exact: true })).toBeVisible();
+  await expect(browser.getByText('Row deleted.', { exact: true })).toBeVisible();
   const records = await (await context.request.get(`/api/apps/${app.id}/native/records?table=items`)).json();
   expect(records.rows.some((row: { title: string }) => row.title === title + ' Edited')).toBe(false);
   await hosting.getByRole('button', { name: 'Done', exact: true }).click();

@@ -12,8 +12,16 @@ export function isSoftnApp(app: Pick<App, 'settings'> | null | undefined): boole
   return app?.settings?.softnApp === true;
 }
 
-/** Where the owner manages a SoftN app. */
-export const softnWorkspacePath = (appId: string) => `/apps/${appId}/softn`;
+/** The sections of a SoftN app's page, each at its own address under /apps/<id>/softn/. */
+export const SOFTN_SECTIONS = ['overview', 'data', 'edit', 'domains', 'settings'] as const;
+export type SoftnSection = (typeof SOFTN_SECTIONS)[number];
+
+/**
+ * Where the owner manages a SoftN app: its page, or one section of it. The overview is the page's
+ * own address, and `rest` names what is open inside a section (a table and its view, under data).
+ */
+export const softnWorkspacePath = (appId: string, section: SoftnSection = 'overview', ...rest: string[]) =>
+  section === 'overview' ? `/apps/${appId}/softn` : `/apps/${appId}/softn/${[section, ...rest.filter(Boolean).map(encodeURIComponent)].join('/')}`;
 
 /** How a new SoftN app's first version is made. */
 /** `backendFile`: for a file with no backend of its own, the app's full file, whose backend is added to it (lib/softnBackend). */

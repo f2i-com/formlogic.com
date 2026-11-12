@@ -19,8 +19,8 @@ export function AiConnectNotice({ lead, reason, onConnected, className }: {
     <p>{lead}.{reason ? ` ${reason}` : ''}</p>
     <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
       {siteAi.offered && <Button size="sm" variant="secondary" isLoading={siteAi.choosing} leftIcon={<Sparkles className="h-4 w-4" />} onClick={() => void siteAi.choose()}>Use FormLogic Site AI</Button>}
-      <Link className="inline-flex min-h-9 items-center font-medium text-indigo-600 dark:text-indigo-300" to="/settings#ai">{siteAi.offered ? 'Or connect your own' : 'Connect one'}</Link>
-      <button type="button" className="inline-flex min-h-9 items-center font-medium text-indigo-600 dark:text-indigo-300" onClick={() => void onConnected()}>Check again</button>
+      <Link className="inline-flex min-h-9 items-center font-medium text-primary-600 dark:text-primary-300" to="/settings#ai">{siteAi.offered ? 'Or connect your own' : 'Connect one'}</Link>
+      <button type="button" className="inline-flex min-h-9 items-center font-medium text-primary-600 dark:text-primary-300" onClick={() => void onConnected()}>Check again</button>
     </div>
   </div>;
 }

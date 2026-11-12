@@ -16,7 +16,7 @@ type ModalProps = {
   description?: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
-  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full';
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full' | 'window';
   showCloseButton?: boolean;
 } & (
   | { title: React.ReactNode; ariaLabel?: string }
@@ -160,6 +160,8 @@ export function Modal({
     xl: 'max-w-[calc(100%-2rem)] sm:max-w-xl',
     '2xl': 'max-w-[calc(100%-2rem)] sm:max-w-5xl',
     full: 'max-w-[calc(100%-2rem)] sm:max-w-4xl',
+    // As wide as the window allows, for a table of data: 'full' is 56rem and '2xl' 64rem.
+    window: 'max-w-[calc(100%-2rem)] sm:max-w-[min(96rem,calc(100%-2rem))]',
   };
 
   const content = (

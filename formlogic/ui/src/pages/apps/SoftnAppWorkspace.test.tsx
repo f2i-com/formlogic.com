@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 /**
- * The SoftN app workspace: an app with nothing installed starts from its setup choices; one
+ * The SoftN app's page: its sections are addresses (the overview at the page itself, then data,
+ * edit, domains and settings); an app with nothing installed starts from its setup choices; one
  * arriving from "Create app" or the chat opens straight into the editor it asked for, once;
  * editor changes are installed at once while the app is not published and kept as a draft to
  * publish once it is; Publish makes a draft app live.
@@ -19,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   getAppDomains: vi.fn(),
   createAppDomain: vi.fn(),
   getAppAi: vi.fn(),
+  getNativeDataSummary: vi.fn(),
+  getAppUsers: vi.fn(),
+  dataManager: null as null | { table?: string; view?: string; query?: string; onNavigate(table: string | undefined, view: string, query?: string, options?: { replace?: boolean }): void },
   editor: null as null | { kind: string; brief?: unknown; applyLabel?: string; onApply(bytes: Uint8Array): Promise<void>; onClose(): void },
 }));
 vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
@@ -26,6 +30,7 @@ vi.mock('../../lib/api', () => ({ api: {
   getNativeProject: mocks.getNativeProject, saveNativeProject: mocks.saveNativeProject, installNativeStarter: mocks.installNativeStarter, publishApp: mocks.publishApp,
   getAppDomains: mocks.getAppDomains, createAppDomain: mocks.createAppDomain,
   getAppAi: mocks.getAppAi,
+  getNativeDataSummary: mocks.getNativeDataSummary, getAppUsers: mocks.getAppUsers,
   getPassKinds: async () => ({ data: { passes: [] } }),
   isAdminActing: () => false, isDemoMode: () => false,
 } }));
@@ -42,7 +47,9 @@ vi.mock('../../components/apps/AppAiPanel', () => ({ AppAiPanel: () => <p>ai set
 vi.mock('../../components/studio/AppEditorDialog', () => ({
   AppEditorDialog: (props: NonNullable<typeof mocks.editor>) => { mocks.editor = props; return <p>editor:{props.kind}</p>; },
 }));
-vi.mock('../../components/studio/NativeRecordsBrowser', () => ({ NativeRecordsBrowser: () => <p>records</p> }));
+vi.mock('../../components/data', () => ({
+  DataManager: (props: NonNullable<typeof mocks.dataManager>) => { mocks.dataManager = props; return <p data-testid="data-manager">data:{props.table ?? ''}:{props.view}</p>; },
+}));
 vi.mock('../../components/studio/AppEngineSelect', () => ({ AppEngineSelect: () => null }));
 vi.mock('../../components/studio/NativeAppPanel', () => ({ NativeEditor: () => <p>source editor</p> }));
 vi.mock('../../components/studio/NativeAppView', () => ({ NativeAppView: ({ slug }: { slug: string }) => <p>running {slug}</p> }));
@@ -67,6 +74,9 @@ beforeEach(() => {
   mocks.publishApp.mockResolvedValue({ data: { app: app('published'), version: 1 } });
   mocks.getAppDomains.mockReset().mockResolvedValue({ data: { domains: [] } });
   mocks.createAppDomain.mockReset();
+  mocks.getNativeDataSummary.mockReset().mockResolvedValue({ data: { installed: true, tables: [] } });
+  mocks.getAppUsers.mockReset().mockResolvedValue({ data: { users: [], count: 0 } });
+  mocks.dataManager = null;
   useAuthStore.setState({ user: { id: 'u1', email: 'owner@example.test' } as never });
   useUIStore.getState().setSoftnOpen(null);
   container = document.createElement('div');
@@ -74,20 +84,77 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
-async function render(status: 'draft' | 'published', project: NativeProject | null) {
+/** The page at one of its addresses: the overview unless a section is named. */
+async function render(status: 'draft' | 'published', project: NativeProject | null, at = '') {
   useAppStore.setState({ apps: [app(status)] as never, fetchApps: vi.fn(async () => {}) });
   mocks.getNativeProject.mockResolvedValue({ data: { available: true, ready: true, preflight: { ok: true, checks: [] }, project } });
   root = createRoot(container);
-  await act(async () => root.render(<MemoryRouter initialEntries={['/apps/app-1/softn']}><Routes><Route path="/apps/:appId/softn" element={<SoftnAppWorkspace />} /></Routes></MemoryRouter>));
+  await act(async () => root.render(<MemoryRouter initialEntries={[`/apps/app-1/softn${at}`]}><Routes><Route path="/apps/:appId/softn/*" element={<SoftnAppWorkspace />} /></Routes></MemoryRouter>));
   await act(async () => {});
 }
 const button = (text: RegExp) => [...document.body.querySelectorAll('button')].find(b => text.test(b.textContent ?? '')) as HTMLButtonElement | undefined;
+/** The section the page says it is showing. */
+const section = () => container.querySelector('nav[aria-label="App sections"] a[aria-current="page"]')?.textContent;
+const withBackend = (version: number): NativeProject => ({ ...installed(version), files: { 'manifest.json': '{"id":"a","server":{"entry":"server/main.logic"}}', 'ui/main.ui': '<Text>Hi</Text>' } });
 
 describe('SoftnAppWorkspace', () => {
+  describe('sections', () => {
+    it('opens on the overview, which says what the app holds and starts nothing', async () => {
+      mocks.getNativeDataSummary.mockResolvedValue({ data: { installed: true, tables: ['bookings', 'rooms'], summary: { tables: [{ name: 'bookings', rows: 8214, columns: 9 }, { name: 'rooms', rows: 12, columns: 3 }], bytes: 3145728, hiddenTables: 1 } } });
+      mocks.getAppUsers.mockResolvedValue({ data: { users: [], count: 4 } });
+      await render('published', withBackend(7));
+      expect(section()).toBe('Overview');
+      expect(container.textContent).toContain('Live, version 7');
+      expect(container.textContent).toContain('2 tables · 8,226 rows · 3.0 MB');
+      expect(container.textContent).toContain('You and 3 other people can use it.');
+      // The largest table is a link into the data section, at that table.
+      expect((container.querySelector('a[href="/apps/app-1/softn/data/bookings"]') as HTMLAnchorElement).textContent).toContain('8,214');
+      // The app itself runs under Edit: an owner looking at ten apps starts none of them.
+      expect(container.querySelector('[data-testid="softn-app-preview"]')).toBeNull();
+    });
+
+    it('gives every section an address, and takes the table and the view from it', async () => {
+      await render('published', withBackend(1), '/data/bookings/structure');
+      expect(section()).toBe('Data');
+      expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:bookings:structure');
+      expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.getAttribute('href'))).toEqual([
+        '/apps/app-1/softn', '/apps/app-1/softn/data', '/apps/app-1/softn/edit', '/apps/app-1/softn/domains', '/apps/app-1/softn/settings']);
+      // The data manager asks for another table: the address follows, and the default view is left out of it.
+      await act(async () => mocks.dataManager!.onNavigate('rooms', 'browse'));
+      expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:rooms:browse');
+      await act(async () => mocks.dataManager!.onNavigate('rooms', 'export'));
+      expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:rooms:export');
+    });
+
+    it('keeps what is being looked at in a table in the address, and hands it back to the data manager', async () => {
+      await render('published', withBackend(1), '/data/bookings?q=nuts&sort=starts_at');
+      expect(mocks.dataManager!.query).toBe('q=nuts&sort=starts_at');
+      // A linked ID: another table, filtered to the row it points at, with that row open.
+      await act(async () => mocks.dataManager!.onNavigate('customers', 'browse', 'filter=%5B%5D&row=%7B%22id%22%3A%221458%22%7D'));
+      expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:customers:browse');
+      expect(mocks.dataManager!.query).toBe('filter=%5B%5D&row=%7B%22id%22%3A%221458%22%7D');
+      // Opening a table from the list asks for no query: the address has none.
+      await act(async () => mocks.dataManager!.onNavigate('rooms', 'browse'));
+      expect(mocks.dataManager!.query).toBe('');
+    });
+
+    it('sends an address that names no section to the overview', async () => {
+      await render('published', installed(1), '/records');
+      expect(section()).toBe('Overview');
+    });
+
+    it('offers a backend, not an empty table list, to an app that keeps its data in each browser', async () => {
+      await render('published', installed(1), '/data');
+      expect(container.querySelector('[data-testid="data-manager"]')).toBeNull();
+      expect(container.textContent).toContain('This app has no database on the server.');
+      expect(mocks.getNativeDataSummary).not.toHaveBeenCalled();
+    });
+  });
+
   it('lets the owner give the app a domain, opening the app itself by default', async () => {
-    await render('published', installed(1));
-    await act(async () => (container.querySelector('#softn-tab-settings') as HTMLButtonElement).click());
+    await render('published', installed(1), '/domains');
     await act(async () => {});
+    expect(section()).toBe('Domains');
     expect(container.textContent).toContain('Custom domains');
     expect(container.textContent).toContain('full screen on your domain');
     expect((container.querySelector('select[aria-label="Domain mode"]') as HTMLSelectElement).value).toBe('runtime_direct');
@@ -95,8 +162,7 @@ describe('SoftnAppWorkspace', () => {
 
   it('shows the domains panel to the owner alone, as the server allows', async () => {
     useAuthStore.setState({ user: { id: 'manager', email: 'manager@example.test' } as never });
-    await render('published', installed(1));
-    await act(async () => (container.querySelector('#softn-tab-settings') as HTMLButtonElement).click());
+    await render('published', installed(1), '/domains');
     expect(container.textContent).not.toContain('Custom domains');
     expect(mocks.getAppDomains).not.toHaveBeenCalled();
   });
@@ -118,7 +184,7 @@ describe('SoftnAppWorkspace', () => {
       expect(mocks.getAppAi).toHaveBeenCalledWith('app-1');
       expect(prompt()?.textContent).toBe('This app can use AI. Set it up');
       await act(async () => button(/^Set it up$/)!.click());
-      expect(container.querySelector('#softn-tab-settings')!.getAttribute('aria-selected')).toBe('true');
+      expect(section()).toBe('Settings');
       expect(container.querySelector('#app-ai-settings')!.textContent).toContain('ai settings');
       // On the settings themselves the line would only repeat the panel below it.
       expect(prompt()).toBeNull();
@@ -163,7 +229,7 @@ describe('SoftnAppWorkspace', () => {
   });
 
   it('previews the app in place at the width chosen, never framing a page of FormLogic', async () => {
-    await render('draft', installed(1));
+    await render('draft', installed(1), '/edit');
     const preview = container.querySelector('[data-testid="softn-app-preview"]')!;
     expect(preview.textContent).toBe('running recipes');
     // A FormLogic page may not be framed: the browser refused the preview on a real server.
@@ -190,7 +256,9 @@ describe('SoftnAppWorkspace', () => {
     expect(mocks.editor?.brief).toEqual({ prompt: 'A recipe box.', kind: 'build' });
     expect(mocks.editor?.applyLabel).toBe('Save changes');
     expect(useUIStore.getState().softnOpen).toBeNull();
+    // Back from the editor, the page shows the app running with what was changed.
     await act(async () => mocks.editor!.onClose());
+    expect(section()).toBe('Edit');
     expect(container.textContent).toContain('Change your app');
   });
 
@@ -216,7 +284,7 @@ describe('SoftnAppWorkspace', () => {
 
   it('publishes a draft app', async () => {
     await render('draft', installed(1));
-    expect(container.textContent).toContain('Not published');
+    expect(container.textContent).toContain('Draft, version 1');
     await act(async () => button(/^Publish$/)!.click());
     expect(mocks.publishApp).toHaveBeenCalledWith('app-1');
   });

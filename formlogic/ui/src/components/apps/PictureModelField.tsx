@@ -1,7 +1,7 @@
 import type { AiModel } from '../../lib/appAi';
 
 const field = 'block min-h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white';
-const link = 'font-medium text-indigo-600 underline underline-offset-2 dark:text-indigo-300';
+const link = 'font-medium text-primary-600 underline underline-offset-2 dark:text-primary-300';
 
 /**
  * The picture model for an app's AI, or the site's: a pick-list of the computer's own picture models

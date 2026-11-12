@@ -148,7 +148,7 @@ test('An administrator sets up AI for apps on their own computer, using only the
   await expect(panel.getByTestId('ai-test').getByRole('img', { name: 'The test picture' })).toBeVisible();
   // Its AI is on now: the line is not shown again.
   await page.goto(`/apps/${app.id}/softn`);
-  await expect(page.getByRole('tablist', { name: 'App sections' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'App sections' })).toBeVisible();
   await expect(page.getByTestId('app-ai-prompt')).toHaveCount(0);
 
   expect((await admin.api.delete(`/api/apps/${app.id}`, { headers: { 'X-CSRF-Token': admin.csrf } })).ok()).toBe(true);

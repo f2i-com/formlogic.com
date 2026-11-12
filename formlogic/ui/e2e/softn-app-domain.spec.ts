@@ -79,10 +79,10 @@ async function publishApp(context: BrowserContext, request: APIRequestContext, n
   return { app, headers };
 }
 
-/** Connects a domain the way an owner does, from the app's Settings tab. */
+/** Connects a domain the way an owner does, from the app's Domains section. */
 async function connectDomain(page: Page, appId: string, domain: string) {
   await page.goto(`/apps/${appId}/softn`);
-  await page.getByRole('tab', { name: 'Settings' }).click();
+  await page.getByRole('navigation', { name: 'App sections' }).getByRole('link', { name: 'Domains', exact: true }).click();
   await expect(page.getByLabel('Domain mode')).toHaveValue('runtime_direct');
   await page.getByLabel('Custom domain').fill(domain);
   await page.getByRole('button', { name: 'Add', exact: true }).click();

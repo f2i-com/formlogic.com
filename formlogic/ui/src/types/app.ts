@@ -330,6 +330,28 @@ export type AppListItem = App & {
   canCreateCompanion?: boolean;
 };
 
+/**
+ * What the apps list shows beside one of the caller's own apps (GET /api/apps/summary). Each value
+ * is null where the server has nothing to say: an app with no project, or no database of its own.
+ */
+export interface AppSummary {
+  /** A SoftN app: its settings say so, or it has a project installed. */
+  softn: boolean;
+  installed: boolean;
+  /** The installed project's version: the number the app's own page shows. */
+  version: number | null;
+  /** Who can use it, as the project stores it ('members', 'application'). */
+  access: string | null;
+  /** The project has a server side, so its data is kept here and not in each person's browser. */
+  backend: boolean;
+  tables: number | null;
+  bytes: number | null;
+  /** The first custom domain that is connected, without the scheme. */
+  domain: string | null;
+  /** People with access besides the owner. */
+  members: number | null;
+}
+
 /** One app (owned by the caller) that contains a given form — from
  *  GET /api/forms/{formId}/app-contexts. Powers context-aware Preview routing:
  *  a form in exactly one PUBLISHED app previews inside that app's runtime. */

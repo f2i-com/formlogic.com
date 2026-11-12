@@ -12,5 +12,7 @@
  * leak on an abnormal unmount, and is unit-testable without a DOM.
  */
 export function pathClaimsBottomEdge(pathname: string): boolean {
-  return /^\/apps\/[^/]+\/studio(\/|$)/.test(pathname);
+  // The App Studio, and a SoftN app's data section: its rows, their ticks and its pager reach
+  // the bottom of a phone's screen, where a floating button would sit over the last of them.
+  return /^\/apps\/[^/]+\/(?:studio|softn\/data)(\/|$)/.test(pathname);
 }

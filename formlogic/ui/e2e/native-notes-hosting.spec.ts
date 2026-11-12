@@ -93,23 +93,32 @@ function saveNote() {
   }).toBe(true);
   await page.goto(`/apps/${app.id}/records`);
   await page.getByRole('button', { name: 'Database records', exact: true }).click();
-  await page.getByLabel('Database table', { exact: true }).selectOption('notes');
+  // The dialog's records are the data manager the app's own page has: its list of tables, a
+  // search over every row of the table, and a row opened beside the rows.
   const recordBrowser = page.getByRole('region', { name: 'Database records browser', exact: true });
-  await expect(recordBrowser.getByRole('table').getByText(title, { exact: true })).toBeVisible();
-  await recordBrowser.getByRole('searchbox', { name: 'Filter records on this page' }).fill(title);
-  await recordBrowser.getByRole('button', { name: /^View record / }).click();
-  await expect(recordBrowser.getByRole('heading', { name: /^Record [0-9]+$/, level: 4 })).toBeVisible();
+  await recordBrowser.getByRole('navigation', { name: 'Tables' }).getByRole('button', { name: /^notes/ }).click();
+  const noteRows = recordBrowser.getByRole('grid', { name: 'Rows of notes' });
+  await recordBrowser.getByRole('searchbox', { name: 'Search this table' }).fill(title);
+  await expect(noteRows.locator('tbody tr')).toHaveCount(1);
+  await expect(noteRows.getByText(title, { exact: true })).toBeVisible();
+  await noteRows.getByRole('button', { name: /: open row / }).first().click();
+  const rowDetails = recordBrowser.getByRole('complementary', { name: /^Row id \d+ of notes$/ });
+  await expect(rowDetails).toContainText(title);
   await page.screenshot({ path: '../../../ecosystem-audit/native-record-browser-desktop.png' });
-  await recordBrowser.getByRole('button', { name: 'Close record details', exact: true }).click();
+  await rowDetails.getByRole('button', { name: 'Close this row', exact: true }).click();
+  // On a phone the rows are cards and a row opens as a sheet over the page; nothing is wider than the dialog.
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(recordBrowser.getByRole('table')).toHaveCount(0);
-  await expect(recordBrowser.getByRole('article')).toHaveCount(1);
-  await expect(recordBrowser.getByRole('article').getByText(title, { exact: true })).toBeVisible();
-  await recordBrowser.getByRole('button', { name: 'View details', exact: true }).click();
-  await expect(recordBrowser.getByRole('heading', { name: /^Record [0-9]+$/, level: 4 })).toBeVisible();
-  const modal = page.getByRole('dialog');
+  await expect(recordBrowser.getByRole('grid')).toHaveCount(0);
+  const noteCards = recordBrowser.getByRole('list', { name: 'Rows of notes' }).getByRole('listitem');
+  await expect(noteCards).toHaveCount(1);
+  await expect(noteCards.first()).toContainText(title);
+  const modal = page.getByRole('dialog', { name: 'Native app hosting', exact: true });
   expect(await modal.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await noteCards.first().getByRole('button', { name: /^Open row / }).click();
+  const rowSheet = page.getByRole('dialog', { name: /^Row id \d+ of notes$/ });
+  await expect(rowSheet).toContainText(title);
   await page.screenshot({ path: '../../../ecosystem-audit/native-record-browser-mobile.png' });
+  await rowSheet.getByRole('button', { name: 'Back', exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole('tab', { name: 'backend', exact: true }).click();
   const source = page.getByLabel('Private backend source', { exact: true });

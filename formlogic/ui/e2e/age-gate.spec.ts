@@ -74,10 +74,10 @@ async function publishGatedApp(context: BrowserContext, name: string) {
   return app as { id: string; slug: string };
 }
 
-/** The owner turns the requirement on the way an owner does, in the SoftN app's Settings tab. */
+/** The owner turns the requirement on the way an owner does, in the SoftN app's Settings section. */
 async function turnOnTheGate(page: Page, appId: string) {
   await page.goto(`/apps/${appId}/softn`);
-  await page.getByRole('tab', { name: 'Settings' }).click();
+  await page.getByRole('navigation', { name: 'App sections' }).getByRole('link', { name: 'Settings', exact: true }).click();
   await page.getByRole('switch', { name: 'Only for people over an age' }).click();
   await expect(page.getByText('Members are asked before it opens.', { exact: true })).toBeVisible();
 }
@@ -162,8 +162,7 @@ test('on its own domain the pass is met on FormLogic, and the member comes back 
   const name = `grown-ups-domain-${RUN}`;
   const app = await publishGatedApp(page.context(), name);
   await turnOnTheGate(page, app.id);
-  await page.goto(`/apps/${app.id}/softn`);
-  await page.getByRole('tab', { name: 'Settings' }).click();
+  await page.goto(`/apps/${app.id}/softn/domains`);
   await page.getByLabel('Custom domain').fill(DOMAIN);
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await page.getByRole('button', { name: 'Verify', exact: true }).click();

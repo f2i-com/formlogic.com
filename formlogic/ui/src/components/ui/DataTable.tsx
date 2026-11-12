@@ -203,29 +203,29 @@ export function DataTable<T extends Record<string, unknown>>({
                 aria-label={onRowClick ? `Open ${String(item[columns[0]?.key] ?? 'item')}` : undefined}
                 onKeyDown={onRowClick ? (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick(item); } } : undefined}
                 className={cn(
-                  'rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-4 flex items-start justify-between gap-3',
+                  'relative rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-3',
                   onRowClick && 'cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50'
                 )}
               >
-                <div className="min-w-0 flex-1 space-y-1">
-                  {/* The LABEL is what may truncate, not the answer. It used to be
-                      `shrink-0` with the value `truncate`, so a question-style column name
-                      ("How would you rate your experience?") took the whole row on a phone
-                      and pushed the actual answer off the card — every row looked
-                      identical. The value now wraps instead. */}
-                  {columns.map((col) => (
-                    <div key={col.key} className="flex gap-2 text-sm">
-                      <span className="min-w-0 max-w-[45%] truncate text-gray-400 dark:text-slate-500" title={col.label}>
-                        {col.label}:
-                      </span>
-                      <span className="min-w-0 break-words text-gray-900 dark:text-slate-200">
+                {/* Each column's name over its value, two to a line, so several rows fit a
+                    phone's screen: a line each for "Name: value" made a card of seven columns
+                    250px tall, and the name was what got cut ("Submitt…"). A name that is a
+                    long question is cut with an ellipsis (it is whole in its tooltip and in the
+                    record itself); a value wraps, and is never cut.
+                    The first column is the row's title and takes the whole first line, beside
+                    the row's actions. */}
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+                  {columns.map((col, index) => (
+                    <div key={col.key} className={cn('min-w-0', index === 0 && 'col-span-2', index === 0 && actions && 'pr-12')}>
+                      <dt className="truncate text-[11px] text-gray-500 dark:text-slate-400" title={col.label}>{col.label}</dt>
+                      <dd className={cn('min-w-0 break-words text-gray-900 dark:text-slate-200', index === 0 && 'font-medium')}>
                         {col.render ? col.render(item) : String(item[col.key] ?? '')}
-                      </span>
+                      </dd>
                     </div>
                   ))}
-                </div>
+                </dl>
                 {actions && (
-                  <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <div className="absolute right-1.5 top-1.5" onClick={(e) => e.stopPropagation()}>
                     {actions(item)}
                   </div>
                 )}
@@ -244,19 +244,21 @@ export function DataTable<T extends Record<string, unknown>>({
                   // Keep the columnheader role so aria-sort is honored; the sort
                   // control is an inner <button> (so the header isn't a role=button).
                   aria-sort={sortInteractive(col) ? (activeSortKey === col.key ? (activeSortDir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined}
-                  className={cn('px-4 py-3 text-left font-medium text-gray-600 dark:text-slate-400 truncate', col.className)}
+                  // The list look the rest of the product has (docs/WORKSPACE_PAGES.md): a small
+                  // uppercase head and rows about 36px tall, so a page holds 25 of them.
+                  className={cn('px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 truncate', col.className)}
                 >
                   {sortInteractive(col) ? (
                     <button
                       type="button"
                       onClick={() => handleSort(col.key)}
-                      className="-mx-1 px-1 inline-flex items-center gap-1 rounded font-medium hover:text-gray-900 dark:hover:text-slate-200 select-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50"
+                      className="-mx-1 px-1 inline-flex max-w-full items-center gap-1 rounded font-semibold uppercase tracking-wider hover:text-gray-900 dark:hover:text-slate-200 select-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50"
                     >
-                      {col.label}
+                      <span className="truncate">{col.label}</span>
                       {activeSortKey === col.key ? (
-                        activeSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                        activeSortDir === 'asc' ? <ChevronUp className="h-3 w-3 flex-none" /> : <ChevronDown className="h-3 w-3 flex-none" />
                       ) : (
-                        <ChevronsUpDown className="h-3 w-3 text-gray-300 dark:text-slate-600" aria-hidden="true" />
+                        <ChevronsUpDown className="h-3 w-3 flex-none text-gray-300 dark:text-slate-600" aria-hidden="true" />
                       )}
                     </button>
                   ) : (
@@ -264,7 +266,7 @@ export function DataTable<T extends Record<string, unknown>>({
                   )}
                 </th>
               ))}
-              {actions && <th className="px-4 py-3 text-right font-medium text-gray-600 dark:text-slate-400 w-28">Actions</th>}
+              {actions && <th className="px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 w-28">Actions</th>}
             </tr>
           </thead>
           <tbody>
@@ -272,12 +274,12 @@ export function DataTable<T extends Record<string, unknown>>({
               Array.from({ length: Math.min(pageSize, 5) }).map((_, i) => (
                 <tr key={`skeleton-${i}`} className="border-b border-gray-100 dark:border-slate-700/40">
                   {visibleColumns.map((col) => (
-                    <td key={col.key} className="px-4 py-3">
+                    <td key={col.key} className="px-3 py-2.5">
                       <div className="h-4 rounded bg-gray-100 dark:bg-slate-800 shimmer" />
                     </td>
                   ))}
                   {actions && (
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-2.5">
                       <div className="h-4 w-16 ml-auto rounded bg-gray-100 dark:bg-slate-800 shimmer" />
                     </td>
                   )}
@@ -306,12 +308,12 @@ export function DataTable<T extends Record<string, unknown>>({
                   )}
                 >
                   {visibleColumns.map((col) => (
-                    <td key={col.key} className={cn('px-4 py-3 text-gray-900 dark:text-slate-200 truncate', col.className)}>
+                    <td key={col.key} className={cn('px-3 py-2 text-[13px] leading-5 text-gray-900 dark:text-slate-200 truncate', col.className)}>
                       {col.render ? col.render(item) : String(item[col.key] ?? '')}
                     </td>
                   ))}
                   {actions && (
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-3 py-0.5 text-right">
                       {actions(item)}
                     </td>
                   )}

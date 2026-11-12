@@ -1,15 +1,23 @@
-// The SoftN app workspace (/apps/:appId/softn): where the owner of a hosted SoftN app sees it
-// running, changes it — with AI Studio, the Visual Builder or a new .softn file — manages the
-// data in its database, and publishes it. One page for what used to take the App Studio's
-// Screens step, a collapsed "Hosting & app tools" section and the native hosting dialog.
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, Lock, MessageSquare, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wallet, Wand2 } from 'lucide-react';
+// The SoftN app's page (/apps/:appId/softn): where the owner of a hosted SoftN app manages it.
+// Five sections, each at its own address so a link or the back button lands where it was:
+//   (the page itself)  Overview: what the app is doing, at a glance; nothing is started
+//   …/data[/<table>[/<view>]]  its database, table by table (components/data)
+//   …/edit             the app running, AI Studio, the Visual Builder and its files
+//   …/domains          its address and its own domains
+//   …/settings         who can use it, what it may do, how it looks
+// One page for what used to take the App Studio's Screens step, a collapsed "Hosting & app tools"
+// section and the native hosting dialog.
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, LayoutDashboard, Lock, MessageSquare, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wallet, Wand2 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Textarea } from '../../components/ui/Textarea';
 import { Switch } from '../../components/ui/Switch';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { SectionNav } from '../../components/ui/SectionNav';
+import { Panel, PANEL_COLUMNS } from '../../components/ui/Panel';
+import { PAGE_GUTTER } from '../../components/layout/PageBody';
 import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
 import { SoftnLookPanel } from '../../components/apps/SoftnLookPanel';
 import { PhoneSignInPanel } from '../../components/apps/PhoneSignInPanel';
@@ -25,13 +33,14 @@ import { AppEngineSelect } from '../../components/studio/AppEngineSelect';
 import { AppTorchSwitch } from '../../components/studio/AppTorchSwitch';
 import { NativeEditor } from '../../components/studio/NativeAppPanel';
 import { NativeAppView } from '../../components/studio/NativeAppView';
-import { NativeRecordsBrowser } from '../../components/studio/NativeRecordsBrowser';
+import { DataManager, type DataView } from '../../components/data';
+import { SoftnOverview } from '../../components/apps/SoftnOverview';
 import { DRAFT_KEEPING, useNativeProjectDraft } from '../../components/studio/useNativeProjectDraft';
 import { useAiReady } from '../../hooks/useAiReady';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { api } from '../../lib/api';
 import { declaresFormlogicAi, declaresFormlogicPayments, exportNativeProject, importNativeProject, type NativeProject } from '../../lib/nativeHosting';
-import { isSoftnApp, projectFromUpload, projectHasBackend } from '../../lib/softnApps';
+import { isSoftnApp, projectFromUpload, projectHasBackend, SOFTN_SECTIONS, softnWorkspacePath, type SoftnSection } from '../../lib/softnApps';
 import { cn, copyToClipboard } from '../../lib/utils';
 import { useAppStore } from '../../stores/appStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -39,8 +48,12 @@ import { toast } from '../../stores/toastStore';
 import { useUIStore, type SoftnOpen } from '../../stores/uiStore';
 import type { App, AppRequirement, SoftnLook } from '../../types/app';
 
-type Tab = 'app' | 'data' | 'settings';
-const TABS = [['app', 'App', Globe], ['data', 'Data', Database], ['settings', 'Settings', SettingsIcon]] as const;
+const SECTIONS: readonly (readonly [SoftnSection, string, typeof Globe])[] = [
+  ['overview', 'Overview', LayoutDashboard], ['data', 'Data', Database], ['edit', 'Edit', PencilRuler], ['domains', 'Domains', Globe], ['settings', 'Settings', SettingsIcon],
+];
+const DATA_VIEWS: readonly DataView[] = ['browse', 'structure', 'export', 'import'];
+/** The parts of the address after /softn/, decoded; a part that is not valid text is dropped. */
+const addressParts = (rest: string) => rest.split('/').filter(Boolean).map(part => { try { return decodeURIComponent(part); } catch { return ''; } });
 type Opened = { kind: AppEditorKind; bundle: Uint8Array; brief?: EditorBrief };
 
 export function SoftnAppWorkspace() {
@@ -58,7 +71,7 @@ export function SoftnAppWorkspace() {
   if (!app) {
     return <div className="min-h-screen">
       <Header title="SoftN app" back={{ onClick: () => navigate('/apps'), label: 'Back to apps' }} />
-      <div className="mx-auto max-w-3xl px-4 py-10 text-sm text-slate-600 dark:text-slate-400">
+      <div className="px-4 py-10 text-sm text-slate-600 dark:text-slate-400 sm:px-6">
         {looked ? <p role="alert">This app was not found, or it is not yours to manage.</p> : <p role="status">Loading your app…</p>}
       </div>
     </div>;
@@ -79,7 +92,31 @@ function Workspace({ app }: { app: App }) {
   const draft = useNativeProjectDraft(app, { reloadKey, onInstalled: () => setPreviewKey(key => key + 1) });
   const { project, version, ready, readOnly, busy, dirty } = draft;
   const ai = useAiReady({ withRecheck: true });
-  const [tab, setTab] = useState<Tab>('app');
+  // The section, and what is open inside it, come from the address: /softn/data/<table>/<view>.
+  const location = useLocation();
+  const parts = addressParts(useParams()['*'] ?? '');
+  const known = (SOFTN_SECTIONS as readonly string[]).includes(parts[0] ?? 'overview');
+  const section: SoftnSection = known ? (parts[0] ?? 'overview') as SoftnSection : 'overview';
+  const dataTable = section === 'data' ? parts[1] : undefined;
+  const dataView: DataView = section === 'data' && (DATA_VIEWS as readonly string[]).includes(parts[2] ?? '') ? parts[2] as DataView : 'browse';
+  const hasProject = !!project;
+  // The page stays mounted from one section to the next, so a section is opened from its top, as
+  // a page is. A link into a section may name one of its panels (…/settings#settings-look): that
+  // is brought into view instead, once the section has drawn it.
+  const sectionShown = useRef(section);
+  useEffect(() => {
+    const moved = sectionShown.current !== section;
+    sectionShown.current = section;
+    if (!location.hash) {
+      if (moved) document.documentElement.scrollTop = 0;
+      return;
+    }
+    if (!hasProject) return;
+    let id = '';
+    try { id = decodeURIComponent(location.hash.slice(1)); } catch { return; }
+    const timer = window.setTimeout(() => document.getElementById(id)?.scrollIntoView?.({ block: 'start' }), 60);
+    return () => window.clearTimeout(timer);
+  }, [location.hash, section, hasProject]);
   const [editor, setEditor] = useState<Opened | null>(null);
   const [advanced, setAdvanced] = useState<'backend' | 'project' | null>(null);
   const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
@@ -90,6 +127,7 @@ function Workspace({ app }: { app: App }) {
   const upload = useRef<HTMLInputElement>(null);
   const published = app.status === 'published';
   const userId = useAuthStore(s => s.user?.id);
+  const isOwner = app.ownerId === userId;
   const liveUrl = `${window.location.origin}/app/${encodeURIComponent(app.slug)}${project?.home ? '' : '/native'}`;
   // An app without a backend of its own runs in the browser alone: it has no database here.
   const backend = project ? projectHasBackend(project) : true;
@@ -228,30 +266,19 @@ function Workspace({ app }: { app: App }) {
     }
   };
 
-  // The tabs take the arrow keys, Home and End, as a tab list does.
-  const moveTab = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const order = TABS.map(([value]) => value);
-    const at = order.indexOf(tab);
-    const next = event.key === 'ArrowRight' ? order[(at + 1) % order.length] : event.key === 'ArrowLeft' ? order[(at + order.length - 1) % order.length]
-      : event.key === 'Home' ? order[0] : event.key === 'End' ? order[order.length - 1] : null;
-    if (!next) return;
-    event.preventDefault();
-    setTab(next);
-    document.getElementById(`softn-tab-${next}`)?.focus();
-  };
-
   const leave = (to: string) => { if (!dirty || window.confirm(draft.leaveMessage('Leave without publishing?'))) navigate(to); };
 
-  // "This app can use AI. Set it up": the Settings tab, at its AI panel, once the tab has drawn it.
-  const openAiSettings = () => {
-    setTab('settings');
-    window.setTimeout(() => document.getElementById('app-ai-settings')?.scrollIntoView?.({ block: 'start' }), 60);
-  };
+  // "This app can use AI. Set it up": the Settings section, at its AI panel.
+  const openAiSettings = () => navigate(`${softnWorkspacePath(app.id, 'settings')}#app-ai-settings`);
+
+  // An address that names no section of this page (an old link, a typing slip): the overview.
+  if (!known) return <Navigate to={softnWorkspacePath(app.id)} replace />;
 
   if (editor) {
     return <AppEditorDialog kind={editor.kind} name={app.name} bundle={editor.bundle} brief={editor.brief}
       applyLabel={published ? 'Keep changes' : 'Save changes'}
-      onClose={() => setEditor(null)} onApply={applyEditorChanges} />;
+      // Back from an editor, the page shows the app running, with what was changed: its Edit section.
+      onClose={() => { setEditor(null); if (section !== 'edit') navigate(softnWorkspacePath(app.id, 'edit'), { replace: true }); }} onApply={applyEditorChanges} />;
   }
   if (advanced) {
     return <NativeEditor app={app} initialTab={advanced} onClose={() => { setAdvanced(null); setReloadKey(key => key + 1); setPreviewKey(key => key + 1); }} />;
@@ -262,14 +289,23 @@ function Workspace({ app }: { app: App }) {
     {(!published || dirty) && <Button size="sm" onClick={() => void publish()} isLoading={publishing || busy} disabled={!ready} leftIcon={<Rocket className="h-4 w-4" />}>{published ? 'Publish changes' : 'Publish'}</Button>}
   </div> : undefined;
 
+  // The app's state in a line: live or a draft, its version, and its link to copy.
+  const statusLine = <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+    <StatusPill live={published} />
+    {project && <span className="text-xs text-slate-500 dark:text-slate-400">Version {version}{dirty ? ` · unpublished changes${draft.keeping ? ` (${DRAFT_KEEPING[draft.keeping][0]})` : ''}` : ''}</span>}
+    {published && project && <button type="button" onClick={copyLink} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-primary-600 hover:bg-primary-50 dark:text-primary-300 dark:hover:bg-primary-500/10">{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Link copied' : liveUrl.replace(/^https?:\/\//, '')}</button>}
+  </div>;
+
   return <div className="min-h-screen">
     <Header title={app.name} back={{ onClick: () => leave('/apps'), label: 'Back to apps' }} actions={actions} />
-    <div className="mx-auto max-w-6xl px-4 pb-24 pt-5 sm:px-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <StatusPill live={published} />
-        {project && <span className="text-xs text-slate-500 dark:text-slate-400">Version {version}{dirty ? ` · unpublished changes${draft.keeping ? ` (${DRAFT_KEEPING[draft.keeping][0]})` : ''}` : ''}</span>}
-        {published && project && <button type="button" onClick={copyLink} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-indigo-600 hover:bg-indigo-50 dark:text-indigo-300 dark:hover:bg-indigo-500/10">{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Link copied' : liveUrl.replace(/^https?:\/\//, '')}</button>}
-      </div>
+    {/* Every section starts at the left and takes the page's whole width: its panels flow into
+        more columns as the screen widens, and stack on a phone.
+        On a wide screen the data section is the rest of the window below the page's header: the
+        page does not scroll, the table list and the rows scroll inside it, and the pager stays in
+        view. Narrower, it flows with the page as the other sections do. */}
+    <div className={cn('w-full pb-24 pt-3', PAGE_GUTTER, section === 'data' &&'lg:flex lg:h-[calc(100dvh-4rem-var(--fl-demo-banner-h,0px))] lg:flex-col lg:pb-3')}>
+      {/* An app with nothing installed has no sections yet: its state stands alone. */}
+      {!project && statusLine}
 
       <Messages draft={draft} />
 
@@ -280,16 +316,18 @@ function Workspace({ app }: { app: App }) {
 
       {project && <>
         {/* An app that can use AI, with its AI off: one line for its owner, never for anyone else. */}
-        {app.ownerId === userId && backend && !readOnly && tab !== 'settings' && declaresFormlogicAi(project) && <AppAiPrompt appId={app.id} onSetUp={openAiSettings} />}
-        <div role="tablist" aria-label="App sections" onKeyDown={moveTab} className="mt-5 inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
-          {TABS.map(([value, label, Icon]) =>
-            <button key={value} id={`softn-tab-${value}`} type="button" role="tab" aria-selected={tab === value} aria-controls={`softn-panel-${value}`} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)}
-              className={cn('inline-flex min-h-10 items-center gap-2 rounded-lg px-4 text-sm font-medium', tab === value ? 'bg-white text-indigo-700 shadow-sm dark:bg-slate-700 dark:text-indigo-200' : 'text-slate-600 dark:text-slate-300')}>
-              <Icon className="h-4 w-4" aria-hidden="true" />{label}
-            </button>)}
-        </div>
+        {app.ownerId === userId && backend && !readOnly && section !== 'settings' && declaresFormlogicAi(project) && <AppAiPrompt appId={app.id} onSetUp={openAiSettings} />}
+        {/* One row for the page's sections and its state, so the section itself starts higher.
+            Links, not tabs: each section is an address, so it opens in a new tab and the back button returns to it. */}
+        <SectionNav label="App sections" className="mt-2" current={section}
+          items={SECTIONS.map(([value, label, icon]) => ({ value, label, icon, to: softnWorkspacePath(app.id, value) }))}
+          // On a phone the Data section keeps the screen for the rows: the status is on every other section.
+          end={<div className={cn('py-0.5', section === 'data' && 'max-sm:hidden')}>{statusLine}</div>} />
 
-        {tab === 'app' && <div role="tabpanel" id="softn-panel-app" aria-labelledby="softn-tab-app" className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        {section === 'overview' && <SoftnOverview app={app} project={project} version={version} published={published} dirty={dirty} readOnly={readOnly} backend={backend}
+          isOwner={app.ownerId === userId} liveUrl={liveUrl} busy={publishing || busy} onPublish={() => void publish()} />}
+
+        {section === 'edit' && <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <section aria-label="Preview" className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-700">
               <span className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">{published ? 'Live app' : 'Preview — only you can see it until you publish'}</span>
@@ -335,28 +373,31 @@ function Workspace({ app }: { app: App }) {
               </div>
               <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{backend
                 ? <>Records stay in the app&apos;s database when you upload a new version. Downloads hold the source only.</>
-                : <>This app has no backend: what it saves stays in each visitor&apos;s browser. Downloads hold the source only. <button type="button" className="font-medium text-indigo-600 underline-offset-2 hover:underline dark:text-indigo-300" onClick={() => setTab('data')}>Add a backend</button></>}</p>
+                : <>This app has no backend: what it saves stays in each visitor&apos;s browser. Downloads hold the source only. <Link to={softnWorkspacePath(app.id, 'data')} className="font-medium text-primary-600 underline-offset-2 hover:underline dark:text-primary-300">Add a backend</Link></>}</p>
             </Panel>
           </aside>}
         </div>}
 
-        {tab === 'data' && <section role="tabpanel" id="softn-panel-data" aria-labelledby="softn-tab-data" className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-5">
-          {backend ? <>
-            <p className="mb-4 text-sm leading-6 text-slate-600 dark:text-slate-400">Everything your app stores, table by table. Add, edit and delete records here; your app sees the changes at once. To add a table or a column, ask AI Studio.</p>
-            <NativeRecordsBrowser key={`${app.id}:${version}`} appId={app.id} version={version} readOnly={readOnly} openFirstTable />
-            {app.ownerId === userId && !readOnly && <details className="mt-5 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-              <summary className="cursor-pointer text-sm font-medium text-slate-900 dark:text-white">Bring data from where it ran before</summary>
-              <div className="mt-3">
-                <BringDataPanel appId={app.id} disabled={busy} waiting={dirty ? 'Publish or discard your unpublished changes first: bringing data installs the app again.' : null}
+        {section === 'data' && (backend
+          ? <section aria-label="Data" className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 lg:min-h-0 lg:flex-1">
+            {/* The table, its view and what is being looked at in it (search, filters, sort, page, the
+                open row) are the address: Back, a reload and a copied link return to the same thing. */}
+            <DataManager key={app.id} appId={app.id} appSlug={app.slug} version={version} readOnly={readOnly} table={dataTable} view={dataView}
+              query={location.search.replace(/^\?/, '')}
+              onNavigate={(table, view, query, options) => navigate(
+                softnWorkspacePath(app.id, 'data', ...(table ? [table, ...(view === 'browse' ? [] : [view])] : [])) + (query ? `?${query}` : ''),
+                { replace: options?.replace })}
+              importPanel={app.ownerId === userId && !readOnly
+                ? <BringDataPanel appId={app.id} disabled={busy} waiting={dirty ? 'Publish or discard your unpublished changes first: bringing data installs the app again.' : null}
                   onImported={result => {
                     setReloadKey(key => key + 1); setPreviewKey(key => key + 1);
                     toast.success('Data brought in', result.keyImported ? 'With the key it was kept under.' : 'The app keeps its own key here.');
                     if (result.verification?.configured) toast.info('Sign-in codes are on', 'Its Twilio Verify details now send this app’s codes.');
                     if (result.verificationProblem) toast.warning('Sign-in codes are not set up', result.verificationProblem);
                   }} />
-              </div>
-            </details>}
-          </> : <div className="flex items-start gap-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
+                : undefined} />
+          </section>
+          : <section aria-label="Data" className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-5"><div className="flex items-start gap-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
             <Database className="mt-0.5 h-5 w-5 shrink-0 text-slate-400" aria-hidden="true" />
             <div className="min-w-0 space-y-3">
               <p><span className="font-semibold text-slate-900 dark:text-white">This app has no database on the server.</span> It has no backend of its own, so what it saves stays in each visitor&apos;s browser. To keep data here and see it in this tab, give the app a backend: add one below, or ask AI Studio to.</p>
@@ -364,68 +405,86 @@ function Workspace({ app }: { app: App }) {
                 waiting={dirty ? 'Publish or discard your unpublished changes first: adding a backend makes a new version.' : null}
                 onAdd={addBackend} />}
             </div>
-          </div>}
+          </div></section>)}
 
-        </section>}
-
-        {tab === 'settings' && <div role="tabpanel" id="softn-panel-settings" aria-labelledby="softn-tab-settings" className="mt-4 grid gap-4 lg:grid-cols-2">
-          <Panel title="Who can use it" icon={<Users className="h-4 w-4" />}>
-            <fieldset disabled={busy || readOnly} className="space-y-2">
-              <legend className="sr-only">Who can use it</legend>
-              {([['members', 'Only people you invite', 'Visitors sign in to FormLogic as members of this app. Invite them in Members & roles.', Lock], ['application', 'Anyone with the link', 'The app is open to everyone. If it has its own sign-in, that is what protects it.', Globe]] as const).map(([value, label, hint, Icon]) =>
-                <label key={value} className={cn('flex cursor-pointer gap-3 rounded-xl border p-3', project.access === value ? 'border-indigo-400 bg-indigo-50/60 dark:border-indigo-500/60 dark:bg-indigo-500/10' : 'border-slate-200 dark:border-slate-700')}>
-                  <input type="radio" name="softn-access" className="mt-1" checked={project.access === value}
-                    onChange={() => void changeSetting({ ...project, access: value }, value === 'members' ? 'Now only invited members can use it.' : 'Now anyone with the link can use it.')} />
-                  <span><span className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white"><Icon className="h-4 w-4" aria-hidden="true" />{label}</span><span className="mt-0.5 block text-xs leading-5 text-slate-500 dark:text-slate-400">{hint}</span></span>
-                </label>)}
-            </fieldset>
-            {!projectHasBackend(project) && <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">This app keeps its records in each visitor&rsquo;s own browser, so changing this starts everyone again from empty.</p>}
-            <Link to={`/apps/${app.id}/studio/access`} className="mt-3 inline-flex min-h-10 items-center text-sm font-medium text-indigo-600 dark:text-indigo-300">Members &amp; roles</Link>
-          </Panel>
-          {app.ownerId === userId && <Panel title="Before it opens" icon={<Lock className="h-4 w-4" />}>
-            <RequirementsSetting value={app.settings?.requires} disabled={gateBusy || readOnly} anonymousAccess={project.access === 'application'}
-              onChange={next => void changeRequirements(next)} />
-          </Panel>}
-          {app.ownerId === userId && <Panel title="Files on this device" icon={<FolderOpen className="h-4 w-4" />}>
-            <fieldset disabled={filesBusy || readOnly} className="space-y-2">
-              <legend className="mb-2 text-xs leading-5 text-slate-500 dark:text-slate-400">Whether the app may open the files a person chooses for it and save files they ask for, such as a saved game. It never sees anything else on their device.</legend>
-              {([[undefined, 'Off', 'The app cannot open or save files.'], ['ask', 'Ask each person', 'FormLogic asks each person before the app opens; they can say not now.'], ['allow', 'Allowed without asking', 'For an app you know: nobody is asked.']] as const).map(([value, label, hint]) =>
-                <label key={label} className={cn('flex cursor-pointer gap-3 rounded-xl border p-3', app.settings?.softnFiles === value ? 'border-indigo-400 bg-indigo-50/60 dark:border-indigo-500/60 dark:bg-indigo-500/10' : 'border-slate-200 dark:border-slate-700')}>
-                  <input type="radio" name="softn-files" className="mt-1" checked={app.settings?.softnFiles === value} onChange={() => void changeFiles(value)} />
-                  <span><span className="block text-sm font-medium text-slate-900 dark:text-white">{label}</span><span className="mt-0.5 block text-xs leading-5 text-slate-500 dark:text-slate-400">{hint}</span></span>
-                </label>)}
-            </fieldset>
-          </Panel>}
-          {app.ownerId === userId && backend && <Panel title="Phone sign-in codes" icon={<MessageSquare className="h-4 w-4" />}>
-            <PhoneSignInPanel appId={app.id} version={version} disabled={readOnly} />
-          </Panel>}
-          {app.ownerId === userId && backend && declaresFormlogicAi(project) && <div id="app-ai-settings" className="min-w-0 scroll-mt-24 lg:col-span-2"><Panel title="AI for this app" icon={<Sparkles className="h-4 w-4" />}>
-            <AppAiPanel appId={app.id} />
-          </Panel></div>}
-          {app.ownerId === userId && backend && declaresFormlogicPayments(project) && <Panel title="Payments" icon={<Wallet className="h-4 w-4" />}>
-            <AppPaymentsPanel appId={app.id} />
-          </Panel>}
-          {app.ownerId === userId && <Panel title="Look and sharing" icon={<Palette className="h-4 w-4" />}>
-
-            <SoftnLookPanel project={project} look={app.settings?.softnLook} themeColor={app.settings?.pwaThemeColor} disabled={readOnly} onSave={changeLook} />
-          </Panel>}
+        {/* Wide: the address beside the domains. Narrow: one under the other. */}
+        {section === 'domains' && <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
           <Panel title="Address" icon={<Globe className="h-4 w-4" />}>
             <Switch label="Open this app at its address" description={`Visitors to /app/${app.slug} get this app. Off: it opens at /app/${app.slug}/native.`}
               checked={!!project.home} disabled={busy || readOnly} onChange={checked => void changeSetting({ ...project, home: checked }, 'Address updated.')} />
             {published ? <Button className="mt-4" variant="secondary" size="sm" disabled={readOnly} onClick={() => setConfirmUnpublish(true)}>Unpublish</Button>
               : <p className="mt-4 text-xs leading-5 text-slate-500 dark:text-slate-400">Not published yet: only you can open it. Publish from the top of the page when it is ready.</p>}
           </Panel>
-          {!readOnly && app.ownerId === userId && <div className="min-w-0 lg:col-span-2"><CustomDomainsPanel appId={app.id} published={published} softn /></div>}
-          {draft.engine && draft.enginePolicy && <Panel title="Engine" icon={<SettingsIcon className="h-4 w-4" />}>
+          {!readOnly && app.ownerId === userId
+            ? <div className="min-w-0"><CustomDomainsPanel appId={app.id} published={published} softn /></div>
+            : <p className="text-sm text-slate-600 dark:text-slate-400">Only the app&rsquo;s owner connects a domain of its own.</p>}
+        </div>}
+
+        {section === 'settings' && <div className="mt-4">
+          {/* The page is long: one line of links to its panels, each an address a link elsewhere can use. */}
+          <nav aria-label="Settings on this page" className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+            {([['settings-access', 'Who can use it', true], ['settings-before', 'Before it opens', isOwner], ['settings-files', 'Files on this device', isOwner],
+              ['settings-signin', 'Phone sign-in codes', isOwner && backend], ['app-ai-settings', 'AI', isOwner && backend && declaresFormlogicAi(project)],
+              ['settings-payments', 'Payments', isOwner && backend && declaresFormlogicPayments(project)], ['settings-look', 'Look and sharing', isOwner],
+              ['settings-engine', 'Engine', !!(draft.engine && draft.enginePolicy)], ['settings-more', 'More tools', true]] as const)
+              .filter(([, , shown]) => shown).map(([id, label]) =>
+                <Link key={id} to={{ hash: `#${id}` }} replace className="inline-flex items-center font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-300 max-sm:min-h-11">{label}</Link>)}
+          </nav>
+          {/* The panels fill the page's width in as many columns as fit, each as tall as what it
+              holds: one column on a phone, two on a laptop, three on a wide screen. */}
+          <div className={cn('mt-3', PANEL_COLUMNS)}>
+          <Panel id="settings-access" title="Who can use it" icon={<Users className="h-4 w-4" />}>
+            <fieldset disabled={busy || readOnly} className="space-y-2">
+              <legend className="sr-only">Who can use it</legend>
+              {([['members', 'Only people you invite', 'Visitors sign in to FormLogic as members of this app. Invite them in Members & roles.', Lock], ['application', 'Anyone with the link', 'The app is open to everyone. If it has its own sign-in, that is what protects it.', Globe]] as const).map(([value, label, hint, Icon]) =>
+                <label key={value} className={cn('flex cursor-pointer gap-3 rounded-xl border p-3', project.access === value ? 'border-primary-400 bg-primary-50/60 dark:border-primary-500/60 dark:bg-primary-500/10' : 'border-slate-200 dark:border-slate-700')}>
+                  <input type="radio" name="softn-access" className="mt-1" checked={project.access === value}
+                    onChange={() => void changeSetting({ ...project, access: value }, value === 'members' ? 'Now only invited members can use it.' : 'Now anyone with the link can use it.')} />
+                  <span><span className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white"><Icon className="h-4 w-4" aria-hidden="true" />{label}</span><span className="mt-0.5 block text-xs leading-5 text-slate-500 dark:text-slate-400">{hint}</span></span>
+                </label>)}
+            </fieldset>
+            {!projectHasBackend(project) && <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">This app keeps its records in each visitor&rsquo;s own browser, so changing this starts everyone again from empty.</p>}
+            <Link to={`/apps/${app.id}/studio/access`} className="mt-3 inline-flex min-h-10 items-center text-sm font-medium text-primary-600 dark:text-primary-300">Members &amp; roles</Link>
+          </Panel>
+          {app.ownerId === userId && <Panel id="settings-before" title="Before it opens" icon={<Lock className="h-4 w-4" />}>
+            <RequirementsSetting value={app.settings?.requires} disabled={gateBusy || readOnly} anonymousAccess={project.access === 'application'}
+              onChange={next => void changeRequirements(next)} />
+          </Panel>}
+          {app.ownerId === userId && <Panel id="settings-files" title="Files on this device" icon={<FolderOpen className="h-4 w-4" />}>
+            <fieldset disabled={filesBusy || readOnly} className="space-y-2">
+              <legend className="mb-2 text-xs leading-5 text-slate-500 dark:text-slate-400">Whether the app may open the files a person chooses for it and save files they ask for, such as a saved game. It never sees anything else on their device.</legend>
+              {([[undefined, 'Off', 'The app cannot open or save files.'], ['ask', 'Ask each person', 'FormLogic asks each person before the app opens; they can say not now.'], ['allow', 'Allowed without asking', 'For an app you know: nobody is asked.']] as const).map(([value, label, hint]) =>
+                <label key={label} className={cn('flex cursor-pointer gap-3 rounded-xl border p-3', app.settings?.softnFiles === value ? 'border-primary-400 bg-primary-50/60 dark:border-primary-500/60 dark:bg-primary-500/10' : 'border-slate-200 dark:border-slate-700')}>
+                  <input type="radio" name="softn-files" className="mt-1" checked={app.settings?.softnFiles === value} onChange={() => void changeFiles(value)} />
+                  <span><span className="block text-sm font-medium text-slate-900 dark:text-white">{label}</span><span className="mt-0.5 block text-xs leading-5 text-slate-500 dark:text-slate-400">{hint}</span></span>
+                </label>)}
+            </fieldset>
+          </Panel>}
+          {app.ownerId === userId && backend && <Panel id="settings-signin" title="Phone sign-in codes" icon={<MessageSquare className="h-4 w-4" />}>
+            <PhoneSignInPanel appId={app.id} version={version} disabled={readOnly} />
+          </Panel>}
+          {app.ownerId === userId && backend && declaresFormlogicAi(project) && <div id="app-ai-settings" className="min-w-0 scroll-mt-24"><Panel title="AI for this app" icon={<Sparkles className="h-4 w-4" />}>
+            <AppAiPanel appId={app.id} />
+          </Panel></div>}
+          {app.ownerId === userId && backend && declaresFormlogicPayments(project) && <Panel id="settings-payments" title="Payments" icon={<Wallet className="h-4 w-4" />}>
+            <AppPaymentsPanel appId={app.id} />
+          </Panel>}
+          {app.ownerId === userId && <Panel id="settings-look" title="Look and sharing" icon={<Palette className="h-4 w-4" />}>
+
+            <SoftnLookPanel project={project} look={app.settings?.softnLook} themeColor={app.settings?.pwaThemeColor} disabled={readOnly} onSave={changeLook} />
+          </Panel>}
+          {draft.engine && draft.enginePolicy && <Panel id="settings-engine" title="Engine" icon={<SettingsIcon className="h-4 w-4" />}>
             <AppEngineSelect appId={app.id} engine={draft.engine} policy={draft.enginePolicy} disabled={busy || readOnly} onChanged={() => void draft.refreshEngine()} />
             <div className="mt-4"><AppTorchSwitch appId={app.id} policy={draft.enginePolicy} disabled={busy || readOnly} /></div>
           </Panel>}
-          <Panel title="More tools" icon={<Code2 className="h-4 w-4" />}>
+          <Panel id="settings-more" title="More tools" icon={<Code2 className="h-4 w-4" />}>
             <div className="flex flex-col items-start gap-1">
               <Button variant="ghost" size="sm" onClick={() => setAdvanced('backend')} leftIcon={<Code2 className="h-4 w-4" />}>Edit the source code</Button>
               <Button variant="ghost" size="sm" onClick={() => leave(`/apps/${app.id}/studio`)} leftIcon={<SettingsIcon className="h-4 w-4" />}>Open the App Studio (forms, automations, access)</Button>
+              {app.ownerId === userId && !readOnly && <Button variant="ghost" size="sm" onClick={() => leave(`/apps/${app.id}/settings`)} leftIcon={<SettingsIcon className="h-4 w-4" />}>Name, address and deleting the app</Button>}
             </div>
           </Panel>
+          </div>
         </div>}
       </>}
     </div>
@@ -464,18 +523,18 @@ function Setup({ app, aiReady, aiReason, onAiRecheck, initialRequest, onInstalle
     {error && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
     <div className="mt-4 grid gap-3 md:grid-cols-3">
       <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
-        <p className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><Sparkles className="h-4 w-4 text-indigo-500" />Build it with AI</p>
+        <p className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><Sparkles className="h-4 w-4 text-primary-500" />Build it with AI</p>
         <Textarea aria-label="What should the app do?" rows={3} value={request} onChange={event => setRequest(event.target.value)} disabled={aiReady !== true || working} className="mt-2 min-h-20 resize-none" placeholder="Describe the app: its pages, what it stores, how it looks." />
         <Button size="sm" className="mt-2" disabled={aiReady !== true || working || !request.trim()} isLoading={working} onClick={() => void start({ appId: app.id, editor: 'studio', brief: { prompt: request.trim(), kind: 'build' } })}>Build it</Button>
         {aiReady === false && <AiConnectNotice lead="Building with AI needs an AI connection" reason={aiReason} onConnected={onAiRecheck} />}
       </div>
       <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
-        <p className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><PencilRuler className="h-4 w-4 text-indigo-500" />Start from a working app</p>
+        <p className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><PencilRuler className="h-4 w-4 text-primary-500" />Start from a working app</p>
         <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">A small app with a page, a backend and a database table, opened in the Visual Builder.</p>
         <Button size="sm" variant="secondary" className="mt-3" disabled={working} onClick={() => void start({ appId: app.id, editor: 'builder' })}>Start building</Button>
       </div>
       <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
-        <p className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><Upload className="h-4 w-4 text-indigo-500" />Upload a .softn file</p>
+        <p className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><Upload className="h-4 w-4 text-primary-500" />Upload a .softn file</p>
         <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">A SoftN app you already have, with its interface and backend.</p>
         <input ref={file} type="file" accept=".softn,.zip" className="hidden" aria-label="Upload a .softn file" onChange={event => { void fromFile(event.target.files?.[0]); event.target.value = ''; }} />
         <Button size="sm" variant="secondary" className="mt-3" disabled={working} onClick={() => file.current?.click()}>Choose a file</Button>
@@ -498,11 +557,11 @@ function Messages({ draft }: { draft: ReturnType<typeof useNativeProjectDraft> }
     {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
     {notice && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">{notice}</p>}
     {conflict && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">These changes started from version {base}; version {version} was published since. Publishing replaces version {version}.</p>}
-    {draft.dirty && !busy && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 text-sm text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-950/30 dark:text-indigo-100">
+    {draft.dirty && !busy && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary-200 bg-primary-50/70 p-3 text-sm text-primary-900 dark:border-primary-500/30 dark:bg-primary-950/30 dark:text-primary-100">
       <span className="min-w-0 flex-1">You have changes that are not live yet.</span>
       <Button size="sm" variant="ghost" onClick={() => { if (window.confirm('Discard your unpublished changes?')) draft.revert(); }}>Discard</Button>
     </div>}
-    {recoverable && <div role="region" aria-label="Unpublished draft" className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 text-sm dark:border-indigo-500/40 dark:bg-indigo-950/20">
+    {recoverable && <div role="region" aria-label="Unpublished draft" className="rounded-xl border border-primary-200 bg-primary-50/60 p-4 text-sm dark:border-primary-500/40 dark:bg-primary-950/20">
       <p className="font-medium text-slate-900 dark:text-white">Unpublished changes from {new Date(recoverable.savedAt).toLocaleString()} are kept in this browser.</p>
       <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={busy} onClick={() => draft.recoverDraft()}>Recover them</Button><Button size="sm" variant="secondary" disabled={busy} onClick={draft.discardDraft}>Discard them</Button></div>
     </div>}
@@ -511,15 +570,9 @@ function Messages({ draft }: { draft: ReturnType<typeof useNativeProjectDraft> }
 
 function StatusPill({ live }: { live: boolean }) {
   return <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold', live ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300')}>
-    <span className={cn('h-1.5 w-1.5 rounded-full', live ? 'bg-emerald-500' : 'bg-slate-400')} aria-hidden="true" />{live ? 'Live' : 'Not published'}
+    {/* The words lib/appStatus gives every surface: Live, Draft. */}
+    <span className={cn('h-1.5 w-1.5 rounded-full', live ? 'bg-emerald-500' : 'bg-slate-400')} aria-hidden="true" />{live ? 'Live' : 'Draft'}
   </span>;
-}
-
-function Panel({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
-  return <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-    <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><span className="text-indigo-500" aria-hidden="true">{icon}</span>{title}</h2>
-    {children}
-  </section>;
 }
 
 function IconButton({ label, active, onClick, children }: { label: string; active?: boolean; onClick: () => void; children: ReactNode }) {

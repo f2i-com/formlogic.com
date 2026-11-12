@@ -40,7 +40,7 @@ afterEach(async () => { await act(async () => root.unmount()); container.remove(
 const tree = (aiReady: boolean | null) =>
   <MemoryRouter initialEntries={['/apps/new']}><PathProbe /><Routes>
     <Route path="/apps/new" element={<SoftnCreateForm aiReady={aiReady} aiReason={aiReady === false ? 'No AI service is chosen.' : null} onAiRecheck={mocks.recheck} />} />
-    <Route path="/apps/:appId/softn" element={<p>workspace</p>} />
+    <Route path="/apps/:appId/softn/*" element={<p>workspace</p>} />
   </Routes></MemoryRouter>;
 async function render(aiReady: boolean | null) {
   root = createRoot(container);
@@ -64,7 +64,7 @@ describe('SoftnCreateForm', () => {
     await act(async () => button(/Create and build with AI/).click());
     expect(mocks.createSoftnApp).toHaveBeenCalledWith({ name: 'Recipes', description: 'A recipe box with favourites.', start: { kind: 'starter' } });
     expect(useUIStore.getState().softnOpen).toEqual({ appId: 'app-1', editor: 'studio', brief: { prompt: 'A recipe box with favourites.', kind: 'build' } });
-    expect(path.current).toBe('/apps/app-1/softn');
+    expect(path.current).toBe('/apps/app-1/softn/edit');
   });
 
   it('starts visually without AI: the starter, opened in the Visual Builder', async () => {
@@ -150,7 +150,7 @@ describe('SoftnCreateForm', () => {
     expect(path.current).toBe('/apps/new');
     await act(async () => button(/Create from this file/).click());
     expect(useUIStore.getState().softnOpen).toBeNull();
-    expect(path.current).toBe('/apps/app-1/softn');
+    expect(path.current).toBe('/apps/app-1/softn/edit');
   });
 
   it('says what is wrong with a file as soon as it is chosen, and creates nothing from it', async () => {

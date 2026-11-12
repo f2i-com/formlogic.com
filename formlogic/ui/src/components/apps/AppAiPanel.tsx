@@ -15,7 +15,7 @@ const LIMITS: { key: 'perRequesterDay' | 'perIpDay' | 'perIpHour' | 'perAppDay';
   { key: 'perIpHour', label: 'Per network address an hour', hint: 'Stops a burst from one network.' },
   { key: 'perAppDay', label: 'For the whole app a day', hint: 'The most your app may ask for in a day.' },
 ];
-const link = 'font-medium text-indigo-600 underline underline-offset-2 dark:text-indigo-300';
+const link = 'font-medium text-primary-600 underline underline-offset-2 dark:text-primary-300';
 
 /** How the app's AI is doing, in a word and a sentence: ready, busy with how many, offline since when, off and why. */
 function statusWords(view: AppAiView): { tone: 'ready' | 'warn' | 'off' | 'stopped'; lead: string; detail: string } {

@@ -161,21 +161,26 @@ export function AppCreateStart() {
         title="Create app"
         back={{ onClick: () => navigate('/apps'), label: 'Back to apps' }}
       />
-      <div className="mx-auto max-w-3xl px-4 pb-32 pt-6 sm:pb-16 sm:pt-8">
+      {/* The page starts at the left, on the title's line, as every workspace page does. On a wide
+          screen the choice of what to make stands beside the form it leads to, so both are in
+          view; narrower, the form follows the choice at a readable width. */}
+      <div className="w-full max-w-3xl px-4 pb-32 pt-4 sm:px-6 sm:pb-16 xl:grid xl:max-w-none xl:grid-cols-[minmax(0,24rem)_minmax(0,46rem)] xl:items-start xl:gap-x-6">
         {(
           <>
-            <h2 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">
-              <Boxes className="h-6 w-6 text-primary-600 dark:text-primary-300" />
+            <div className="min-w-0">
+            <h2 className="flex items-center gap-2.5 text-xl font-semibold tracking-tight text-gray-900 dark:text-white">
+              <Boxes className="h-5 w-5 text-primary-600 dark:text-primary-300" />
               What do you want to make?
             </h2>
-            <fieldset className="mt-5">
+            <fieldset className="mt-4">
               <legend className="sr-only">What kind of app</legend>
-              {/* A row each on a phone, so the form is in reach without a long scroll; cards side by side above that. */}
-              <div className="grid gap-2 sm:grid-cols-3 sm:gap-3">
+              {/* A row each on a phone, so the form is in reach without a long scroll; cards side
+                  by side above that; rows again where they stand in a column beside the form. */}
+              <div className="grid gap-2 sm:grid-cols-3 sm:gap-3 xl:grid-cols-1 xl:gap-2">
                 {BUILDS.map(([value, label, hint, Icon]) => (
-                  <label key={value} className={cn('flex cursor-pointer items-start gap-3 rounded-2xl border p-3 transition has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary-500 sm:flex-col sm:gap-2 sm:p-4', build === value ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-500/15 dark:bg-primary-500/10' : 'border-gray-200 bg-white hover:border-gray-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600')}>
+                  <label key={value} className={cn('flex cursor-pointer items-start gap-3 rounded-2xl border p-3 transition has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary-500 sm:flex-col sm:gap-2 sm:p-4 xl:flex-row xl:gap-3 xl:p-3', build === value ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-500/15 dark:bg-primary-500/10' : 'border-gray-200 bg-white hover:border-gray-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600')}>
                     <input type="radio" name="app-build" value={value} checked={build === value} disabled={creating} onChange={() => setBuild(value)} className="sr-only" />
-                    <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', build === value ? 'bg-primary-600 text-white dark:bg-primary-500' : 'bg-gray-100 text-gray-500 dark:bg-slate-800 dark:text-slate-300')}><Icon className="h-5 w-5" aria-hidden="true" /></span>
+                    <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', build === value ? 'bg-primary-600 text-primary-foreground dark:bg-primary-500' : 'bg-gray-100 text-gray-500 dark:bg-slate-800 dark:text-slate-300')}><Icon className="h-5 w-5" aria-hidden="true" /></span>
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold text-gray-900 dark:text-white">{label}</span>
                       <span className="mt-0.5 block text-xs leading-5 text-gray-500 dark:text-slate-400 sm:mt-1">{hint}</span>
@@ -191,7 +196,8 @@ export function AppCreateStart() {
               <div className="mt-4"><ConnectAiDoors onConnected={() => recheck(true)} /></div>
               <Button className="mt-3" variant="secondary" onClick={() => void recheck()} isLoading={rechecking} leftIcon={<RefreshCw className="h-4 w-4" />}>Check connection</Button>
             </details>}
-            <section className="mt-5 rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm dark:border-slate-700/60 dark:bg-slate-900 sm:p-6">
+            </div>
+            <section className="mt-5 rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm dark:border-slate-700/60 dark:bg-slate-900 sm:p-6 xl:col-start-2 xl:row-span-2 xl:row-start-1 xl:mt-0">
               {isDemo && (
                 <div className="mb-5 flex items-start gap-3 rounded-xl border border-primary-200/80 bg-primary-50/70 p-3 text-primary-800 dark:border-primary-500/20 dark:bg-primary-500/10 dark:text-primary-200">
                   <HardDrive className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
@@ -334,9 +340,9 @@ export function AppCreateStart() {
             {/* Starting from a ready-made app was invisible at the moment someone
                 decided to create one — the marketplace was only reachable from the
                 sidebar's Advanced tools or the Apps header's Import button. */}
-            <div className="mt-5 rounded-2xl border border-dashed border-gray-300 p-4 text-center dark:border-white/15">
+            <div className="mt-5 rounded-2xl border border-dashed border-gray-300 p-4 dark:border-white/15 xl:col-start-1 xl:row-start-2">
               <p className="text-sm font-semibold text-gray-800 dark:text-slate-200">Or start from something that already works</p>
-              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-gray-500 dark:text-slate-400">
+              <p className="mt-1 max-w-md text-xs leading-5 text-gray-500 dark:text-slate-400">
                 Install a ready-made app from the Marketplace and edit it, instead of building from
                 an empty studio. Already have forms? Attach them in Data &amp; forms once the app exists.
               </p>

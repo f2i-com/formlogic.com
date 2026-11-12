@@ -5,7 +5,7 @@
 import { ADMIN_CONFIRMATION_DECLINED, ADMIN_CONFIRMATION_REQUIRED, adminConfirmationHeaders, askForAdminConfirmation, canAskForAdminConfirmation } from './adminConfirmation';
 import type { Form } from '../types/form';
 import type { SoftnDirectorySettings, SoftnDraft } from '../types/app';
-import type { AccessReceipt, App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppVersion, AvailablePlugin, CameraCheckState, FormAppContext, InstalledPlugin, PassKind, PassRequirement, RequirementsStatus, UploadedPlugin } from '../types/app';
+import type { AccessReceipt, App, AppForm, AppFormUsageApp, AppListItem, AppSettings, AppSummary, AppVersion, AvailablePlugin, CameraCheckState, FormAppContext, InstalledPlugin, PassKind, PassRequirement, RequirementsStatus, UploadedPlugin } from '../types/app';
 import { APP_LEVEL_PERMISSIONS, FORM_LEVEL_PERMISSIONS } from '../types/app';
 import { APP_LOGIC_LANGUAGES } from '../types/customAppLogic';
 import type { ClientEngineId } from './clientEngines';
@@ -839,6 +839,19 @@ function seg(value: string | number): string {
 /** A wallet request's headers: FormLogic's visitor marker for an app open to anyone (AppVisitors). */
 function walletHeaders(visitor: boolean): Record<string, string> {
   return visitor ? { 'X-FormLogic-Visitor': '1' } : {};
+}
+
+/**
+ * Which rows of a table a request is about, as the records route reads them: `sort` and `dir`,
+ * `q`, and `filter` as a JSON array. Nothing is sent for what was not asked. A filter that takes
+ * no value (`empty`, `notEmpty`) is sent without one.
+ */
+function nativeRowsQuery(params: URLSearchParams, query: Pick<import('./nativeHosting').NativeBrowseQuery, 'sort' | 'q' | 'filters'>): void {
+  if (query.sort) { params.set('sort', query.sort.column); params.set('dir', query.sort.dir); }
+  if (query.q) params.set('q', query.q);
+  if (query.filters?.length) {
+    params.set('filter', JSON.stringify(query.filters.map(({ column, op, value }) => op === 'empty' || op === 'notEmpty' ? { column, op } : { column, op, value: value ?? '' })));
+  }
 }
 
 /** An answer of the form `{data: …}` as its `data`; an error as it came. */
@@ -2098,6 +2111,16 @@ class ApiClient {
     return this.request(`/apps/${encodeURIComponent(appId)}/compose`, { method: 'POST', body: JSON.stringify(input) });
   }
 
+  /**
+   * What the apps list shows beside each of the caller's own apps: its installed version, who can
+   * use it, its database's size and its connected domain. Cheap by contract (no row counts), and
+   * absent on a server from before it: the list then shows what the apps themselves say.
+   */
+  async getAppsSummary(signal?: AbortSignal): Promise<ApiResponse<{ apps: Record<string, AppSummary> }>> {
+    if (this._demoMode) return { data: { apps: {} } };
+    return this.request('/apps/summary', { signal });
+  }
+
   async getApps(): Promise<ApiResponse<{ apps: AppListItem[]; count: number }>> {
     const server = await this.request<{ apps: AppListItem[]; count: number }>('/apps');
     if (!this._demoMode) return server;
@@ -2233,10 +2256,41 @@ class ApiClient {
   async getFormTemplates(signal?: AbortSignal): Promise<ApiResponse<import('../data/formTemplates').FormTemplateCatalog>> {
     return this.request('/form-templates', { cache: 'no-store', signal });
   }
+  /** The app's tables with their row counts, and its database's size: the data manager's table list and the overview's data card. */
+  async getNativeDataSummary(id: string, signal?: AbortSignal): Promise<ApiResponse<import('./nativeHosting').NativeDataSummary>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/records?summary=1`, { signal });
+  }
   async getNativeRecords(id: string, table?: string, offset = 0): Promise<ApiResponse<import('./nativeHosting').NativeRecords>> {
     const params = new URLSearchParams({ offset: String(offset) });
     if (table) params.set('table', table);
     return this.request(`/apps/${encodeURIComponent(id)}/native/records?${params}`);
+  }
+  /** One page of a table for the data manager: the server sorts, searches and filters it, and counts what matches. */
+  async browseNativeRecords(id: string, table: string, query: import('./nativeHosting').NativeBrowseQuery = {}, signal?: AbortSignal): Promise<ApiResponse<import('./nativeHosting').NativeBrowse>> {
+    const params = new URLSearchParams({ table, offset: String(query.offset ?? 0) });
+    if (query.limit) params.set('limit', String(query.limit));
+    nativeRowsQuery(params, query);
+    return this.request(`/apps/${encodeURIComponent(id)}/native/records?${params}`, { signal });
+  }
+  /** A table's shape: its columns (the hidden ones named, never shown), indexes, and the tables it points at and is pointed at by. */
+  async getNativeStructure(id: string, table: string, signal?: AbortSignal): Promise<ApiResponse<import('./nativeHosting').NativeStructure>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/records?${new URLSearchParams({ table, view: 'structure' })}`, { signal });
+  }
+  /** Delete up to 250 rows together, all or none. Each goes with the stamp its page gave: a row changed since then refuses them all (409). */
+  async deleteNativeRecords(id: string, table: string, rows: { key: Record<string, string>; stamp: string }[]): Promise<ApiResponse<{ saved?: boolean; deleted?: number }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/records`, { method: 'POST', body: JSON.stringify({ table, action: 'deleteMany', rows }) });
+  }
+  /**
+   * Where an export downloads from: one table (`*` for every table, JSON only) as a file, with the
+   * rows the search and filters leave when a query is given. A plain link, so the browser saves
+   * the file with the session's cookies. Empty where record data is not shown (an admin acting
+   * for another account).
+   */
+  nativeExportUrl(id: string, table: string, format: 'csv' | 'json', query: Pick<import('./nativeHosting').NativeBrowseQuery, 'sort' | 'q' | 'filters'> = {}): string {
+    const params = new URLSearchParams({ table, export: format });
+    nativeRowsQuery(params, query);
+    const routed = this.routeForAdminActing(`/apps/${encodeURIComponent(id)}/native/records?${params}`);
+    return routed.blocked ? '' : `${this.baseUrl}${routed.endpoint}`;
   }
   /**
    * `onLook` is told, once the project has come and before its media have, the app's look and its

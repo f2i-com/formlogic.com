@@ -22,6 +22,15 @@ export function statusLabel(app: StatusSource): string {
   return version > 0 ? `Live v${version}` : 'Live';
 }
 
+/**
+ * The same words for the apps list. A SoftN app's number is its installed project's version, the
+ * one its own page shows, where the list's summary knows it: `publishedVersion` counts the times
+ * the app went from draft to live, so it stayed at 1 through every later version.
+ */
+export function listedStatus(app: StatusSource, summary?: { softn: boolean; version: number | null } | null): string {
+  return statusLabel(summary?.softn && summary.version ? { ...app, publishedVersion: summary.version } : app);
+}
+
 /** Badge tone that matches `statusLabel`, so colour and word never disagree. */
 export function statusTone(app: StatusSource): 'success' | 'warning' | 'default' {
   if (app.status === 'archived') return 'default';

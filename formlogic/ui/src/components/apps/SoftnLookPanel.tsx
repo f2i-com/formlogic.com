@@ -61,7 +61,7 @@ export function SoftnLookPanel({ project, look, themeColor, disabled, onSave }: 
       <div className="mt-1.5 flex items-center gap-2">
         <input id={id} type="color" value={value ?? fallback} onChange={event => change(event.target.value)} className="h-10 w-12 cursor-pointer rounded-lg border border-slate-300 dark:border-slate-600" />
         <span className="font-mono text-xs text-slate-600 dark:text-slate-300">{value ?? 'Default'}</span>
-        {value && <button type="button" className="text-xs font-medium text-indigo-600 dark:text-indigo-300" onClick={() => change(undefined)}>Use default</button>}
+        {value && <button type="button" className="text-xs font-medium text-primary-600 dark:text-primary-300" onClick={() => change(undefined)}>Use default</button>}
       </div>
     </div>
   );

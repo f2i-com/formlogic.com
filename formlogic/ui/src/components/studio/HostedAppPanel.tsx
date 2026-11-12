@@ -41,8 +41,8 @@ export function HostedAppPanel({
   const [open, setOpen] = useState(false);
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
   return (
-    <section className="overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-5 dark:border-indigo-900 dark:from-indigo-950/50 dark:via-slate-900 dark:to-slate-900">
-      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white">
+    <section className="overflow-hidden rounded-2xl border border-primary-200 bg-gradient-to-br from-primary-50 via-white to-sky-50 p-5 dark:border-primary-900 dark:from-primary-950/50 dark:via-slate-900 dark:to-slate-900">
+      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-primary-600 text-primary-foreground">
         <CloudUpload size={20} />
       </div>
       <h3 className="font-semibold text-slate-900 dark:text-white">
@@ -51,11 +51,11 @@ export function HostedAppPanel({
       <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-400">
         Bring your interface, write the backend, and keep your data together.
       </p>
-      <div className="my-4 flex flex-wrap gap-2 text-xs font-medium text-indigo-700 dark:text-indigo-300">
-        <span className="rounded-full bg-indigo-100 px-2.5 py-1 dark:bg-indigo-900/40">
+      <div className="my-4 flex flex-wrap gap-2 text-xs font-medium text-primary-700 dark:text-primary-300">
+        <span className="rounded-full bg-primary-100 px-2.5 py-1 dark:bg-primary-900/40">
           Editable code
         </span>
-        <span className="rounded-full bg-indigo-100 px-2.5 py-1 dark:bg-indigo-900/40">
+        <span className="rounded-full bg-primary-100 px-2.5 py-1 dark:bg-primary-900/40">
           SQLite database
         </span>
       </div>
@@ -376,7 +376,7 @@ function HostingEditor({
         <div className="min-w-0 space-y-5 p-4 sm:p-6">
           <div className="rounded-2xl bg-slate-950 p-5 text-white sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className="text-xs font-semibold uppercase tracking-widest text-indigo-300">
+              <span className="text-xs font-semibold uppercase tracking-widest text-primary-300">
                 Your app, connected
               </span>
               <span className="rounded-full bg-white/10 px-3 py-1 text-xs">
@@ -394,7 +394,7 @@ function HostingEditor({
             </p>
             <div className="mt-5 grid grid-cols-3 gap-2 border-t border-white/10 pt-4 text-xs text-slate-300">
               <span>
-                <Code2 size={16} className="mb-2 text-indigo-300" />
+                <Code2 size={16} className="mb-2 text-primary-300" />
                 {Object.keys(pkg.client).length} client files
               </span>
               <span>
@@ -419,7 +419,7 @@ function HostingEditor({
             <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
               <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Choose who can join</h3>
               <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400">The current host uses FormLogic membership. Allow registration for visitors, or keep the app invite-only, in Users &amp; roles.</p>
-              <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-medium text-indigo-600 dark:text-indigo-300" to={`/apps/${app.id}/studio/access`}>Manage users &amp; roles</Link>
+              <Link className="mt-2 inline-flex min-h-11 items-center text-sm font-medium text-primary-600 dark:text-primary-300" to={`/apps/${app.id}/studio/access`}>Manage users &amp; roles</Link>
             </div>
           </div>
           {engine && enginePolicy && (
@@ -538,7 +538,7 @@ function HostingEditor({
                 className={cn(
                   "min-h-11 rounded-lg px-2 text-sm font-medium capitalize",
                   tab === value
-                    ? "bg-white text-indigo-700 shadow-sm dark:bg-slate-700 dark:text-indigo-200"
+                    ? "bg-white text-primary-700 shadow-sm dark:bg-slate-700 dark:text-primary-200"
                     : "text-slate-600 dark:text-slate-400",
                 )}
               >
@@ -764,7 +764,7 @@ function HostingEditor({
                     real app database.
                   </span>
                   <a
-                    className="inline-flex min-h-11 items-center gap-1 text-indigo-600 dark:text-indigo-300"
+                    className="inline-flex min-h-11 items-center gap-1 text-primary-600 dark:text-primary-300"
                     href={`/app/${encodeURIComponent(app.slug)}/project`}
                     target="_blank"
                     rel="noreferrer"

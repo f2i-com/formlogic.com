@@ -1,131 +1,56 @@
 // @vitest-environment jsdom
-import React, { act } from 'react';
+// The records tab of the "Native app hosting" dialog is the data manager (components/data, with
+// its own tests of paging, searching, editing and read-only browsing). What is tested here is
+// what this file adds: a dialog has no address, so it holds the table, the view and what is being
+// looked at in it, and hands the manager what the dialog knows.
+import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { DataManagerProps } from '../data';
+
+const shown = vi.hoisted(() => ({ props: null as unknown }));
+vi.mock('../data', () => ({
+  DataManager: (props: DataManagerProps) => {
+    shown.props = props;
+    return <p data-testid="manager">{`${props.table ?? '(first table)'} | ${props.view} | ${props.query}`}</p>;
+  },
+}));
+
 import { NativeRecordsBrowser } from './NativeRecordsBrowser';
-const { getRecords } = vi.hoisted(() => ({ getRecords: vi.fn() }));
-vi.mock('../../lib/api', () => ({ api: { getNativeRecords: getRecords } }));
+
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root;
 let container: HTMLDivElement;
-const data = (title: string, more = false) => ({ data: { tables: ['notes', 'users'], columns: ['id', 'title'], rows: [{ id: 1, title }], hasMore: more } });
-beforeEach(() => { getRecords.mockReset(); container = document.createElement('div'); document.body.append(container); root = createRoot(container); });
+const props = () => shown.props as DataManagerProps;
+const text = () => container.querySelector('[data-testid="manager"]')?.textContent;
+
+beforeEach(() => { shown.props = null; container = document.createElement('div'); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
-const mount = async () => { await act(async () => root.render(<NativeRecordsBrowser appId="app" version={1} initialTable="notes" />)); };
-const button = (label: string) => [...container.querySelectorAll('button')].find(node => node.textContent === label)!;
 
-it('paginates real requests and hides old records when a page fails to load', async () => {
-  getRecords.mockResolvedValueOnce(data('First page', true)).mockResolvedValueOnce(data('Second page')).mockResolvedValueOnce({ error: 'Database temporarily unavailable' });
-  await mount();
-  await act(async () => button('Next').click());
-  expect(getRecords).toHaveBeenLastCalledWith('app', 'notes', 50);
-  expect(container.textContent).toContain('Second page');
-  expect(container.textContent).not.toContain('First page');
-  expect(button('Next').disabled).toBe(true);
-  await act(async () => button('Refresh records').click());
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain('Database temporarily unavailable');
-  expect(container.textContent).not.toContain('Second page');
-  expect(button('Try again')).toBeTruthy();
+it('opens the table it was asked for, in Browse, with nothing searched', async () => {
+  await act(async () => root.render(<NativeRecordsBrowser appId="app" appSlug="my-app" version={3} initialTable="notes" />));
+  expect(text()).toBe('notes | browse | ');
+  expect(props()).toMatchObject({ appId: 'app', appSlug: 'my-app', version: 3, readOnly: false });
+  expect(container.querySelector('section[aria-label="Database records browser"]')).not.toBeNull();
 });
 
-it('ignores a late response after the user switches tables', async () => {
-  let resolveOld!: (value: ReturnType<typeof data>) => void;
-  getRecords.mockResolvedValueOnce(data('Original note'))
-    .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }))
-    .mockResolvedValueOnce(data('Current note'));
-  await mount();
-  const select = container.querySelector('select')!;
-  await act(async () => { select.value = 'users'; select.dispatchEvent(new Event('change', { bubbles: true })); });
-  await act(async () => { select.value = 'notes'; select.dispatchEvent(new Event('change', { bubbles: true })); });
-  await act(async () => resolveOld(data('Stale user')));
-  expect(container.textContent).toContain('Current note');
-  expect(container.textContent).not.toContain('Stale user');
-  expect(select.value).toBe('notes');
+it('leaves the choice of table to the manager when none was asked for', async () => {
+  await act(async () => root.render(<NativeRecordsBrowser appId="app" version={1} />));
+  expect(text()).toBe('(first table) | browse | ');
 });
 
-// Audit FL-S06: the server clamps offsets to its browsing window. The pager
-// must show the page the server answered with and stop there, rather than
-// counting its own pages up while the same rows come back under new labels.
-it('follows the server’s effective offset and stops at the browsing window', async () => {
-  const page = (offset: number, end: 'more' | 'end' | 'limit', first: number) => ({ data: { tables: ['notes'], columns: ['id'], rows: Array.from({ length: 50 }, (_, i) => ({ id: first + i })), hasMore: end === 'more', offset, end, limit: 50, offsetLimit: 100000 } });
-  getRecords.mockResolvedValueOnce(page(0, 'more', 1)).mockResolvedValueOnce(page(50, 'more', 51)).mockResolvedValueOnce(page(100, 'limit', 100001));
-  await mount();
-  expect(container.textContent).toContain('Page 1 · Rows 1–50');
-  await act(async () => button('Next').click());
-  expect(getRecords).toHaveBeenLastCalledWith('app', 'notes', 50);
-  expect(container.textContent).toContain('Page 2 · Rows 51–100');
-  await act(async () => button('Next').click());
-  // The third answer is the clamped window page: labels follow it, Next stops.
-  expect(container.textContent).toContain('Page 3 · Rows 101–150');
-  expect(button('Next').disabled).toBe(true);
-  expect(container.querySelector('[role="status"]')?.textContent).toContain('first 100,050 records');
-  expect(getRecords).toHaveBeenCalledTimes(3);
+it('keeps the table, the view and what is looked at, as the page keeps them in its address', async () => {
+  await act(async () => root.render(<NativeRecordsBrowser appId="app" version={1} initialTable="notes" />));
+  await act(async () => props().onNavigate('users', 'browse', 'q=ann&sort=name&dir=desc'));
+  expect(text()).toBe('users | browse | q=ann&sort=name&dir=desc');
+  await act(async () => props().onNavigate('users', 'structure', 'q=ann&sort=name&dir=desc'));
+  expect(text()).toBe('users | structure | q=ann&sort=name&dir=desc');
+  // A table opened from the list: nothing searched, as the manager asks.
+  await act(async () => props().onNavigate('notes', 'browse'));
+  expect(text()).toBe('notes | browse | ');
 });
 
-it('shows the clamped page under its real position when a request lands past the window', async () => {
-  // A request for offset 100050 answered as offset 100000 (end=limit): the
-  // labels say 100 001–100 050, page 2001, and Next is disabled. The notice
-  // counts the window (`offsetLimit`) plus its last page (`limit`), as the
-  // server sends them, so it ends at the last row on screen.
-  getRecords.mockResolvedValue({ data: { tables: ['notes'], columns: ['id'], rows: Array.from({ length: 50 }, (_, i) => ({ id: 100001 + i })), hasMore: false, offset: 100000, end: 'limit', limit: 50, offsetLimit: 100000 } });
-  await mount();
-  expect(container.textContent).toContain('Page 2001 · Rows 100001–100050');
-  expect(container.querySelector('[role="status"]')?.textContent).toContain('first 100,050 records');
-  expect(button('Next').disabled).toBe(true);
-  expect(button('Previous').disabled).toBe(false);
-  await act(async () => button('Previous').click());
-  expect(getRecords).toHaveBeenLastCalledWith('app', 'notes', 99950);
-});
-
-it('steps by the page size the server sends', async () => {
-  const page = (offset: number) => ({ data: { tables: ['notes'], columns: ['id'], rows: Array.from({ length: 25 }, (_, i) => ({ id: offset + i + 1 })), hasMore: true, offset, end: 'more', limit: 25, offsetLimit: 100000 } });
-  getRecords.mockResolvedValueOnce(page(0)).mockResolvedValueOnce(page(25));
-  await mount();
-  expect(container.textContent).toContain('up to 25 records per page');
-  await act(async () => button('Next').click());
-  expect(getRecords).toHaveBeenLastCalledWith('app', 'notes', 25);
-  expect(container.textContent).toContain('Page 2 · Rows 26–50');
-});
-
-// The shared demo: rows and record details are browsable, adding and editing are not offered.
-it('read-only browsing keeps rows and details but offers no add or edit', async () => {
-  const editable = (readOnly?: boolean) => ({ data: { tables: ['notes'], columns: ['id', 'title'], rows: [{ id: 1, title: 'Demo note' }], hasMore: false, schema: { fields: [], primaryKey: ['id'], canCreate: true }, keys: [{ id: '1' }], ...(readOnly === undefined ? {} : { readOnly }) } });
-  const find = (label: string) => [...container.querySelectorAll('button')].find(node => node.textContent === label);
-  const view = () => act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="View record 1"]')!.click());
-  // The same page for an owner offers both, so their absence below is the read-only mode.
-  getRecords.mockResolvedValue(editable());
-  await mount();
-  expect(find('Add record')).toBeDefined();
-  await view();
-  expect(find('Edit record')).toBeDefined();
-  await act(async () => root.unmount());
-
-  root = createRoot(container);
+it('browses read-only in the shared demo', async () => {
   await act(async () => root.render(<NativeRecordsBrowser appId="app" version={1} initialTable="notes" readOnly />));
-  expect(container.textContent).toContain('Read-only');
-  expect(container.textContent).toContain('records cannot be added, edited or deleted');
-  expect(find('Add record')).toBeUndefined();
-  await view();
-  expect(container.querySelector('[aria-label="Record 1 details"]')?.textContent).toContain('Demo note');
-  expect(find('Edit record')).toBeUndefined();
-  expect(container.textContent).not.toContain('before it can be edited or deleted');
-  await act(async () => root.unmount());
-
-  // A page the server marks read-only is read-only without being told.
-  getRecords.mockResolvedValue(editable(true));
-  root = createRoot(container);
-  await mount();
-  expect(find('Add record')).toBeUndefined();
-  await view();
-  expect(find('Edit record')).toBeUndefined();
-});
-
-it('keeps working with an older server that only sends hasMore', async () => {
-  getRecords.mockResolvedValueOnce(data('Old server', true)).mockResolvedValueOnce(data('Last page'));
-  await mount();
-  expect(button('Next').disabled).toBe(false);
-  await act(async () => button('Next').click());
-  expect(getRecords).toHaveBeenLastCalledWith('app', 'notes', 50);
-  expect(container.textContent).toContain('Page 2');
-  expect(button('Next').disabled).toBe(true);
+  expect(props().readOnly).toBe(true);
 });

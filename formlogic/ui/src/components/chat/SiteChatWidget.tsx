@@ -235,7 +235,8 @@ function AccountChatWidget() {
     // which wizard step the user is on and can guide them through the sections.
     const appStudioStep = matchPath('/apps/:appId/studio/:step', location.pathname);
     const appStudioRoot = matchPath('/apps/:appId/studio', location.pathname);
-    const softnWorkspace = matchPath('/apps/:appId/softn', location.pathname);
+    // The page and any of its sections (…/softn/data/<table>): all one app's page.
+    const softnWorkspace = matchPath('/apps/:appId/softn/*', location.pathname);
     const app = matchPath('/apps/:appId/*', location.pathname);
     const diagram = matchPath('/diagrams/:diagramId', location.pathname);
     pageContextRef.current = form?.params.formId

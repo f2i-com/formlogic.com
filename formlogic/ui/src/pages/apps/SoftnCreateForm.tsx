@@ -121,7 +121,7 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
       // Its data, once its first version is in: installed as the next version, or not at all.
       if (created.project && method === 'upload' && withItsBackend && data) {
         const brought = await api.importNativeData(created.app.id, data, keyFile, keyTwilio && useTwilio);
-        if (brought.error) toast.error('Your app was created, without its data', `${brought.error} You can bring it from the app's Data tab.`);
+        if (brought.error) toast.error('Your app was created, without its data', `${brought.error} You can bring it from Import, in the app's Data section.`);
         else toast.success('Its data came with it', brought.data?.keyImported ? 'With the key it was kept under.' : 'The app has a key of its own here.');
         if (brought.data?.verificationProblem) toast.warning('Sign-in codes are not set up', brought.data.verificationProblem);
       }
@@ -131,7 +131,8 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
         // Kept for the workspace's setup, which asks again once the app can be installed.
         setSoftnOpen({ appId: created.app.id, editor: 'studio', brief: { prompt: request.trim(), kind: 'build' } });
       }
-      navigate(softnWorkspacePath(created.app.id));
+      // A new app opens on its Edit section: the app running, with the ways to change it.
+      navigate(softnWorkspacePath(created.app.id, 'edit'));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not create the app. Please try again.');
     } finally { lock.current = false; setCreating(false); }

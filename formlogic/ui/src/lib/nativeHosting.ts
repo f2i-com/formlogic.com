@@ -112,6 +112,32 @@ export interface NativeRecordDetail { values: Record<string, string | null>; rev
  * `readOnly` is true for the shared demo: records can be browsed, not changed.
  */
 export interface NativeRecords { schema?: { fields: NativeRecordField[]; primaryKey: string[]; canCreate: boolean }; keys?: (Record<string, string> | null)[]; installed?: boolean; tables: string[]; columns?: string[]; rows?: Record<string, unknown>[]; hasMore?: boolean; offset?: number; end?: 'more' | 'end' | 'limit'; limit?: number; offsetLimit?: number; readOnly?: boolean }
+/**
+ * The app's tables with their sizes (GET …/native/records?summary=1). `summary` is absent for an
+ * app with no database: `backend: false` then says its data is kept in each person's browser.
+ */
+export interface NativeDataSummary { installed?: boolean; tables: string[]; backend?: boolean; readOnly?: boolean; summary?: { tables: { name: string; rows: number; columns: number }[]; bytes: number; hiddenTables: number } }
+/** How a filter compares a column with its value. `empty` (NULL or no text) and `notEmpty` take no value. */
+export type NativeFilterOp = 'eq' | 'ne' | 'contains' | 'starts' | 'gt' | 'gte' | 'lt' | 'lte' | 'empty' | 'notEmpty';
+export interface NativeFilter { column: string; op: NativeFilterOp; value?: string }
+export interface NativeSort { column: string; dir: 'asc' | 'desc' }
+/** What the data manager asks of a table: which page, in what order, and which rows (`q` and every filter must hold). */
+export interface NativeBrowseQuery { offset?: number; limit?: number; sort?: NativeSort | null; q?: string; filters?: NativeFilter[] }
+/**
+ * A page of a table for the data manager: a page of records, plus `total` (rows in the table),
+ * `matching` (rows that pass the search and filters), `stamps` (one per row, in step with `rows`
+ * and `keys`: what deleting several rows sends back, null where the row has no usable key), `cut`
+ * (row index to the columns whose text is a 400-character preview), `sort` (what was applied, null
+ * for the table's own order) and `hiddenColumns` (how many columns are never shown).
+ */
+export interface NativeBrowse extends NativeRecords { total?: number; matching?: number; stamps?: (string | null)[]; cut?: Record<string, string[]>; sort?: NativeSort | null; hiddenColumns?: number }
+/** `primaryKey` is the column's place in the key (from 1) or 0. `hidden`: its values are never shown. */
+export interface NativeStructureColumn { name: string; type: string; notNull: boolean; defaultValue: string | null; primaryKey: number; hidden: boolean; generated: boolean }
+/** `origin` is SQLite's: `c` (CREATE INDEX), `u` (a UNIQUE constraint), `pk`. */
+export interface NativeStructureIndex { name: string; unique: boolean; origin: string; columns: string[] }
+export interface NativeForeignKey { columns: string[]; table: string; to: string[]; onUpdate: string; onDelete: string }
+/** A table's shape (GET …/native/records?table=T&view=structure). `referencedBy`: the shown tables whose foreign keys point here. */
+export interface NativeStructure { table: string; rows: number; columns: NativeStructureColumn[]; indexes: NativeStructureIndex[]; foreignKeys: NativeForeignKey[]; referencedBy: { table: string; columns: string[]; to: string[] }[]; readOnly?: boolean }
 /** A source file name the app host keeps (the server holds uploads to the same rule). */
 const SOURCE_PATH = /^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|py|json|sql|xdb)$/;
 /** The private tree: backend code, which runs only under a server block. */

@@ -82,7 +82,7 @@ export function AppAiOwnComputer({ appId, computers, current, wantsPictures, onC
         {watching && <p className="text-xs text-gray-500 dark:text-slate-400" role="status">Looking for the new computer. It appears here once OAIY has started on it.</p>}
         {computers.length === 0 && (
           <p className="text-xs text-gray-500 dark:text-slate-400">
-            Using OAIY on your own desktop? Link it in <Link className="font-medium text-indigo-600 underline underline-offset-2 dark:text-indigo-300" to="/settings#local-runtime">Settings → AI &amp; devices</Link>; it then shows here.
+            Using OAIY on your own desktop? Link it in <Link className="font-medium text-primary-600 underline underline-offset-2 dark:text-primary-300" to="/settings#local-runtime">Settings → AI &amp; devices</Link>; it then shows here.
           </p>
         )}
       </div>

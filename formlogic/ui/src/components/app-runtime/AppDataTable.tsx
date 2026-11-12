@@ -14,7 +14,9 @@ import { toast } from '../../stores/toastStore';
 
 // Exclude non-data field types from columns
 const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
-const SERVER_PAGE = 10; // rows per page in server mode — small pages keep queries fast and pagination visible
+// Rows per page in server mode: a screen of the compact rows. (It was 10, of rows 53px tall;
+// 25 is still a small, fast query.)
+const SERVER_PAGE = 25;
 
 /** Drill-down filter carried in the URL by dashboard chart clicks (see WidgetDashboard):
  *  ?form={formId}&drill={groupByFieldId}&value={label}&bucket={day|month|year}. */
@@ -384,7 +386,8 @@ export function AppDataTable() {
   }));
 
   const submittedAtCol: Column<Record<string, unknown>> = {
-    key: 'submittedAt', label: 'Submitted', sortable: true, render: (r) => {
+    // Wide enough for the whole time: as one of six equal columns it read "Nov 12, 2026, 8:51:1…".
+    key: 'submittedAt', label: 'Submitted', sortable: true, className: 'w-60', render: (r) => {
       const date = r.submittedAt as string;
       return date ? formatDateTimeInZone(date, tz) : '-';
     },

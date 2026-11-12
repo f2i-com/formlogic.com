@@ -5,6 +5,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** 3,145,728 → "3.0 MB": a size on disk, to one decimal above a kilobyte. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024, unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
 /**
  * Copy text to the clipboard. The async Clipboard API only works in secure contexts (HTTPS/localhost),
  * so fall back to a hidden-textarea + execCommand for plain-HTTP deployments. Returns true on success.

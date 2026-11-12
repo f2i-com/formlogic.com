@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { isFormLogicMainHost } from './client-runtime/detectEnvironment';
 import { isPublicPath } from './lib/publicPaths';
+import { pagePlace } from './lib/pagePlace';
 import { AppShell } from './components/layout/AppShell';
 // Landing stays eager so the unauthenticated marketing page paints immediately;
 // the authed pages below are lazy so unauthenticated visitors don't download the
@@ -101,11 +102,14 @@ const AokieGuidePage = lazyWithRetry(() => import('./pages/AokieGuidePage').then
 // (it forwards to /login?redirect=… and returns), demo, and authed.
 const OAuthAuthorize = lazyWithRetry(() => import('./pages/OAuthAuthorize').then(m => ({ default: m.OAuthAuthorize })));
 
-/** Error boundary that auto-resets when the user navigates to a different route */
+/**
+ * Error boundary that auto-resets when the user navigates to a different page. The key remounts
+ * everything under it, so the addresses inside one page (a SoftN app's sections) share a key.
+ */
 function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   return (
-    <ErrorBoundary key={location.pathname}>
+    <ErrorBoundary key={pagePlace(location.pathname)}>
       {children}
     </ErrorBoundary>
   );
@@ -333,7 +337,9 @@ function AppRoutes() {
               creating AND editing). Companion apps are created from the app's
               Forms manager; existing forms attach in the studio's Data step. */}
           <Route path="/apps/new" element={<AppCreateStart />} />
-          <Route path="/apps/:appId/softn" element={<SoftnAppWorkspace />} />
+          {/* One route for the page and its sections (data, edit, domains, settings; under data a
+              table and its view), so moving between them keeps the page and its unpublished draft. */}
+          <Route path="/apps/:appId/softn/*" element={<SoftnAppWorkspace />} />
           <Route path="/apps/:appId/studio" element={<AppStudio />} />
           <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
           <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />
@@ -417,7 +423,8 @@ function AppRoutes() {
             Forms manager; existing forms attach in the studio's Data step. */}
         <Route path="/apps/new" element={<AppCreateStart />} />
         {/* App Studio — the app-first workspace (Plan/Data/Screens/Automations/Access/Publish) */}
-        <Route path="/apps/:appId/softn" element={<SoftnAppWorkspace />} />
+        {/* The page and its sections (data, edit, domains, settings), under data a table and its view */}
+        <Route path="/apps/:appId/softn/*" element={<SoftnAppWorkspace />} />
         {/* An agent's draft for the public SoftN directory, published only when its owner approves here */}
         <Route path="/softn-directory/approve/:draftId" element={<SoftnDirectoryApprove />} />
         <Route path="/apps/:appId/studio" element={<AppStudio />} />

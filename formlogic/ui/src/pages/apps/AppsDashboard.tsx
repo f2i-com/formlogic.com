@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload, FileText, LayoutGrid, List, Settings , RotateCcw } from 'lucide-react';
 import { AppTile } from '../../components/apps/AppTile';
+import { AppsTable } from '../../components/apps/AppsTable';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
@@ -19,10 +20,15 @@ import type { PackInstallation } from '../../lib/api';
 import { cn, formatRelativeTime } from '../../lib/utils';
 import { KIND_LABELS } from '../../types/app';
 import { statusLabel, statusTone } from '../../lib/appStatus';
-import type { App } from '../../types/app';
+import type { App, AppSummary } from '../../types/app';
 import { isSoftnApp, softnWorkspacePath } from '../../lib/softnApps';
 
+/** The card view shows this many, then more on request. The table shows every app. */
 const APPS_PAGE = 9;
+type KindFilter = 'all' | 'softn' | 'forms';
+type StatusFilter = 'any' | 'live' | 'draft';
+const KINDS: readonly (readonly [KindFilter, string])[] = [['all', 'All kinds'], ['softn', 'SoftN'], ['forms', 'Forms']];
+const STATUSES: readonly (readonly [StatusFilter, string])[] = [['any', 'Any status'], ['live', 'Live'], ['draft', 'Draft']];
 
 // Accent hex lands in an inline CSS custom property, so keep the format strict
 // (mirrors the marketplace's DemoAppCard identity-tile pattern).
@@ -38,14 +44,27 @@ export function AppsDashboard() {
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
   const [showImport, setShowImport] = useState(false);
   const [showHandToAi, setShowHandToAi] = useState(false);
-  // Card grid vs compact list — remembered across visits.
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
-    try { return localStorage.getItem('appsDashboard.viewMode') === 'list' ? 'list' : 'grid'; } catch { return 'grid'; }
+  // The table (every app on one screen) or the cards — remembered across visits. The table is the
+  // default, and what an earlier visit saved as the "list" opens as the table.
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>(() => {
+    try { return localStorage.getItem('appsDashboard.viewMode') === 'grid' ? 'grid' : 'table'; } catch { return 'table'; }
   });
-  const changeViewMode = (mode: 'grid' | 'list') => {
+  const changeViewMode = (mode: 'grid' | 'table') => {
     setViewMode(mode);
     try { localStorage.setItem('appsDashboard.viewMode', mode); } catch { /* ignore */ }
   };
+  const [kind, setKind] = useState<KindFilter>('all');
+  const [status, setStatus] = useState<StatusFilter>('any');
+  // What the table shows beside each app. A server from before the summary answers 404: the
+  // table then shows what the apps themselves say.
+  const [summaries, setSummaries] = useState<Record<string, AppSummary>>({});
+  useEffect(() => {
+    const stop = new AbortController();
+    void api.getAppsSummary(stop.signal).then((result) => {
+      if (!stop.signal.aborted && !result.error && result.data?.apps) setSummaries(result.data.apps);
+    });
+    return () => stop.abort();
+  }, [apps.length]);
 
   // Open a "creator" MCP connection so an external AI can build a brand-new app itself — no placeholder.
 
@@ -76,15 +95,21 @@ export function AppsDashboard() {
   // Filter apps by search — matches the app name OR its pack's name.
   const filteredApps = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return apps;
     return apps.filter((app) =>
-      app.name.toLowerCase().includes(q) ||
-      // The slug is printed on every card and used in the /app/<slug> URL, so it is
-      // the obvious thing to paste in. The sidebar's search already matched it.
-      app.slug.toLowerCase().includes(q) ||
-      (appPackMap[app.id]?.toLowerCase().includes(q) ?? false)
+      (kind === 'all' || (kind === 'softn') === isSoftnApp(app)) &&
+      (status === 'any' || (status === 'live') === (app.status === 'published')) &&
+      (!q ||
+        app.name.toLowerCase().includes(q) ||
+        // The slug is printed on every card and used in the /app/<slug> URL, so it is
+        // the obvious thing to paste in. The sidebar's search already matched it.
+        app.slug.toLowerCase().includes(q) ||
+        // Its own domain is its address too.
+        (summaries[app.id]?.domain?.toLowerCase().includes(q) ?? false) ||
+        (appPackMap[app.id]?.toLowerCase().includes(q) ?? false))
     );
-  }, [apps, searchQuery, appPackMap]);
+  }, [apps, searchQuery, appPackMap, kind, status, summaries]);
+  const filtering = !!searchQuery.trim() || kind !== 'all' || status !== 'any';
+  const clearFilters = () => { setSearchQuery(''); setKind('all'); setStatus('any'); };
 
   return (
     <div className="min-h-screen">
@@ -108,40 +133,39 @@ export function AppsDashboard() {
         }
       />
 
-      <div className="@container/apps w-full flex-1 p-4 @2xl/apps:p-6 @5xl/apps:p-8">
-        <div className="mb-6">
-          <p className="text-gray-500 dark:text-slate-400">Build and manage deployable applications</p>
-        </div>
-
-        {/* Search + view toggle */}
+      {/* The page frame every workspace page has (components/layout/PageBody): the header's gutter. */}
+      <div className="@container/apps w-full flex-1 px-4 pb-24 pt-4 sm:px-6">
+        {/* Search, the two filters and the view toggle, on one line where there is room. */}
         {apps.length > 0 && (
-          <div className="mb-4 sm:mb-6 flex items-center gap-3">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
             <Input
-              placeholder="Search…"
+              placeholder="Search name or address…"
               aria-label="Search apps by name, address or template"
               value={searchQuery}
               onChange={(e) => { setSearchQuery(e.target.value); setAppLimit(APPS_PAGE); }}
               leftIcon={<Search className="h-4 w-4" />}
-              className="w-full sm:max-w-xs lg:max-w-md"
+              className="w-full sm:w-64"
             />
-            <div className="flex flex-none rounded-lg border border-gray-300 dark:border-slate-700 overflow-hidden ml-auto" role="group" aria-label="View mode">
+            <Segmented label="Kind" options={KINDS} value={kind} onChange={(next) => { setKind(next); setAppLimit(APPS_PAGE); }} />
+            <Segmented label="Status" options={STATUSES} value={status} onChange={(next) => { setStatus(next); setAppLimit(APPS_PAGE); }} />
+            <div className="ml-auto flex flex-none overflow-hidden rounded-lg border border-gray-300 dark:border-slate-700" role="group" aria-label="View mode">
+              <button
+                type="button"
+                onClick={() => changeViewMode('table')}
+                aria-pressed={viewMode === 'table'}
+                title="Table"
+                className={`px-3 py-2 max-sm:min-h-11 transition-colors cursor-pointer ${viewMode === 'table' ? 'bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-400' : 'bg-white dark:bg-slate-900/60 text-gray-400 hover:text-gray-700 dark:hover:text-slate-300'}`}
+              >
+                <List className="h-4 w-4" /><span className="sr-only">Table</span>
+              </button>
               <button
                 type="button"
                 onClick={() => changeViewMode('grid')}
                 aria-pressed={viewMode === 'grid'}
-                title="Card view"
-                className={`px-3 py-2.5 transition-colors cursor-pointer ${viewMode === 'grid' ? 'bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-400' : 'bg-white dark:bg-slate-900/60 text-gray-400 hover:text-gray-700 dark:hover:text-slate-300'}`}
+                title="Cards"
+                className={`px-3 py-2 max-sm:min-h-11 border-l border-gray-300 dark:border-slate-700 transition-colors cursor-pointer ${viewMode === 'grid' ? 'bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-400' : 'bg-white dark:bg-slate-900/60 text-gray-400 hover:text-gray-700 dark:hover:text-slate-300'}`}
               >
-                <LayoutGrid className="h-4 w-4" /><span className="sr-only">Card view</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => changeViewMode('list')}
-                aria-pressed={viewMode === 'list'}
-                title="List view"
-                className={`px-3 py-2.5 border-l border-gray-300 dark:border-slate-700 transition-colors cursor-pointer ${viewMode === 'list' ? 'bg-primary-50 dark:bg-primary-500/15 text-primary-600 dark:text-primary-400' : 'bg-white dark:bg-slate-900/60 text-gray-400 hover:text-gray-700 dark:hover:text-slate-300'}`}
-              >
-                <List className="h-4 w-4" /><span className="sr-only">List view</span>
+                <LayoutGrid className="h-4 w-4" /><span className="sr-only">Cards</span>
               </button>
             </div>
           </div>
@@ -182,11 +206,11 @@ export function AppsDashboard() {
         ) : filteredApps.length === 0 ? (
           <EmptyState
             icon={Search}
-            title="No apps match your search"
-            description="Try a different search term to see your apps."
+            title="No apps match"
+            description="Nothing fits the search and filters above."
             action={
-              <Button variant="outline" onClick={() => setSearchQuery('')}>
-                Clear search
+              <Button variant="outline" onClick={clearFilters}>
+                Show every app
               </Button>
             }
           />
@@ -203,29 +227,18 @@ export function AppsDashboard() {
                     // A member goes straight to the runtime; the studio would only
                     // bounce them there anyway.
                     onClick={() => navigate(canManageApp(app) ? manageApp(app) : `/app/${app.slug}`)}
-                    onManage={() => navigate(`/apps/${app.id}/settings`)}
+                    // A SoftN app's settings are a section of its own page; the forms-era page knows nothing of it.
+                    onManage={() => navigate(isSoftnApp(app) ? softnWorkspacePath(app.id, 'settings') : `/apps/${app.id}/settings`)}
                     onDelete={() => setDeleteTarget(app)}
                   />
                 ))}
-                {/* New-app CTA rides along in the grid (hidden while searching) — same wizard entry as the header button. */}
-                {!searchQuery.trim() && <NewAppCard onClick={() => navigate('/apps/new')} />}
+                {/* New-app CTA rides along in the grid (hidden while filtering) — same wizard entry as the header button. */}
+                {!filtering && <NewAppCard onClick={() => navigate('/apps/new')} />}
               </div>
             ) : (
-              <div className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 divide-y divide-gray-100 dark:divide-slate-800">
-                {filteredApps.slice(0, appLimit).map((app) => (
-                  <AppRow
-                    key={app.id}
-                    app={app}
-                    packName={appPackMap[app.id] ?? null}
-                    canManage={canManageApp(app)}
-                    onManage={() => navigate(canManageApp(app) ? manageApp(app) : `/app/${app.slug}`)}
-                    onSettings={() => navigate(`/apps/${app.id}/settings`)}
-                    onDelete={() => setDeleteTarget(app)}
-                  />
-                ))}
-              </div>
+              <AppsTable apps={filteredApps} summaries={summaries} packNames={appPackMap} canManage={canManageApp} managePath={manageApp} onDelete={setDeleteTarget} />
             )}
-            <ShowMore shown={Math.min(appLimit, filteredApps.length)} total={filteredApps.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" />
+            {viewMode === 'grid' && <ShowMore shown={Math.min(appLimit, filteredApps.length)} total={filteredApps.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" />}
           </>
         )}
       </div>
@@ -242,7 +255,11 @@ export function AppsDashboard() {
         title="Delete app"
         message={deleteTarget && isDemoLocalId(deleteTarget.id)
           ? `Delete "${deleteTarget.name}"? This browser-only app is removed from this device immediately and cannot be restored.`
-          : `Delete "${deleteTarget?.name}"? The app (with its flows, roles and members) moves to the recycle bin, restorable for 30 days. Its forms and their records stay in your workspace.`}
+          // A SoftN app's source and database stay on disk while it is in the bin (AppStorageEraser),
+          // and it has no forms of its own to speak of.
+          : deleteTarget && isSoftnApp(deleteTarget)
+            ? `Delete "${deleteTarget.name}"? The app moves to the recycle bin with its database and members, restorable for 30 days. After that it is erased for good.`
+            : `Delete "${deleteTarget?.name}"? The app (with its flows, roles and members) moves to the recycle bin, restorable for 30 days. Its forms and their records stay in your workspace.`}
         confirmLabel="Delete app"
         variant="danger"
         isLoading={deleting}
@@ -264,91 +281,28 @@ function canManageApp(app: App): boolean {
   return app.canManage ?? !!app.ownerId;
 }
 
-// Compact list-mode row: click opens the App Studio; explicit View app / Settings / Remove actions.
-/** Where the owner manages an app: a SoftN app's workspace, or the App Studio. */
+/** Where the owner manages an app: a SoftN app's page, or the App Studio. */
 const manageApp = (app: App) => (isSoftnApp(app) ? softnWorkspacePath(app.id) : `/apps/${app.id}/studio`);
 
-function AppRow({ app, packName, canManage, onManage, onSettings, onDelete }: { app: App; packName: string | null; canManage: boolean; onManage: () => void; onSettings: () => void; onDelete: () => void }) {
-  const formCount = app.formCount ?? app.navConfig?.length ?? 0;
+/** A filter with a few choices, one of them on: a row of buttons that reads as one control. */
+function Segmented<T extends string>({ label, options, value, onChange }: { label: string; options: readonly (readonly [T, string])[]; value: T; onChange: (next: T) => void }) {
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onManage}
-      // Only the row itself opens the app. Without the target check, Enter on the
-      // nested Settings / Remove buttons was preventDefaulted here, so those controls
-      // were unreachable without a mouse.
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return;
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onManage(); }
-      }}
-      title="Edit app"
-      className="flex items-center gap-3 px-4 py-3.5 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
-    >
-      <AppTile app={app} size="sm" />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-medium text-gray-900 dark:text-white truncate">{app.name}</span>
-          {packName && (
-            <Badge variant="info" size="sm" className="hidden md:inline-flex max-w-full whitespace-nowrap flex-none">
-              <Package className="h-3 w-3 mr-1 inline shrink-0" /><span className="truncate">{packName}</span>
-            </Badge>
+    <div role="group" aria-label={label} className="flex flex-none overflow-hidden rounded-lg border border-gray-300 dark:border-slate-700">
+      {options.map(([option, text], index) => (
+        <button
+          key={option}
+          type="button"
+          aria-pressed={value === option}
+          onClick={() => onChange(option)}
+          className={cn(
+            'px-3 py-2 text-xs font-medium transition-colors cursor-pointer max-sm:min-h-11',
+            index > 0 && 'border-l border-gray-300 dark:border-slate-700',
+            value === option ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300' : 'bg-white text-gray-600 hover:text-gray-900 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:text-white',
           )}
-          {isDemoLocalId(app.id) && <Badge variant="primary" size="sm">Browser only</Badge>}
-        </div>
-        <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400 min-w-0">
-          <span className="font-mono truncate max-w-[45%]">/{app.slug}</span>
-          {/* A SoftN app is its own project, not a group of forms: a count of them says nothing. */}
-          {!isSoftnApp(app) && <>
-            <span aria-hidden="true">·</span>
-            <span className="tabular-nums flex-none">{formCount} form{formCount === 1 ? '' : 's'}</span>
-          </>}
-        </div>
-      </div>
-      <Badge
-        variant={statusTone(app)}
-        size="sm"
-        className="flex-none whitespace-nowrap"
-      >
-        {statusLabel(app)}
-      </Badge>
-      <div className="flex items-center gap-0.5 flex-none" onClick={(e) => e.stopPropagation()}>
-        {app.status === 'published' && (
-          <button
-            type="button"
-            onClick={() => window.open(`/app/${app.slug}`, '_blank', 'noopener,noreferrer')}
-            title="Open app"
-            aria-label={`Open ${app.name}`}
-            className="p-2 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:text-primary-400 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
-          >
-            <ExternalLink className="h-4 w-4" />
-          </button>
-        )}
-        {/* Settings and Remove are owner-only on the server; offering them to a member
-            produced a confirmed delete that then failed with "access denied". */}
-        {canManage && (
-          <>
-            <button
-              type="button"
-              onClick={onSettings}
-              title="App settings"
-              aria-label={`Manage ${app.name}`}
-              className="cursor-pointer rounded-lg p-2 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 dark:text-slate-400 dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={onDelete}
-              title="Remove app"
-              aria-label={`Remove ${app.name}`}
-              className="cursor-pointer rounded-lg p-2 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-400"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </>
-        )}
-      </div>
+        >
+          {text}
+        </button>
+      ))}
     </div>
   );
 }

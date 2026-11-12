@@ -45,10 +45,13 @@ async function nativeProject(context: BrowserContext, id: string) {
   return (await (await context.request.get(`/api/apps/${id}/native`)).json()).project as { version: number; files: Record<string, string>; access: string; home: boolean } | null;
 }
 
-/** The app id in the workspace's address, recorded for deletion. */
+/** The sections of an app's page: links, each at its own address. */
+const section = (page: Page, name: string) => page.getByRole('navigation', { name: 'App sections' }).getByRole('link', { name, exact: true });
+
+/** The app id in its page's address (a new app opens on its Edit section), recorded for deletion. */
 async function workspaceAppId(page: Page): Promise<string> {
-  await expect(page).toHaveURL(/\/apps\/[^/]+\/softn$/, { timeout: 30000 });
-  const id = /\/apps\/([^/]+)\/softn$/.exec(new URL(page.url()).pathname)![1];
+  await expect(page).toHaveURL(/\/apps\/[^/]+\/softn\/edit$/, { timeout: 30000 });
+  const id = /\/apps\/([^/]+)\/softn\/edit$/.exec(new URL(page.url()).pathname)![1];
   if (!created.includes(id)) created.push(id);
   return id;
 }
@@ -159,15 +162,19 @@ test.describe('hosted SoftN apps', () => {
     await preview(page).getByRole('button', { name: 'Save a recipe', exact: true }).click();
     await expect(preview(page).getByText('Item saved in your app database', { exact: true })).toBeVisible({ timeout: 60000 });
 
-    // The record is in the app's own database, shown on the Data tab.
-    await page.getByRole('tab', { name: 'Data' }).click();
-    await expect(page.getByRole('combobox', { name: 'Database table' })).toHaveValue('items', { timeout: 30000 });
-    await expect(page.getByRole('region', { name: 'Database records browser' }).getByText('My first item').first()).toBeVisible({ timeout: 30000 });
+    // The record is in the app's own database, shown in the Data section, which opens on the first table.
+    await section(page, 'Data').click();
+    await expect(page).toHaveURL(/\/softn\/data$/, { timeout: 30000 });
+    const data = page.getByRole('region', { name: 'Data', exact: true });
+    await expect(data.getByRole('region', { name: 'Table items', exact: true })).toBeVisible({ timeout: 30000 });
+    await expect(data.getByText('My first item').first()).toBeVisible({ timeout: 30000 });
 
     // Publish makes it live at its address.
-    await expect(page.getByText('Not published', { exact: true })).toBeVisible();
+    // (The list of apps down the side says the same of each app: the page's own status is meant.)
+    const status = page.locator('#main-content');
+    await expect(status.getByText('Draft', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Publish', exact: true }).click();
-    await expect(page.getByText('Live', { exact: true })).toBeVisible({ timeout: 30000 });
+    await expect(status.getByText('Live', { exact: true })).toBeVisible({ timeout: 30000 });
     const app = await (await context.request.get(`/api/apps/${appId}`)).json();
     expect((app.app ?? app).status).toBe('published');
   });
@@ -241,18 +248,18 @@ test.describe('hosted SoftN apps', () => {
     await expect(preview(page).getByText('Browser-only app', { exact: true })).toBeVisible({ timeout: 60000 });
     await preview(page).getByRole('button', { name: 'Add one', exact: true }).click();
     await expect(preview(page).getByText('Count: 1', { exact: true })).toBeVisible();
-    // With no backend it has no database here, and the Data tab says so.
-    await page.getByRole('tab', { name: 'Data' }).click();
+    // With no backend it has no database here, and the Data section says so.
+    await section(page, 'Data').click();
     await expect(page.getByText('This app has no database on the server.', { exact: true })).toBeVisible();
     // What the owner downloads is what was uploaded.
-    await page.getByRole('tab', { name: 'App' }).click();
+    await section(page, 'Edit').click();
     const download = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Download as .softn', exact: true }).click();
     const saved = join(tmpdir(), `softn-client-download-${Date.now()}.softn`);
     await (await download).saveAs(saved);
     expect(Object.fromEntries(Object.entries(unzipSync(readFileSync(saved))).map(([p, bytes]) => [p, strFromU8(bytes)]))).toEqual(files);
-    // Its Data tab gives it a backend: the starter's, installed as its next version, the page kept.
-    await page.getByRole('tab', { name: 'Data' }).click();
+    // Its Data section gives it a backend: the starter's, installed as its next version, the page kept.
+    await section(page, 'Data').click();
     await page.getByRole('button', { name: 'Add a backend', exact: true }).click();
     await expect(page.getByText('Backend added', { exact: false }).first()).toBeVisible({ timeout: 60000 });
     const added = (await nativeProject(context, appId))!;

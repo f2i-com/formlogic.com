@@ -30,13 +30,13 @@ export function AppAiPrompt({ appId, onSetUp }: { appId: string; onSetUp: () => 
     setDismissed(true);
   };
   return (
-    <div role="note" data-testid="app-ai-prompt" className="mt-4 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm text-indigo-950 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-100">
+    <div role="note" data-testid="app-ai-prompt" className="mt-4 flex items-center gap-3 rounded-xl border border-primary-200 bg-primary-50 px-4 py-2 text-sm text-primary-950 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-100">
       <Sparkles className="h-4 w-4 shrink-0" aria-hidden="true" />
       <p className="min-w-0 flex-1">
         This app can use AI.{' '}
         <button type="button" className="font-semibold underline underline-offset-2" onClick={onSetUp}>Set it up</button>
       </p>
-      <button type="button" aria-label="Dismiss" title="Dismiss" onClick={dismiss} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-500/20">
+      <button type="button" aria-label="Dismiss" title="Dismiss" onClick={dismiss} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg hover:bg-primary-100 dark:hover:bg-primary-500/20">
         <X className="h-4 w-4" aria-hidden="true" />
       </button>
     </div>
