@@ -157,6 +157,11 @@ test.describe('accessibility smoke (axe)', () => {
       await page.route(/\/api\/forms(?:\?[^#]*)?$/, route => route.fulfill({
         json: { forms: [], count: 0 },
       }));
+      // The welcome is for an account with neither a form nor an app: an owner who hosts apps
+      // and has no forms is no newcomer. The shared account's apps are held back the same way.
+      await page.route(/\/api\/apps(?:\?[^#]*)?$/, route => route.request().method() === 'GET'
+        ? route.fulfill({ json: { apps: [], count: 0 } })
+        : route.continue());
       await login(page);
       await page.waitForLoadState('networkidle');
       await setTheme(page, theme);

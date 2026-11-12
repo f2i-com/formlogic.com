@@ -105,13 +105,14 @@ export default function ConnectAiWizard() {
   return (
     <div className="min-h-screen">
       <Header title="Connect your AI" />
-      <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 pb-24 sm:px-6 sm:py-10">
+      {/* Starts at the left, on the title's line, as every workspace page does; the steps keep a readable width. */}
+      <div className="w-full max-w-3xl space-y-5 px-4 pb-24 pt-4 sm:px-6">
         <Link
           to="/"
           className="inline-flex items-center gap-2 text-sm text-gray-500"
         >
           <ArrowLeft size={16} />
-          Dashboard
+          Home
         </Link>
         <div>
           <h2 className="text-2xl font-semibold">

@@ -73,7 +73,9 @@ export function AppShell() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
+    // accent-*: a plain radio button, tick box or slider in the workspace takes the product's
+    // accent (indigo by day, lime by night) in place of the browser's own blue.
+    <div className="min-h-screen bg-gray-50 accent-primary-600 dark:bg-slate-950 dark:accent-primary-500">
       {/* Skip to content (visible on keyboard focus) */}
       <a
         href="#main-content"

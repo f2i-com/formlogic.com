@@ -10,8 +10,8 @@ import {
   ChevronDown,
   Blocks,
   Boxes,
+  ArrowRight,
   Cloud,
-  ExternalLink,
   HardDrive,
   Map,
   Package,
@@ -34,6 +34,8 @@ import type { AppListItem } from '../../types/app';
 
 const TOOLS_OPEN_KEY = 'formlogic.sidebar.toolsOpen';
 const APPS_OPEN_KEY = 'formlogic.sidebar.appsOpen';
+/** How many apps the navigation lists before "Show N more": the rest are a press, or a search, away. */
+const SIDEBAR_APPS = 6;
 
 /**
  * App-first sidebar (App Studio redesign): the user's apps — published and draft —
@@ -107,6 +109,18 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
     // Archived apps live in Settings/recycle surfaces, not the primary nav.
     return list.filter((a) => a.status !== 'archived');
   }, [apps, query]);
+  // With many apps the list used to push "More tools" (Templates, the Recycle bin) below the
+  // fold of the navigation, where nobody scrolled to find them. The first few are listed, with
+  // the one that is open always among them, and a row under them shows the rest; a search
+  // lists every match.
+  const [allAppsShown, setAllAppsShown] = useState(false);
+  const listedApps = useMemo(() => {
+    if (allAppsShown || query.trim() || visibleApps.length <= SIDEBAR_APPS + 1) return visibleApps;
+    const first = visibleApps.slice(0, SIDEBAR_APPS);
+    const open = visibleApps.find((a) => a.id === activeAppId);
+    return open && !first.includes(open) ? [...first.slice(0, SIDEBAR_APPS - 1), open] : first;
+  }, [visibleApps, allAppsShown, query, activeAppId]);
+  const moreApps = visibleApps.length - listedApps.length;
 
   const openApp = (app: AppListItem) => {
     // Owners land in the App Studio; members go straight to the live app.
@@ -206,7 +220,8 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
               title="View all apps"
               className="flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-[11px] font-semibold text-gray-500 transition hover:bg-gray-100 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-primary-300"
             >
-              View all <ExternalLink className="h-3.5 w-3.5" />
+              {/* An arrow, not the "opens elsewhere" mark: the Apps page is a page of this workspace. */}
+              View all <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
             </NavLink>
           </div>
         )}
@@ -215,7 +230,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
             {query.trim() ? 'No apps match your search.' : 'No apps yet — create one to get started.'}
           </p>
         )}
-        {appsExpanded && visibleApps.map((app) => {
+        {appsExpanded && listedApps.map((app) => {
           const active = app.id === activeAppId;
           return (
             <button
@@ -225,40 +240,50 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
               title={sidebarCollapsed ? app.name : undefined}
               aria-current={active ? 'page' : undefined}
               className={cn(
-                'group flex w-full cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-left transition-all duration-200',
+                'group flex w-full cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 text-left transition-all duration-200',
                 active
                   ? 'bg-primary-50 dark:bg-primary-500/10 ring-1 ring-inset ring-primary-200/70 dark:ring-primary-500/20'
                   : 'hover:bg-gray-100 dark:hover:bg-slate-800',
                 sidebarCollapsed && 'justify-center px-0'
               )}
             >
-              <AppTile app={app} size="sm" />
+              {/* One line an app: its name, and its state at the right. Two lines each took the
+                  navigation's height with six apps, and the tools under them went out of view. */}
+              <AppTile app={app} size="sm" className={cn(!sidebarCollapsed && 'h-7 w-7 rounded-md')} />
               {!sidebarCollapsed && (
                 <>
-                  <span className="min-w-0 flex-1">
-                    <span className={cn(
-                      'block truncate text-sm font-medium',
-                      active ? 'text-primary-700 dark:text-primary-300' : 'text-gray-700 dark:text-slate-300'
-                    )}>
-                      {app.name}
-                    </span>
-                    <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-slate-400">
-                      <span
-                        className={cn(
-                          'h-1.5 w-1.5 rounded-full',
-                          app.status === 'published' ? 'bg-emerald-500' : 'bg-amber-500'
-                        )}
-                        aria-hidden="true"
-                      />
-                      {statusLabel(app)}
-                    </span>
+                  <span title={app.name} className={cn(
+                    'min-w-0 flex-1 truncate text-sm font-medium',
+                    active ? 'text-primary-700 dark:text-primary-300' : 'text-gray-700 dark:text-slate-300'
+                  )}>
+                    {app.name}
                   </span>
-                  {active && <ChevronRight className="h-4 w-4 shrink-0 text-primary-500 dark:text-primary-400" />}
+                  <span className="flex flex-none items-center gap-1.5 text-[11px] text-gray-500 dark:text-slate-400">
+                    <span
+                      className={cn(
+                        'h-1.5 w-1.5 rounded-full',
+                        app.status === 'published' ? 'bg-emerald-500' : 'bg-amber-500'
+                      )}
+                      aria-hidden="true"
+                    />
+                    {statusLabel(app)}
+                  </span>
                 </>
               )}
             </button>
           );
         })}
+        {appsExpanded && !sidebarCollapsed && (moreApps > 0 || (allAppsShown && !query.trim() && visibleApps.length > SIDEBAR_APPS + 1)) && (
+          <button
+            type="button"
+            onClick={() => setAllAppsShown((shown) => !shown)}
+            aria-expanded={allAppsShown}
+            className="flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-lg px-3 text-left text-xs font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+          >
+            <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', allAppsShown && 'rotate-180')} aria-hidden="true" />
+            {allAppsShown ? 'Show fewer apps' : `Show ${moreApps} more app${moreApps === 1 ? '' : 's'}`}
+          </button>
+        )}
 
         {/* Advanced tools: the shared building blocks behind apps */}
         <div className="my-3 h-px bg-gray-200/80 dark:bg-white/[0.08]" />

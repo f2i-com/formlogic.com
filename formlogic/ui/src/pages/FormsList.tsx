@@ -1083,7 +1083,8 @@ export function FormsList() {
           the space they actually have. Viewport breakpoints expanded them exactly when
           there was no room, and `main` is overflow-x-clip — the controls that fell off
           the right edge simply vanished, with no scrollbar to find them. */}
-      <div className="@container/forms flex-1 w-full p-4 sm:p-6 lg:p-8">
+      {/* The page frame every workspace page has (components/layout/PageBody): the header's gutter. */}
+      <div className="@container/forms flex-1 w-full px-4 pb-24 pt-4 sm:px-6">
         {/* Breadcrumb + app actions when drilled into an app */}
         {selectedAppId && (
           <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">

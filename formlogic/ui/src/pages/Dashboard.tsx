@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback, type CSSProperties } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 
@@ -24,16 +24,16 @@ import {
   ArrowRight,
   Inbox,
   Sparkles,
-  BookOpen,
   Package,
   Boxes,
-  ChevronRight,
   Search,
   ShieldCheck,
   AlertTriangle,
   X,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
+import { PageBody } from '../components/layout/PageBody';
+import { AppsTable } from '../components/apps/AppsTable';
 import { Card, CardContent } from '../components/ui/Card';
 import { ListRowSkeleton, Skeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -48,18 +48,17 @@ import { useAppStore } from '../stores/appStore';
 import { api } from '../lib/api';
 import { loadUiCache, saveUiCache } from '../lib/uiCache';
 import { loadAppGroupsCache, fetchAppGroups, type AppGroup } from '../lib/appGroups';
-import { appClickLabel, appClickPath } from '../lib/appNavigation';
+import { appClickPath } from '../lib/appNavigation';
 import { actionsMenuPosition, isMenuScroll } from '../lib/actionsMenu';
 import { isDemoLocalId } from '../lib/demoLocal';
-import { cn, formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
+import { cn, formatBytes, formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
 import { EmbedModal, PackImportModal, useFormPreview } from '../components/builder';
 import { WelcomeModal } from '../components/onboarding/WelcomeModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
-import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { CreateBand } from '../components/chat/CreateBand';
 import { PrivateLockBadge } from '../components/forms/PrivateLockBadge';
 import { useCreateFormFlow } from '../hooks/useCreateFormFlow';
-import type { App } from '../types/app';
+import type { AppSummary } from '../types/app';
 import type { Form } from '../types/form';
 
 interface DashboardStats {
@@ -91,45 +90,15 @@ type DashFormsSort = 'activity' | 'edited' | 'created' | 'responses';
 const DASH_FORMS_SORT_KEY = 'dashboard.formsSort';
 const DASH_FORMS_PAGE = 10;
 const DASH_FORMS_INITIAL = 5;
+/** How many apps Home lists, most recently changed first; the Apps page has all of them. */
+const HOME_APPS = 6;
 
 // Within this window a remount reuses the cache without refetching at all —
 // rapid Dashboard ↔ Forms navigation shouldn't hammer N analytics endpoints.
 const STATS_FRESH_MS = 60_000;
 
-// App accents are user/pack-authored hex values; validate strictly before injecting into an
-// inline CSS custom property (same rule as AppsDashboard / FormsList).
-const isHexColor = (v: string | null | undefined): v is string => !!v && /^#[0-9a-fA-F]{3,8}$/.test(v);
-
-// App identity tile: logo image → curated icon tinted with the app's accent → monogram initial.
-function AppIdentityTile({ app }: { app: App }) {
-  const [imgFailed, setImgFailed] = useState(false);
-  const showLogo = Boolean(app.logoUrl) && !imgFailed;
-  const icon = app.settings?.icon;
-  const accent = app.theme?.primaryColor;
-  const accented = !showLogo && isHexColor(accent);
-  const monogram = (app.name?.trim().charAt(0) || '?').toUpperCase();
-  return (
-    <div
-      style={accented ? ({ '--fl-a': accent } as CSSProperties) : undefined}
-      className={cn(
-        'flex h-10 w-10 flex-none items-center justify-center overflow-hidden rounded-lg',
-        showLogo
-          ? 'bg-gray-50 dark:bg-slate-800/60'
-          : accented
-            ? 'bg-[color-mix(in_srgb,var(--fl-a)_11%,transparent)] text-[color:var(--fl-a)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--fl-a)_25%,transparent)] dark:bg-[color-mix(in_srgb,var(--fl-a)_16%,transparent)] dark:text-[color:color-mix(in_srgb,var(--fl-a)_62%,white)]'
-            : 'bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400'
-      )}
-    >
-      {showLogo ? (
-        <img src={app.logoUrl} alt="" loading="lazy" onError={() => setImgFailed(true)} className="h-full w-full object-cover" />
-      ) : icon ? (
-        <DynamicIcon name={icon} className="h-5 w-5" fallback={<span className="text-sm font-semibold" aria-hidden="true">{monogram}</span>} />
-      ) : (
-        <span className="text-sm font-semibold" aria-hidden="true">{monogram}</span>
-      )}
-    </div>
-  );
-}
+/** Home's apps list names no templates: one empty map, the same one on every render. */
+const NO_PACK_NAMES: Record<string, string> = {};
 
 // ---------------------------------------------------------------------------
 // The 14-day pulse strip — the dashboard's signature element. One row per form:
@@ -707,7 +676,7 @@ function QuickFind({
 
 export function Dashboard() {
   const now = useCurrentTime();
-  useDocumentTitle('Dashboard');
+  useDocumentTitle('Home');
   const navigate = useNavigate();
   const { forms, createForm, setActiveForm, deleteForm, storageMode } = useFormStore();
   const formsLoading = useFormStore((s) => s.isLoading || !s.isInitialized);
@@ -765,17 +734,38 @@ export function Dashboard() {
   // Apps panel (cloud mode only — apps live on the server). Reuses the app store, which
   // persists across visits, so the section renders instantly on revisit.
   const { apps, fetchApps } = useAppStore();
+  const appsFailed = useAppStore((s) => !!s.error) && storageMode === 'api';
+  // Whether this visit has asked the server for the apps and been answered. An account is new
+  // only once both its forms and its apps are known to be none: someone who hosts apps and has
+  // no forms is not a newcomer, and used to be welcomed as one on every visit.
+  const [appsAsked, setAppsAsked] = useState(false);
   useEffect(() => {
-    if (storageMode === 'api') fetchApps();
+    if (storageMode !== 'api') return;
+    let current = true;
+    void fetchApps().finally(() => { if (current) setAppsAsked(true); });
+    return () => { current = false; };
   }, [storageMode, fetchApps]);
+  const hasApps = storageMode === 'api' && apps.length > 0;
+  const appsKnown = storageMode !== 'api' || appsAsked || hasApps;
   const recentApps = useMemo(
     () => storageMode === 'api'
       ? [...apps]
         .sort((a, b) => parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime())
-        .slice(0, 4)
+        .slice(0, HOME_APPS)
       : [],
     [apps, storageMode]
   );
+  // What the apps list shows beside each app (its data, who can use it), as the Apps page has it.
+  // A server from before the summary answers 404: the rows then show what the apps say themselves.
+  const [appSummaries, setAppSummaries] = useState<Record<string, AppSummary>>({});
+  useEffect(() => {
+    if (storageMode !== 'api' || apps.length === 0) return;
+    const stop = new AbortController();
+    void api.getAppsSummary(stop.signal).then((result) => {
+      if (!stop.signal.aborted && !result.error && result.data?.apps) setAppSummaries(result.data.apps);
+    });
+    return () => stop.abort();
+  }, [storageMode, apps.length]);
 
   // First-run onboarding: a welcome that routes a brand-new user into creating their first form.
   // Dismissal persists PER USER (namespaced by id) so a fresh account on a shared browser still sees
@@ -1197,8 +1187,13 @@ export function Dashboard() {
   // forms: [], so without this an owner whose data failed to load was shown the
   // brand-new-account hero and told to create their first form.
   const formsFailed = useFormStore((s) => !!s.error) && storageMode === 'api';
-  const showGettingStarted = forms.length === 0 && !formsLoading && !formsFailed;
+  // …and not for an owner who hosts apps: with no forms they are no newcomer, and a failed or
+  // unanswered read of the apps is not "no apps" either.
+  const noForms = forms.length === 0 && !formsLoading && !formsFailed;
+  const showGettingStarted = noForms && appsKnown && !hasApps && !appsFailed;
   const showWelcome = showGettingStarted && !welcomeDismissed;
+  // An owner of apps with no forms: the forms part of the page is one line, not two empty boxes.
+  const appsOnly = hasApps && noForms;
 
   // The headline band — one prose sentence, data figures set in primary color.
   // While data is loading, say what is happening instead of rendering em-dash
@@ -1222,7 +1217,7 @@ export function Dashboard() {
   } else if (statsFailed) {
     headline = <span className="text-gray-500 dark:text-slate-400">Some response figures are unavailable. Last known figures are kept where possible.</span>;
   } else if (totalForms === 0) {
-    headline = <>Create your first form to start collecting responses.</>;
+    headline = hasApps ? null : <>Create your first form to start collecting responses.</>;
   } else if (totalResponses === 0) {
     headline = <>No responses yet — share a form link and watch them arrive here.</>;
   } else if (weekly.responses === 0) {
@@ -1236,15 +1231,37 @@ export function Dashboard() {
     );
   }
 
+  // The apps in a sentence, for an owner who has some: how many are live, and what they hold.
+  // The figures come from the list and its summary; nothing is asked of any app.
+  let appsLine: React.ReactNode = null;
+  if (hasApps) {
+    const count = apps.length;
+    const live = apps.filter((app) => app.status === 'published').length;
+    const held = apps.map((app) => appSummaries[app.id]).filter((summary) => typeof summary?.tables === 'number');
+    const tables = held.reduce((sum, summary) => sum + (summary.tables ?? 0), 0);
+    const bytes = held.reduce((sum, summary) => sum + (summary.bytes ?? 0), 0);
+    appsLine = (
+      <>
+        {live === count
+          ? (count === 1 ? <>Your app is live</> : <>All {num(count)} apps are live</>)
+          : live === 0
+            ? <>{num(count)} app{count === 1 ? '' : 's'}, not live yet</>
+            : <>{num(live)} of {num(count)} apps are live</>}
+        {tables > 0 && <>, holding {num(tables.toLocaleString())} table{tables === 1 ? '' : 's'}{bytes > 0 && <> ({formatBytes(bytes)})</>}</>}.
+      </>
+    );
+  }
+
   return (
     <div className="min-h-screen">
-      <Header title="Dashboard" />
+      {/* "Home", as the navigation calls it: the page a person is on has one name. */}
+      <Header title="Home" />
 
       {/* @container/dash: Home sits inside AppShell's sidebar inset (64/256px) and can
           lose another 384px to a docked chat, so viewport breakpoints fired the 3-column
           layout exactly when the content box was 704px — 219px tracks, with app names and
           "12 forms · published" both truncated to nothing. Size against the real box. */}
-      <div className="@container/dash flex-1 w-full max-w-[1600px] mx-auto px-5 py-6 sm:p-7 lg:p-10">
+      <PageBody className="@container/dash flex-1">
         {/* Post-signup security nudge: suggest (optional) two-factor auth to new accounts. */}
         {showMfaNudge && (
           <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-primary-200/70 dark:border-primary-500/25 bg-primary-50/70 dark:bg-primary-500/10 p-4">
@@ -1299,78 +1316,60 @@ export function Dashboard() {
           </div>
         )}
 
-        {/* Headline band — the intake ledger reads as one live sentence, not four stat cards. */}
-        <div className="mb-8 rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 @2xl/dash:p-8">
-          <p className="text-xs font-semibold uppercase tracking-widest text-primary-600 dark:text-primary-400">Your workspace</p>
-          <h2 className="mt-2 text-2xl @2xl/dash:text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">Your workspace, at a glance.</h2>
-          <p className="mt-3 max-w-3xl text-base leading-relaxed text-gray-600 dark:text-slate-300" aria-live="polite">
-            {headline}
+        {/* Headline band — the workspace reads as one live sentence, not four stat cards: the apps
+            first for an owner who hosts some, then the week's answers. The sentence is the band:
+            no title stands over it, so the page's lists start higher. */}
+        <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-gray-200/80 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 @3xl/dash:flex-row @3xl/dash:items-center @3xl/dash:justify-between @3xl/dash:px-5">
+          <p className="min-w-0 text-base font-medium leading-relaxed text-gray-800 dark:text-slate-100 @2xl/dash:text-lg" aria-live="polite">
+            {appsLine}{appsLine && headline ? ' ' : null}{headline}
           </p>
           {/* Deliberately minimal (owner direction): the sidebar's Create app owns the
               whole app journey (studio covers diagrams, AI and the rest) — the dashboard
-              keeps just the form quick-start and pack import. */}
+              keeps just the form quick-start and pack import. The first button is what this
+              owner makes: an app for someone who hosts apps and has no forms, a form otherwise. */}
           {!showGettingStarted && (
-            <div className="mt-4 flex flex-wrap gap-3">
-              <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
+            <div className="flex flex-none flex-wrap gap-2">
+              <Button size="sm" variant={appsOnly ? 'outline' : 'primary'} onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
                 Create a form
               </Button>
-              <Button variant="outline" onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>Create an app</Button>
-              <Button variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
+              <Button size="sm" variant={appsOnly ? 'primary' : 'outline'} onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>Create an app</Button>
+              <Button size="sm" variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
                 Start from a template
               </Button>
             </div>
           )}
         </div>
 
-            {/* Apps strip — the user's most recently updated apps, mirroring the Apps page
-                cards. Lives under My forms (sharing its 2/3-width column), not as a full-width
-                strip — the AppIdentityTile treatment itself is unchanged ("as-is"). */}
-            {recentApps.length > 0 && (
-              <div className="mb-8">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Your apps</h2>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => navigate('/apps')}
-                    className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-                  >
-                    View all
-                    <ArrowRight className="h-4 w-4 ml-1" />
-                  </Button>
-                </div>
-                <div className="grid grid-cols-1 gap-3 @2xl/dash:grid-cols-2">
-                  {recentApps.map((app) => {
-                    // Real count from the list endpoint; navConfig.length is empty on pack-provisioned apps.
-                    const formCount = app.formCount;
-                    return (
-                      <button
-                        key={app.id}
-                        onClick={() => navigate(appClickPath(app))}
-                        title={appClickLabel(app)}
-                        className={cn(
-                          'flex items-center gap-4 p-5 min-w-0 rounded-xl border text-left group cursor-pointer',
-                          'bg-white dark:bg-slate-900/50 border-gray-200/80 dark:border-white/[0.06] shadow-sm shadow-gray-900/[0.03]',
-                          'hover:bg-gray-50 dark:hover:bg-slate-800/60 hover:border-gray-300 dark:hover:border-slate-600 motion-safe:transition-colors',
-                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950'
-                        )}
-                      >
-                        <AppIdentityTile app={app} />
-                        <div className="min-w-0 flex-1">
-                          <span className="block text-sm font-medium text-gray-900 dark:text-slate-100 truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors">
-                            {app.name}
-                          </span>
-                          <span className="block text-xs text-gray-500 dark:text-slate-400 truncate tabular-nums">
-                            {formCount !== undefined ? `${formCount} form${formCount === 1 ? '' : 's'} · ` : ''} <span className="capitalize">{app.status}</span>
-                          </span>
-                        </div>
-                        <ChevronRight className="h-4 w-4 flex-none text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 motion-safe:transition-colors" aria-hidden="true" />
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+        {/* The apps changed most recently, as the Apps page lists them: one compact row each with
+            its state, what it holds and the ways into it (open, data, settings). Removing an app
+            is done from the Apps page, not from here. */}
+        {recentApps.length > 0 && (
+          <section aria-labelledby="home-apps" className="mb-6">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h2 id="home-apps" className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Your apps</h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate('/apps')}
+                className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+              >
+                View all
+                <ArrowRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+            <AppsTable
+              apps={recentApps}
+              summaries={appSummaries}
+              packNames={NO_PACK_NAMES}
+              canManage={(app) => app.canManage ?? !!app.ownerId}
+              managePath={appClickPath}
+              sortable={false}
+              footer={apps.length > recentApps.length
+                ? <Link to="/apps" className="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-300 max-sm:inline-flex max-sm:min-h-11 max-sm:items-center">All {apps.length.toLocaleString()} apps</Link>
+                : null}
+            />
+          </section>
+        )}
 
         {/* §11B O1: the availability-routed creation band — chat-first when an AI can
             answer, "Build your way" when none is connected. A brand-new owner used to get
@@ -1394,48 +1393,46 @@ export function Dashboard() {
           />
         )}
 
-        {/* Getting Started Section for New Users */}
+        {/* A new account, with neither a form nor an app: the three ways to begin, side by side.
+            FormLogic hosts apps as well as forms, so the first choice is not a form alone. */}
         {showGettingStarted && (
-          <div className="mb-8">
-            <Card className="bg-gradient-to-br from-primary-600/90 to-primary-800/90 dark:from-primary-900/50 dark:to-primary-950/50 border-primary-500/20">
-              <CardContent className="p-6 sm:p-8">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
-                  <div className="p-4 bg-white/20 rounded-2xl">
-                    <Sparkles className="h-8 w-8 text-primary-foreground dark:text-primary-200" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-xl font-bold text-primary-foreground dark:text-white mb-2">
-                      Get started with FormLogic
-                    </h3>
-                    <p className="text-primary-foreground/80 dark:text-slate-200 mb-4">
-                      Create your first form in seconds. Choose from templates or start from scratch.
-                    </p>
-                    <div className="flex flex-wrap gap-3">
-                      <Button
-                        onClick={handleCreateForm}
-                        className="bg-white text-primary-600 hover:bg-white/90 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 dark:hover:text-slate-900"
-                      >
-                        <Plus className="h-4 w-4 mr-2" />
-                        Create your first form
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className="text-primary-foreground hover:bg-white/10 dark:text-slate-100 dark:hover:bg-white/10 dark:hover:text-white"
-                        onClick={() => handleCreateForm()}
-                      >
-                        <BookOpen className="h-4 w-4 mr-2" />
-                        Browse templates
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+          <section aria-labelledby="home-start" className="mb-6">
+            <h2 id="home-start" className="mb-2 text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Start here</h2>
+            <div className="grid gap-3 @2xl/dash:grid-cols-3">
+              {([
+                [FileText, 'Create your first form', 'Ask questions and collect the answers. Start blank or from a ready-made form.', handleCreateForm],
+                [Boxes, 'Create an app', 'Forms, records and screens together, or a website or web app with its own pages and data.', () => navigate('/apps/new')],
+                [Package, 'Start from a template', 'A finished app for a kind of work (bookings, jobs, a service desk) to make your own.', () => setShowPackImport(true)],
+              ] as const).map(([Icon, title, text, onClick]) => (
+                <button
+                  key={title}
+                  type="button"
+                  onClick={onClick}
+                  className="group flex min-h-11 items-start gap-3 rounded-2xl border border-gray-200 bg-white p-4 text-left shadow-sm motion-safe:transition-colors hover:border-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-primary-500/50"
+                >
+                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400"><Icon className="h-4.5 w-4.5" aria-hidden="true" /></span>
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1 text-sm font-semibold text-gray-900 dark:text-white">{title}<ArrowRight className="h-3.5 w-3.5 text-gray-400 motion-safe:transition-transform group-hover:translate-x-0.5 dark:text-slate-500" aria-hidden="true" /></span>
+                    <span className="mt-1 block text-xs leading-5 text-gray-500 dark:text-slate-400">{text}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* An owner who hosts apps and has no forms: forms are one line here, not two empty boxes
+            under their apps. The line's buttons are the ones a first form starts from. */}
+        {appsOnly && (
+          <div className="flex flex-col gap-2 rounded-2xl border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-600 dark:border-slate-700 dark:text-slate-400 @2xl/dash:flex-row @2xl/dash:items-center @2xl/dash:justify-between">
+            <p className="min-w-0"><span className="font-medium text-gray-900 dark:text-white">No forms yet.</span> A form asks questions and keeps the answers; the newest answers are listed here.</p>
+            <Button variant="outline" size="sm" className="flex-none" onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>Create form</Button>
           </div>
         )}
 
-        {/* Main Content - Two Column Layout on Desktop */}
-        <div className="grid gap-6 @4xl/dash:grid-cols-3">
+        {/* Main Content - Two Column Layout on Desktop. Not drawn for an account without a form:
+            a newcomer has "Start here" above, an owner of apps the one line. */}
+        {!noForms && <div className="grid gap-6 @4xl/dash:grid-cols-3">
           {/* Recent Forms - Takes 2/3 on desktop. min-w-0: grid items default to
               min-width:auto, so one long nowrap form title would otherwise blow the
               track past the viewport and shove the pulse strips over/under the text. */}
@@ -1520,7 +1517,11 @@ export function Dashboard() {
                       className="@container/formcard group cursor-pointer overflow-hidden motion-safe:transition-all duration-300 hover:border-primary-300/80 hover:shadow-md hover:shadow-gray-900/[0.05] focus-within:ring-2 focus-within:ring-primary-500 focus-within:ring-offset-2 dark:hover:border-primary-500/30 dark:hover:shadow-black/20 dark:focus-within:ring-offset-slate-950"
                     >
                       <CardContent className="p-0 sm:p-0">
-                        <div className="p-4 sm:p-5">
+                        {/* With room, the form's name and facts stand beside its fortnight, not
+                            over it: a card is about as tall as the chart, and twice as many forms
+                            fit a screen. Narrow, the chart goes under them. */}
+                        <div className="grid min-w-0 gap-3 p-4 @xl/formcard:grid-cols-[minmax(0,1fr)_minmax(13rem,15rem)] @xl/formcard:items-center">
+                          <div className="min-w-0">
                           <div className="flex items-start gap-3">
                             <span className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-inset ring-primary-100/80 transition-colors group-hover:bg-primary-100 dark:bg-primary-500/10 dark:text-primary-400 dark:ring-primary-500/15 dark:group-hover:bg-primary-500/15">
                               <FileText className="h-4.5 w-4.5" aria-hidden="true" />
@@ -1602,8 +1603,8 @@ export function Dashboard() {
                             </div>
                           </div>
 
-                          <div className="mt-4 grid min-w-0 gap-3 @xl/formcard:grid-cols-[minmax(0,1fr)_minmax(13rem,16rem)] @xl/formcard:items-end">
-                            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-500 dark:text-slate-400">
+                            {/* Under the name, in line with it (past the 40px icon and its gap). */}
+                            <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-gray-500 dark:text-slate-400 sm:pl-[52px]">
                               <span className="flex items-center gap-1.5 tabular-nums">
                                 <Clock className="h-3.5 w-3.5 flex-none" />
                                 <span className="font-mono">
@@ -1629,8 +1630,9 @@ export function Dashboard() {
                                 </span>
                               )}
                             </div>
+                          </div>
 
-                            <div className="min-w-0 rounded-xl border border-gray-200/80 bg-gray-50/80 px-3 pb-2 pt-2.5 dark:border-white/[0.06] dark:bg-white/[0.025]">
+                            <div className="min-w-0 rounded-xl border border-gray-200/80 bg-gray-50/80 px-3 pb-1.5 pt-2 dark:border-white/[0.06] dark:bg-white/[0.025]">
                               <div className="mb-1.5 flex items-center justify-between gap-2">
                                 <span className="flex min-w-0 items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">
                                   <BarChart3 className="h-3.5 w-3.5 flex-none text-primary-500" />
@@ -1650,7 +1652,6 @@ export function Dashboard() {
                                 <span>Today</span>
                               </div>
                             </div>
-                          </div>
                         </div>
                       </CardContent>
                     </Card>
@@ -1747,8 +1748,8 @@ export function Dashboard() {
               </Card>
             )}
           </div>
-        </div>
-      </div>
+        </div>}
+      </PageBody>
 
       {/* Embed Modal */}
       {embedModalForm && (

@@ -74,10 +74,11 @@ export function Signup() {
 
   const displayError = localError || error;
 
+  // What an account gets: forms, and apps hosted with their own database, as well.
   const benefits = [
     'Unlimited forms with the free plan',
+    'Apps hosted with their own backend and database',
     'Real backend logic with scripting',
-    'SQLite database per form',
     'Full data ownership',
   ];
 
@@ -100,10 +101,10 @@ export function Signup() {
         </div>
         <div className="relative z-10">
           <h2 className="text-4xl font-bold text-white mb-4 tracking-tight">
-            Start building smarter forms
+            Start building forms and apps
           </h2>
           <p className="text-primary-200/80 text-lg mb-8 leading-relaxed">
-            Create forms with real backend logic and full data control.
+            Create forms and host apps with real backend logic and full data control.
           </p>
           <ul className="space-y-3.5">
             {benefits.map((benefit) => (

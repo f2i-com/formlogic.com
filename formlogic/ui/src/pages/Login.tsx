@@ -120,12 +120,13 @@ export function Login() {
           <h2 className="text-4xl font-bold text-white mb-4 tracking-tight">
             Welcome back
           </h2>
+          {/* What is behind the sign-in today: apps and automations as well as forms. */}
           <p className="text-primary-200/80 text-lg leading-relaxed">
-            Sign in to access your forms, responses, and analytics.
+            Sign in to your forms, apps and automations.
           </p>
         </div>
         <p className="text-primary-300/60 text-sm relative z-10">
-          Trusted by developers and agencies worldwide.
+          Your forms, your apps and their data, in one place.
         </p>
       </div>
       )}

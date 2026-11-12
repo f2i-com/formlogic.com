@@ -4,6 +4,7 @@ import { ArrowRight, Menu, Moon, Star, Sun, X } from 'lucide-react';
 import { FormLogicMark } from './shared';
 import { GITHUB_URL } from './stats';
 import { useUIStore } from '../../stores/uiStore';
+import { useAuthStore } from '../../stores/authStore';
 
 /**
  * Sticky dark marketing nav. In-page anchors for the sections, router links
@@ -48,6 +49,10 @@ export function LandingNav({ onMenuOpen }: { onMenuOpen?: () => void } = {}) {
   // light bands, the docs page, and the app runtime all follow this toggle.
   const theme = useUIStore((s) => s.theme);
   const toggleTheme = useUIStore((s) => s.toggleTheme);
+  // Someone already signed in reads the docs and the marketplace under this bar too: they are
+  // offered the way back to their workspace, not "Sign in" and "Start free". The shared demo is
+  // a visitor's look around, so it keeps both.
+  const signedIn = useAuthStore((s) => !!s.user && !s.user.isDemo);
 
   return (
     <nav className="lv2-nav" aria-label="FormLogic primary navigation">
@@ -63,12 +68,20 @@ export function LandingNav({ onMenuOpen }: { onMenuOpen?: () => void } = {}) {
           <NavLink to="/packs" onClick={close}>Marketplace</NavLink>
           <a href="/#pricing" onClick={close}>Pricing</a>
           <NavLink to="/docs" onClick={close}>Docs</NavLink>
-          <Link to="/login" onClick={close} className="lv2-nav__mobile-signin">
-            Sign in
-          </Link>
-          <Link to="/signup" onClick={close} className="lv2-nav__mobile-start">
-            Start free <ArrowRight size={15} aria-hidden="true" />
-          </Link>
+          {signedIn ? (
+            <Link to="/" onClick={close} className="lv2-nav__mobile-start">
+              Open your workspace <ArrowRight size={15} aria-hidden="true" />
+            </Link>
+          ) : (
+            <>
+              <Link to="/login" onClick={close} className="lv2-nav__mobile-signin">
+                Sign in
+              </Link>
+              <Link to="/signup" onClick={close} className="lv2-nav__mobile-start">
+                Start free <ArrowRight size={15} aria-hidden="true" />
+              </Link>
+            </>
+          )}
         </div>
 
         <div className="lv2-nav__actions">
@@ -93,12 +106,20 @@ export function LandingNav({ onMenuOpen }: { onMenuOpen?: () => void } = {}) {
             <span>Star</span>
             <Star size={13} className="lv2-nav__star-glyph" />
           </a>
-          <Link to="/login" className="lv2-nav__signin">
-            Sign in
-          </Link>
-          <Link to="/signup" className="lv2-nav__cta">
-            Start free <ArrowRight size={15} />
-          </Link>
+          {signedIn ? (
+            <Link to="/" className="lv2-nav__cta">
+              Open your workspace <ArrowRight size={15} />
+            </Link>
+          ) : (
+            <>
+              <Link to="/login" className="lv2-nav__signin">
+                Sign in
+              </Link>
+              <Link to="/signup" className="lv2-nav__cta">
+                Start free <ArrowRight size={15} />
+              </Link>
+            </>
+          )}
           <button
             type="button"
             className="lv2-nav__menu"

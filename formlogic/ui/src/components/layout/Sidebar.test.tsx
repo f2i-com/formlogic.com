@@ -173,6 +173,55 @@ describe('Sidebar (app-first)', () => {
     }
   });
 
+  // With eleven apps the list pushed More tools (Templates, the Recycle bin) below the fold.
+  describe('with many apps', () => {
+    const many = () => Array.from({ length: 11 }, (_, index) => makeApp({ id: `a${index + 1}`, name: `App number ${index + 1}`, slug: `app-${index + 1}` }));
+    const listed = () => Array.from(container.querySelectorAll('button')).map((b) => /App number (\d+)/.exec(b.textContent ?? '')?.[1]).filter(Boolean);
+    const moreButton = () => Array.from(container.querySelectorAll('button')).find((b) => /^Show (\d+ more apps?|fewer apps)$/.test(b.textContent?.trim() ?? ''));
+
+    it('lists the first six, and the rest after "Show 5 more apps"', async () => {
+      h.apps = many();
+      await renderSidebar();
+      expect(listed()).toEqual(['1', '2', '3', '4', '5', '6']);
+      expect(moreButton()?.textContent).toBe('Show 5 more apps');
+      expect(moreButton()?.getAttribute('aria-expanded')).toBe('false');
+
+      await act(async () => { moreButton()!.click(); });
+      expect(listed()).toHaveLength(11);
+      expect(moreButton()?.textContent).toBe('Show fewer apps');
+
+      await act(async () => { moreButton()!.click(); });
+      expect(listed()).toHaveLength(6);
+    });
+
+    it('keeps the open app in the short list', async () => {
+      h.apps = many();
+      await renderSidebar('/apps/a9/studio');
+      expect(listed()).toEqual(['1', '2', '3', '4', '5', '9']);
+      expect(container.querySelector('button[aria-current="page"]')?.textContent).toContain('App number 9');
+    });
+
+    it('a search lists every match, however many', async () => {
+      h.apps = many();
+      await renderSidebar();
+      const search = container.querySelector<HTMLInputElement>('input[aria-label="Search apps"]')!;
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+        setter.call(search, 'app number');
+        search.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      expect(listed()).toHaveLength(11);
+      expect(moreButton()).toBeUndefined();
+    });
+
+    it('seven apps are simply listed: a row saying "1 more" would take the place of the app', async () => {
+      h.apps = many().slice(0, 7);
+      await renderSidebar();
+      expect(listed()).toHaveLength(7);
+      expect(moreButton()).toBeUndefined();
+    });
+  });
+
   it('auto-expands More tools when already on a tool route', async () => {
     await renderSidebar('/diagrams');
     const toggle = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('More tools'))!;
