@@ -402,7 +402,7 @@ export default function AiServicesDialog({ isOpen, onClose, desktopPresence, api
                 <EmptyState
                   icon={Sparkles}
                   title="No API services"
-                  description="Add OpenAI, Ollama, LM Studio, or a custom HTTP service for browser-run AI nodes."
+                  description="Add OpenAI, Ollama, LM Studio, or a custom HTTP service for browser-run AI steps."
                   action={<Button size="sm" onClick={openAdd} leftIcon={<Plus className="h-4 w-4" />}>Add service</Button>}
                   className="rounded-lg border border-dashed border-gray-200 py-8 dark:border-slate-700"
                 />

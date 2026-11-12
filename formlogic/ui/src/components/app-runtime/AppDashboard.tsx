@@ -227,7 +227,7 @@ export function AppDashboard() {
   const showRail = showStats && (statsLoading || (pulse?.recent.length ?? 0) > 0);
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <div className="max-w-5xl">
       {/* Header: app identity + what the user can do here */}
       <div className="mb-6 flex items-start gap-4">
         <div className="flex h-12 w-12 flex-none items-center justify-center rounded-2xl app-bg-primary-light overflow-hidden">

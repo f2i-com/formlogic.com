@@ -289,7 +289,7 @@ export default function ConnectAiWizard() {
                   </p>
                   <Link
                     to="/"
-                    className="inline-flex rounded-lg bg-primary-600 px-4 py-2 text-sm text-white"
+                    className="inline-flex rounded-lg bg-primary-600 px-4 py-2 text-sm text-primary-foreground"
                   >
                     Return to your workspace
                   </Link>

@@ -31,7 +31,7 @@ export function NotFound() {
         <div className="flex items-center justify-center gap-3">
           {user ? (
             <Link to="/">
-              <Button size="lg" leftIcon={<ArrowLeft className="h-4 w-4" />}>Go to Dashboard</Button>
+              <Button size="lg" leftIcon={<ArrowLeft className="h-4 w-4" />}>Go to Home</Button>
             </Link>
           ) : (
             <>

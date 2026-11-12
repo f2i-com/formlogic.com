@@ -36,7 +36,7 @@ export function AppSectionDashboard({ formId, dashboard, allowNew, onNew }: {
   return (
     <div className="relative h-full min-h-[60vh]">
       {(allowNew || isOwner) && (
-        <div className="max-w-6xl mx-auto mb-3 flex items-center justify-end gap-2">
+        <div className="max-w-6xl mb-3 flex items-center justify-end gap-2">
           {allowNew && (
             <button
               type="button"
@@ -58,7 +58,7 @@ export function AppSectionDashboard({ formId, dashboard, allowNew, onNew }: {
         </div>
       )}
 
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-6xl">
         <WidgetDashboard
           dashboard={dashboard}
           forms={forms}

@@ -18,7 +18,7 @@ export function AppSplash({ look, label = 'Opening the app', className = '' }: {
     >
       <span
         aria-hidden="true"
-        className={`h-10 w-10 rounded-full border-[3.5px] border-r-transparent motion-safe:animate-spin motion-reduce:animate-pulse ${look?.spinner ? '' : 'border-indigo-500 border-r-transparent dark:border-indigo-400 dark:border-r-transparent'}`}
+        className={`h-10 w-10 rounded-full border-[3.5px] border-r-transparent motion-safe:animate-spin motion-reduce:animate-pulse ${look?.spinner ? '' : 'border-primary-500 border-r-transparent dark:border-primary-400 dark:border-r-transparent'}`}
         style={look?.spinner ? { borderColor: look.spinner, borderRightColor: 'transparent' } : undefined}
       />
     </div>

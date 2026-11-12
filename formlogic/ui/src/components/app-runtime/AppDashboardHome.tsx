@@ -33,7 +33,7 @@ export function AppDashboardHome({ dashboard }: { dashboard?: DashboardScreen })
   return (
     <>
       {isOwner && (
-        <div className="max-w-6xl mx-auto mb-2 flex justify-end">
+        <div className="max-w-6xl mb-2 flex justify-end">
           <button
             type="button"
             onClick={() => setEditing(true)}

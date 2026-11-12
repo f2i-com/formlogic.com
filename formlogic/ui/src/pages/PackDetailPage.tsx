@@ -900,7 +900,7 @@ function PackDetailContent() {
           </div>
         </div>
 
-        {pack.folderSource && <p className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm leading-6 text-indigo-950 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-100">Includes an editable app workspace, linked forms and record storage. Install to create your own copy, then customise its screens, backend actions, forms and automations in App Studio. The source download includes each app as a .softn project and the complete installation package.</p>}
+        {pack.folderSource && <p className="rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm leading-6 text-primary-950 dark:border-primary-800 dark:bg-primary-950/40 dark:text-primary-100">Includes an editable app workspace, linked forms and record storage. Install to create your own copy, then customise its screens, backend actions, forms and automations in App Studio. The source download includes each app as a .softn project and the complete installation package.</p>}
         {consentPanel}
 
         {/* Description */}

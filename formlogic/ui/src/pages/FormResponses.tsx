@@ -793,7 +793,7 @@ function FormResponses() {
           icon={Inbox}
           title="Form not found"
           description="The form you're looking for doesn't exist or has been deleted."
-          action={<Button onClick={() => navigate('/')}>Go to Dashboard</Button>}
+          action={<Button onClick={() => navigate('/')}>Go to Home</Button>}
         />
       </div>
     );

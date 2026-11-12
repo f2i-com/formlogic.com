@@ -138,7 +138,7 @@ export function WalletSheet({ slug, appName, visitor, onClose }: { slug: string;
                   <legend className="text-sm font-medium text-gray-700 dark:text-slate-300">Add to it</legend>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {sheet.packages.map((p) => (
-                      <label key={p} className={`cursor-pointer rounded-full border px-3 py-1.5 text-sm ${cents === p ? 'border-indigo-500 bg-indigo-50 text-indigo-800 dark:bg-indigo-500/20 dark:text-indigo-200' : 'border-gray-300 dark:border-slate-600'}`}>
+                      <label key={p} className={`cursor-pointer rounded-full border px-3 py-1.5 text-sm ${cents === p ? 'border-primary-500 bg-primary-50 text-primary-800 dark:bg-primary-500/20 dark:text-primary-200' : 'border-gray-300 dark:border-slate-600'}`}>
                         <input type="radio" name="fl-wallet-package" className="sr-only" checked={cents === p} onChange={() => { centsRef.current = p; setCents(p); }} />{formatCents(p)}
                       </label>
                     ))}

@@ -42,7 +42,7 @@ export function AppUserProfile() {
   };
 
   return (
-    <div className="max-w-md mx-auto">
+    <div className="max-w-md">
       <PageHeader
         title="Profile"
         subtitle="Your details in this app"

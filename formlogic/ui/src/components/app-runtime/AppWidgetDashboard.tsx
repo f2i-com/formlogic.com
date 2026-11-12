@@ -35,7 +35,7 @@ export function AppWidgetDashboard({ dashboard }: { dashboard: DashboardScreen }
   if (!dashboard.widgets?.length) return <AppDashboard />;
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="max-w-6xl">
       <WidgetDashboard
         dashboard={dashboard}
         forms={forms}

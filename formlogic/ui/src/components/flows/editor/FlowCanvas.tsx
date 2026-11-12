@@ -453,7 +453,7 @@ function QuickConnectMenu({ x, y, specs, onPick, onClose }: {
       <div className="fixed inset-0 z-40" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} aria-hidden="true" />
       <div
         role="dialog"
-        aria-label="Add a connected node"
+        aria-label="Add a connected step"
         style={{ top: y, left: x }}
         className="fixed z-50 flex max-h-72 w-56 flex-col rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl"
       >
@@ -468,15 +468,15 @@ function QuickConnectMenu({ x, y, specs, onPick, onClose }: {
                 if (e.key === 'Escape') onClose();
                 else if (e.key === 'Enter' && results.length > 0) onPick(results[0].type);
               }}
-              placeholder="Add a node…"
-              aria-label="Search nodes to connect"
+              placeholder="Add a step…"
+              aria-label="Search steps to connect"
               className="w-full rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-1.5 pl-8 pr-2.5 text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
         </div>
         <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-1">
           {results.length === 0 ? (
-            <p className="px-2 py-1.5 text-xs text-gray-400 dark:text-slate-500">No nodes match "{query}".</p>
+            <p className="px-2 py-1.5 text-xs text-gray-400 dark:text-slate-500">No steps match "{query}".</p>
           ) : (
             results.map((s) => {
               const Icon = s.icon;

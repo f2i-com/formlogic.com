@@ -25,7 +25,7 @@ export default function HostedAppPage() {
         </h1>
         {app?.deployment && (
           <button
-            className="inline-flex min-h-11 items-center gap-2 text-sm text-indigo-600 dark:text-indigo-300"
+            className="inline-flex min-h-11 items-center gap-2 text-sm text-primary-600 dark:text-primary-300"
             onClick={() =>
               void downloadHostedClient(app.deployment!.client, app.name || 'App').catch(
                 () => setDownloadError("Could not download the project."),

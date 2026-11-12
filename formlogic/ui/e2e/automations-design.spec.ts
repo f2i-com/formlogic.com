@@ -95,10 +95,10 @@ for (const width of [1440, 390]) for (const theme of ['light', 'dark']) {
     }
     await expect(page.getByRole('button', { name: 'Arrange steps', exact: true })).toBeInViewport();
     if (await page.getByRole('button', { name: 'Add step', exact: true }).isVisible()) await page.getByRole('button', { name: 'Add step', exact: true }).click();
-    await page.getByRole('textbox', { name: 'Search flow nodes', exact: true }).fill('Template');
-    await expect(page.getByRole('button', { name: 'Add Template node', exact: true })).toContainText('text');
+    await page.getByRole('textbox', { name: 'Search steps', exact: true }).fill('Template');
+    await expect(page.getByRole('button', { name: 'Add Template step', exact: true })).toContainText('text');
     await page.screenshot({ path: testInfo.outputPath('step-picker.png'), fullPage: true });
-    await page.getByRole('button', { name: 'Add Template node', exact: true }).click();
+    await page.getByRole('button', { name: 'Add Template step', exact: true }).click();
     await expect(page.locator('.react-flow__node-template')).toHaveCount(1);
     await page.screenshot({ path: testInfo.outputPath('step-settings.png'), fullPage: true });
     await page.getByRole('button', { name: width < 768 ? 'Close Template settings' : 'Close step settings', exact: true }).click();

@@ -165,7 +165,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     for (const resolve of waiting) resolve({ closed: true, balanceCents });
   }, []);
   const verify = current?.pass?.verifyPath ? `${current.pass.verifyPath}&return=` : null;
-  const linkClass = 'mt-4 inline-flex min-h-11 items-center text-indigo-600 dark:text-indigo-300';
+  const linkClass = 'mt-4 inline-flex min-h-11 items-center text-primary-600 dark:text-primary-300';
   if (project && filesAppId && answer === null) {
     const appName = current?.name || 'This app';
     return <div className="flex h-full items-center justify-center p-6">
@@ -173,7 +173,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
         <h2 id="native-files-title" className="text-lg font-semibold text-slate-900 dark:text-white">{appName} would like to use files on this device</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">It can open the files you choose for it and save files you ask it to, such as a saved game. It cannot look at anything else on this device.</p>
         <div className="mt-5 flex flex-wrap gap-2">
-          <button type="button" className="min-h-11 rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700" onClick={() => answerFiles('allow')}>Allow</button>
+          <button type="button" className="min-h-11 rounded-lg bg-primary-600 px-4 text-sm font-semibold text-primary-foreground hover:bg-primary-700" onClick={() => answerFiles('allow')}>Allow</button>
           <button type="button" className="min-h-11 rounded-lg border border-slate-300 px-4 text-sm font-medium text-slate-800 dark:border-slate-600 dark:text-slate-200" onClick={() => answerFiles('deny')}>Not now</button>
         </div>
         <p className="mt-4 text-xs leading-5 text-slate-500 dark:text-slate-400">Not now opens the app without them; you will be asked again on another visit.</p>

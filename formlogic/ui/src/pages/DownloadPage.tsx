@@ -43,7 +43,7 @@ export function DownloadPage() {
   return (
     <div className="min-h-[100dvh] w-full overflow-x-clip flex flex-col items-center justify-center px-6 py-16 bg-white dark:bg-slate-950">
       <main className="w-full max-w-md text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 text-white shadow-lg">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 text-primary-foreground shadow-lg">
           <Download className="h-8 w-8" />
         </div>
         <h1 className="mt-6 text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Get OAIY for your desktop</h1>

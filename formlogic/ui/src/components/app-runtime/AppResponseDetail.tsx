@@ -129,7 +129,7 @@ function ResponseVisit() {
 
   if (formId && !canViewOwn(formId) && !canViewAll(formId)) {
     return (
-      <div className="max-w-4xl mx-auto py-8">
+      <div className="max-w-4xl py-8">
         <EmptyState
           icon={Lock}
           title="No access"
@@ -141,7 +141,7 @@ function ResponseVisit() {
 
   if (fetchError) {
     return (
-      <div className="max-w-4xl mx-auto py-8" role="alert">
+      <div className="max-w-4xl py-8" role="alert">
         <EmptyState
           icon={AlertTriangle}
           title="Couldn't load this record"
@@ -163,7 +163,7 @@ function ResponseVisit() {
   if (loading || !response || !formId) {
     // Skeleton mirroring the loaded layout: header, answers grid, details side card.
     return (
-      <div className="max-w-4xl mx-auto" role="status" aria-label="Loading response">
+      <div className="max-w-4xl" role="status" aria-label="Loading response">
         <div className="mb-6 flex items-start gap-3">
           <Skeleton className="h-9 w-9 flex-none rounded-lg" />
           <div className="min-w-0 flex-1 space-y-2 pt-0.5">
@@ -311,7 +311,7 @@ function ResponseVisit() {
   const microLabel = 'block text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500';
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-4xl">
       <PageHeader
         title={recordTitle}
         subtitle={submittedDateShort ? `${formName} · Submitted ${submittedDateShort}` : formName}

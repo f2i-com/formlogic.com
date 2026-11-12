@@ -24,7 +24,7 @@ import { FlowDesktopPresenceContext } from './flowNodeContext';
 // Tiles carry only icon + name now — the description lives in this hover popover, so it
 // should appear promptly (but still late enough that drag-pickups don't flash it).
 const HOVER_DELAY_MS = 300;
-const DESKTOP_OFFLINE_NODE_TOOLTIP = 'OAIY is offline — this node will fail at run time';
+const DESKTOP_OFFLINE_NODE_TOOLTIP = 'OAIY is offline — this step will fail at run time';
 
 /** Compact "In / Out" handle summary for the hover popover. */
 function handleSummary(handles: { label: string }[]): string {
@@ -145,7 +145,7 @@ function PaletteItem({
       onFocus={openDoc}
       onBlur={closeDoc}
       disabled={disabled}
-      aria-label={disabled ? `${spec.label} (not available)` : `Add ${spec.label} node`}
+      aria-label={disabled ? `${spec.label} (not available)` : `Add ${spec.label} step`}
       className={cn(
         // A step is one compact row: its name and one line of what it does. The longer account,
         // with what goes in and comes out, is in the popover beside it (PaletteDoc).
@@ -303,7 +303,7 @@ function NodeGroupSection({
             <button
               type="button"
               onClick={() => deleteGroup(group.id)}
-              aria-label={`Delete group ${group.name} (its nodes return to their usual sections)`}
+              aria-label={`Delete group ${group.name} (its steps return to their usual sections)`}
               className="rounded p-0.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
             >
               <X className="h-3 w-3" />
@@ -314,7 +314,7 @@ function NodeGroupSection({
       {!collapsed && (
         specs.length === 0 ? (
           <p className="px-1 pb-1 text-[10px] text-gray-400 dark:text-slate-600">
-            Empty — pick this group under a node below to file it here.
+            Empty — pick this group under a step below to file it here.
           </p>
         ) : (
           <div className="grid grid-cols-1 gap-2">
@@ -408,8 +408,8 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
           variant="ghost"
           size="iconOnly"
           onClick={onToggleCollapsed}
-          aria-label="Expand node palette"
-          title="Expand node palette"
+          aria-label="Expand step list"
+          title="Expand step list"
           className="h-8 w-8"
         >
           <PanelLeftOpen className="h-4 w-4" />
@@ -428,7 +428,7 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search steps"
-            aria-label="Search flow nodes"
+            aria-label="Search steps"
             className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-2.5 pl-8 pr-2.5 text-base md:py-1.5 md:text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
         </div>
@@ -436,7 +436,7 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
           variant={organising ? 'secondary' : 'ghost'}
           size="iconOnly"
           onClick={() => setOrganising((on) => !on)}
-          aria-label={organising ? 'Done organising nodes' : 'Organise nodes into groups'}
+          aria-label={organising ? 'Done organising steps' : 'Organise steps into groups'}
           aria-pressed={organising}
           title={organising ? 'Done organising' : 'Organise into groups'}
           className="h-8 w-8 flex-none"
@@ -448,8 +448,8 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
             variant="ghost"
             size="iconOnly"
             onClick={onToggleCollapsed}
-            aria-label="Collapse node palette"
-            title="Collapse node palette"
+            aria-label="Collapse step list"
+            title="Collapse step list"
             className="h-8 w-8 flex-none"
           >
             <PanelLeftClose className="h-4 w-4" />
@@ -472,7 +472,7 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
               value={newGroupName}
               onChange={(e) => setNewGroupName(e.target.value)}
               placeholder="New group name"
-              aria-label="New node group name"
+              aria-label="New step group name"
               maxLength={40}
               className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-8 pr-2.5 text-base md:py-1.5 md:text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
             />
@@ -487,14 +487,16 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
         ref={resultsRef}
         onScroll={(e) => { resultsScrollTop.current = e.currentTarget.scrollTop; }}
         className={cn(
-          '@container/palette scrollbar-thin min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5',
+          // The bottom padding lets the last steps scroll clear of the desktop chip, which floats
+          // over this corner of the window.
+          '@container/palette scrollbar-thin min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5 pb-16',
           // The docked rail sits behind the floating Desktop-connection chip (fixed
           // bottom-left) — leave clearance so the last tiles stay reachable.
           draggable && 'pb-16',
         )}
       >
         {grouped.length === 0 && visibleUserSections.length === 0 && (
-          <p className="px-1 text-xs text-gray-400 dark:text-slate-500">No nodes match "{query}".</p>
+          <p className="px-1 text-xs text-gray-400 dark:text-slate-500">No steps match "{query}".</p>
         )}
         {/* The user's own groups come first: someone who bothered to organise their palette
             put the things they reach for most into it. */}
