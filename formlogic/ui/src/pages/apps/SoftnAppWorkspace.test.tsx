@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * The SoftN app's page: its sections are addresses (the overview at the page itself, then data,
- * edit, domains and settings); an app with nothing installed starts from its setup choices; one
+ * members, edit, domains and settings); an app with nothing installed starts from its setup choices; one
  * arriving from "Create app" or the chat opens straight into the editor it asked for, once;
  * editor changes are installed at once while the app is not published and kept as a draft to
  * publish once it is; Publish makes a draft app live.
@@ -49,6 +49,9 @@ vi.mock('../../components/studio/AppEditorDialog', () => ({
 }));
 vi.mock('../../components/data', () => ({
   DataManager: (props: NonNullable<typeof mocks.dataManager>) => { mocks.dataManager = props; return <p data-testid="data-manager">data:{props.table ?? ''}:{props.view}</p>; },
+}));
+vi.mock('../../components/apps/SoftnMembers', () => ({
+  SoftnMembers: ({ app, project }: { app: { name: string }; project: { access?: string } }) => <p data-testid="softn-members">members of {app.name}, {project.access}</p>,
 }));
 vi.mock('../../components/studio/AppEngineSelect', () => ({ AppEngineSelect: () => null }));
 vi.mock('../../components/studio/NativeAppPanel', () => ({ NativeEditor: () => <p>source editor</p> }));
@@ -118,7 +121,7 @@ describe('SoftnAppWorkspace', () => {
       expect(section()).toBe('Data');
       expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:bookings:structure');
       expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.getAttribute('href'))).toEqual([
-        '/apps/app-1/softn', '/apps/app-1/softn/data', '/apps/app-1/softn/edit', '/apps/app-1/softn/domains', '/apps/app-1/softn/settings']);
+        '/apps/app-1/softn', '/apps/app-1/softn/data', '/apps/app-1/softn/members', '/apps/app-1/softn/edit', '/apps/app-1/softn/domains', '/apps/app-1/softn/settings']);
       // The data manager asks for another table: the address follows, and the default view is left out of it.
       await act(async () => mocks.dataManager!.onNavigate('rooms', 'browse'));
       expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:rooms:browse');
@@ -148,6 +151,30 @@ describe('SoftnAppWorkspace', () => {
       expect(container.querySelector('[data-testid="data-manager"]')).toBeNull();
       expect(container.textContent).toContain('This app has no database on the server.');
       expect(mocks.getNativeDataSummary).not.toHaveBeenCalled();
+    });
+  });
+
+  // Who can use the app is a section of its own page: it used to send the owner into App Studio.
+  describe('members', () => {
+    it('is a section of the app\'s own page, and the overview and the settings lead to it', async () => {
+      await render('published', installed(1), '/members');
+      expect(section()).toBe('Members');
+      expect(container.querySelector('[data-testid="softn-members"]')!.textContent).toBe('members of Recipes, members');
+      await act(async () => root.unmount());
+      await render('published', installed(1));
+      expect((container.querySelector('a[href="/apps/app-1/softn/members"]:not(nav a)') as HTMLAnchorElement).textContent).toBe('Members');
+      expect(container.querySelector('a[href="/apps/app-1/studio/access"]')).toBeNull();
+      await act(async () => root.unmount());
+      await render('published', installed(1), '/settings');
+      expect([...container.querySelectorAll('#settings-access a')].map(a => a.getAttribute('href'))).toEqual(['/apps/app-1/softn/members']);
+    });
+
+    it('is the owner\'s alone: nobody else is offered it, or shown it at its address', async () => {
+      useAuthStore.setState({ user: { id: 'manager', email: 'manager@example.test' } as never });
+      await render('published', installed(1), '/members');
+      expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent)).not.toContain('Members');
+      expect(container.querySelector('[data-testid="softn-members"]')).toBeNull();
+      expect(container.textContent).toContain('Only the app’s owner manages who can use it.');
     });
   });
 

@@ -23,6 +23,8 @@ import { SoftnLookPanel } from '../../components/apps/SoftnLookPanel';
 import { PhoneSignInPanel } from '../../components/apps/PhoneSignInPanel';
 import { AppAiPanel } from '../../components/apps/AppAiPanel';
 import { AppAiPrompt } from '../../components/apps/AppAiPrompt';
+import { AppTile } from '../../components/apps/AppTile';
+import { SoftnMembers } from '../../components/apps/SoftnMembers';
 import { AppPaymentsPanel } from '../../components/apps/AppPaymentsPanel';
 import { BringDataPanel } from '../../components/apps/BringDataPanel';
 import { AddBackendPanel } from '../../components/apps/AddBackendPanel';
@@ -49,7 +51,7 @@ import { useUIStore, type SoftnOpen } from '../../stores/uiStore';
 import type { App, AppRequirement, SoftnLook } from '../../types/app';
 
 const SECTIONS: readonly (readonly [SoftnSection, string, typeof Globe])[] = [
-  ['overview', 'Overview', LayoutDashboard], ['data', 'Data', Database], ['edit', 'Edit', PencilRuler], ['domains', 'Domains', Globe], ['settings', 'Settings', SettingsIcon],
+  ['overview', 'Overview', LayoutDashboard], ['data', 'Data', Database], ['members', 'Members', Users], ['edit', 'Edit', PencilRuler], ['domains', 'Domains', Globe], ['settings', 'Settings', SettingsIcon],
 ];
 const DATA_VIEWS: readonly DataView[] = ['browse', 'structure', 'export', 'import'];
 /** The parts of the address after /softn/, decoded; a part that is not valid text is dropped. */
@@ -128,6 +130,8 @@ function Workspace({ app }: { app: App }) {
   const published = app.status === 'published';
   const userId = useAuthStore(s => s.user?.id);
   const isOwner = app.ownerId === userId;
+  // Who can use the app is its owner's to decide, and not while the page only shows it (readOnly).
+  const managesMembers = isOwner && !readOnly;
   const liveUrl = `${window.location.origin}/app/${encodeURIComponent(app.slug)}${project?.home ? '' : '/native'}`;
   // An app without a backend of its own runs in the browser alone: it has no database here.
   const backend = project ? projectHasBackend(project) : true;
@@ -297,7 +301,7 @@ function Workspace({ app }: { app: App }) {
   </div>;
 
   return <div className="min-h-screen">
-    <Header title={app.name} back={{ onClick: () => leave('/apps'), label: 'Back to apps' }} actions={actions} />
+    <Header title={app.name} mark={<AppTile app={app} size="sm" className="h-7 w-7 rounded-md" />} back={{ onClick: () => leave('/apps'), label: 'Back to apps' }} actions={actions} />
     {/* Every section starts at the left and takes the page's whole width: its panels flow into
         more columns as the screen widens, and stack on a phone.
         On a wide screen the data section is the rest of the window below the page's header: the
@@ -320,12 +324,17 @@ function Workspace({ app }: { app: App }) {
         {/* One row for the page's sections and its state, so the section itself starts higher.
             Links, not tabs: each section is an address, so it opens in a new tab and the back button returns to it. */}
         <SectionNav label="App sections" className="mt-2" current={section}
-          items={SECTIONS.map(([value, label, icon]) => ({ value, label, icon, to: softnWorkspacePath(app.id, value) }))}
+          // Members are the owner's to manage: nobody else is shown the section.
+          items={SECTIONS.filter(([value]) => value !== 'members' || managesMembers).map(([value, label, icon]) => ({ value, label, icon, to: softnWorkspacePath(app.id, value) }))}
           // On a phone the Data section keeps the screen for the rows: the status is on every other section.
           end={<div className={cn('py-0.5', section === 'data' && 'max-sm:hidden')}>{statusLine}</div>} />
 
         {section === 'overview' && <SoftnOverview app={app} project={project} version={version} published={published} dirty={dirty} readOnly={readOnly} backend={backend}
           isOwner={app.ownerId === userId} liveUrl={liveUrl} busy={publishing || busy} onPublish={() => void publish()} />}
+
+        {section === 'members' && (managesMembers
+          ? <SoftnMembers app={app} project={project} onReloadApp={fetchApps} />
+          : <p className="mt-6 text-sm text-slate-600 dark:text-slate-400">Only the app&rsquo;s owner manages who can use it.</p>)}
 
         {section === 'edit' && <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <section aria-label="Preview" className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -436,7 +445,7 @@ function Workspace({ app }: { app: App }) {
           <Panel id="settings-access" title="Who can use it" icon={<Users className="h-4 w-4" />}>
             <fieldset disabled={busy || readOnly} className="space-y-2">
               <legend className="sr-only">Who can use it</legend>
-              {([['members', 'Only people you invite', 'Visitors sign in to FormLogic as members of this app. Invite them in Members & roles.', Lock], ['application', 'Anyone with the link', 'The app is open to everyone. If it has its own sign-in, that is what protects it.', Globe]] as const).map(([value, label, hint, Icon]) =>
+              {([['members', 'Only people you invite', 'Visitors sign in to FormLogic as members of this app. Invite them in Members.', Lock], ['application', 'Anyone with the link', 'The app is open to everyone. If it has its own sign-in, that is what protects it.', Globe]] as const).map(([value, label, hint, Icon]) =>
                 <label key={value} className={cn('flex cursor-pointer gap-3 rounded-xl border p-3', project.access === value ? 'border-primary-400 bg-primary-50/60 dark:border-primary-500/60 dark:bg-primary-500/10' : 'border-slate-200 dark:border-slate-700')}>
                   <input type="radio" name="softn-access" className="mt-1" checked={project.access === value}
                     onChange={() => void changeSetting({ ...project, access: value }, value === 'members' ? 'Now only invited members can use it.' : 'Now anyone with the link can use it.')} />
@@ -444,7 +453,7 @@ function Workspace({ app }: { app: App }) {
                 </label>)}
             </fieldset>
             {!projectHasBackend(project) && <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">This app keeps its records in each visitor&rsquo;s own browser, so changing this starts everyone again from empty.</p>}
-            <Link to={`/apps/${app.id}/studio/access`} className="mt-3 inline-flex min-h-10 items-center text-sm font-medium text-primary-600 dark:text-primary-300">Members &amp; roles</Link>
+            <Link to={softnWorkspacePath(app.id, 'members')} className="mt-3 inline-flex min-h-10 items-center text-sm font-medium text-primary-600 dark:text-primary-300">Members</Link>
           </Panel>
           {app.ownerId === userId && <Panel id="settings-before" title="Before it opens" icon={<Lock className="h-4 w-4" />}>
             <RequirementsSetting value={app.settings?.requires} disabled={gateBusy || readOnly} anonymousAccess={project.access === 'application'}

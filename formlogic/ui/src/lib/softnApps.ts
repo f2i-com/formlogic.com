@@ -13,7 +13,7 @@ export function isSoftnApp(app: Pick<App, 'settings'> | null | undefined): boole
 }
 
 /** The sections of a SoftN app's page, each at its own address under /apps/<id>/softn/. */
-export const SOFTN_SECTIONS = ['overview', 'data', 'edit', 'domains', 'settings'] as const;
+export const SOFTN_SECTIONS = ['overview', 'data', 'members', 'edit', 'domains', 'settings'] as const;
 export type SoftnSection = (typeof SOFTN_SECTIONS)[number];
 
 /**

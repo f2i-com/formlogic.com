@@ -118,7 +118,7 @@ export function SoftnOverview({ app, project, version, published, dirty, readOnl
         {domains && !domains.length && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">No domain of its own yet.</p>}
       </Card>
 
-      <Card title="People" action={members && isOwner && !readOnly ? <Link to={`/apps/${app.id}/studio/access`} className={link}>Members</Link> : undefined}>
+      <Card title="People" action={members && isOwner && !readOnly ? <Link to={softnWorkspacePath(app.id, 'members')} className={link}>Members</Link> : undefined}>
         <p className="font-semibold text-slate-900 dark:text-white">{members ? 'Only people you invite' : 'Anyone with the link'}</p>
         <p className="mt-0.5 text-slate-600 dark:text-slate-300">
           {/* The count is everyone with access, the owner among them. */}

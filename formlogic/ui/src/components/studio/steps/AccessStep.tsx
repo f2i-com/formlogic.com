@@ -513,7 +513,11 @@ function PermissionCard({
 
 // ── People & invites ─────────────────────────────────────────────────────────
 
-function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
+/**
+ * The people who can use the app and the invitations out to others. Also the Members section of a
+ * SoftN app's own page (components/apps/SoftnMembers), which says where "Advanced" returns to.
+ */
+export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: App; roles: AppRole[]; returnLabel?: string }) {
   // The server refuses to invite into, or assign, the Owner role
   // ("Cannot invite users to the Owner role" / "Cannot assign the Owner role"), so
   // offering it here is a choice that can only ever fail.
@@ -645,7 +649,7 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => navigate(`/apps/${app.id}/users`, { state: returnToState(location.pathname, 'App Studio') })}
+              onClick={() => navigate(`/apps/${app.id}/users`, { state: returnToState(location.pathname, returnLabel) })}
               title="Suspend members, search the full list and review invitation expiry"
             >
               Advanced
@@ -842,7 +846,12 @@ function PeopleView({ app, roles }: { app: App; roles: AppRole[] }) {
 
 // ── Sign-up ──────────────────────────────────────────────────────────────────
 
-function SignupView({ app, roles, onReloadApp }: { app: App; roles: AppRole[]; onReloadApp: () => Promise<void> }) {
+/**
+ * How people join the app, and its link to share. Laid out by the width of a `@container/studio`
+ * around it. `peopleName` is what the page calls the list of members it stands beside: App
+ * Studio's tab by default, "the list above" where the list is drawn above it.
+ */
+export function SignupView({ app, roles, onReloadApp, peopleName = 'People & invites' }: { app: App; roles: AppRole[]; onReloadApp: () => Promise<void>; peopleName?: string }) {
   const updateApp = useAppStore((s) => s.updateApp);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -915,7 +924,7 @@ function SignupView({ app, roles, onReloadApp }: { app: App; roles: AppRole[]; o
             label="Require approval"
             description={
               app.settings?.allowSelfRegistration === true
-                ? "New members wait as 'pending' until you approve them in People & invites"
+                ? `New members wait as 'pending' until you approve them in ${peopleName}`
                 : 'Applies once self-registration is on — invited people never need approval'
             }
             checked={app.settings?.requireApproval === true}
@@ -962,8 +971,7 @@ function SignupView({ app, roles, onReloadApp }: { app: App; roles: AppRole[]; o
             approval first told invite-only apps that anyone with the link could join. */}
         {app.settings?.allowSelfRegistration === true && app.settings?.requireApproval === true ? (
           <div className="mt-4 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800 dark:bg-amber-400/10 dark:text-amber-200">
-            <span className="font-bold">Approval is on.</span> People who join with this link wait in
-            People &amp; invites until you approve them.
+            <span className="font-bold">Approval is on.</span> People who join with this link wait in {peopleName} until you approve them.
           </div>
         ) : app.settings?.allowSelfRegistration === true ? (
           <div className="mt-4 rounded-xl bg-emerald-50 p-3 text-xs leading-5 text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200">
@@ -972,7 +980,7 @@ function SignupView({ app, roles, onReloadApp }: { app: App; roles: AppRole[]; o
         ) : (
           /* Self-registration is off, so nobody joins by link whatever "Require approval" says. */
           <div className="mt-4 rounded-xl bg-gray-50 p-3 text-xs leading-5 text-gray-600 dark:bg-white/[0.04] dark:text-slate-300">
-            <span className="font-bold">Invite-only.</span> Only people you invite (People &amp; invites) can access the app.
+            <span className="font-bold">Invite-only.</span> Only people you invite ({peopleName}) can access the app.
           </div>
         )}
         {app.status !== 'published' && (
