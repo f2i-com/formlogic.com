@@ -27,7 +27,7 @@ export const BINDING_MODE_COPY: Record<FlowBindingMode, ModeCopy> = {
   },
   sync: {
     label: 'Wait for the result',
-    consequence: 'The event waits for this automation to finish before continuing. Slower, but the result is available immediately.',
+    consequence: 'The event waits for this flow to finish before continuing. Slower, but the result is available immediately.',
   },
   background: {
     label: 'Run in the background',
@@ -35,7 +35,7 @@ export const BINDING_MODE_COPY: Record<FlowBindingMode, ModeCopy> = {
   },
   manual: {
     label: 'Paused — only run when I ask',
-    consequence: 'This automation will NOT run when the event happens. Nothing is triggered until you run it yourself.',
+    consequence: 'This flow will not run when the event happens. Nothing is triggered until you run it yourself.',
     rowPrefix: 'Paused',
   },
 };

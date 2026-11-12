@@ -194,10 +194,10 @@ function ChipRow({ mode, hints = EVENT_DATA_HINTS, onInsert }: { mode: Reference
           type="button"
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => activate(h)}
-          title="Insert at cursor (or copy)"
-          className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600 hover:bg-primary-100 hover:text-primary-700 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-primary-500/20 dark:hover:text-primary-200"
+          title="Press to put it in the field you are typing in, or to copy it"
+          className="h-6 max-w-full cursor-pointer truncate rounded bg-gray-100 px-1.5 font-mono text-[11px] text-gray-700 hover:bg-primary-100 hover:text-primary-700 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-primary-500/20 dark:hover:text-primary-200 max-sm:h-8"
         >
-          {flash?.h === h ? (flash.kind === 'inserted' ? 'inserted!' : 'copied!') : h}
+          {flash?.h === h ? (flash.kind === 'inserted' ? 'inserted' : 'copied') : h}
         </button>
       ))}
     </div>
@@ -379,7 +379,7 @@ export function BindingEditor({
 
   const save = async () => {
     if (!draft.flow) {
-      toast.error('Pick an automation for this trigger');
+      toast.error('Pick a flow for this trigger');
       return;
     }
     if ((workspaceFormOnly || draft.event === 'form.submitted') && formOptions.length > 0 && draft.formId.trim() === '') {
@@ -404,8 +404,12 @@ export function BindingEditor({
   };
 
   return (
-    <div className="rounded-xl border border-gray-200/80 p-4 dark:border-slate-700/60 space-y-3">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+    // @container/binding: this editor stands in the app's wide Deploy panel and in the 384 px
+    // Triggers panel beside the canvas alike. Its fields sit side by side by the room the editor
+    // itself has: by the screen's width they were three 100 px selects in the narrow panel, each
+    // cut to "form.sub", "Ticket fo", "Run stra".
+    <div className="@container/binding rounded-xl border border-gray-200/80 p-3 dark:border-slate-700/60 space-y-3">
+      <div className={cn('grid grid-cols-1 gap-3', lockFlow ? '@xl/binding:grid-cols-2' : '@xl/binding:grid-cols-3')}>
         <div>
           <label className={LABEL_CLS}>Event</label>
           {workspaceFormOnly ? (
@@ -424,18 +428,21 @@ export function BindingEditor({
             />
           )}
         </div>
-        <div>
-          <label className={LABEL_CLS}>Flow</label>
-          <select
-            value={draft.flow}
-            onChange={(e) => patch({ flow: e.target.value })}
-            disabled={lockFlow}
-            aria-label="Automation this trigger runs"
-            className={cn(INPUT_CLS, 'cursor-pointer', lockFlow && 'cursor-not-allowed opacity-70')}
-          >
-            {flows.map((f) => <option key={f.id} value={f.slug}>{f.name} ({f.slug})</option>)}
-          </select>
-        </div>
+        {/* Where the trigger can only run the flow being edited (its own Triggers panel), a
+            greyed-out list of one flow says nothing: the choice is left out. */}
+        {!lockFlow && (
+          <div>
+            <label className={LABEL_CLS}>Flow</label>
+            <select
+              value={draft.flow}
+              onChange={(e) => patch({ flow: e.target.value })}
+              aria-label="Flow this trigger runs"
+              className={cn(INPUT_CLS, 'cursor-pointer')}
+            >
+              {flows.map((f) => <option key={f.id} value={f.slug}>{f.name} ({f.slug})</option>)}
+            </select>
+          </div>
+        )}
         <div>
           <label className={LABEL_CLS}>When it runs</label>
           <select value={draft.mode} onChange={(e) => patch({ mode: e.target.value as FlowBindingMode })} aria-label="When this trigger runs" className={INPUT_CLS + ' cursor-pointer'}>
@@ -511,9 +518,9 @@ export function BindingEditor({
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr,8rem]">
+      <div className="grid grid-cols-1 gap-3 @md/binding:grid-cols-[1fr_8rem]">
         <div>
-          <label className={LABEL_CLS}>Condition (sandboxed boolean over <span className="font-mono">event</span>; optional)</label>
+          <label className={LABEL_CLS}>Condition (optional, a true-or-false expression over <span className="font-mono">event</span>)</label>
           <input
             ref={conditionInputRef}
             value={draft.conditionExpr}
@@ -539,9 +546,9 @@ export function BindingEditor({
       </div>
 
       <div>
-        <div className="mb-1.5 flex items-center justify-between">
-          <span className={LABEL_CLS + ' mb-0'}>What this trigger passes to the automation</span>
-          <Button variant="ghost" size="sm" onClick={() => patch({ inputRows: [...draft.inputRows, { id: generateId(), key: '', value: '' }] })} leftIcon={<Plus className="h-3.5 w-3.5" />}>
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <span className={LABEL_CLS + ' mb-0'}>What this trigger passes to the flow</span>
+          <Button variant="ghost" size="sm" onClick={() => patch({ inputRows: [...draft.inputRows, { id: generateId(), key: '', value: '' }] })} leftIcon={<Plus className="h-3.5 w-3.5" />} className="flex-none whitespace-nowrap px-2">
             Add input
           </Button>
         </div>
@@ -557,15 +564,15 @@ export function BindingEditor({
             const jsonKey = `input:${row.id}`;
             return (
               <div key={row.id}>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <input
                     value={row.key}
                     onChange={(e) => patch({ inputRows: draft.inputRows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)) })}
                     placeholder="callerPhone"
                     aria-label={`Input name ${i + 1}`}
-                    className={MONO_INPUT_CLS + ' max-w-[12rem]'}
+                    className={MONO_INPUT_CLS + ' min-w-0 max-w-[12rem] flex-[2]'}
                   />
-                  <span className="text-xs text-gray-400">&lt;-</span>
+                  <span className="flex-none text-xs text-gray-400" aria-hidden="true">=</span>
                   <input
                     onFocus={(e) => { activeInputRowRef.current = e.currentTarget; }}
                     onBlur={(e) => validateJson(jsonKey, e.currentTarget.value)}
@@ -573,9 +580,9 @@ export function BindingEditor({
                     onChange={(e) => patch({ inputRows: draft.inputRows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)) })}
                     placeholder="$event.data.from"
                     aria-label={`Input selector ${i + 1}`}
-                    className={MONO_INPUT_CLS}
+                    className={MONO_INPUT_CLS + ' min-w-0 flex-[3]'}
                   />
-                  <Button variant="ghost" size="sm" onClick={() => patch({ inputRows: draft.inputRows.filter((_, j) => j !== i) })} aria-label={`Remove input ${i + 1}`}>
+                  <Button variant="ghost" size="sm" onClick={() => patch({ inputRows: draft.inputRows.filter((_, j) => j !== i) })} aria-label={`Remove input ${i + 1}`} className="flex-none px-2">
                     <Trash2 className="h-3.5 w-3.5 text-gray-400 hover:text-red-500" />
                   </Button>
                 </div>
@@ -598,21 +605,22 @@ export function BindingEditor({
       </div>
 
       <div>
-        <div className="mb-1.5 flex items-center justify-between">
-          <span className={LABEL_CLS + ' mb-0'}>Then do this — in order, after the automation succeeds</span>
-          <Button variant="ghost" size="sm" onClick={() => patch({ actions: [...draft.actions, { type: 'formlogic.toast', message: '' }] })} leftIcon={<Plus className="h-3.5 w-3.5" />}>
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <span className={LABEL_CLS + ' mb-0'}>Then do this, in order, after the flow succeeds</span>
+          <Button variant="ghost" size="sm" onClick={() => patch({ actions: [...draft.actions, { type: 'formlogic.toast', message: '' }] })} leftIcon={<Plus className="h-3.5 w-3.5" />} className="flex-none whitespace-nowrap px-2">
             Add action
           </Button>
         </div>
         <div className="space-y-2">
           {draft.actions.map((action, i) => (
             <div key={i} className="rounded-lg border border-gray-200 p-2.5 dark:border-slate-700 space-y-2">
-              <div className="flex items-center gap-2">
+              {/* What to do and its bin on one line; "only when" beside them with room, under them without. */}
+              <div className="flex flex-wrap items-center gap-2">
                 <select
                   value={action.type}
                   onChange={(e) => patchAction(i, { type: e.target.value as FlowOutputActionType })}
                   aria-label={`Action ${i + 1} type`}
-                  className={INPUT_CLS + ' max-w-[16rem] cursor-pointer text-xs'}
+                  className={INPUT_CLS + ' min-w-0 flex-1 basis-40 cursor-pointer text-xs @xl/binding:max-w-[16rem]'}
                 >
                   {ACTION_TYPES.map((t) => <option key={t} value={t}>{outputActionLabel(t)}</option>)}
                 </select>
@@ -621,9 +629,9 @@ export function BindingEditor({
                   onChange={(e) => patchAction(i, { when: e.target.value || undefined })}
                   placeholder="only when… (e.g. $result.found)"
                   aria-label={`Action ${i + 1} condition`}
-                  className={MONO_INPUT_CLS}
+                  className={MONO_INPUT_CLS + ' order-last min-w-0 basis-full @xl/binding:order-none @xl/binding:flex-1 @xl/binding:basis-40'}
                 />
-                <Button variant="ghost" size="sm" onClick={() => patch({ actions: draft.actions.filter((_, j) => j !== i) })} aria-label={`Remove action ${i + 1}`}>
+                <Button variant="ghost" size="sm" onClick={() => patch({ actions: draft.actions.filter((_, j) => j !== i) })} aria-label={`Remove action ${i + 1}`} className="flex-none px-2">
                   <Trash2 className="h-3.5 w-3.5 text-gray-400 hover:text-red-500" />
                 </Button>
               </div>
@@ -631,12 +639,12 @@ export function BindingEditor({
                 {OUTPUT_ACTION_COPY[action.type]?.description}
               </p>
               {(action.type === 'formlogic.submitResponse' || action.type === 'formlogic.updateResponse') && (
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2 @md/binding:grid-cols-2">
                   <input value={action.form ?? ''} onChange={(e) => patchAction(i, { form: e.target.value || undefined })} placeholder="form id" aria-label={`Action ${i + 1} form`} className={MONO_INPUT_CLS} />
                   {action.type === 'formlogic.updateResponse' && (
                     <input value={action.responseId ?? ''} onChange={(e) => patchAction(i, { responseId: e.target.value || undefined })} placeholder="responseId ($result.record.id)" aria-label={`Action ${i + 1} responseId`} className={MONO_INPUT_CLS} />
                   )}
-                  <div className="sm:col-span-2">
+                  <div className="@md/binding:col-span-2">
                     <input
                       value={typeof action.answers === 'string' ? action.answers : cellToString(action.answers)}
                       onBlur={(e) => validateJson(`action:${i}:answers`, e.currentTarget.value)}
@@ -659,7 +667,7 @@ export function BindingEditor({
                 const commands = mergeKnownConnectorCommands(action.connectorId, grantCommands, availableConnectorIds);
                 const commandListId = `flow-action-commands-${commandListPrefix}-${i}`;
                 return (
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-2 @xl/binding:grid-cols-3">
                     <input value={action.connectorId ?? ''} onChange={(e) => patchAction(i, { connectorId: e.target.value || undefined })} placeholder={hasAokieConnector ? 'connectorId (aokie)' : 'connectorId'} aria-label={`Action ${i + 1} connector`} className={MONO_INPUT_CLS} />
                     <input value={action.command ?? ''} list={commands.length > 0 ? commandListId : undefined} onChange={(e) => patchAction(i, { command: e.target.value || undefined })} placeholder={hasAokieConnector ? 'command (sms.send)' : 'command'} aria-label={`Action ${i + 1} command`} className={MONO_INPUT_CLS} />
                     {commands.length > 0 && (
@@ -694,14 +702,21 @@ export function BindingEditor({
         </div>
       </div>
 
-      <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex items-center justify-between border-t border-gray-200/80 bg-white/95 px-4 py-3 dark:border-slate-700/60 dark:bg-slate-900/95">
-        <div className="flex items-center gap-3">
+      {/* A trigger not saved yet has nothing to delete: its bin only throws the draft away, so it
+          says "Cancel" in words. A saved one keeps its bin. */}
+      <div className="sticky bottom-0 z-10 -mx-3 -mb-3 flex flex-wrap items-center justify-between gap-2 rounded-b-xl border-t border-gray-200/80 bg-white px-3 py-2.5 dark:border-slate-700/60 dark:bg-slate-900">
+        <div className="flex items-center gap-2">
           <Switch checked={draft.enabled} onChange={(v) => patch({ enabled: v })} label="Enabled" size="sm" />
-          <Button variant="ghost" size="sm" onClick={onDelete} aria-label="Delete trigger">
-            <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
-          </Button>
+          {binding && (
+            <Button variant="ghost" size="sm" onClick={onDelete} aria-label="Delete trigger" title="Delete trigger" className="px-2 hover:text-red-600 dark:hover:text-red-400">
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
         </div>
-        <Button size="sm" onClick={save} isLoading={saving} disabled={saving}>{binding ? 'Save trigger' : 'Add trigger'}</Button>
+        <div className="flex items-center gap-2">
+          {!binding && <Button variant="ghost" size="sm" onClick={onDelete}>Cancel</Button>}
+          <Button size="sm" onClick={save} isLoading={saving} disabled={saving}>{binding ? 'Save trigger' : 'Add trigger'}</Button>
+        </div>
       </div>
     </div>
   );

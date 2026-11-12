@@ -135,7 +135,7 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
   );
   const relayBlock = useMemo(() => {
     if (location !== 'desktop' || api.isDemoMode()) return null;
-    if (contributed && compiledLanguages === null) return "Checking what this flow's extension nodes run…";
+    if (contributed && compiledLanguages === null) return "Checking what this flow's extension steps run…";
     return relayLanguageBlock(relayLanguages, computers?.list ?? null, desktopInstanceId, computers?.checkedAt ?? 0);
   }, [location, contributed, compiledLanguages, relayLanguages, computers, desktopInstanceId]);
 
@@ -316,7 +316,7 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
   const hasTimeline = runLog.order.length > 0;
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col border-l border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900">
+    <div className="flex h-full min-h-0 w-full flex-col bg-white dark:bg-slate-900">
       <PanelHeader
         icon={PlayCircle}
         title="Test run"
@@ -328,7 +328,8 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
         )}
       />
 
-      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
+      {/* pb-24: the result scrolls clear of the chat button fixed at the window's corner. */}
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-3 pb-24 space-y-4">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-slate-300" htmlFor="flow-test-inputs">
             Inputs (JSON) — available as <span className="font-mono">$inputs</span> / <span className="font-mono">inputs</span>
@@ -422,11 +423,11 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
               </p>
             ) : cloudError.kind === 'unsupported' ? (
               <p>
-                FormLogic Cloud can't run this flow yet — unsupported node{cloudError.nodes && cloudError.nodes.length === 1 ? '' : 's'}
+                FormLogic Cloud can't run this flow yet — unsupported step{cloudError.nodes && cloudError.nodes.length === 1 ? '' : 's'}
                 {cloudError.nodes && cloudError.nodes.length > 0 ? (
                   <>: <span className="font-medium">{cloudError.nodes.join(', ')}</span></>
                 ) : null}
-                . Switch to Auto or Desktop to run it now, or change those nodes.
+                . Switch to Auto or Desktop to run it now, or change those steps.
               </p>
             ) : (
               <p>{cloudError.message}</p>
@@ -482,7 +483,7 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
               {runLocation && (
                 <span
                   data-testid="run-location-badge"
-                  className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:border-indigo-500/25 dark:bg-indigo-500/10 dark:text-indigo-300"
+                  className="inline-flex items-center rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-[10px] font-medium text-primary-700 dark:border-primary-500/25 dark:bg-primary-500/10 dark:text-primary-300"
                 >
                   {runLocation === 'cloud'
                     ? 'Ran on FormLogic Cloud'
@@ -491,13 +492,13 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
                       : 'Ran in this browser'}
                 </span>
               )}
-              <span className="text-[11px] text-gray-400 dark:text-slate-500">{runLocation === 'desktop' && outcome.nodesExecuted === 0
+              <span className="text-[11px] tabular-nums text-gray-500 dark:text-slate-400">{runLocation === 'desktop' && outcome.nodesExecuted === 0
                 ? 'Completed on linked computer'
-                : `${outcome.nodesExecuted} node${outcome.nodesExecuted === 1 ? '' : 's'} executed`}</span>
+                : `${outcome.nodesExecuted} step${outcome.nodesExecuted === 1 ? '' : 's'} ran`}</span>
             </div>
             {outcome.error && (
               <p className="text-xs text-red-600 dark:text-red-400">
-                {outcome.error.code}: {outcome.error.message}{outcome.error.nodeId ? ` (node '${outcome.error.nodeId}')` : ''}
+                {outcome.error.code}: {outcome.error.message}{outcome.error.nodeId ? ` (step '${outcome.error.nodeId}')` : ''}
               </p>
             )}
             <div>

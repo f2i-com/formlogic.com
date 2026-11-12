@@ -11,19 +11,28 @@ import {
 import type { WorkflowGraph } from '../../../types/flows';
 
 describe('resolveEditorLayout', () => {
-  it('keeps properties inline only when the palette rail and canvas floor still fit', () => {
+  it('keeps a step\'s properties beside the canvas down to the least canvas a side panel may leave', () => {
     expect(resolveEditorLayout({
-      editorWidth: FLOW_LAYOUT.PROPS_W + FLOW_LAYOUT.PALETTE_RAIL_W + FLOW_LAYOUT.CANVAS_FLOOR,
+      editorWidth: FLOW_LAYOUT.PROPS_W + FLOW_LAYOUT.SIDE_CANVAS_FLOOR,
       selectedNode: true,
     }).properties).toBe('inline');
 
     expect(resolveEditorLayout({
-      editorWidth: FLOW_LAYOUT.PROPS_W + FLOW_LAYOUT.PALETTE_RAIL_W + FLOW_LAYOUT.CANVAS_FLOOR - 1,
+      editorWidth: FLOW_LAYOUT.PROPS_W + FLOW_LAYOUT.SIDE_CANVAS_FLOOR - 1,
       selectedNode: true,
     }).properties).toBe('sheet');
   });
 
-  it('degrades the palette from expanded to rail to hidden around the canvas floor', () => {
+  it('never turns the properties into a sheet on a desktop window, sidebar open or not', () => {
+    // The editor's width at 1024, 1280 and 1440 wide with the sidebar open (256), and at 1024
+    // with it collapsed (64). At 1024 with the sidebar this used to be a sheet over the window.
+    for (const editorWidth of [768, 1024, 1184, 960]) {
+      expect(resolveEditorLayout({ editorWidth, selectedNode: true }).properties).toBe('inline');
+      expect(resolveEditorLayout({ editorWidth, rightPanelOpen: true }).rightPanel).toBe('rail');
+    }
+  });
+
+  it('degrades the palette from expanded to rail to hidden around the canvas floors', () => {
     expect(resolveEditorLayout({
       editorWidth: FLOW_LAYOUT.PALETTE_W + FLOW_LAYOUT.CANVAS_FLOOR,
       paletteCollapsedPreference: false,
@@ -35,79 +44,64 @@ describe('resolveEditorLayout', () => {
     }).palette).toBe('rail');
 
     expect(resolveEditorLayout({
-      editorWidth: FLOW_LAYOUT.PALETTE_RAIL_W + FLOW_LAYOUT.CANVAS_FLOOR - 1,
+      editorWidth: FLOW_LAYOUT.PALETTE_RAIL_W + FLOW_LAYOUT.RAIL_CANVAS_FLOOR - 1,
       paletteCollapsedPreference: false,
     }).palette).toBe('hidden');
   });
 
-  it('layers palette and library collapse preferences under forced space tiers', () => {
+  it('has the palette give way to what stands at the right, never the other way round', () => {
+    const fitsBoth = FLOW_LAYOUT.PALETTE_W + FLOW_LAYOUT.CANVAS_FLOOR + FLOW_LAYOUT.PROPS_W;
+    expect(resolveEditorLayout({ editorWidth: fitsBoth, selectedNode: true })).toMatchObject({ palette: 'inline', properties: 'inline' });
+    expect(resolveEditorLayout({ editorWidth: fitsBoth - 1, selectedNode: true })).toMatchObject({ palette: 'rail', properties: 'inline' });
+    // The wider panel (Triggers, Run history, a test run) takes more from the palette.
+    expect(resolveEditorLayout({ editorWidth: fitsBoth, rightPanelOpen: true })).toMatchObject({ palette: 'rail', rightPanel: 'rail' });
+    // 1024 wide with the sidebar open: the panel stays, the palette is out of the way.
+    expect(resolveEditorLayout({ editorWidth: 768, rightPanelOpen: true })).toMatchObject({ palette: 'hidden', rightPanel: 'rail' });
+    expect(resolveEditorLayout({ editorWidth: 768, selectedNode: true })).toMatchObject({ palette: 'rail', properties: 'inline' });
+  });
+
+  it('counts one thing at the right: a selected step\'s properties cover an open panel', () => {
+    const width = FLOW_LAYOUT.PALETTE_W + FLOW_LAYOUT.CANVAS_FLOOR + FLOW_LAYOUT.PROPS_W;
+    // With both open at once the palette would have to make room for 320 + 384; it makes room
+    // for the properties alone, because they stand in the panel's place.
+    expect(resolveEditorLayout({ editorWidth: width, selectedNode: true, rightPanelOpen: true }).palette).toBe('inline');
+  });
+
+  it('layers the palette collapse preference under forced space tiers', () => {
     expect(resolveEditorLayout({
       editorWidth: FLOW_LAYOUT.PALETTE_W + FLOW_LAYOUT.CANVAS_FLOOR + 80,
       paletteCollapsedPreference: true,
     }).palette).toBe('rail');
-
-    expect(resolveEditorLayout({
-      workspaceWidth: FLOW_LAYOUT.LIBRARY_W + FLOW_LAYOUT.CANVAS_FLOOR + FLOW_LAYOUT.PALETTE_RAIL_W,
-      selectedFlow: true,
-      libraryCollapsedPreference: false,
-    }).library).toBe('expanded');
-
-    expect(resolveEditorLayout({
-      workspaceWidth: FLOW_LAYOUT.LIBRARY_W + FLOW_LAYOUT.CANVAS_FLOOR + FLOW_LAYOUT.PALETTE_RAIL_W - 1,
-      selectedFlow: true,
-      libraryCollapsedPreference: false,
-    }).library).toBe('rail');
-
-    expect(resolveEditorLayout({
-      workspaceWidth: FLOW_LAYOUT.LIBRARY_W + FLOW_LAYOUT.CANVAS_FLOOR + FLOW_LAYOUT.PALETTE_RAIL_W + 120,
-      selectedFlow: true,
-      libraryCollapsedPreference: true,
-    }).library).toBe('rail');
   });
 
-  it('moves the right panel from inline rail to drawer when the measured workspace is tight', () => {
+  it('moves the right panel from inline rail to drawer when the measured editor is tight', () => {
     expect(resolveEditorLayout({
-      workspaceWidth: FLOW_LAYOUT.LIBRARY_W + FLOW_LAYOUT.CANVAS_FLOOR + FLOW_LAYOUT.PALETTE_RAIL_W + FLOW_LAYOUT.RIGHT_PANEL_W,
-      selectedFlow: true,
+      editorWidth: FLOW_LAYOUT.SIDE_CANVAS_FLOOR + FLOW_LAYOUT.RIGHT_PANEL_W,
       rightPanelOpen: true,
     }).rightPanel).toBe('rail');
 
     expect(resolveEditorLayout({
-      workspaceWidth: FLOW_LAYOUT.LIBRARY_W + FLOW_LAYOUT.CANVAS_FLOOR + FLOW_LAYOUT.PALETTE_RAIL_W + FLOW_LAYOUT.RIGHT_PANEL_W - 1,
-      selectedFlow: true,
+      editorWidth: FLOW_LAYOUT.SIDE_CANVAS_FLOOR + FLOW_LAYOUT.RIGHT_PANEL_W - 1,
       rightPanelOpen: true,
     }).rightPanel).toBe('drawer');
   });
 
-  it('sizes the right panel with zero library width when the workspace renders none', () => {
-    expect(resolveEditorLayout({
-      workspaceWidth: FLOW_LAYOUT.CANVAS_FLOOR + FLOW_LAYOUT.PALETTE_RAIL_W + FLOW_LAYOUT.RIGHT_PANEL_W,
-      selectedFlow: true,
-      rightPanelOpen: true,
-      libraryHidden: true,
-    }).rightPanel).toBe('rail');
-
-    expect(resolveEditorLayout({
-      workspaceWidth: FLOW_LAYOUT.CANVAS_FLOOR + FLOW_LAYOUT.PALETTE_RAIL_W + FLOW_LAYOUT.RIGHT_PANEL_W - 1,
-      selectedFlow: true,
-      rightPanelOpen: true,
-      libraryHidden: true,
-    }).rightPanel).toBe('drawer');
+  it('gives a drawer or a sheet no room: the palette keeps its place under them', () => {
+    // A tablet held upright with the sidebar open (768 - 256).
+    expect(resolveEditorLayout({ editorWidth: 512, selectedNode: true })).toMatchObject({ palette: 'rail', properties: 'sheet' });
+    expect(resolveEditorLayout({ editorWidth: 512, rightPanelOpen: true })).toMatchObject({ palette: 'rail', rightPanel: 'drawer' });
   });
 
   it('preserves the sub-md mobile behavior and first-paint legacy fallback', () => {
     expect(resolveEditorLayout({
       belowMd: true,
       editorWidth: 1200,
-      workspaceWidth: 1600,
       selectedNode: true,
-      selectedFlow: true,
       rightPanelOpen: true,
     })).toMatchObject({ palette: 'hidden', properties: 'sheet', rightPanel: 'drawer' });
 
     expect(resolveEditorLayout({
       editorWidth: null,
-      workspaceWidth: null,
       legacyInline: true,
       selectedNode: true,
       rightPanelOpen: true,
@@ -115,24 +109,10 @@ describe('resolveEditorLayout', () => {
 
     expect(resolveEditorLayout({
       editorWidth: null,
-      workspaceWidth: null,
       legacyInline: false,
       selectedNode: true,
       rightPanelOpen: true,
     })).toMatchObject({ palette: 'hidden', properties: 'sheet', rightPanel: 'drawer' });
-  });
-
-  it('degrades the toolbar by MEASURED editor width, not viewport breakpoints', () => {
-    // Wide viewport but a docked right panel squeezing the editor column → compact labels.
-    expect(resolveEditorLayout({ editorWidth: 940, workspaceWidth: 1440 }).toolbar).toBe('full');
-    expect(resolveEditorLayout({ editorWidth: 939, workspaceWidth: 1440 }).toolbar).toBe('compact');
-    expect(resolveEditorLayout({ editorWidth: 560, workspaceWidth: 1440 }).toolbar).toBe('compact');
-    expect(resolveEditorLayout({ editorWidth: 559, workspaceWidth: 1440 }).toolbar).toBe('tiny');
-    // Below md never renders full labels even if a stale wide measurement is around.
-    expect(resolveEditorLayout({ belowMd: true, editorWidth: 1200 }).toolbar).toBe('compact');
-    // First paint (no measurement): legacy breakpoint fallback.
-    expect(resolveEditorLayout({ editorWidth: null, legacyInline: true }).toolbar).toBe('full');
-    expect(resolveEditorLayout({ editorWidth: null, legacyInline: false }).toolbar).toBe('compact');
   });
 });
 

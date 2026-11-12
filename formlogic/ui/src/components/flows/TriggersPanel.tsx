@@ -18,7 +18,7 @@ import { Switch } from '../ui/Switch';
 import { PanelHeader } from './PanelHeader';
 import { BindingEditor, type BindingDraft } from './bindings/BindingEditor';
 import { bindingToPayload } from './bindings/bindingPayload';
-import { FLOW_EVENT_CATALOG } from './flowEventCatalog';
+import { flowEventLabel } from './flowEventCatalog';
 import { EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from './editor/nodeCatalog';
 import type { FlowFormOption } from './editor/NodeProperties';
 import type { FlowBinding, FlowDefinition } from '../../types/flows';
@@ -37,12 +37,7 @@ interface TriggersPanelProps {
   onRefresh: () => Promise<void>;
 }
 
-const CHANGE_HINT = 'A connected Desktop picks up binding changes within about a minute.';
-
-function eventLabel(event: string): string {
-  const entry = FLOW_EVENT_CATALOG.find((candidate) => candidate.kind === 'event' && candidate.event === event);
-  return entry?.label ?? event.split('.').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
-}
+const CHANGE_HINT = 'A connected Desktop picks up a changed trigger within about a minute.';
 
 // (conditionSummary retired — triggerRunSummary in bindings/triggerVocabulary composes the
 // mode and the condition into one sentence, shared with the editor's "When it runs" copy.)
@@ -174,7 +169,7 @@ export function TriggersPanel({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
       <PanelHeader
         icon={Zap}
         title="Triggers"
@@ -185,10 +180,12 @@ export function TriggersPanel({
         )}
       />
 
-      <div className="scrollbar-thin min-h-0 flex-1 overflow-auto p-3">
+      {/* pb-24: the last trigger scrolls clear of the chat button fixed at the window's corner. */}
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-3 pb-24">
+        {/* A fact about workspace flows, not a warning: one muted line, no amber box. */}
         {isWorkspaceFlow && (
-          <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-            Workspace flows can only use form.submitted triggers here; connector/event triggers need an app-scoped flow.
+          <p className="mb-3 text-xs leading-5 text-gray-500 dark:text-slate-400">
+            A workspace flow's triggers are form submissions. To start a flow on an app's own events (a call, an SMS, a changed record), create the flow in that app.
           </p>
         )}
         {appReadOnly && (
@@ -203,7 +200,7 @@ export function TriggersPanel({
         )}
 
         {loading ? (
-          <p className="flex items-center gap-2 px-1 py-3 text-xs text-gray-400 dark:text-slate-500">
+          <p className="flex items-center gap-2 px-1 py-3 text-xs text-gray-500 dark:text-slate-400">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             Loading triggers...
           </p>
@@ -221,7 +218,7 @@ export function TriggersPanel({
                     <Zap className="h-3.5 w-3.5" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{eventLabel(binding.event)}</p>
+                    <p className={cn('truncate text-sm font-medium', binding.enabled ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-slate-400')}>{flowEventLabel(binding.event)}{!binding.enabled && ' (off)'}</p>
                     <p className="truncate font-mono text-[11px] text-gray-500 dark:text-slate-400">{binding.event}</p>
                     {/* One sentence about behaviour, from the SAME copy the editor's
                         "When it runs" select uses, so the row and the editor cannot
@@ -247,19 +244,20 @@ export function TriggersPanel({
                       </button>
                     )}
                   </div>
-                  <div className="flex flex-none items-center">
-                    <Button variant="ghost" size="iconOnly" disabled={appReadOnly} onClick={() => { setEditingId((id) => (id === binding.id ? null : binding.id)); setAdding(false); }} aria-label="Edit trigger">
+                  {/* The switch stands with the row's two buttons, without its word (the word was
+                      what did not fit beside the name in a panel this narrow, and gave the switch
+                      a row to itself): the name says "(off)" when it is off. */}
+                  <div className="flex flex-none items-center gap-0.5">
+                    <span className="mr-1 flex items-center max-sm:min-h-11" title={binding.enabled ? 'Enabled. Press to disable.' : 'Disabled. Press to enable.'}>
+                      <Switch checked={binding.enabled} onChange={(enabled) => void toggleEnabled(binding, enabled)} ariaLabel="Enabled" size="sm" disabled={appReadOnly} />
+                    </span>
+                    <Button variant="ghost" size="sm" disabled={appReadOnly} onClick={() => { setEditingId((id) => (id === binding.id ? null : binding.id)); setAdding(false); }} aria-label="Edit trigger" title="Edit trigger" aria-expanded={editingId === binding.id} className="h-8 w-8 px-0 max-sm:h-11 max-sm:w-11">
                       <Pencil className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="iconOnly" disabled={appReadOnly} onClick={() => setPendingDelete(binding)} aria-label="Delete trigger">
-                      <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
+                    <Button variant="ghost" size="sm" disabled={appReadOnly} onClick={() => setPendingDelete(binding)} aria-label="Delete trigger" title="Delete trigger" className="h-8 w-8 px-0 hover:text-red-600 dark:hover:text-red-400 max-sm:h-11 max-sm:w-11">
+                      <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
-                </div>
-                {/* The switch gets its own uncramped row (same pattern as the library's flow rows) —
-                    sharing the title row clipped its label in the rail/drawer widths. */}
-                <div className="mt-2">
-                  <Switch checked={binding.enabled} onChange={(enabled) => void toggleEnabled(binding, enabled)} label="Enabled" size="sm" disabled={appReadOnly} />
                 </div>
                 {!appReadOnly && editingId === binding.id && (
                   <div className="mt-3">
@@ -302,15 +300,17 @@ export function TriggersPanel({
               <LoadFailure
                 compact
                 className="mt-1"
-                title="We couldn't load this automation's triggers"
+                title="We couldn't load this flow's triggers"
                 message={loadError}
                 onRetry={() => { void onRefresh(); }}
               />
             )}
 
             {!loadError && bindings.length === 0 && !adding && (
-              <p className="px-1 py-3 text-xs text-gray-400 dark:text-slate-500">
-                No triggers yet. Add one so this flow runs itself — on a call, an SMS, or a form submission.
+              <p className="px-1 py-3 text-xs leading-5 text-gray-500 dark:text-slate-400">
+                {isWorkspaceFlow
+                  ? 'No triggers yet. Add one so this flow starts by itself when a form is submitted.'
+                  : 'No triggers yet. Add one so this flow starts by itself: on a call, an SMS, a form submission or a changed record.'}
               </p>
             )}
           </div>

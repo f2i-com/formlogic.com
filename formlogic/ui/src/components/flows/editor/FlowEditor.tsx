@@ -5,7 +5,7 @@
 // stored WorkflowGraph. Rendered keyed by flow id so switching flows remounts with fresh state.
 // Node capabilities are kept in sync on save (a storage_set/formlogic node auto-declares its
 // required capability) so an authored flow can actually execute.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ReactFlowProvider,
   addEdge,
@@ -17,7 +17,7 @@ import {
   type EdgeChange,
   type NodeChange,
 } from '@xyflow/react';
-import { ArrowLeft, Check, Loader2, PlayCircle, Plus, Redo2, RefreshCw, Save, Undo2, History, Zap } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, PlayCircle, Plus, Redo2, RefreshCw, Save, Undo2, History, X, Zap } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { usePersistentBoolean } from '../../../hooks/usePersistentBoolean';
 import { Button } from '../../ui/Button';
@@ -66,6 +66,13 @@ function nextNodeId(type: string, nodes: FlowRFNode[]): string {
 const BELOW_MD_QUERY = '(max-width: 767.98px)';
 const LEGACY_INLINE_QUERY = '(min-width: 1024px)';
 
+// Which of the bar's words stand, by the bar's own width (container queries on `flowbar`):
+// from 72rem everything is on one line with its words; from 56rem it is one line still, and the
+// words an icon can say give way; below 56rem the tools take a line of their own under the name,
+// where there is room for their words again, until 36rem, where one line of tools needs icons.
+const WORD_WIDE_OR_OWN_LINE = 'hidden @max-4xl/flowbar:inline @max-xl/flowbar:hidden @6xl/flowbar:inline';
+const WORD_ROOMY_OR_OWN_LINE = 'hidden @max-4xl/flowbar:inline @max-xl/flowbar:hidden @5xl/flowbar:inline';
+
 function mediaMatches(query: string, fallback: boolean): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return fallback;
   return window.matchMedia(query).matches;
@@ -82,7 +89,16 @@ interface FlowEditorProps {
   onToggleTriggers?: () => void;
   historyOpen: boolean;
   triggersOpen?: boolean;
+  testRunOpen?: boolean;
   triggerCount?: number;
+  /**
+   * The panel open at the right (Triggers, Run history or a test run). The editor places it:
+   * beside the canvas where there is room ('rail'), as a drawer over it where there is not.
+   * Only one thing stands at the right: while a step is selected its properties cover the panel,
+   * which stays as it was (a trigger half written, a run's result) until the step is let go.
+   */
+  sidePanel?: { title: string; render: (placed: 'rail' | 'drawer') => ReactNode } | null;
+  onCloseSidePanel?: () => void;
   /** The author's forms (form picker + field helpers in the properties panel). */
   forms?: FlowFormOption[];
   /** App/connector context — drives the context-aware palette + connector pickers (docs §4). */
@@ -131,7 +147,7 @@ async function sendGraph(onSave: FlowEditorProps['onSave'], snapshot: string): P
   }
 }
 
-function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory, onToggleTriggers, historyOpen, triggersOpen = false, triggerCount = 0, forms = [], context = EMPTY_FLOW_EDITOR_CONTEXT, nodeStatus, desktopPresence = EMPTY_DESKTOP_PRESENCE, bindings = [], scopeLabel, onExecutionLocationChange, cloudDisabledReason = null, cloudUnsupportedNodes = null }: FlowEditorProps) {
+function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory, onToggleTriggers, historyOpen, triggersOpen = false, testRunOpen = false, triggerCount = 0, sidePanel = null, onCloseSidePanel, forms = [], context = EMPTY_FLOW_EDITOR_CONTEXT, nodeStatus, desktopPresence = EMPTY_DESKTOP_PRESENCE, bindings = [], scopeLabel, onExecutionLocationChange, cloudDisabledReason = null, cloudUnsupportedNodes = null }: FlowEditorProps) {
   // Seed React Flow state once (the parent renders this keyed by flow.id, so a flow switch
   // remounts with a fresh initial graph). A lazy useState initializer runs exactly on mount.
   const [leftBehind] = useState(() => savesFromClosedEditors.get(flow.id) ?? null);
@@ -492,10 +508,12 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
 
   const selectedNode = selectedId ? nodes.find((n) => n.id === selectedId) ?? null : null;
   const selectedNodePresent = selectedNode !== null;
+  const sidePanelOpen = sidePanel !== null;
   const [belowMd, setBelowMd] = useState(() => mediaMatches(BELOW_MD_QUERY, false));
   const [editorLayout, setEditorLayout] = useState(() => resolveEditorLayout({
     editorWidth: null,
     selectedNode: false,
+    rightPanelOpen: sidePanelOpen,
     paletteCollapsedPreference: paletteCollapsed,
     belowMd: mediaMatches(BELOW_MD_QUERY, false),
     legacyInline: mediaMatches(LEGACY_INLINE_QUERY, true),
@@ -506,6 +524,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
     const next = resolveEditorLayout({
       editorWidth: width,
       selectedNode: selectedNodePresent,
+      rightPanelOpen: sidePanelOpen,
       paletteCollapsedPreference: paletteCollapsed,
       belowMd,
       legacyInline: mediaMatches(LEGACY_INLINE_QUERY, true),
@@ -513,7 +532,19 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
     if (sameResolvedEditorLayout(editorLayoutRef.current, next)) return;
     editorLayoutRef.current = next;
     setEditorLayout(next);
-  }, [belowMd, paletteCollapsed, selectedNodePresent]);
+  }, [belowMd, paletteCollapsed, selectedNodePresent, sidePanelOpen]);
+
+  // One thing at the right. A selected step's properties stand in the open panel's place; the
+  // panel's own button then shows it again by letting the step go, instead of closing a panel
+  // that cannot be seen. A panel that was not open is opened as before.
+  const pressPanel = useCallback((open: boolean, toggle?: () => void) => {
+    if (selectedId !== null) {
+      setSelectedId(null);
+      if (open) return;
+    }
+    toggle?.();
+  }, [selectedId]);
+  const panelShown = (open: boolean) => open && !selectedNodePresent;
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
@@ -543,6 +574,46 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
 
   if (editorLayout.palette === 'inline' && mobilePaletteOpen) setMobilePaletteOpen(false);
 
+  // A panel opening at the right takes its width from the canvas, and the step just selected
+  // can end up under it. When the canvas narrows, the selected step is brought back into view
+  // by moving the view (never the step, and never the zoom).
+  const selectedIdRef = useRef(selectedId);
+  useEffect(() => { selectedIdRef.current = selectedId; });
+  const keepSelectedInView = useCallback(() => {
+    const id = selectedIdRef.current;
+    const host = canvasHostRef.current;
+    const node = id ? reactFlow.getNode(id) : undefined;
+    if (!host || !node) return;
+    const { x, y, zoom } = reactFlow.getViewport();
+    const box = host.getBoundingClientRect();
+    const width = (node.measured?.width ?? 220) * zoom;
+    const height = (node.measured?.height ?? 80) * zoom;
+    const left = node.position.x * zoom + x;
+    const top = node.position.y * zoom + y;
+    const margin = 24;
+    let dx = 0;
+    let dy = 0;
+    if (left + width > box.width - margin) dx = box.width - margin - (left + width);
+    if (left + dx < margin) dx = margin - left;
+    if (top + height > box.height - margin) dy = box.height - margin - (top + height);
+    if (top + dy < margin) dy = margin - top;
+    if (dx !== 0 || dy !== 0) void reactFlow.setViewport({ x: x + dx, y: y + dy, zoom }, { duration: 200 });
+  }, [reactFlow]);
+  useEffect(() => {
+    const host = canvasHostRef.current;
+    if (!host || typeof ResizeObserver === 'undefined') return undefined;
+    let lastWidth = host.getBoundingClientRect().width;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width !== 'number' || Math.abs(width - lastWidth) < 1) return;
+      const narrowed = width < lastWidth;
+      lastWidth = width;
+      if (narrowed) keepSelectedInView();
+    });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [keepSelectedInView]);
+
   // Let node cards name a picked form by its title (not its UUID).
   const formsCtx = useMemo(
     () => ({ titleById: (id: string) => forms.find((f) => f.id === id)?.title }),
@@ -553,8 +624,9 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
   // $event, and any other node's output ($nodes.<id>). Surfaced as copyable chips in the panel.
   // Open-only variant of the Triggers toggle for the Trigger node's "Manage triggers" affordance
   // (a toggle would close an already-open panel, which reads as a broken link).
+  // It lets the step go too: the panel takes the place the Trigger's own properties stood in.
   const openTriggersPanel = useMemo(
-    () => (onToggleTriggers ? () => { if (!triggersOpen) onToggleTriggers(); } : undefined),
+    () => (onToggleTriggers ? () => { setSelectedId(null); if (!triggersOpen) onToggleTriggers(); } : undefined),
     [onToggleTriggers, triggersOpen],
   );
 
@@ -599,7 +671,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
               </p>
             </div>
             <Button size="sm" onClick={onOpenTestRun} aria-label="Test run" title="Test run" className="h-9 w-9 flex-none px-0"><PlayCircle className="h-4 w-4" /></Button>
-            <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} compact />
+            <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} words="hidden" />
             <Button
               size="sm"
               onClick={() => void save()}
@@ -616,7 +688,7 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
 
           <div className="space-y-1 border-t border-gray-100 px-2 py-2 dark:border-slate-800" aria-label="Flow editor actions">
             <div className="grid grid-cols-3 gap-1.5">
-              <Button variant="outline" size="sm" onClick={() => setMobilePaletteOpen(true)} leftIcon={<Plus className="h-4 w-4" />} className="min-h-11 px-2" aria-label="Add node">Add step</Button>
+              <Button variant="outline" size="sm" onClick={() => setMobilePaletteOpen(true)} leftIcon={<Plus className="h-4 w-4" />} className="min-h-11 px-2" aria-label="Add step">Add step</Button>
               <Button variant={triggersOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleTriggers} disabled={!onToggleTriggers} leftIcon={<Zap className="h-4 w-4" />} aria-pressed={triggersOpen} aria-label="Triggers" className="min-h-11 px-2">Triggers <span className="text-xs opacity-60">{triggerCount}</span></Button>
               <Button variant={historyOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleHistory} leftIcon={<History className="h-4 w-4" />} aria-pressed={historyOpen} aria-label="History" className="min-h-11 px-2">History</Button>
             </div>
@@ -630,33 +702,42 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
           </div>
         </div>
       ) : (
-      <div className="border-b border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex min-h-18 items-center gap-3 px-4 py-3">
+      // One bar. It follows the room it really has (its own width: the sidebar and a docked chat
+      // take their share of the window): with room, everything stands on one line with its
+      // words; with less, the words that an icon can say give way; narrower still, the tools
+      // take a second line under the name. No control is ever dropped.
+      <div className="@container/flowbar border-b border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-2 @4xl/flowbar:flex-nowrap">
           {onBack && <button type="button" onClick={() => void leave()} aria-label="Back to flows" title="Back to flows"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"><ArrowLeft className="h-4 w-4" /></button>}
-          <div className="min-w-0 flex-1">
-            <h2 className="truncate text-base font-semibold tracking-tight text-gray-900 dark:text-white" title={flow.name}>{flow.name}</h2>
-            <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-slate-400">{scopeLabel ?? (flow.appId ? 'App flow' : 'Workspace flow')} · {nodes.length} step{nodes.length === 1 ? '' : 's'}</p>
+            className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-gray-200 text-gray-500 transition-colors hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"><ArrowLeft className="h-4 w-4" /></button>}
+          <div className="min-w-0 flex-1 basis-32">
+            <h2 className="truncate text-sm font-semibold leading-5 text-gray-900 dark:text-white" title={flow.name}>{flow.name}</h2>
+            <p className="truncate text-xs leading-4 text-gray-500 dark:text-slate-400">{scopeLabel ?? (flow.appId ? 'App flow' : 'Workspace flow')} · {nodes.length} step{nodes.length === 1 ? '' : 's'}</p>
           </div>
-          <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} compact={editorLayout.toolbar !== 'full'} />
-          <Button variant="outline" size="sm" onClick={() => void save()} isLoading={saving} disabled={!dirty && !saving} leftIcon={<Save className="h-4 w-4" />} aria-label="Save flow">
-            {editorLayout.toolbar !== 'tiny' && <span>Save</span>}
-          </Button>
-          <Button size="sm" onClick={onOpenTestRun} leftIcon={<PlayCircle className="h-4 w-4" />} className="shrink-0 whitespace-nowrap" aria-label="Test run">Test run</Button>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-gray-100 bg-gray-50/60 px-4 py-2 dark:border-slate-800 dark:bg-slate-950/30" aria-label="Flow editor actions">
-          <div className="flex items-center gap-1">
-            <Button variant="outline" size="sm" onClick={() => setMobilePaletteOpen(true)} leftIcon={<Plus className="h-4 w-4" />} className={cn(editorLayout.palette === 'inline' && 'hidden')} aria-label="Add node">Add step</Button>
-            <Button variant="ghost" size="sm" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)"><Undo2 className="h-4 w-4" /></Button>
-            <Button variant="ghost" size="sm" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)"><Redo2 className="h-4 w-4" /></Button>
+          {/* The tools: what changes the graph, where it runs, what starts it and what it did. */}
+          <div className="order-last flex basis-full flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-gray-100 pt-2 dark:border-slate-800 @4xl/flowbar:order-none @4xl/flowbar:flex-none @4xl/flowbar:basis-auto @4xl/flowbar:flex-nowrap @4xl/flowbar:border-t-0 @4xl/flowbar:pt-0" aria-label="Flow editor actions">
+            <div className="flex items-center gap-0.5">
+              <Button variant="outline" size="sm" onClick={() => setMobilePaletteOpen(true)} leftIcon={<Plus className="h-4 w-4" />} className={cn('mr-1 px-2', editorLayout.palette === 'inline' && 'hidden')} aria-label="Add step" title="Add step"><span className={WORD_WIDE_OR_OWN_LINE}>Add step</span></Button>
+              <Button variant="ghost" size="sm" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)" className="px-2"><Undo2 className="h-4 w-4" /></Button>
+              <Button variant="ghost" size="sm" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)" className="px-2"><Redo2 className="h-4 w-4" /></Button>
+            </div>
+            <ToolbarDivider />
+            {onExecutionLocationChange && <ExecutionLocationSelect value={flowExecutionLocation(flow)} onChange={onExecutionLocationChange} cloudDisabledReason={cloudDisabledReason} labelClassName={WORD_WIDE_OR_OWN_LINE} />}
+            {onExecutionLocationChange && <ToolbarDivider />}
+            <div className="flex items-center gap-0.5">
+              <Button variant={panelShown(triggersOpen) ? 'secondary' : 'ghost'} size="sm" onClick={() => pressPanel(triggersOpen, onToggleTriggers)} disabled={!onToggleTriggers} leftIcon={<Zap className="h-4 w-4" />} aria-pressed={panelShown(triggersOpen)} aria-label="Triggers" title="Triggers: what starts this flow" className="px-2">
+                <span className={WORD_ROOMY_OR_OWN_LINE}>Triggers</span> <span className="rounded-md bg-gray-200/60 px-1.5 py-0.5 text-[10px] tabular-nums dark:bg-slate-700">{triggerCount}</span>
+              </Button>
+              <Button variant={panelShown(historyOpen) ? 'secondary' : 'ghost'} size="sm" onClick={() => pressPanel(historyOpen, onToggleHistory)} leftIcon={<History className="h-4 w-4" />} aria-pressed={panelShown(historyOpen)} aria-label="History" title="Run history" className="px-2"><span className={WORD_WIDE_OR_OWN_LINE}>History</span></Button>
+            </div>
+            <ToolbarDivider className="@max-4xl/flowbar:hidden" />
           </div>
-          <ToolbarDivider />
-          {onExecutionLocationChange && <ExecutionLocationSelect value={flowExecutionLocation(flow)} onChange={onExecutionLocationChange} cloudDisabledReason={cloudDisabledReason} />}
-          <div className="ml-auto flex items-center gap-1">
-            <Button variant={triggersOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleTriggers} disabled={!onToggleTriggers} leftIcon={<Zap className="h-4 w-4" />} aria-pressed={triggersOpen} aria-label="Triggers">
-              Triggers <span className="ml-1 rounded-md bg-gray-200/60 px-1.5 py-0.5 text-[10px] dark:bg-slate-700">{triggerCount}</span>
+          <div className="flex flex-none items-center gap-1.5">
+            <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} words={WORD_WIDE_OR_OWN_LINE} />
+            <Button variant="outline" size="sm" onClick={() => void save()} isLoading={saving} disabled={!dirty && !saving} leftIcon={<Save className="h-4 w-4" />} aria-label="Save flow" title="Save flow" className="px-2">
+              <span className={WORD_WIDE_OR_OWN_LINE}>Save</span>
             </Button>
-            <Button variant={historyOpen ? 'secondary' : 'ghost'} size="sm" onClick={onToggleHistory} leftIcon={<History className="h-4 w-4" />} aria-pressed={historyOpen} aria-label="History">History</Button>
+            <Button variant={panelShown(testRunOpen) ? 'secondary' : 'primary'} size="sm" onClick={() => pressPanel(testRunOpen, onOpenTestRun)} leftIcon={<PlayCircle className="h-4 w-4" />} className="shrink-0 whitespace-nowrap" aria-pressed={panelShown(testRunOpen)} aria-label="Test run">Test run</Button>
           </div>
         </div>
       </div>
@@ -696,9 +777,9 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
                     <Check className="h-4 w-4" />
                   </span>
                 </div>
-                <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Wire up your first step</p>
-                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
-                  {editorLayout.palette === 'inline' ? 'Drag a node from the palette' : 'Tap Add node'}
+                <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Add your first step</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-slate-400">
+                  {editorLayout.palette === 'inline' ? 'Drag a step in from the list, or press one to add it' : 'Press Add step'}
                 </p>
               </div>
             </div>
@@ -721,6 +802,18 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
             context={context}
           />
         </div>
+        {/* The right side holds one thing. The open panel stays as it is under a selected step's
+            properties (not shown, not thrown away) and is there again when the step is let go. */}
+        {sidePanel && editorLayout.rightPanel === 'rail' && (
+          <div
+            data-flow-side-panel={sidePanel.title}
+            // overflow-hidden: what a panel holds never widens the panel (a wide table in it
+            // made the whole editor wider than the window, and the window could be dragged sideways).
+            className={cn('w-96 min-w-0 flex-none overflow-hidden border-l border-gray-200/80 bg-white dark:border-slate-800 dark:bg-slate-900', selectedNode && editorLayout.properties === 'inline' ? 'hidden' : 'hidden md:flex')}
+          >
+            {sidePanel.render('rail')}
+          </div>
+        )}
         {selectedNode && editorLayout.properties === 'inline' && (
           <div className="hidden md:flex motion-safe:transition-[width] motion-safe:duration-200">
             <NodeProperties
@@ -738,6 +831,11 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
           </div>
         )}
       </div>
+      {sidePanel && editorLayout.rightPanel === 'drawer' && (
+        <SidePanelDrawer title={sidePanel.title} onClose={() => onCloseSidePanel?.()}>
+          {sidePanel.render('drawer')}
+        </SidePanelDrawer>
+      )}
       <BottomSheet expanded title="Add step" open={mobilePaletteOpen} onClose={() => setMobilePaletteOpen(false)}>
         <NodePalette
           onAddNode={(type) => {
@@ -762,7 +860,8 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
             forms={forms}
             context={context}
             insertHints={insertHints}
-            onOpenTriggers={openTriggersPanel ? () => { setSelectedId(null); openTriggersPanel(); } : undefined}
+            onOpenTriggers={openTriggersPanel}
+            inSheet
             className="w-full border-l-0 bg-white dark:bg-slate-900"
           />
         </BottomSheet>
@@ -789,64 +888,32 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
   );
 }
 
-function ToolbarDivider() {
-  return <div className="hidden h-4 w-px flex-none bg-gray-200 dark:bg-slate-700 sm:block" aria-hidden="true" />;
+function ToolbarDivider({ className }: { className?: string }) {
+  return <div className={cn('h-4 w-px flex-none bg-gray-200 dark:bg-slate-700', className)} aria-hidden="true" />;
 }
 
+/**
+ * Whether the graph is saved. One piece for every width: its sign always stands, and its words
+ * stand where `words` lets them (the bar's wide form), so it says the same thing either way.
+ */
 function SaveStatus({
   dirty,
   saving,
   failed,
   onRetry,
-  compact = false,
+  words,
 }: {
   dirty: boolean;
   saving: boolean;
   failed: boolean;
   onRetry: () => void;
-  compact?: boolean;
+  /** Classes on the words: where they are shown beside the sign. */
+  words: string;
 }) {
-  if (compact) {
-    if (saving) {
-      return (
-        <span role="status" aria-label="Saving" title="Saving" className="flex h-8 w-8 items-center justify-center text-gray-500 dark:text-slate-400">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        </span>
-      );
-    }
-    if (failed) {
-      return (
-        <button
-          type="button"
-          onClick={onRetry}
-          aria-label="Save failed – retry"
-          title="Save failed – retry"
-          className="flex h-8 w-8 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/15"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-        </button>
-      );
-    }
-    const label = dirty ? 'Unsaved changes' : 'Saved';
-    return (
-      <span
-        role="img"
-        aria-label={label}
-        title={label}
-        className={cn(
-          'flex h-8 w-8 items-center justify-center rounded-full',
-          dirty ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400',
-        )}
-      >
-        {dirty ? <span className="h-2 w-2 rounded-full bg-amber-500" /> : <Check className="h-3.5 w-3.5" />}
-      </span>
-    );
-  }
-
   if (saving) {
     return (
-      <span className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving...
+      <span role="status" aria-label="Saving" title="Saving" className="flex h-8 min-w-8 flex-none items-center justify-center gap-1.5 whitespace-nowrap text-xs text-gray-500 dark:text-slate-400">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /><span className={words}>Saving...</span>
       </span>
     );
   }
@@ -855,18 +922,55 @@ function SaveStatus({
       <button
         type="button"
         onClick={onRetry}
-        className="flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/15"
+        aria-label="Save failed – retry"
+        title="Save failed – retry"
+        className="flex h-8 min-w-8 flex-none cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-red-200 bg-red-50 px-2 text-xs font-medium text-red-700 hover:bg-red-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/15"
       >
-        <span className="h-2 w-2 rounded-full bg-red-500" />
-        Save failed · Retry
+        <RefreshCw className="h-3.5 w-3.5" /><span className={words}>Save failed · Retry</span>
       </button>
     );
   }
+  const label = dirty ? 'Unsaved changes' : 'Saved';
   return (
-    <span className={cn('flex items-center gap-1.5 text-xs', dirty ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400')}>
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className={cn(
+        'flex h-8 min-w-8 flex-none items-center justify-center gap-1.5 whitespace-nowrap text-xs',
+        dirty ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400',
+      )}
+    >
       {dirty ? <span className="h-2 w-2 rounded-full bg-amber-500" /> : <Check className="h-3.5 w-3.5" />}
-      {dirty ? 'Unsaved changes' : 'Saved'}
+      <span className={words}>{label}</span>
     </span>
+  );
+}
+
+/** The open panel on a screen with no room for it beside the canvas: it slides over from the right. */
+function SidePanelDrawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  return (
+    <div>
+      <div className="fixed inset-0 z-[80] bg-gray-900/35 dark:bg-slate-950/60" onClick={onClose} aria-hidden="true" />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="fixed inset-y-0 right-0 z-[90] flex w-full max-w-md flex-col bg-white shadow-2xl dark:bg-slate-900"
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={`Close ${title}`}
+          className="absolute right-1 top-0.5 z-10 flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+        >
+          <X className="h-4 w-4" />
+        </button>
+        {/* flex-col + forced flex-1 children (not h-full percentage chains): the panels inside
+            must size as flex items so their inner lists scroll instead of clipping on iOS. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden [&>*]:min-h-0 [&>*]:flex-1 [&>div>div:first-child]:pr-12 [&>div>div:nth-child(2)]:pb-[calc(1rem+env(safe-area-inset-bottom))]">{children}</div>
+      </aside>
+    </div>
   );
 }
 

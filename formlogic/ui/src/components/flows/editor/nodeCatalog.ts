@@ -473,11 +473,11 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     label: 'Trigger',
     category: 'io',
     description:
-      'When this flow runs. It receives named inputs from the trigger event (set by the flow binding). Everything downstream reads them as $inputs.<name>.',
+      'Where the flow starts. It receives named inputs from whatever starts it (a trigger fills them in). Every later step reads them as $inputs.<name>.',
     icon: Zap,
     accent: 'emerald',
     executable: true,
-    output: 'The flow inputs. Reference any one downstream as $inputs.<name> (e.g. $inputs.callerPhone).',
+    output: 'The flow\'s inputs. Any later step reads one as $inputs.<name> (e.g. $inputs.callerPhone).',
     inputs: [],
     outputs: [{ id: 'out', label: 'Runs' }],
     properties: [
@@ -485,7 +485,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         key: 'inputs',
         label: 'Inputs this flow receives',
         type: 'triggerInputs',
-        help: 'These are provided by the flow binding (from the trigger event). Reference them below as $inputs.<name>.',
+        help: 'A trigger fills these in when it starts the flow. Later steps read them as $inputs.<name>.',
       },
     ],
   },
@@ -493,22 +493,22 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     type: 'output',
     label: 'Output',
     category: 'io',
-    description: 'The flow result. A selector/literal in "value" wins; otherwise the upstream value passes through.',
+    description: 'What the flow gives back. A value set here is the result; with none, the result is what the step before it gave.',
     icon: ArrowLeftToLine,
     accent: 'emerald',
     executable: true,
-    output: 'The flow result (terminal node — nothing references it downstream).',
+    output: 'The flow\'s result (the last step: nothing after it reads it).',
     inputs: IN,
     outputs: [],
     properties: [
       {
         key: 'value',
-        label: 'Value (selector or JSON)',
+        label: 'Value',
         type: 'code',
         zipp: false,
         language: 'json',
         placeholder: '{ "greeting": "$nodes.match.greeting" }',
-        help: 'Optional. Selector strings ($nodes.x, $inputs.y) resolve against the run scope. Leave blank to pass the upstream value through.',
+        help: 'Optional. A reference such as $nodes.x or $inputs.y is replaced by its value when the flow runs. Leave blank to give back what the step before it gave.',
       },
     ],
   },
@@ -516,11 +516,11 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     type: 'condition',
     label: 'Condition',
     category: 'logic',
-    description: 'Branch on a sandboxed boolean expression (JavaScript or Python). The True / False handles route downstream nodes.',
+    description: 'Take one of two paths. A true-or-false expression (JavaScript or Python, sandboxed) decides whether the steps on the True side or the False side run next.',
     icon: GitBranch,
     accent: 'amber',
     executable: true,
-    output: 'Boolean — routes to the True or False handle. Rarely referenced by value.',
+    output: 'True or false: the flow goes on from the True or the False side. Later steps rarely read it.',
     inputs: IN,
     outputs: [
       { id: 'true', label: 'True', tone: 'true' },
@@ -552,7 +552,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     icon: Braces,
     accent: 'amber',
     executable: true,
-    output: 'String — the interpolated text. Reference downstream as $nodes.<id>.',
+    output: 'The finished text. Later steps read it as $nodes.<id>.',
     inputs: IN,
     outputs: OUT,
     properties: [
@@ -562,7 +562,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         type: 'textarea',
         required: true,
         placeholder: 'Hello {{inputs.name}}, thanks for calling.',
-        help: '{{event.data.from}} / {{nodes.match.greeting}} interpolate; missing paths render empty.',
+        help: 'Write {{inputs.name}} or {{nodes.match.greeting}} where a value goes. A value that is not there leaves a blank.',
         referenceSyntax: 'template',
       },
     ],
@@ -674,7 +674,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
           "Target a named service running in OAIY (llama.cpp, Ollama, a custom script service, …) " +
           "by id instead of hand-typing its loopback URL. When set, 'URL' below becomes a PATH under that " +
           "service (e.g. /predict) rather than an absolute URL, and only that service's resolved loopback " +
-          'port is reachable — the Desktop/API URL allow-list does not apply for this node. Fixed at ' +
+          'port is reachable — the Desktop/API URL allow-list does not apply for this step. Fixed at ' +
           'authoring time; never affected by trigger/event data.',
       },
       {
@@ -695,7 +695,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
       },
       {
         key: 'body',
-        label: 'Body (JSON, selectors ok)',
+        label: 'Body',
         type: 'code',
         language: 'json',
         placeholder: '{ "id": "$inputs.id" }',
@@ -768,7 +768,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
       { key: 'form', label: 'Form', type: 'form', required: true, help: 'The target form. Pick one, or use a dynamic value (id / selector).' },
       {
         key: 'answers',
-        label: 'Answers (JSON, selectors ok)',
+        label: 'Answers',
         type: 'code',
         language: 'json',
         required: true,
@@ -792,7 +792,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     properties: [
       { key: 'form', label: 'Form', type: 'form', required: true, help: 'The target form. Pick one, or use a dynamic value (id / selector).' },
       { key: 'responseId', label: 'Response id', type: 'text', required: true, placeholder: '$nodes.lookup.first.id' },
-      { key: 'answers', label: 'Answers (JSON, selectors ok)', type: 'code', language: 'json', placeholder: '{ "status": "done" }' },
+      { key: 'answers', label: 'Answers', type: 'code', language: 'json', placeholder: '{ "status": "done" }' },
     ],
   },
   {
@@ -809,7 +809,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     properties: [
       { key: 'connectorId', label: 'Connector', type: 'connector', required: true, placeholder: 'aokie' },
       { key: 'command', label: 'Command', type: 'connectorCommand', required: true, placeholder: 'sms.send' },
-      { key: 'payload', label: 'Payload (JSON, selectors ok)', type: 'code', language: 'json', placeholder: '{ "to": "$event.data.from" }' },
+      { key: 'payload', label: 'Payload', type: 'code', language: 'json', placeholder: '{ "to": "$event.data.from" }' },
     ],
   },
   {
@@ -842,7 +842,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     outputs: OUT,
     properties: [
       { key: 'key', label: 'Key', type: 'text', required: true, placeholder: 'cursor  or  $inputs.key' },
-      { key: 'value', label: 'Value (JSON, selectors ok)', type: 'code', language: 'json', placeholder: '{ "seenAt": "$event.receivedAt" }' },
+      { key: 'value', label: 'Value', type: 'code', language: 'json', placeholder: '{ "seenAt": "$event.receivedAt" }' },
       { key: 'valueFrom', label: 'Value from (selector)', type: 'text', placeholder: '$nodes.build.value', help: 'Optional. Takes precedence over Value.' },
       { key: 'scope', label: 'Scope', type: 'text', placeholder: 'flow:<slug> (default)' },
     ],
@@ -941,7 +941,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     category: 'desktop',
     description: 'Invoke a typed action from the Desktop Services catalog — validated against the action’s declared schemas, with credentials held by Desktop.',
     doc:
-      'The generic service-action node (extensible-flows plan §7): stores only stable references — a service definition id, an action id, and the Desktop AI provider profile that holds the credential. '
+      'The generic service-action step (extensible-flows plan §7): stores only stable references — a service definition id, an action id, and the Desktop AI provider profile that holds the credential. '
       + 'Desktop resolves the action from its catalog, validates your input against the action’s declared inputSchema, injects credentials via its provider gateway, and validates the output. '
       + 'Requires a paired desktop runtime with Service Platform support. The OAIY bridge does not currently expose this action catalog.',
     icon: Layers,

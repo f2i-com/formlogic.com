@@ -38,20 +38,20 @@ test.describe('flows workspace', () => {
     // Flows is a first-class nav item (replaced Settings in the sidebar).
     await page.goto('/flows');
     await expect(page).toHaveURL(/\/flows/);
-    // Workspace shell: a "New flow" affordance is the anchor of the library.
-    const newFlow = page.getByRole('button', { name: /new flow|create a? ?flow|\+ ?flow/i }).first();
+    // The page's two sections are links under its header; "Create a flow" holds the form.
+    const newFlow = page.getByRole('navigation', { name: 'Automation workspace' }).getByRole('link', { name: 'Create a flow', exact: true });
     await expect(newFlow).toBeVisible({ timeout: 30_000 });
 
     await newFlow.click();
-    // The New-flow dialog: name field + "Start from" template cards + "Create flow".
+    // The form: name field + "Create in" + starting-point cards + "Create flow".
     await expect(page.getByText(/new flow/i).first()).toBeVisible({ timeout: 15_000 });
-    const nameInput = page.getByLabel('Automation name');
+    const nameInput = page.getByLabel('Flow name');
     if (await nameInput.isVisible().catch(() => false)) {
       await nameInput.fill('E2E Smoke Flow');
     }
     // Pick the "Blank flow" starter card, then confirm.
     await page.getByText('Blank flow', { exact: true }).first().click().catch(() => {});
-    await page.getByRole('button', { name: 'Create automation', exact: true }).click();
+    await page.getByRole('button', { name: 'Create flow', exact: true }).click();
 
     // The @xyflow canvas mounts (react-flow root) — proves the editor renders.
     await expect(page.locator('.react-flow').first()).toBeVisible({ timeout: 20_000 });

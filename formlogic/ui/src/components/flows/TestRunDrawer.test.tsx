@@ -197,7 +197,7 @@ describe('TestRunDrawer — run dispatch per executionLocation', () => {
     expect(runFlowCloudMock).toHaveBeenCalledWith('flow-1', {});
     expect(container.textContent).toContain('Ran on FormLogic Cloud');
     expect(container.textContent).toContain('"booked": true');
-    expect(container.textContent).toContain('3 nodes executed');
+    expect(container.textContent).toContain('3 steps ran');
   });
 
   it('cloud: flow_credits_exceeded surfaces upgrade copy, not a generic error', async () => {

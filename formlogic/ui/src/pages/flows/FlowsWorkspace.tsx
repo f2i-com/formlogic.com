@@ -1,14 +1,17 @@
-// FormLogic Flows — first-class workspace (/flows).
+// FormLogic Flows — first-class workspace (/flows), "Automations" in the navigation.
 //
-// Creation opens by default; ?view=existing shows the paginated library and optional
-// connection/run details. With ?flow=<id> set, the FULL-PAGE editor
-// (FlowEditor — React Flow canvas, node palette, properties, autosave) with a back link
-// in its toolbar, plus measured-width inline panels or the shared slide-over drawer for
-// triggers/history/test-run. Deep-linked by ?flow=<id> from the app-level Flows panel.
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+// Two sections, each an address: /flows creates a flow, /flows?view=existing lists the flows
+// (a table, with the latest runs and the connections under it). With ?flow=<id> set, the
+// FULL-PAGE editor (FlowEditor — React Flow canvas, list of steps, properties, autosave) with
+// a back link in its bar; the triggers, run history and test run panels are handed to the
+// editor, which places one at a time beside the canvas (a drawer on a phone).
+// Deep-linked by ?flow=<id> (and &panel=history|triggers|test) from the app-level Flows panel.
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Plus, RefreshCw, Sparkles, Workflow, X } from 'lucide-react';
+import { AlertTriangle, Plus, RefreshCw, Sparkles, Workflow } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
+import { PAGE_BODY } from '../../components/layout/PageBody';
+import { SectionNav } from '../../components/ui/SectionNav';
 import { Button } from '../../components/ui/Button';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -20,7 +23,6 @@ import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { demoApplyFlowOverlay, demoApplyFormBindingOverlay, demoCreateFlow, demoUpdateFlow, demoDeleteFlow } from '../../lib/demoLocal';
 import { toast } from '../../stores/toastStore';
 import { FlowEditor } from '../../components/flows/editor/FlowEditor';
-import { resolveEditorLayout, sameResolvedEditorLayout } from '../../components/flows/editor/flowEditorLogic';
 import type { CloudRunFeedback, FlowExecutionLocation } from '../../components/flows/editor/executionLocation';
 import { deriveFlowConnectors } from '../../components/flows/flowConnectors';
 import { EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from '../../components/flows/editor/nodeCatalog';
@@ -38,14 +40,10 @@ import type { FlowStarterTemplate } from '../../components/flows/starterTemplate
 import type { AppListItem } from '../../types/app';
 import type { FlowBinding, FlowDefinition, WorkflowGraph } from '../../types/flows';
 
-const BELOW_MD_QUERY = '(max-width: 767.98px)';
-const LEGACY_INLINE_QUERY = '(min-width: 1024px)';
 const AiServicesDialog = lazyWithRetry(() => import('../../components/flows/AiServicesDialog'));
 
-function mediaMatches(query: string, fallback: boolean): boolean {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return fallback;
-  return window.matchMedia(query).matches;
-}
+/** What the panel at the editor's right is called: on a narrow screen it is a drawer under this name. */
+const SIDE_PANEL_TITLE = { triggers: 'Triggers', history: 'Run history', test: 'Test run' } as const;
 
 function bindingReferencesFlow(binding: FlowBinding, flow: FlowDefinition): boolean {
   return binding.flowDefinitionId === flow.id || binding.flow === flow.slug;
@@ -105,8 +103,6 @@ export function FlowsWorkspace() {
   // server has no cloud-run concept at all (the Cloud option disables with that reason).
   const [cloudUnsupportedByFlowId, setCloudUnsupportedByFlowId] = useState<Record<string, string[]>>({});
   const [cloudDisabledReasonByFlowId, setCloudDisabledReasonByFlowId] = useState<Record<string, string>>({});
-  const workspaceRowRef = useRef<HTMLDivElement | null>(null);
-  const workspaceWidthRef = useRef<number | null>(null);
 
   // Flat lookup of every flow by id (the editor + drawers work off this).
   const flowById = useMemo(() => {
@@ -115,58 +111,6 @@ export function FlowsWorkspace() {
     return m;
   }, [groups]);
   const selectedFlow = selectedId ? flowById.get(selectedId) ?? null : null;
-  const selectedFlowPresent = selectedFlow !== null;
-  const [belowMd, setBelowMd] = useState(() => mediaMatches(BELOW_MD_QUERY, false));
-  const [workspaceLayout, setWorkspaceLayout] = useState(() => resolveEditorLayout({
-    workspaceWidth: null,
-    selectedFlow: false,
-    rightPanelOpen: false,
-    libraryHidden: true,
-    belowMd: mediaMatches(BELOW_MD_QUERY, false),
-    legacyInline: mediaMatches(LEGACY_INLINE_QUERY, true),
-  }));
-  const workspaceLayoutRef = useRef(workspaceLayout);
-
-  const applyWorkspaceLayout = useCallback((width: number | null = workspaceWidthRef.current) => {
-    // The full-page editor renders no library rail — only the right panel tier matters here.
-    const next = resolveEditorLayout({
-      workspaceWidth: width,
-      selectedFlow: selectedFlowPresent,
-      rightPanelOpen: rightPanel !== null,
-      libraryHidden: true,
-      belowMd,
-      legacyInline: mediaMatches(LEGACY_INLINE_QUERY, true),
-    });
-    if (sameResolvedEditorLayout(workspaceLayoutRef.current, next)) return;
-    workspaceLayoutRef.current = next;
-    setWorkspaceLayout(next);
-  }, [belowMd, rightPanel, selectedFlowPresent]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
-    const query = window.matchMedia(BELOW_MD_QUERY);
-    const onChange = () => setBelowMd((current) => (current === query.matches ? current : query.matches));
-    onChange();
-    query.addEventListener('change', onChange);
-    return () => query.removeEventListener('change', onChange);
-  }, []);
-
-  useEffect(() => {
-    applyWorkspaceLayout();
-  }, [applyWorkspaceLayout]);
-
-  useEffect(() => {
-    const el = workspaceRowRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return undefined;
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width;
-      if (typeof width !== 'number') return;
-      workspaceWidthRef.current = width;
-      applyWorkspaceLayout(width);
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [applyWorkspaceLayout]);
 
   const allFlows = useMemo(() => groups.flatMap((group) => group.flows), [groups]);
   // The selected flow's sibling flows (same app / same workspace) feed the §9.1 outcome-trigger
@@ -191,10 +135,10 @@ export function FlowsWorkspace() {
     () => [...new Set(apps.flatMap((app) => deriveFlowConnectors(app).map((connector) => connector.id)))].sort(),
     [apps],
   );
-  const rightPanelInline = selectedFlowPresent && rightPanel !== null && workspaceLayout.rightPanel === 'rail';
-  const rightPanelDrawer = selectedFlowPresent && rightPanel !== null && workspaceLayout.rightPanel === 'drawer';
-
-  const fetchFlowBindings = useCallback(async (flow: FlowDefinition) => {
+  // `forTheList`: the list of flows reads a row's triggers to say what starts it. A read that
+  // fails there says so in the row and nothing more (no toast a row), and leaves the flow unread,
+  // so opening it reads again and reports as it always did.
+  const fetchFlowBindings = useCallback(async (flow: FlowDefinition, forTheList = false) => {
     // Demo too: the seeded demo flows are real server rows with real bindings, and reads are
     // allowed — only a per-browser overlay flow (id unknown to the server) 404s, which reads
     // as "no triggers" rather than an error there.
@@ -207,6 +151,10 @@ export function FlowsWorkspace() {
           await demoApplyFormBindingOverlay(form.id, [])
         )))).flat().filter((binding) => bindingReferencesFlow(binding, flow));
         setFlowBindingsById((map) => ({ ...map, [flow.id]: localBindings }));
+        return;
+      }
+      if (forTheList) {
+        setFlowBindingsErrorById((map) => ({ ...map, [flow.id]: typeof res.error === 'string' ? res.error : 'Please try again.' }));
         return;
       }
       if (!api.isDemoMode()) {
@@ -238,6 +186,36 @@ export function FlowsWorkspace() {
     if (flowBindingsById[selectedFlow.id] !== undefined) return;
     return deferEffect(() => { void fetchFlowBindings(selectedFlow); });
   }, [selectedFlow, flowBindingsById, fetchFlowBindings]);
+
+  // The list's "Starts on" column: the rows on screen ask for their triggers. Each flow is read
+  // once (the editor's own read counts), a few at a time, so a page of rows is not a burst.
+  const knownBindingsRef = useRef(flowBindingsById);
+  const readBindingsRef = useRef(fetchFlowBindings);
+  useEffect(() => {
+    knownBindingsRef.current = flowBindingsById;
+    readBindingsRef.current = fetchFlowBindings;
+  });
+  const listTriggerReads = useRef({ asked: new Set<string>(), waiting: [] as FlowDefinition[], running: 0 });
+  const readListTriggers = useCallback((flows: FlowDefinition[]) => {
+    const reads = listTriggerReads.current;
+    for (const flow of flows) {
+      if (reads.asked.has(flow.id)) continue;
+      reads.asked.add(flow.id);
+      reads.waiting.push(flow);
+    }
+    const next = () => {
+      while (reads.running < 3 && reads.waiting.length > 0) {
+        const flow = reads.waiting.shift()!;
+        if (knownBindingsRef.current[flow.id] !== undefined) continue;
+        reads.running += 1;
+        void readBindingsRef.current(flow, true).catch(() => undefined).then(() => {
+          reads.running -= 1;
+          next();
+        });
+      }
+    };
+    next();
+  }, []);
 
   // Initial load (+ apply any ?flow=<id> deep-link once the flows are known). All setState runs
   // after awaits — never synchronously in the effect body.
@@ -554,9 +532,11 @@ export function FlowsWorkspace() {
         </div>
       )}
 
-      <div ref={workspaceRowRef} className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1">
         {selectedFlow ? (
-          /* Full-page editor: toolbar + canvas own everything (no library rail). */
+          /* Full-page editor: toolbar + canvas own everything (no library rail). The panel
+             opened from its bar (triggers, run history, a test run) is handed to the editor,
+             which places it at the canvas's right, under the bar. */
           <div className="flex min-w-0 flex-1 flex-col">
             <FlowEditor
               key={selectedFlow.id}
@@ -571,6 +551,37 @@ export function FlowsWorkspace() {
               onToggleHistory={() => setRightPanel((p) => (p === 'history' ? null : 'history'))}
               triggersOpen={rightPanel === 'triggers'}
               historyOpen={rightPanel === 'history'}
+              testRunOpen={rightPanel === 'test'}
+              onCloseSidePanel={() => setRightPanel(null)}
+              sidePanel={rightPanel === null ? null : {
+                title: SIDE_PANEL_TITLE[rightPanel],
+                render: (placed) => rightPanel === 'triggers' ? (
+                  <TriggersPanel
+                    flow={selectedFlow}
+                    bindings={selectedFlowBindings}
+                    loading={!!flowBindingsLoading[selectedFlow.id]}
+                    forms={forms}
+                    context={editorContext}
+                    appFlows={selectedAppFlows}
+                    loadError={flowBindingsErrorById[selectedFlow.id] ?? null}
+                    onRefresh={() => fetchFlowBindings(selectedFlow)}
+                  />
+                ) : rightPanel === 'history' ? (
+                  <FlowRunHistory flowId={selectedFlow.id} flow={selectedFlow} />
+                ) : (
+                  <TestRunDrawer
+                    flow={selectedFlow}
+                    inputValue={testInputs[selectedFlow.id]}
+                    onInputChange={(value) => setTestInputs((drafts) => ({ ...drafts, [selectedFlow.id]: value }))}
+                    // The drawer has its own way to close: no second one in the panel's header.
+                    hideClose={placed === 'drawer'}
+                    onClose={() => setRightPanel(null)}
+                    onRunStart={() => setNodeStatus({})}
+                    onNodeStatus={(id, status, info) => setNodeStatus((m) => reduceNodeStatus(m, id, status, info))}
+                    onCloudRunFeedback={handleCloudRunFeedback}
+                  />
+                ),
+              }}
               triggerCount={selectedFlowBindings.length}
               forms={forms}
               context={editorContext}
@@ -603,109 +614,50 @@ export function FlowsWorkspace() {
             <EmptyState icon={Workflow} title="Loading flows..." description="" />
           </div>
         ) : (
-          <div className="min-w-0 flex-1 overflow-y-auto bg-gray-50 px-4 pt-5 pb-24 dark:bg-slate-950 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8">
-            <div className="mx-auto grid max-w-6xl items-start gap-5 xl:grid-cols-[190px_minmax(0,1fr)]">
-              <nav aria-label="Automation workspace" className="space-y-2 xl:sticky xl:top-0">
-                <Button className="w-full justify-start" onClick={() => openNewFlow()} disabled={creating} leftIcon={<Plus className="h-4 w-4" />} aria-current={!libraryVisible ? 'page' : undefined}>Create a flow</Button>
-                <Button className="w-full justify-start" variant={libraryVisible ? 'outline' : 'ghost'} disabled={creating} onClick={() => selectFlow(null)} leftIcon={<Workflow className="h-4 w-4" />} aria-current={libraryVisible ? 'page' : undefined}>Existing flows <span className="ml-auto text-xs opacity-70">{allFlows.length}</span></Button>
-              </nav>
-              <div className="min-w-0">
-                <div hidden={libraryVisible}>
-                  <NewFlowDialog embedded isOpen onClose={() => selectFlow(null)} onCreate={createFlow} creating={creating} apps={apps} initialTemplate={newFlowInitialTemplate} />
-                  <p className="mt-4 px-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">Using local AI or Aokie? Connect OAIY in <button className="font-medium text-primary-600 underline underline-offset-2 dark:text-primary-300" onClick={() => navigate('/settings#local-runtime')}>Settings</button>. You can create your flow first.</p>
-                </div>
-                {libraryVisible && (
-                  <FlowsOverview
-                    groups={groups}
-                    desktopPresence={desktopPresence}
-                    availableConnectorIds={availableConnectorIds}
-                    onNewFlow={openNewFlow}
-                    onOpenFlow={selectFlow}
-                    onOpenAiServices={() => setShowAiServices(true)}
-                    onOpenRunFlow={(flowId) => {
-                      selectFlow(flowId);
-                      setRightPanel('history');
-                    }}
-                    onDuplicate={duplicateFlow}
-                    onRename={renameFlow}
-                    onRequestToggleEnabled={setPendingToggle}
-                    onDelete={setPendingDelete}
-                  />
-                )}
+          // The page frame every workspace page has: it starts on the title's line, takes the
+          // width it is given, and its two sections are links under the header. Each is an
+          // address (/flows, /flows?view=existing), so a reload and Back land on it.
+          <div className={cn('min-w-0 flex-1 overflow-y-auto bg-gray-50 dark:bg-slate-950', PAGE_BODY)}>
+            <SectionNav
+              label="Automation workspace"
+              current={libraryVisible ? 'existing' : 'create'}
+              items={[
+                { value: 'create', label: 'Create a flow', icon: Plus, to: { search: '' } },
+                { value: 'existing', label: 'Existing flows', icon: Workflow, to: { search: '?view=existing' }, mark: allFlows.length },
+              ]}
+            />
+            <div className="mt-4 min-w-0">
+              {/* Kept while the list is shown, so a name typed here is still here on the way back. */}
+              <div hidden={libraryVisible}>
+                <NewFlowDialog embedded isOpen onClose={() => selectFlow(null)} onCreate={createFlow} creating={creating} apps={apps} initialTemplate={newFlowInitialTemplate} />
+                <p className="mt-3 px-1 text-xs leading-5 text-gray-500 dark:text-slate-400">Using local AI or Aokie? Connect OAIY in <button className="cursor-pointer font-medium text-primary-600 underline underline-offset-2 dark:text-primary-300" onClick={() => navigate('/settings#local-runtime')}>Settings</button>. You can create your flow first.</p>
               </div>
+              {libraryVisible && (
+                <FlowsOverview
+                  groups={groups}
+                  desktopPresence={desktopPresence}
+                  availableConnectorIds={availableConnectorIds}
+                  onNewFlow={openNewFlow}
+                  onOpenFlow={selectFlow}
+                  onOpenAiServices={() => setShowAiServices(true)}
+                  onOpenRunFlow={(flowId) => {
+                    selectFlow(flowId);
+                    setRightPanel('history');
+                  }}
+                  onDuplicate={duplicateFlow}
+                  onRename={renameFlow}
+                  onRequestToggleEnabled={setPendingToggle}
+                  onDelete={setPendingDelete}
+                  triggersByFlowId={flowBindingsById}
+                  triggerErrorsByFlowId={flowBindingsErrorById}
+                  onNeedTriggers={readListTriggers}
+                  forms={forms}
+                />
+              )}
             </div>
           </div>
         )}
-
-        {/* Right panel: triggers / history / test run. No border here — the panel's white bg vs the
-            canvas's gray provides the seam (docs §4, rail hierarchy: seams by value contrast). */}
-        {rightPanelInline && rightPanel === 'triggers' && selectedFlow && (
-          <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 md:flex motion-safe:transition-[width] motion-safe:duration-200">
-            <TriggersPanel
-              flow={selectedFlow}
-              bindings={selectedFlowBindings}
-              loading={!!flowBindingsLoading[selectedFlow.id]}
-              forms={forms}
-              context={editorContext}
-              appFlows={selectedAppFlows}
-              loadError={flowBindingsErrorById[selectedFlow.id] ?? null}
-              onRefresh={() => fetchFlowBindings(selectedFlow)}
-            />
-          </div>
-        )}
-        {rightPanelInline && rightPanel === 'history' && selectedFlow && (
-          <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 md:flex motion-safe:transition-[width] motion-safe:duration-200">
-            <FlowRunHistory flowId={selectedFlow.id} flow={selectedFlow} />
-          </div>
-        )}
-        {rightPanelInline && rightPanel === 'test' && selectedFlow && (
-          <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 md:flex motion-safe:transition-[width] motion-safe:duration-200">
-            <TestRunDrawer
-              flow={selectedFlow}
-              inputValue={testInputs[selectedFlow.id]}
-              onInputChange={(value) => setTestInputs((drafts) => ({ ...drafts, [selectedFlow.id]: value }))}
-              onClose={() => setRightPanel(null)}
-              onRunStart={() => setNodeStatus({})}
-              onNodeStatus={(id, status, info) => setNodeStatus((m) => reduceNodeStatus(m, id, status, info))}
-              onCloudRunFeedback={handleCloudRunFeedback}
-            />
-          </div>
-        )}
       </div>
-
-      {rightPanelDrawer && rightPanel === 'triggers' && selectedFlow && (
-        <FlowMobileDrawer title="Triggers" onClose={() => setRightPanel(null)}>
-          <TriggersPanel
-            flow={selectedFlow}
-            bindings={selectedFlowBindings}
-            loading={!!flowBindingsLoading[selectedFlow.id]}
-            forms={forms}
-            context={editorContext}
-            appFlows={selectedAppFlows}
-            loadError={flowBindingsErrorById[selectedFlow.id] ?? null}
-            onRefresh={() => fetchFlowBindings(selectedFlow)}
-          />
-        </FlowMobileDrawer>
-      )}
-      {rightPanelDrawer && rightPanel === 'history' && selectedFlow && (
-        <FlowMobileDrawer title="Run history" onClose={() => setRightPanel(null)}>
-          <FlowRunHistory flowId={selectedFlow.id} flow={selectedFlow} />
-        </FlowMobileDrawer>
-      )}
-      {rightPanelDrawer && rightPanel === 'test' && selectedFlow && (
-        <FlowMobileDrawer title="Test run" onClose={() => setRightPanel(null)}>
-          <TestRunDrawer
-            flow={selectedFlow}
-            inputValue={testInputs[selectedFlow.id]}
-            onInputChange={(value) => setTestInputs((drafts) => ({ ...drafts, [selectedFlow.id]: value }))}
-            hideClose
-            onClose={() => setRightPanel(null)}
-            onRunStart={() => setNodeStatus({})}
-            onNodeStatus={(id, status, info) => setNodeStatus((m) => reduceNodeStatus(m, id, status, info))}
-            onCloudRunFeedback={handleCloudRunFeedback}
-          />
-        </FlowMobileDrawer>
-      )}
 
       <ErrorBoundary fallback={<div role="alert" className="fixed bottom-4 right-4 z-50 rounded-lg bg-gray-900 px-4 py-2 text-sm text-white shadow-lg">The AI services dialog couldn’t load. Reload this page to try again.</div>}>
       <Suspense fallback={null}>
@@ -762,32 +714,6 @@ function AiServicesChip({ onClick }: { onClick: () => void }) {
       <span className="hidden sm:inline">AI services</span>
       <span className="sm:hidden">AI</span>
     </button>
-  );
-}
-
-function FlowMobileDrawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  return (
-    <div>
-      <div className="fixed inset-0 z-[80] bg-gray-900/35 dark:bg-slate-950/60" onClick={onClose} aria-hidden="true" />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className="fixed inset-y-0 right-0 z-[90] flex w-full max-w-md flex-col bg-white shadow-2xl dark:bg-slate-900"
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={`Close ${title}`}
-          className="absolute right-2 top-2 z-10 rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
-        >
-          <X className="h-4 w-4" />
-        </button>
-        {/* flex-col + forced flex-1 children (not h-full percentage chains): the panels inside
-            must size as flex items so their inner lists scroll instead of clipping on iOS. */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden [&>*]:min-h-0 [&>*]:flex-1 [&>div>div:first-child]:pr-12 [&>div>div:nth-child(2)]:pb-[calc(1rem+env(safe-area-inset-bottom))]">{children}</div>
-      </aside>
-    </div>
   );
 }
 

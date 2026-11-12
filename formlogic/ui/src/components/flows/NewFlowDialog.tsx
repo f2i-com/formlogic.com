@@ -19,6 +19,9 @@ const TEMPLATE_ICON: Record<string, LucideIcon> = {
   'sms-auto-draft': MessageSquare,
 };
 
+/** Up to this many apps are a button each under "Create in"; more are one list to choose from. */
+const SCOPE_BUTTONS = 4;
+
 function connectorIdsForApps(apps: AppListItem[]): string[] {
   return [...new Set(apps.flatMap((app) => deriveFlowConnectors(app).map((connector) => connector.id)))].sort();
 }
@@ -94,21 +97,29 @@ export function NewFlowDialog({
     onCreate({ ...buildFlowCreateInput(template.id, name), appId: scopeAppId });
   };
 
+  // The Automations page calls the thing a flow, as its editor does; the App Studio's
+  // Automations step, which opens this as a dialog, calls it an automation.
+  const noun = embedded ? 'flow' : 'automation';
   const footer = (<div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-gray-500 dark:text-slate-400">Next: connect and test your steps in the editor.</p>
         <div className="flex gap-2">
-          <Button type="button" variant="ghost" onClick={onClose} disabled={creating}>{embedded ? 'Existing flows' : 'Cancel'}</Button>
-          <Button type="submit" form={formId} isLoading={creating} disabled={creating || !canCreate}>Create automation <ArrowRight className="ml-2 h-4 w-4" /></Button>
+          {/* On the page the list of flows is the section beside this one: no button back to it here. */}
+          {!embedded && <Button type="button" variant="ghost" onClick={onClose} disabled={creating}>Cancel</Button>}
+          <Button type="submit" form={formId} isLoading={creating} disabled={creating || !canCreate}>Create {noun} <ArrowRight className="ml-2 h-4 w-4" /></Button>
         </div>
       </div>);
   const content = (
+      // With room (the page, not the dialog) the name and the place stand beside the starting
+      // points: a name field as wide as the window read as a search bar.
       <form id={formId}
         onSubmit={(e) => { e.preventDefault(); submit(); }}
-        className="space-y-7 p-5 sm:p-7"
+        className="@container/newflow p-4 sm:p-5"
       >
+        <div className="grid gap-x-8 gap-y-6 @4xl/newflow:grid-cols-2">
+        <div className="min-w-0 space-y-6">
         <div>
           <label className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-slate-200" htmlFor="new-flow-name">
-            <span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-500 dark:bg-slate-800 dark:text-slate-400">1</span> Automation name
+            <span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-500 dark:bg-slate-800 dark:text-slate-400">1</span> {embedded ? 'Flow name' : 'Automation name'}
           </label>
           <input
             id="new-flow-name"
@@ -118,7 +129,7 @@ export function NewFlowDialog({
             autoComplete="off"
             required
             maxLength={100}
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-3 text-base text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+            className="h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-base text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white sm:h-10 sm:text-sm"
           />
         </div>
 
@@ -128,11 +139,43 @@ export function NewFlowDialog({
             {!fixedAppId && <ScopeButton
               active={scopeAppId === null}
               label="Workspace"
-              description="A reusable automation for your forms, or for running on demand."
+              description={`A reusable ${noun} for your forms, or one to run on demand.`}
               icon={Workflow}
               onClick={() => { setScopeAppId(null); setScopeEdited(true); }}
             />}
-            {apps.filter(app => !fixedAppId || app.id === fixedAppId).map((app) => {
+            {/* A button an app while they are few. An owner of many apps chooses from a list in one
+                box instead: a dozen buttons stood between the name and the starting points. */}
+            {!fixedAppId && apps.length > SCOPE_BUTTONS ? (
+              <label
+                className={cn(
+                  'flex items-start gap-3 rounded-xl border p-3 transition-colors focus-within:ring-2 focus-within:ring-primary-500',
+                  selectedApp
+                    ? 'border-primary-400 bg-primary-50/70 ring-1 ring-primary-400/40 dark:border-primary-500/60 dark:bg-primary-500/10 dark:ring-primary-500/30'
+                    : 'border-gray-200 dark:border-slate-700',
+                )}
+              >
+                <span className={cn('mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-lg', selectedApp ? 'bg-primary-600 text-primary-foreground' : 'bg-gray-100 text-gray-500 dark:bg-slate-700 dark:text-slate-300')}>
+                  <Plug className="h-4 w-4" aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={cn('block text-sm font-semibold', selectedApp ? 'text-primary-800 dark:text-primary-200' : 'text-gray-900 dark:text-white')}>One of your apps</span>
+                  <select
+                    aria-label="Create in an app"
+                    value={selectedApp?.id ?? ''}
+                    onChange={(event) => { setScopeAppId(event.target.value || null); setScopeEdited(true); }}
+                    className="mt-1.5 h-10 w-full min-w-0 rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                  >
+                    <option value="">Choose an app…</option>
+                    {apps.map((app) => <option key={app.id} value={app.id}>{app.name}</option>)}
+                  </select>
+                  <span className="mt-1.5 block text-xs leading-relaxed text-gray-500 dark:text-slate-400">
+                    {selectedApp && deriveFlowConnectors(selectedApp).some((connector) => connector.id === 'aokie')
+                      ? "Can also run on this app's events, like an incoming phone call."
+                      : "Can also run on the app's own events."}
+                  </span>
+                </span>
+              </label>
+            ) : apps.filter(app => !fixedAppId || app.id === fixedAppId).map((app) => {
               const hasAokie = deriveFlowConnectors(app).some((connector) => connector.id === 'aokie');
               return (
                 <ScopeButton
@@ -158,7 +201,9 @@ export function NewFlowDialog({
             </p>
           )}
         </fieldset>
+        </div>
 
+        <div className="min-w-0 space-y-4">
         <fieldset>
           <legend className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-slate-200"><span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-500 dark:bg-slate-800 dark:text-slate-400">3</span> Choose a starting point</legend>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -211,17 +256,20 @@ export function NewFlowDialog({
         <p className="text-xs leading-relaxed text-gray-500 dark:text-slate-400">{template.description}</p>
 
         {connectorUnavailable && <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">Choose an app with Aokie access for this template, or select a different starting point.</p>}
+        </div>
+        </div>
       </form>
   );
   if (embedded) return (
-    <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-700/60 dark:bg-slate-900">
-      <div className="border-b border-gray-100 bg-gradient-to-br from-primary-50/60 to-white p-5 dark:border-slate-800 dark:from-primary-500/5 dark:to-slate-900 sm:p-7">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-primary-600 dark:text-primary-300">Flow setup</p>
-        <h2 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white sm:text-2xl">Create a new flow</h2>
-        <p className="mt-2 max-w-xl text-sm leading-relaxed text-gray-600 dark:text-slate-400">Set up your flow here, then build it visually. Nothing runs until you test it or connect a trigger.</p>
+    <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      {/* A panel's small title and one line about it: the section's name is in the page's
+          navigation already, so there is no banner over the first field. */}
+      <div className="px-4 pt-4 sm:px-5">
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-white">New flow</h2>
+        <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">Set up your flow here, then build it visually. Nothing runs until you test it or connect a trigger.</p>
       </div>
       {content}
-      <div className="border-t border-gray-100 bg-gray-50/70 p-5 dark:border-slate-800 dark:bg-slate-800/30 sm:p-6">{footer}</div>
+      <div className="border-t border-gray-100 bg-gray-50/70 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/30 sm:px-5">{footer}</div>
     </section>
   );
   return (

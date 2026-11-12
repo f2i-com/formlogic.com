@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// The run-history Location column (plan §5.7): every row shows the as-executed location
-// (browser / desktop / cloud) and '—' when the row predates the column.
+// Where a run ran (plan §5.7): every row of the run history says the as-executed location
+// (browser / desktop / cloud). A row from before it was recorded says nothing about it: the
+// history is a list of two-line rows in a narrow panel, not a table with a cell to fill.
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -83,28 +84,34 @@ afterEach(async () => {
   document.body.innerHTML = '';
 });
 
-describe('FlowRunHistory — Location column (plan §5.7)', () => {
-  it('renders the Location header and each run\'s as-executed location', async () => {
+const whereOf = (row: Element) => row.querySelector('[data-run-location]')?.textContent ?? null;
+
+describe('FlowRunHistory — where each run ran (plan §5.7)', () => {
+  it('says each run\'s as-executed location on its row', async () => {
     const container = await renderHistory([
       run({ runId: 'r1', executionLocation: 'cloud', triggerEvent: 'test.cloud' }),
       run({ runId: 'r2', executionLocation: 'desktop', triggerEvent: 'test.desktop' }),
       run({ runId: 'r3', executionLocation: 'browser', triggerEvent: 'test.browser' }),
       run({ runId: 'r4', executionLocation: null, triggerEvent: 'test.legacy' }),
     ]);
-    const header = [...container.querySelectorAll('th')].map((th) => th.textContent);
-    expect(header).toContain('Location');
 
-    const rows = [...container.querySelectorAll('tbody tr')];
+    const rows = [...container.querySelectorAll('[data-run-row]')];
     expect(rows.length).toBe(4);
-    const locationCells = rows.map((tr) => tr.querySelectorAll('td')[2]?.textContent);
-    expect(locationCells).toEqual(['cloud', 'desktop', 'browser', '—']);
+    expect(rows.map(whereOf)).toEqual(['cloud', 'desktop', 'browser', null]);
+    // Each row still says what started it.
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining('test.cloud'), expect.stringContaining('test.desktop'),
+      expect.stringContaining('test.browser'), expect.stringContaining('test.legacy'),
+    ]);
   });
 
-  it('a run without the field (absent, not null) also renders —', async () => {
+  it('a run without the field (absent, not null) says nothing about where it ran', async () => {
     const legacy = run({ runId: 'r5', triggerEvent: 'test.absent' });
     delete legacy.executionLocation;
     const container = await renderHistory([legacy]);
-    const cell = container.querySelector('tbody tr')?.querySelectorAll('td')[2];
-    expect(cell?.textContent).toBe('—');
+    const row = container.querySelector('[data-run-row]');
+    expect(row?.textContent).toContain('test.absent');
+    expect(whereOf(row!)).toBeNull();
+    expect(row?.textContent).not.toContain('—');
   });
 });

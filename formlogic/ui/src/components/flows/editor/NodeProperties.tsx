@@ -64,9 +64,33 @@ const INPUT_CLS =
   'w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2.5 text-base md:py-2 md:text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500';
 const MONO_CLS = INPUT_CLS + ' font-mono text-xs';
 const LABEL_CLS = 'block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1';
-const HELP_CLS = 'mt-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400';
+const HELP_CLS = 'mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400';
 const LINK_CLS =
-  'text-[11px] font-medium text-primary-600 dark:text-primary-400 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded';
+  'cursor-pointer text-[11px] font-medium text-primary-600 dark:text-primary-400 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded';
+
+/** Help longer than this stands as two lines with the rest on "More". */
+const LONG_HELP = 130;
+
+/**
+ * The line under a field that says what goes in it. Some of these run to nine lines in a panel
+ * 320 px wide, and three such fields were the whole panel: long help shows its first two lines,
+ * and the rest on "More". The whole text stays in the page either way.
+ */
+function FieldHelp({ text, className }: { text?: string; className?: string }) {
+  const [open, setOpen] = useState(false);
+  if (!text) return null;
+  const long = text.length > LONG_HELP;
+  return (
+    <p className={cn(HELP_CLS, className)}>
+      <span className={cn(long && !open && 'line-clamp-2')}>{text}</span>
+      {long && (
+        <button type="button" onClick={() => setOpen((shown) => !shown)} aria-expanded={open} className={LINK_CLS}>
+          {open ? 'Less' : 'More'}
+        </button>
+      )}
+    </p>
+  );
+}
 
 /** A form the picker can offer, with its fields for the filter / answers helpers. */
 export interface FlowFormOption {
@@ -137,6 +161,8 @@ interface NodePropertiesProps {
   /** Opens the flow's Triggers panel — surfaced on the Trigger node so events are definable from here. */
   onOpenTriggers?: () => void;
   onClose?: () => void;
+  /** Shown in a sheet that is headed with the step's name already (a phone): the name is not repeated. */
+  inSheet?: boolean;
   className?: string;
 }
 
@@ -262,7 +288,7 @@ function FormPickerField({
         </select>
       )}
       <div className="mt-1 flex items-center justify-between gap-2">
-        {spec.help && <p className={HELP_CLS + ' mt-0 flex-1'}>{spec.help}</p>}
+        <FieldHelp text={spec.help} className="mt-0 flex-1" />
         <button type="button" className={LINK_CLS + ' flex-none'} onClick={() => setDynamic((d) => !d)}>
           {dynamic ? 'Pick from a list' : 'Use a dynamic value'}
         </button>
@@ -316,7 +342,7 @@ function FlowPickerField({
           This flow calls itself — self-recursion is always refused at run time.
         </p>
       )}
-      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      <FieldHelp text={spec.help} />
     </label>
   );
 }
@@ -439,7 +465,7 @@ function TriggerInputsField({
           </div>
         </div>
       )}
-      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      <FieldHelp text={spec.help} />
     </div>
   );
 }
@@ -569,7 +595,7 @@ function FiltersField({
       >
         <Plus className="h-3.5 w-3.5" /> Add rule
       </button>
-      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      <FieldHelp text={spec.help} />
     </div>
   );
 }
@@ -613,7 +639,7 @@ function ConnectorField({
           className={INPUT_CLS}
         />
       )}
-      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      <FieldHelp text={spec.help} />
     </label>
   );
 }
@@ -658,7 +684,7 @@ function ConnectorCommandField({
           ))}
         </datalist>
       )}
-      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      <FieldHelp text={spec.help} />
     </label>
   );
 }
@@ -720,7 +746,7 @@ function DesktopServicePickerField({
           className={INPUT_CLS}
         />
       )}
-      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      <FieldHelp text={spec.help} />
     </label>
   );
 }
@@ -770,7 +796,7 @@ function ServiceDefinitionPickerField({
           <option key={d.id} value={d.id}>{d.name || d.id}{d.provider ? ` — from ${d.provider}` : ''}</option>
         ))}
       </select>
-      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      <FieldHelp text={spec.help} />
     </label>
   );
 }
@@ -819,7 +845,7 @@ function ProviderConnectionPickerField({
           <option key={profile.refId} value={profile.refId}>{profile.name}</option>
         ))}
       </select>
-      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      <FieldHelp text={spec.help} />
     </label>
   );
 }
@@ -870,11 +896,7 @@ function ServiceActionPickerField({
           <option key={a.id} value={a.id}>{a.title || a.id} ({a.id})</option>
         ))}
       </select>
-      {selected?.description ? (
-        <p className={HELP_CLS}>{selected.description}</p>
-      ) : (
-        spec.help && <p className={HELP_CLS}>{spec.help}</p>
-      )}
+      <FieldHelp text={selected?.description || spec.help} />
     </label>
   );
 }
@@ -981,7 +1003,7 @@ export function AiProviderPickerField({
         ))}
       </select>
       <div className="mt-1 flex flex-col gap-2">
-        {spec.help && <p className={HELP_CLS + ' mt-0'}>{spec.help}</p>}
+        <FieldHelp text={spec.help} className="mt-0" />
         <Button type="button" variant="outline" size="sm" onClick={openManager} leftIcon={<Sparkles className="h-3.5 w-3.5" />}>
           Manage AI services...
         </Button>
@@ -1111,7 +1133,7 @@ function CodeField({
           <CodeEditor value={text} onChange={handle} language={language} height="100%" onMount={onEditorMount} />
         </div>
       </ErrorBoundary>
-      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      <FieldHelp text={spec.help} />
     </label>
   );
 }
@@ -1126,10 +1148,15 @@ function Field({
   onChange: (value: unknown) => void;
 }) {
   if (spec.type === 'boolean') {
+    // The name once, at the left, and the switch at the right. (The switch drew the name a
+    // second time beside itself, and what the switch does was never said.)
     return (
-      <div className="flex items-center justify-between">
-        <span className={LABEL_CLS + ' mb-0'}>{spec.label}</span>
-        <Switch checked={!!value} onChange={(v) => onChange(v)} label={spec.label} size="sm" />
+      <div>
+        <div className="flex items-center justify-between gap-3">
+          <span className={LABEL_CLS + ' mb-0'}>{spec.label}</span>
+          <Switch checked={!!value} onChange={(v) => onChange(v)} ariaLabel={spec.label} size="sm" />
+        </div>
+        <FieldHelp text={spec.help} />
       </div>
     );
   }
@@ -1147,7 +1174,7 @@ function Field({
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
-        {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+        <FieldHelp text={spec.help} />
       </label>
     );
   }
@@ -1163,7 +1190,7 @@ function Field({
           onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
           className={INPUT_CLS}
         />
-        {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+        <FieldHelp text={spec.help} />
       </label>
     );
   }
@@ -1181,7 +1208,7 @@ function Field({
           className={INPUT_CLS + ' resize-y'}
           data-ref-syntax={getReferenceSyntax(spec)}
         />
-        {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+        <FieldHelp text={spec.help} />
       </label>
     );
   }
@@ -1198,7 +1225,7 @@ function Field({
         className={INPUT_CLS}
         data-ref-syntax={getReferenceSyntax(spec)}
       />
-      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      <FieldHelp text={spec.help} />
     </label>
   );
 }
@@ -1211,46 +1238,70 @@ function Field({
  */
 function InsertHints({ hints, onInsert }: { hints: string[]; onInsert: (h: string) => 'inserted' | 'copied' }) {
   const [flash, setFlash] = useState<{ h: string; kind: 'inserted' | 'copied' } | null>(null);
+  const [all, setAll] = useState(false);
+  // Whether the chips run past the two lines shown: only then is there a "Show all" to press.
+  // The chips' own box is watched (it grows as steps are added, while the two lines stay put).
+  const [more, setMore] = useState(false);
+  const shown = useRef<HTMLDivElement | null>(null);
+  const chips = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const box = shown.current;
+    const inner = chips.current;
+    if (!box || !inner || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => setMore(inner.offsetHeight > box.clientHeight + 2));
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, []);
   if (hints.length === 0) return null;
-  const groups = [
-    { label: 'Inputs', items: hints.filter((h) => h.startsWith('$inputs.')) },
-    { label: 'Event', items: hints.filter((h) => h === '$event') },
-    { label: 'Node outputs', items: hints.filter((h) => h.startsWith('$nodes.')) },
-  ].filter((g) => g.items.length > 0);
+  // The flow's inputs first, then the event, then what earlier steps gave. Each chip's own
+  // beginning says which it is, so no heading stands over each kind: with a dozen steps the three
+  // headings and their chips were half the panel, above the first field.
+  const ordered = [
+    ...hints.filter((h) => h.startsWith('$inputs.')),
+    ...hints.filter((h) => h === '$event'),
+    ...hints.filter((h) => h.startsWith('$nodes.')),
+  ];
+  const what = (h: string) => (h.startsWith('$inputs.') ? 'An input this flow receives' : h === '$event' ? 'The event that started the run' : 'What an earlier step gave');
   const activate = (h: string) => {
     const kind = onInsert(h);
     setFlash({ h, kind });
     setTimeout(() => setFlash((f) => (f?.h === h ? null : f)), 1200);
   };
   return (
-    <div className="rounded-lg border border-gray-200/80 dark:border-slate-700/60 bg-white/60 dark:bg-slate-800/40 p-2 space-y-2">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">
-        Insert a value
-      </p>
-      {groups.map((g) => (
-        <div key={g.label}>
-          <p className="mb-1 text-[9px] font-medium uppercase tracking-wide text-gray-400 dark:text-slate-600">{g.label}</p>
-          <div className="flex flex-wrap gap-1">
-            {g.items.map((h) => (
-              <button
-                key={h}
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => activate(h)}
-                title="Insert at cursor (or copy)"
-                className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600 hover:bg-primary-100 hover:text-primary-700 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-primary-500/20 dark:hover:text-primary-200"
-              >
-                {flash?.h === h ? (flash.kind === 'inserted' ? 'inserted!' : 'copied!') : h}
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
+    // It stays at the panel's top while the fields scroll under it, so a value can be put into
+    // the field being typed in without scrolling away from it.
+    <div className="sticky top-0 z-10 -mx-3 border-y border-gray-200/80 bg-gray-50 px-3 py-2 dark:border-slate-700/60 dark:bg-slate-800">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+          Insert a value
+        </p>
+        {(more || all) && (
+          <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setAll((open) => !open)} aria-expanded={all} className={LINK_CLS}>
+            {all ? 'Show fewer' : `Show all ${ordered.length}`}
+          </button>
+        )}
+      </div>
+      <div ref={shown} className={cn('mt-1.5', !all && 'max-h-[3.25rem] overflow-hidden max-sm:max-h-[4.25rem]')}>
+      <div ref={chips} className="flex flex-wrap gap-1">
+        {ordered.map((h) => (
+          <button
+            key={h}
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => activate(h)}
+            title={`${what(h)}. Press to put it in the field you are typing in, or to copy it.`}
+            className="h-6 max-w-full cursor-pointer truncate rounded bg-white px-1.5 font-mono text-[11px] text-gray-700 ring-1 ring-gray-200 hover:bg-primary-50 hover:text-primary-700 dark:bg-slate-700 dark:text-slate-200 dark:ring-0 dark:hover:bg-primary-500/20 dark:hover:text-primary-200 max-sm:h-8"
+          >
+            {flash?.h === h ? (flash.kind === 'inserted' ? 'inserted' : 'copied') : h}
+          </button>
+        ))}
+      </div>
+      </div>
     </div>
   );
 }
 
-export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, context = EMPTY_FLOW_EDITOR_CONTEXT, insertHints = [], onOpenTriggers, onClose, className }: NodePropertiesProps) {
+export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, context = EMPTY_FLOW_EDITOR_CONTEXT, insertHints = [], onOpenTriggers, onClose, inSheet = false, className }: NodePropertiesProps) {
   // Registry resolution (never undefined): unknown types get the §4.5 missing-definition
   // placeholder — the panel explains the situation and shows the raw config read-only.
   const spec = flowNodeRegistry.resolveNodeSpec(type, context);
@@ -1287,19 +1338,23 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
   const visibleProps = spec ? spec.properties.filter((p) => evalShowIf(p.showIf, effective) || fieldHasValue(data[p.key])) : [];
 
   return (
-    <div className={cn('flex h-full min-h-0 w-80 flex-none flex-col border-l border-gray-200/80 bg-white dark:border-slate-700/60 dark:bg-slate-900', className)}>
-      <div className="flex items-center justify-between border-b border-gray-200/80 dark:border-slate-700/60 px-4 py-4">
+    <div className={cn('flex h-full min-h-0 w-80 flex-none flex-col border-l border-gray-200/80 bg-white dark:border-slate-800 dark:bg-slate-900', className)}>
+      {/* The step's name, and under it the id other steps refer to it by. On a phone the sheet
+          this stands in is headed with the name already (and closes itself): only the id and
+          the bin stand here. */}
+      <div className="flex items-center justify-between gap-2 border-b border-gray-200/80 px-3 py-2 dark:border-slate-700/60">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{spec?.label ?? type}</p>
-          <p className="truncate font-mono text-[11px] text-gray-400 dark:text-slate-500">{nodeId} · {type}</p>
+          {!inSheet && <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">{spec?.label ?? type}</p>}
+          <p className="truncate font-mono text-[11px] text-gray-500 dark:text-slate-400" title={`${nodeId} · ${type}`}>{nodeId} · {type}</p>
         </div>
-        <div className="flex items-center gap-1"><Button variant="ghost" size="sm" onClick={onDelete} aria-label="Delete node" title="Delete step">
-          <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
-        </Button>{onClose && <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close step settings" title="Close settings"><X className="h-4 w-4" /></Button>}</div>
+        <div className="flex flex-none items-center"><Button variant="ghost" size="sm" onClick={onDelete} aria-label="Delete step" title="Delete step" className="px-2 hover:text-red-600 dark:hover:text-red-400">
+          <Trash2 className="h-4 w-4" />
+        </Button>{onClose && <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close step settings" title="Close settings" className="px-2"><X className="h-4 w-4" /></Button>}</div>
       </div>
 
-      {/* key={nodeId} remounts the field widgets (form-picker mode, adders) when the selection changes. */}
-      <div key={nodeId} onFocus={onPanelFocus} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-3 space-y-3.5">
+      {/* key={nodeId} remounts the field widgets (form-picker mode, adders) when the selection changes.
+          pb-24: the last field scrolls clear of the chat button fixed at the window's corner. */}
+      <div key={nodeId} onFocus={onPanelFocus} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-3 pb-24 space-y-3.5">
         {spec ? (
           <>
             <p className="text-xs text-gray-500 dark:text-slate-400">{spec.description}</p>
@@ -1314,7 +1369,7 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
                 the UI. Amber is reserved for things they can actually act on. */}
             {spec.capability && (
               <p className="rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600 dark:bg-white/[0.04] dark:text-slate-400">
-                Uses <span className="font-medium">{spec.capability}</span> — permission is granted automatically when you save this automation.
+                Uses <span className="font-medium">{spec.capability}</span> — permission is granted automatically when you save this flow.
               </p>
             )}
             {type === 'input' && onOpenTriggers && (
@@ -1337,7 +1392,7 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
             )}
             {type !== 'input' && !spec.missing && <InsertHints hints={insertHints} onInsert={insertOrCopy} />}
             {visibleProps.length === 0 ? (
-              !spec.missing && <p className="text-xs text-gray-400 dark:text-slate-500">This node has no editable settings.</p>
+              !spec.missing && <p className="text-xs text-gray-500 dark:text-slate-400">This step has no settings to change.</p>
             ) : (
               visibleProps.map((p) => {
                 const onChange = (value: unknown) => onPatch({ [p.key]: value });
@@ -1454,7 +1509,7 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
           </>
         ) : (
           <p className="text-xs text-gray-500 dark:text-slate-400">
-            Unknown node type <span className="font-mono">{type}</span> — authored in the full F2I editor. It is kept as-is but has no
+            Unknown step type <span className="font-mono">{type}</span> — authored in the full F2I editor. It is kept as-is but has no
             settings form here.
           </p>
         )}

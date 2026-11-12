@@ -147,7 +147,9 @@ function PaletteItem({
       disabled={disabled}
       aria-label={disabled ? `${spec.label} (not available)` : `Add ${spec.label} node`}
       className={cn(
-        'group relative flex w-full items-start gap-2.5 rounded-xl border border-gray-100 px-3 py-3 text-left dark:border-slate-800 transition-colors',
+        // A step is one compact row: its name and one line of what it does. The longer account,
+        // with what goes in and comes out, is in the popover beside it (PaletteDoc).
+        'group relative flex w-full items-center gap-2.5 rounded-lg border border-gray-100 px-2 py-1.5 text-left dark:border-slate-800 transition-colors max-sm:py-2',
         disabled
           ? 'cursor-not-allowed opacity-55'
           : cn(
@@ -168,10 +170,13 @@ function PaletteItem({
           <MonitorDown className="h-3 w-3" />
         </span>
       )}
-      <span className={cn('flex h-9 w-9 flex-none items-center justify-center rounded-lg', ACCENT_CHIP[spec.accent] ?? ACCENT_CHIP.slate)}>
-        <Icon className="h-5 w-5" />
+      <span className={cn('flex h-8 w-8 flex-none items-center justify-center rounded-lg', ACCENT_CHIP[spec.accent] ?? ACCENT_CHIP.slate)}>
+        <Icon className="h-4 w-4" />
       </span>
-      <span className="min-w-0 flex-1"><span className="block text-xs font-semibold leading-relaxed text-gray-800 dark:text-slate-200">{spec.label}</span><span className="mt-0.5 line-clamp-2 block text-[11px] leading-relaxed text-gray-500 dark:text-slate-400">{spec.description}</span></span>
+      {/* One line each, cut with an ellipsis. (`line-clamp-2 block` never clamped: `block`
+          overrode the display the clamp needs, so each step stood five lines tall and four and
+          a half of them filled the panel.) */}
+      <span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold leading-5 text-gray-800 dark:text-slate-200">{spec.label}</span><span className="block truncate text-[11px] leading-4 text-gray-500 dark:text-slate-400">{spec.description}</span></span>
     </button>
     {organising && (
       // In organise mode the tile is not for inserting — it is for filing. A select rather than
@@ -482,7 +487,7 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
         ref={resultsRef}
         onScroll={(e) => { resultsScrollTop.current = e.currentTarget.scrollTop; }}
         className={cn(
-          'scrollbar-thin min-h-0 flex-1 space-y-4 overflow-y-auto p-2.5',
+          '@container/palette scrollbar-thin min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5',
           // The docked rail sits behind the floating Desktop-connection chip (fixed
           // bottom-left) — leave clearance so the last tiles stay reachable.
           draggable && 'pb-16',
@@ -514,9 +519,9 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
               <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">{cat.label}</p>
               {cat.hint && <p className="text-[10px] text-gray-400 dark:text-slate-600">{cat.hint}</p>}
             </div>
-            {/* Icon tiles — auto-fill so the same palette works in the w-64 rail (2-up)
-                and the full-width mobile sheet (3+-up). */}
-            <div className="grid grid-cols-1 gap-2">
+            {/* One row a step in the rail; two across where the palette is a phone's bottom
+                sheet or a wide panel (the box's own width decides). */}
+            <div className="grid grid-cols-1 gap-1 @md/palette:grid-cols-2">
               {specs.map((spec) => (
                 <PaletteItem
                   key={spec.type}

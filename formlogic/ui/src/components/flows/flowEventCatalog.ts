@@ -519,6 +519,12 @@ export const FLOW_EVENT_CATALOG: readonly FlowEventCatalogEntry[] = [
   },
 ] as const;
 
+/** An event's name in words ("Form submitted"); an event the catalog does not know is spelled out from its id. */
+export function flowEventLabel(event: string): string {
+  const entry = FLOW_EVENT_CATALOG.find((candidate) => candidate.kind === 'event' && candidate.event === event);
+  return entry?.label ?? event.split('.').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+}
+
 export function flowEventsForGroup(group: FlowEventGroupId): readonly FlowEventCatalogEntry[] {
   return FLOW_EVENT_CATALOG.filter((entry) => entry.group === group);
 }

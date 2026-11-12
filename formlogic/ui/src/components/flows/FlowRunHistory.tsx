@@ -26,7 +26,7 @@ import type { FlowRunErrorCode } from '../../types/flows';
 const RUN_ERROR_HELP: Record<FlowRunErrorCode, { cause: string; next: string }> = {
   node_failed: {
     cause: 'One of the steps failed while it was running.',
-    next: 'Open the automation and check the step named below.',
+    next: 'Open the flow and check the step named below.',
   },
   timeout: {
     cause: 'It took longer than its time limit and was stopped.',
@@ -37,11 +37,11 @@ const RUN_ERROR_HELP: Record<FlowRunErrorCode, { cause: string; next: string }> 
     next: 'Run it again if that was not deliberate.',
   },
   capability_denied: {
-    cause: "A step needed permission this automation doesn't have.",
-    next: 'Open the automation and save it again — saving grants what its steps need.',
+    cause: "A step needed permission this flow doesn't have.",
+    next: 'Open the flow and save it again — saving grants what its steps need.',
   },
   invalid_flow: {
-    cause: 'The automation could not be prepared to run.',
+    cause: 'The flow could not be prepared to run.',
     next: 'Open it and look for steps flagged as needing attention.',
   },
   runner_unavailable: {
@@ -56,7 +56,7 @@ const PAGE_SIZE = 25;
 
 function statusChip(run: FlowRunLog) {
   const { cls, label } = statusChipStyle(run);
-  return <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium ${cls}`}>{label}</span>;
+  return <span className={`inline-block flex-none whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 ${cls}`}>{label}</span>;
 }
 
 function runtimeChip(run: FlowRunLog) {
@@ -67,7 +67,7 @@ function runtimeChip(run: FlowRunLog) {
     : 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/25 dark:bg-sky-500/10 dark:text-sky-300';
   return (
     <span
-      className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${cls}`}
+      className={`inline-block flex-none whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium leading-4 ${cls}`}
       title={run.claimedBy ? `Claimed by ${run.claimedBy}` : `Runtime: ${label}`}
     >
       {label}
@@ -84,19 +84,20 @@ function lineageChip(run: FlowRunLog) {
   if (!run.parentRunId) return null;
   return (
     <span
-      className="inline-block rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:border-violet-500/25 dark:bg-violet-500/10 dark:text-violet-300"
-      title={`Child run — called from run ${run.parentRunId}${run.callNodeId ? ` (node ${run.callNodeId})` : ''}`}
+      className="inline-block flex-none whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-medium leading-4 text-violet-700 dark:border-violet-500/25 dark:bg-violet-500/10 dark:text-violet-300"
+      title={`Child run — called from run ${run.parentRunId}${run.callNodeId ? ` (step ${run.callNodeId})` : ''}`}
     >
       child · d{run.depth ?? 1}
     </span>
   );
 }
 
+/** How long a run took ("120ms", "1.4s"), or '' when the row does not say when it started and ended. */
 function runDuration(run: FlowRunLog): string {
-  if (!run.startedAt || !run.finishedAt) return '-';
+  if (!run.startedAt || !run.finishedAt) return '';
   // parseServerDate: offsetless UTC MySQL datetimes — Safari can't even parse them raw.
   const ms = parseServerDate(run.finishedAt).getTime() - parseServerDate(run.startedAt).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return '-';
+  if (!Number.isFinite(ms) || ms < 0) return '';
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
@@ -212,7 +213,7 @@ export function FlowRunHistory({ flowId, flow, refreshKey }: { flowId: string; f
   const canLoadMore = runs !== null && runs.length < total;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
       <PanelHeader
         icon={History}
         title="Run history"
@@ -234,7 +235,8 @@ export function FlowRunHistory({ flowId, flow, refreshKey }: { flowId: string; f
         )}
       />
 
-      <div className="scrollbar-thin min-h-0 flex-1 overflow-auto">
+      {/* pb-24: the last run scrolls clear of the chat button fixed at the window's corner. */}
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pb-24">
         {loadError && runs !== null && runs.length === 0 ? (
           <div className="px-3 py-4">
             <div className="mb-3 flex items-start gap-2 text-xs text-red-600 dark:text-red-400">
@@ -249,35 +251,27 @@ export function FlowRunHistory({ flowId, flow, refreshKey }: { flowId: string; f
             </Button>
           </div>
         ) : runs === null || loading ? (
-          <p className="px-3 py-4 text-xs text-gray-400 dark:text-slate-500">Loading...</p>
+          <p className="px-3 py-4 text-xs text-gray-500 dark:text-slate-400">Loading…</p>
         ) : runs.length === 0 ? (
-          <p className="px-3 py-4 text-xs text-gray-400 dark:text-slate-500">No runs yet. Trigger the flow or use Test run.</p>
+          <p className="px-3 py-4 text-xs leading-5 text-gray-500 dark:text-slate-400">No runs yet. Trigger the flow or use Test run.</p>
         ) : (
           <>
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-white dark:bg-slate-900">
-                <tr className="border-b border-gray-200/80 text-left text-xs text-gray-500 dark:border-slate-700/60 dark:text-slate-400">
-                  <th className="px-3 py-2 font-medium">Trigger</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2 font-medium">Location</th>
-                  <th className="px-3 py-2 font-medium">Started</th>
-                  <th className="px-3 py-2 font-medium">Duration</th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.map((run) => (
-                  <RunRow
-                    key={run.runId}
-                    run={run}
-                    nodeLabel={run.error?.nodeId ? labelsByNodeId.get(run.error.nodeId) : undefined}
-                    expanded={expanded === run.runId}
-                    onToggle={() => setExpanded((id) => (id === run.runId ? null : run.runId))}
-                  />
-                ))}
-              </tbody>
-            </table>
+            {/* A row a run, two lines each: how it went and when, then what started it, where it
+                ran and how long it took. (Five columns do not fit a panel 384 px wide: the table
+                was wider than its panel, and "done (action failed)" stood three lines tall.) */}
+            <ul className="divide-y divide-gray-100 border-b border-gray-100 dark:divide-slate-800 dark:border-slate-800" aria-label="Runs, newest first">
+              {runs.map((run) => (
+                <RunRow
+                  key={run.runId}
+                  run={run}
+                  nodeLabel={run.error?.nodeId ? labelsByNodeId.get(run.error.nodeId) : undefined}
+                  expanded={expanded === run.runId}
+                  onToggle={() => setExpanded((id) => (id === run.runId ? null : run.runId))}
+                />
+              ))}
+            </ul>
             <div className="flex items-center justify-between gap-2 px-3 py-3">
-              <p className="text-[11px] text-gray-400 dark:text-slate-500">
+              <p className="text-[11px] tabular-nums text-gray-500 dark:text-slate-400">
                 Showing {runs.length} of {total}
               </p>
               {canLoadMore && (
@@ -304,32 +298,38 @@ export function FlowRunHistory({ flowId, flow, refreshKey }: { flowId: string; f
 
 function RunRow({ run, nodeLabel, expanded, onToggle }: { run: FlowRunLog; nodeLabel?: string; expanded: boolean; onToggle: () => void }) {
   const started = run.startedAt ?? run.createdAt;
-  // The as-executed location column (plan §5.7) — absent on rows that predate it ('—').
+  // The as-executed location (plan §5.7): browser, desktop or cloud. A row from before it was
+  // recorded says nothing about where it ran, rather than a dash between two dots.
   const location = runLocationLabel((run as FlowRunLog & { executionLocation?: unknown }).executionLocation);
+  const duration = runDuration(run);
   return (
-    <>
-      <tr onClick={onToggle} className="cursor-pointer border-b border-gray-100 hover:bg-gray-50 dark:border-slate-800 dark:hover:bg-slate-800/40">
-        <td className="px-3 py-2 font-mono text-xs text-gray-600 dark:text-slate-400">{run.triggerEvent}</td>
-        <td className="px-3 py-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {statusChip(run)}
-            {runtimeChip(run)}
-            {lineageChip(run)}
-          </div>
-        </td>
-        <td className="px-3 py-2 text-xs text-gray-500 dark:text-slate-400">{location}</td>
-        <td className="whitespace-nowrap px-3 py-2 text-xs text-gray-500 dark:text-slate-400" title={formatAbsoluteTimeTitle(started)}>
-          {formatRelativeTime(started)}
-        </td>
-        <td className="px-3 py-2 text-xs text-gray-500 dark:text-slate-400">{runDuration(run)}</td>
-      </tr>
+    <li data-run-row>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="flex w-full cursor-pointer flex-col gap-1 px-3 py-2 text-left hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50 dark:hover:bg-white/[0.03] max-sm:py-2.5"
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          {statusChip(run)}
+          {runtimeChip(run)}
+          {lineageChip(run)}
+          <span className="ml-auto flex-none whitespace-nowrap text-xs tabular-nums text-gray-500 dark:text-slate-400" title={formatAbsoluteTimeTitle(started)}>
+            {formatRelativeTime(started)}
+          </span>
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
+          <span className="min-w-0 truncate font-mono text-[11px] text-gray-600 dark:text-slate-300" title={`Started by ${run.triggerEvent}`}>{run.triggerEvent}</span>
+          {location !== '—' && <><span aria-hidden="true">·</span><span data-run-location className="flex-none" title="Where it ran">{location}</span></>}
+          {duration !== '' && <><span aria-hidden="true">·</span><span className="flex-none tabular-nums" title="How long it took">{duration}</span></>}
+        </span>
+      </button>
       {expanded && (
-        <tr className="border-b border-gray-100 dark:border-slate-800">
-          <td colSpan={5} className="bg-gray-50/70 px-3 py-2 dark:bg-slate-800/40">
+        <div className="border-t border-gray-100 bg-gray-50/70 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/40">
             {run.parentRunId && (
               <p className="mb-1.5 text-[11px] text-gray-500 dark:text-slate-400">
                 Called from run <span className="font-mono">{run.parentRunId}</span>
-                {run.callNodeId && <> via node <span className="font-mono">{run.callNodeId}</span></>}
+                {run.callNodeId && <> by step <span className="font-mono">{run.callNodeId}</span></>}
                 {run.rootRunId && run.rootRunId !== run.parentRunId && (
                   <> · root <span className="font-mono">{run.rootRunId}</span></>
                 )}
@@ -368,10 +368,9 @@ function RunRow({ run, nodeLabel, expanded, onToggle }: { run: FlowRunLog; nodeL
               </pre>
             )}
             <ChildRuns runId={run.runId} level={0} />
-          </td>
-        </tr>
+        </div>
       )}
-    </>
+    </li>
   );
 }
 
@@ -416,13 +415,13 @@ function ChildRuns({ runId, level }: { runId: string; level: number }) {
               type="button"
               onClick={() => setOpenChild((id) => (id === child.runId ? null : child.runId))}
               className="flex w-full flex-wrap items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-gray-100/70 dark:hover:bg-slate-800/60"
-              title={`Run ${child.runId}${child.callNodeId ? ` — via node ${child.callNodeId}` : ''}`}
+              title={`Run ${child.runId}${child.callNodeId ? ` — by step ${child.callNodeId}` : ''}`}
             >
               {statusChip(child)}
               <span className="font-mono text-gray-600 dark:text-slate-300">{child.flow ?? child.flowDefinitionId}</span>
               {child.callNodeId && <span className="text-gray-400 dark:text-slate-500">via {child.callNodeId}</span>}
               <span className="ml-auto text-gray-400 dark:text-slate-500" title={formatAbsoluteTimeTitle(child.startedAt ?? child.createdAt)}>
-                {formatRelativeTime(child.startedAt ?? child.createdAt)} · {runDuration(child)}
+                {formatRelativeTime(child.startedAt ?? child.createdAt)}{runDuration(child) !== '' && ` · ${runDuration(child)}`}
               </span>
             </button>
             {openChild === child.runId && (

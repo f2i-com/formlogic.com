@@ -83,6 +83,8 @@ function useUnknownAwareNodeTypes(nodes: FlowRFNode[]): NodeTypes {
 const EDGE_TYPES: EdgeTypes = { flow: FlowEdge };
 
 const PRO_OPTIONS = { hideAttribution: true } as const;
+/** React Flow's own map is 200 by 150: a fifth of a laptop's canvas for a flow of three steps. */
+const MINIMAP_SIZE = { width: 128, height: 84 } as const;
 const DEFAULT_MARKER = { type: MarkerType.ArrowClosed, width: 18, height: 18, color: '#94a3b8' } as const;
 const DEFAULT_EDGE_OPTIONS = { type: 'flow', deletable: true, focusable: true, reconnectable: true, markerEnd: DEFAULT_MARKER } as const;
 // Left-drag PANS — consistent with the diagrams canvas (owner direction: one muscle
@@ -264,6 +266,34 @@ export function FlowCanvas({
   );
 
   const fitView = useCallback(() => instanceRef.current?.fitView({ padding: 0.2, duration: 300 }), []);
+
+  // The first fit is made for the width the canvas has as it mounts. A flow opened by a link that
+  // opens a side panel too (…&panel=triggers) mounts while the editor is still settling: the step
+  // list gives way a frame later, so the fit was made for a sliver and the flow stayed tiny at
+  // the canvas's left edge. For a moment after mounting, a change of width fits the flow again.
+  // After that, or once the person has touched the canvas, the view is theirs and is left alone.
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let width = el.getBoundingClientRect().width;
+    const observer = new ResizeObserver(([entry]) => {
+      const next = entry.contentRect.width;
+      if (Math.abs(next - width) < 48) return;
+      width = next;
+      instanceRef.current?.fitView({ padding: 0.2, maxZoom: 1 });
+    });
+    observer.observe(el);
+    const stop = () => observer.disconnect();
+    const timer = window.setTimeout(stop, 1500);
+    el.addEventListener('pointerdown', stop, { once: true });
+    el.addEventListener('wheel', stop, { once: true, passive: true });
+    return () => {
+      window.clearTimeout(timer);
+      stop();
+      el.removeEventListener('pointerdown', stop);
+      el.removeEventListener('wheel', stop);
+    };
+  }, []);
   const runAutoLayout = useCallback(() => {
     onAutoLayout();
     // Let the new positions flush to the store, then frame the whole graph.
@@ -312,7 +342,7 @@ export function FlowCanvas({
   const selectionScoped = menu?.onNode || hasSelection;
 
   return (
-    <div ref={wrapperRef} className="relative h-full w-full min-w-0" onDrop={onDrop} onDragOver={onDragOver}>
+    <div ref={wrapperRef} className="@container/canvas relative h-full w-full min-w-0" onDrop={onDrop} onDragOver={onDragOver}>
       <ReactFlow<FlowRFNode, FlowRFEdge>
         nodes={nodes}
         edges={styledEdges}
@@ -348,12 +378,18 @@ export function FlowCanvas({
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} className="!text-gray-300 dark:!text-slate-800" />
         <Controls position="top-left" orientation="horizontal" className="!shadow-sm" showInteractive={false}><ControlButton onClick={runAutoLayout} title="Arrange steps" aria-label="Arrange steps"><LayoutGrid /></ControlButton></Controls>
+        {/* At the top right, across from the zoom buttons: the bottom corners belong to the
+            desktop chip and the chat button, which sat over half of the map. A small map (it is
+            an aid, not a second canvas), and none where the canvas itself is narrow: beside an
+            open panel the whole flow is in view anyway and the map would cover a step. */}
         <MiniMap
+          position="top-right"
           nodeColor={miniMapNodeColor}
           nodeClassName={miniMapNodeClassName}
           pannable
           zoomable
-          className="hidden rounded-lg !border !border-gray-200 !bg-white dark:!border-slate-700 dark:!bg-slate-900 sm:block"
+          style={MINIMAP_SIZE}
+          className="hidden rounded-lg !border !border-gray-200 !bg-white dark:!border-slate-700 dark:!bg-slate-900 @2xl/canvas:block"
           maskColor="rgb(148 163 184 / 0.15)"
         />
       </ReactFlow>

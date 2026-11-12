@@ -7,49 +7,35 @@ import { flowNodeRegistry } from '../registry/FlowNodeRegistry';
 export const PATCH_HISTORY_COALESCE_MS = 1000;
 
 export const FLOW_LAYOUT = {
+  /** The canvas keeps this much beside the open list of steps. */
   CANVAS_FLOOR: 440,
+  /** …and this much beside the list's narrow rail, which costs little. */
+  RAIL_CANVAS_FLOOR: 360,
+  /** The least canvas a side panel may leave. With less, the panel is a sheet over the canvas. */
+  SIDE_CANVAS_FLOOR: 320,
   PALETTE_W: 256,
   PALETTE_RAIL_W: 56,
   PROPS_W: 320,
   RIGHT_PANEL_W: 384,
-  LIBRARY_W: 288,
-  LIBRARY_RAIL_W: 56,
 } as const;
 
 export type FlowPaletteTier = 'inline' | 'rail' | 'hidden';
 export type FlowPropertiesTier = 'inline' | 'sheet';
 export type FlowRightPanelTier = 'rail' | 'drawer';
-export type FlowLibraryTier = 'expanded' | 'rail';
-/**
- * Toolbar density from the EDITOR's measured width (a docked right panel can squeeze the editor
- * column at any viewport, so viewport breakpoints are the wrong signal):
- *   'full'    — button labels + the full save-status chip (fits ~940px and up)
- *   'compact' — icon-only Triggers/History/Test run/Add node, dot-only save status, no dividers
- *   'tiny'    — compact plus an icon-only Save button (below ~560px)
- */
-export type FlowToolbarTier = 'full' | 'compact' | 'tiny';
-
-export const TOOLBAR_FULL_MIN_W = 940;
-export const TOOLBAR_COMPACT_MIN_W = 560;
 
 export interface ResolvedEditorLayout {
   palette: FlowPaletteTier;
   properties: FlowPropertiesTier;
   rightPanel: FlowRightPanelTier;
-  library: FlowLibraryTier;
-  toolbar: FlowToolbarTier;
 }
 
 export interface ResolveEditorLayoutInput {
+  /** The editor's own measured width: the sidebar and a docked chat take their share of the window. */
   editorWidth?: number | null;
-  workspaceWidth?: number | null;
   selectedNode?: boolean;
-  selectedFlow?: boolean;
+  /** Triggers, Run history or a test run is open at the right. */
   rightPanelOpen?: boolean;
   paletteCollapsedPreference?: boolean;
-  libraryCollapsedPreference?: boolean;
-  /** The full-page editor renders no flow library at all — its width never subtracts. */
-  libraryHidden?: boolean;
   belowMd?: boolean;
   /** First-paint fallback before ResizeObserver has reported a measured container width. */
   legacyInline?: boolean;
@@ -60,83 +46,48 @@ function measured(width: number | null | undefined): width is number {
 }
 
 /**
- * Resolve the flows workspace/editor chrome from measured container width.
+ * Resolve the editor's chrome from its measured width: the list of steps at the left, the canvas,
+ * and ONE panel at the right.
  *
- * User collapse preferences are treated as preferences only: pressure from the canvas floor can
- * force a rail/sheet/drawer, but the resolver never asks callers to overwrite persisted prefs.
+ * Only one thing stands at the right at a time: a selected step's properties, or else the open
+ * panel (Triggers, Run history, a test run), which the properties cover while a step is selected.
+ * The right side keeps its place beside the canvas on any screen wider than a phone, and the list
+ * of steps gives way first (to its rail, then out of sight, where "Add step" opens it). A side
+ * panel is a sheet over the canvas only on a phone, or where it would leave the canvas less than
+ * SIDE_CANVAS_FLOOR (a tablet held upright with the sidebar open).
+ *
+ * The collapse preference is a preference only: pressure from the canvas floor can force the
+ * rail, but the resolver never asks callers to overwrite the stored choice.
  */
 export function resolveEditorLayout(input: ResolveEditorLayoutInput): ResolvedEditorLayout {
-  const belowMd = input.belowMd === true;
   const legacyInline = input.legacyInline !== false;
-  const selectedNode = input.selectedNode === true;
-  const selectedFlow = input.selectedFlow === true;
   const palettePrefersRail = input.paletteCollapsedPreference === true;
-  const libraryPrefersRail = input.libraryCollapsedPreference === true;
 
-  let properties: FlowPropertiesTier = 'sheet';
-  let palette: FlowPaletteTier = 'hidden';
-
-  if (!belowMd && !measured(input.editorWidth)) {
-    properties = selectedNode && legacyInline ? 'inline' : 'sheet';
-    palette = legacyInline ? (palettePrefersRail ? 'rail' : 'inline') : 'hidden';
-  } else if (!belowMd) {
-    const editorWidth = measured(input.editorWidth) ? input.editorWidth : 0;
-    const canInlineProperties =
-      selectedNode && editorWidth - FLOW_LAYOUT.PROPS_W - FLOW_LAYOUT.PALETTE_RAIL_W >= FLOW_LAYOUT.CANVAS_FLOOR;
-    properties = canInlineProperties ? 'inline' : 'sheet';
-
-    const propertiesWidth = canInlineProperties ? FLOW_LAYOUT.PROPS_W : 0;
-    if (!palettePrefersRail && editorWidth - propertiesWidth - FLOW_LAYOUT.PALETTE_W >= FLOW_LAYOUT.CANVAS_FLOOR) {
-      palette = 'inline';
-    } else if (editorWidth - propertiesWidth - FLOW_LAYOUT.PALETTE_RAIL_W >= FLOW_LAYOUT.CANVAS_FLOOR) {
-      palette = 'rail';
-    } else {
-      palette = 'hidden';
-    }
+  if (input.belowMd === true) return { palette: 'hidden', properties: 'sheet', rightPanel: 'drawer' };
+  if (!measured(input.editorWidth)) {
+    return legacyInline
+      ? { palette: palettePrefersRail ? 'rail' : 'inline', properties: 'inline', rightPanel: 'rail' }
+      : { palette: 'hidden', properties: 'sheet', rightPanel: 'drawer' };
   }
 
-  let library: FlowLibraryTier = libraryPrefersRail ? 'rail' : 'expanded';
-  let rightPanel: FlowRightPanelTier = 'drawer';
+  const width = input.editorWidth;
+  const properties: FlowPropertiesTier = width - FLOW_LAYOUT.PROPS_W >= FLOW_LAYOUT.SIDE_CANVAS_FLOOR ? 'inline' : 'sheet';
+  const rightPanel: FlowRightPanelTier = width - FLOW_LAYOUT.RIGHT_PANEL_W >= FLOW_LAYOUT.SIDE_CANVAS_FLOOR ? 'rail' : 'drawer';
 
-  if (!belowMd && !measured(input.workspaceWidth)) {
-    library = libraryPrefersRail ? 'rail' : 'expanded';
-    rightPanel = legacyInline ? 'rail' : 'drawer';
-  } else if (!belowMd) {
-    const workspaceWidth = measured(input.workspaceWidth) ? input.workspaceWidth : 0;
-    const expandedLibraryFits =
-      !selectedFlow ||
-      workspaceWidth - FLOW_LAYOUT.LIBRARY_W - FLOW_LAYOUT.CANVAS_FLOOR - FLOW_LAYOUT.PALETTE_RAIL_W >= 0;
-    library = input.libraryHidden === true || libraryPrefersRail || !expandedLibraryFits ? 'rail' : 'expanded';
+  // What takes room at the right now. A sheet or a drawer lies over the canvas and takes none.
+  const side = input.selectedNode === true
+    ? (properties === 'inline' ? FLOW_LAYOUT.PROPS_W : 0)
+    : input.rightPanelOpen === true && rightPanel === 'rail' ? FLOW_LAYOUT.RIGHT_PANEL_W : 0;
+  const room = width - side;
+  const palette: FlowPaletteTier = !palettePrefersRail && room - FLOW_LAYOUT.PALETTE_W >= FLOW_LAYOUT.CANVAS_FLOOR
+    ? 'inline'
+    : room - FLOW_LAYOUT.PALETTE_RAIL_W >= FLOW_LAYOUT.RAIL_CANVAS_FLOOR ? 'rail' : 'hidden';
 
-    const libraryWidth = input.libraryHidden === true ? 0 : library === 'rail' ? FLOW_LAYOUT.LIBRARY_RAIL_W : FLOW_LAYOUT.LIBRARY_W;
-    rightPanel =
-      input.rightPanelOpen === true &&
-      workspaceWidth - libraryWidth - FLOW_LAYOUT.CANVAS_FLOOR - FLOW_LAYOUT.PALETTE_RAIL_W >= FLOW_LAYOUT.RIGHT_PANEL_W
-        ? 'rail'
-        : 'drawer';
-  }
-
-  // Toolbar density: measured editor width decides; below-md is always at least compact, and an
-  // unmeasured first paint falls back to the legacy breakpoint signal.
-  let toolbar: FlowToolbarTier;
-  if (measured(input.editorWidth)) {
-    toolbar = input.editorWidth >= TOOLBAR_FULL_MIN_W ? 'full' : input.editorWidth >= TOOLBAR_COMPACT_MIN_W ? 'compact' : 'tiny';
-  } else {
-    toolbar = belowMd ? 'compact' : legacyInline ? 'full' : 'compact';
-  }
-  if (belowMd && toolbar === 'full') toolbar = 'compact';
-
-  return { palette, properties, rightPanel, library, toolbar };
+  return { palette, properties, rightPanel };
 }
 
 export function sameResolvedEditorLayout(a: ResolvedEditorLayout, b: ResolvedEditorLayout): boolean {
-  return (
-    a.palette === b.palette &&
-    a.properties === b.properties &&
-    a.rightPanel === b.rightPanel &&
-    a.library === b.library &&
-    a.toolbar === b.toolbar
-  );
+  return a.palette === b.palette && a.properties === b.properties && a.rightPanel === b.rightPanel;
 }
 
 export interface PatchHistoryBurst {

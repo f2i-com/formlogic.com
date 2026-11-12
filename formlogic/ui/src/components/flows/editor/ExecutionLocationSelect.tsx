@@ -14,6 +14,7 @@ export function ExecutionLocationSelect({
   onChange,
   cloudDisabledReason = null,
   compact = false,
+  labelClassName,
 }: {
   value: FlowExecutionLocation;
   onChange: (location: FlowExecutionLocation) => void;
@@ -21,13 +22,15 @@ export function ExecutionLocationSelect({
   cloudDisabledReason?: string | null;
   /** Tiny toolbars drop the visible "Run on" label (the select keeps its aria-label). */
   compact?: boolean;
+  /** Where the bar shows the words "Run on" (it hides them by its own width; the select keeps its name). */
+  labelClassName?: string;
 }) {
   const cloudTitle = cloudDisabledReason ?? EXECUTION_LOCATION_DESCRIPTIONS.cloud;
   return (
     <div className="flex flex-none items-center gap-1.5">
       <label
         htmlFor="flow-execution-location"
-        className={cn('text-xs text-gray-500 dark:text-slate-400', compact && 'sr-only')}
+        className={cn('whitespace-nowrap text-xs text-gray-500 dark:text-slate-400', compact && 'sr-only', labelClassName)}
       >
         Run on
       </label>
@@ -90,9 +93,9 @@ export function ExecutionLocationNotice({
       >
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-none" />
         <p>
-          FormLogic Cloud can't run this flow yet — unsupported node{cloudUnsupportedNodes.length === 1 ? '' : 's'}:{' '}
+          FormLogic Cloud can't run this flow yet — unsupported step{cloudUnsupportedNodes.length === 1 ? '' : 's'}:{' '}
           <span className="font-medium">{cloudUnsupportedNodes.join(', ')}</span>. The setting stays saved; cloud runs will
-          refuse until those nodes change. Use Auto with the required local services, or a compatible Desktop relay.
+          refuse until those steps change. Use Auto with the required local services, or a compatible Desktop relay.
         </p>
       </div>
     );
