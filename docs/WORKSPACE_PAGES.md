@@ -118,7 +118,23 @@ Where these live:
 
 Two slips to look for, found more than once: `line-clamp-N` beside `block` on one element never
 clamps (`block` overrides the display the clamp needs), and a floating thing in a bottom corner
-(a minimap, a pager) ends up under the chat button or the desktop chip, which live there.
+(a minimap, a pager) ends up under the chat button, which lives in the right one.
+
+Nothing of the workspace's own floats over a page's left corner. The desktop's state ("No
+desktop", "Connect OAIY", a linked desktop's name) is a line at the foot of the sidebar, beside
+where the data is kept (`DesktopConnectionPopover placement="sidebar"`); its panel opens from
+there. A phone has no sidebar: there it is a chip over the page, shown only while a desktop is
+linked, and never on a page that claims the bottom edge (`lib/bottomEdgeClaim`).
+
+## An app's icon
+
+Wherever an app is listed or named (the apps table and cards, Home, the sidebar, a phone's menu,
+an app's own page header, App Studio), it is drawn by `AppTile`: the owner's logo, else a SoftN
+app's own icon, else a curated icon, else the app's initial. A SoftN app's own icon is the one its
+browser tab and home screen show (the owner's choice in Look and sharing, else its manifest's
+`icon`): the server names it on every app it lists (`lookIcon`, see HOSTED_APPS.md) and
+`appIconUrl` (`lib/appLook`) gives its address. It is drawn whole and on no plate, since it is a
+finished icon; a logo, which may be any picture, fills the tile.
 
 ## Colour
 

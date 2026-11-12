@@ -54,11 +54,16 @@ an app's page (v0.0.28 on), which can also `fetch` them. Scene3D draws a model f
 SoftN v0.0.30 (before it, it refused the frame's `data:` URLs as "Unsafe model URL"). HTML, CSS
 and JavaScript files are not kept. A file name may not have two dots together, and `apiVersion` is written `1`, not `1.0`.
 
-The owner manages it at `/apps/<id>/softn`, a page of five sections, each at its own address so a
+The owner manages it at `/apps/<id>/softn`, a page of six sections, each at its own address so a
 link or the back button lands where it was. The page itself is the **Overview**: whether the app
 is live and at which version, its addresses, how much data it holds and who can use it. It starts
 nothing, so looking over many apps runs none of them. **Data** (`…/softn/data/<table>/<view>`) is
-the data manager described below; **Edit** (`…/softn/edit`) previews the app at desktop or phone
+the data manager described below; **Members** (`…/softn/members`, the owner alone) lists the
+people who can use the app, invites others, approves or removes them, and sets how people join
+(self-registration, approval, the role a new member gets): the same panels App Studio's Users &
+roles step has, here on the app's own page, where the Overview's "Members" and the Settings'
+"Who can use it" lead (roles themselves are still edited in App Studio);
+**Edit** (`…/softn/edit`) previews the app at desktop or phone
 width and changes it with AI Studio, the Visual Builder, a new `.softn` file or the source editor;
 **Domains** (`…/softn/domains`) holds whether it opens at the app's address, and its own domains;
 **Settings** (`…/softn/settings`, with `#settings-…` for each panel) chooses who can use it and what
@@ -119,6 +124,15 @@ is shared (`settings.softnLook`, AppLookService):
   frame is uncovered as soon as it starts). A browser that has opened the app before starts on them
   at once. An installed app's splash uses the background too.
 - **Browser bar colour**: `settings.pwaThemeColor`, as for other apps.
+
+The workspace shows the same icon wherever it lists the app (the apps table and cards, Home, the
+sidebar, the app's own page header): `GET /api/apps` and `GET /api/apps/{id}` name it on a SoftN
+app as `lookIcon` (`{ kind: 'raster' | 'svg', version }`, AppLookService::listIcon), for its owner
+and for a member alike, and the page asks for `icon-192.png` or `icon.svg` at that version. An app
+with no icon of its own carries no `lookIcon` and shows its initial. What a list is told is kept
+beside the media pack for the project as installed and the owner's choices as they are, so listing
+many apps reads one small file for each, not each app's source; an icon later found to be one the
+server cannot draw stops being named, as the look stops naming it.
 
 The images are served at `/api/app/{slug}/look/{name}` (`icon-32.png`, `icon-180.png`,
 `icon-192.png`, `icon-512.png`, `icon-512-maskable.png`, `share.png`, `icon.svg`) to everyone the
@@ -1162,6 +1176,27 @@ At most four native workers run concurrently across apps in one storage root, wi
 worker deadline; a request waits up to three seconds for one before it is answered busy (`429`).
 This is an initial capacity limit, not a production concurrency benchmark. Saves to the app's
 browser storage are not counted against the frame's four calls at a time.
+
+**A newer version, in the page where the app is open.** Whoever has the app open sees a version its
+owner publishes (from the workspace's editors, `git push`, or an AI's tools) in the page where the
+app is already running, without reloading it: the app goes on from where it stood, with its
+variables and open page, where only its markup or styles changed; it starts again where its logic
+changed (what the person had typed and not saved goes with that, as on a reload); and a version
+that does not parse or will not start is kept back, with the last one that worked still on screen
+and the problem said over it. The runtime GET tells the page so
+(`updates: "live"`, to everyone it admits; never for a plugin's pages) and how far apart to ask
+(`updatesEvery`, in seconds: 20 for the owner, who is the one publishing, 60 for everyone else);
+the page then asks for the version alone while it is looked at (`GET /api/app/{slug}/native?only=version`,
+admitted exactly as the project is and answering `{version}` and nothing else: on coming back to
+the tab, and at that interval), fetches a newer one as an opening is fetched (its media only
+if they changed) and hands its files to the running frame (SoftN v0.0.39's `formlogic:update`).
+The asking is counted apart from the app's own calls (a budget of its own for each person or
+address in each app), so a room of people behind one address asking cannot slow the app itself; a
+check that is refused is simply asked again at the next turn.
+Only the files travel that way. A version that differs in anything a frame is opened with (its
+access or storage, the engine the server runs it on, the origins it may call, the files
+permission, what it asks of FormLogic), a runtime from before v0.0.39, or a frame that answers
+`reopen`, is opened in a new frame, as every newer version was before.
 
 **A throttled call, as the app's page sees it.** FormLogic refuses a call before the app's backend
 runs in three cases, and the page's `softn.net.fetch` is answered the same way for each:
