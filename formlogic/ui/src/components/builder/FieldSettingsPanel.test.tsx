@@ -188,7 +188,7 @@ describe('FieldSettingsPanel number settings that always hold a value', () => {
   // next key lands after it: a 3 typed over Max Stars 5 read "53" and was stored as 10.
   it('lets Max Stars be cleared and retyped', () => {
     render({ id: 'r1', type: 'rating', label: 'Rate us', required: false, properties: { maxStars: 5 } } as FormField);
-    const input = inputLabelled('Max Stars');
+    const input = inputLabelled('Max stars');
     press(input, ['Backspace']);
     expect(input.value).toBe('');
     expect(latest?.properties.maxStars).toBe(5);
@@ -200,7 +200,7 @@ describe('FieldSettingsPanel number settings that always hold a value', () => {
 
   it('puts back what was stored when Max Stars is left empty', () => {
     render({ id: 'r1', type: 'rating', label: 'Rate us', required: false, properties: { maxStars: 4 } } as FormField);
-    const input = inputLabelled('Max Stars');
+    const input = inputLabelled('Max stars');
     press(input, ['Backspace']);
     act(() => input.blur());
     expect(input.value).toBe('4');
@@ -209,7 +209,7 @@ describe('FieldSettingsPanel number settings that always hold a value', () => {
 
   it('lets Max File Size be cleared and retyped', () => {
     render({ id: 'f1', type: 'file_upload', label: 'Attachment', required: false, properties: {} } as FormField);
-    const input = inputLabelled('Max File Size (MB)');
+    const input = inputLabelled('Max file size (MB)');
     press(input, ['Backspace', 'Backspace']);
     expect(input.value).toBe('');
     press(input, ['2', '5']);
@@ -243,7 +243,7 @@ describe('FieldSettingsPanel accepted file types', () => {
 
   it('takes a second type typed after a comma', () => {
     render(upload);
-    const input = inputLabelled('Accepted File Types');
+    const input = inputLabelled('Accepted file types');
     keys(input, '.pdf, .jpg');
     expect(input.value).toBe('.pdf, .jpg');
     expect(latest?.properties.acceptedFileTypes).toEqual(['.pdf', '.jpg']);

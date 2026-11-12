@@ -62,7 +62,7 @@ describe('CsvImportWizard', () => {
     const cells = [...document.querySelectorAll('tbody td')].map((td) => td.textContent);
     expect(cells).toEqual(['Ada', 'Lovelace']);
 
-    await click(/Import 1 Rows/);
+    await click(/Import 1 row/);
     expect(importCsv.mock.calls[0][2]).toEqual(['first', 'second', 'skip']);
   });
 
@@ -77,7 +77,7 @@ describe('CsvImportWizard', () => {
     expect(page()).toContain('1 of 2 columns mapped');
 
     await click(/Preview/);
-    await click(/Import 1 Rows/);
+    await click(/Import 1 row/);
     expect(importCsv.mock.calls[0][2]).toEqual(['first', 'skip']);
   });
 
@@ -144,7 +144,7 @@ describe('CsvImportWizard', () => {
     const importCsv = await open(['Name', 'Notes'], [['Ada', 'x']]);
 
     await click(/Preview/);
-    await click(/Import 1 Rows/);
+    await click(/Import 1 row/);
 
     expect(importCsv.mock.calls[0][2]).toEqual(['first', 'skip']);
     expect(importCsv.mock.calls[0][3]).toEqual(['Name', 'Notes']);

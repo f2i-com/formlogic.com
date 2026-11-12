@@ -143,9 +143,10 @@ export default function FormPreview() {
   // widget mounts here too so the conversation follows the viewer onto the result.
   const previewBar = (
     <div className="flex h-11 flex-shrink-0 items-center gap-2 border-b border-gray-200 bg-white px-3 dark:border-slate-800 dark:bg-slate-900">
-      <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)}>
+      {/* Named for a screen reader too: on a phone only the arrow shows. */}
+      <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)} aria-label="Exit preview" title="Exit preview">
         <ArrowLeft className="h-4 w-4 sm:mr-2" />
-        <span className="hidden sm:inline">Exit Preview</span>
+        <span className="hidden sm:inline">Exit preview</span>
       </Button>
       <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-700 dark:text-slate-300">{form.title}</span>
     </div>
@@ -157,17 +158,17 @@ export default function FormPreview() {
       <div className={cn('min-h-dvh w-full bg-gray-50 dark:bg-slate-950 flex flex-col', chatDockOffset && 'mr-96')}>
         <SiteChatWidget />
         {previewBar}
+        {/* The dashboard starts at the left and takes the width of the window, as the
+            product's other data views do, instead of a centred column. */}
         <div className="w-full p-4 md:p-6">
-          <div className="max-w-6xl mx-auto">
-            <FormWidgetDashboard
-              dashboard={form.customScreen.dashboard}
-              formId={form.id}
-              fields={form.fields}
-              formTitle={form.title}
-              publicMode={false}
-              accent={form.theme.primaryColor}
-            />
-          </div>
+          <FormWidgetDashboard
+            dashboard={form.customScreen.dashboard}
+            formId={form.id}
+            fields={form.fields}
+            formTitle={form.title}
+            publicMode={false}
+            accent={form.theme.primaryColor}
+          />
         </div>
       </div>
     );
@@ -232,9 +233,9 @@ export default function FormPreview() {
       {/* Header */}
       <header className="h-14 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between px-4 flex-shrink-0 transition-colors duration-300">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)} aria-label="Exit preview" title="Exit preview">
             <ArrowLeft className="h-4 w-4 sm:mr-2" />
-            <span className="hidden sm:inline">Exit Preview</span>
+            <span className="hidden sm:inline">Exit preview</span>
           </Button>
         </div>
 
@@ -242,10 +243,13 @@ export default function FormPreview() {
           {/* Device toggle - hidden on mobile since it's responsive anyway */}
           <div className="hidden md:flex items-center bg-gray-100 dark:bg-slate-800 rounded-lg p-1 transition-colors duration-300">
             <button
+              type="button"
               onClick={() => setPreviewDevice('desktop')}
               aria-label="Desktop preview"
+              aria-pressed={previewDevice === 'desktop'}
+              title="Desktop preview"
               className={cn(
-                'p-2 rounded-md transition-all duration-200 cursor-pointer',
+                'p-2 rounded-md transition-all duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
                 previewDevice === 'desktop'
                   ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white'
                   : 'hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-500 dark:text-slate-400'
@@ -254,10 +258,13 @@ export default function FormPreview() {
               <Monitor className="h-4 w-4" />
             </button>
             <button
+              type="button"
               onClick={() => setPreviewDevice('mobile')}
               aria-label="Mobile preview"
+              aria-pressed={previewDevice === 'mobile'}
+              title="Mobile preview"
               className={cn(
-                'p-2 rounded-md transition-all duration-200 cursor-pointer',
+                'p-2 rounded-md transition-all duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
                 previewDevice === 'mobile'
                   ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white'
                   : 'hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-500 dark:text-slate-400'

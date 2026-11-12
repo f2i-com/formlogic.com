@@ -8,6 +8,7 @@ import { api } from '../../lib/api';
 import { isDemoLocalId } from '../../lib/demoLocal';
 import { cn } from '../../lib/utils';
 import type { Form } from '../../types/form';
+import { DIALOG_CLOSE, DIALOG_DESCRIPTION, DIALOG_FOOTER, DIALOG_HEADER, DIALOG_OVERLAY, DIALOG_PANEL, DIALOG_TABS, DIALOG_TITLE, GROUP_TITLE, dialogTab } from './builderDialog';
 
 interface EmbedModalProps {
   isOpen: boolean;
@@ -245,32 +246,29 @@ function closeFormPopup() {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+    <div className={DIALOG_OVERLAY}>
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
-      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="embed-modal-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800 focus:outline-none">
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="embed-modal-title" className={cn(DIALOG_PANEL, 'max-w-2xl')}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
-          <div className="flex items-center gap-4 min-w-0">
-            <div className="w-10 h-10 shrink-0 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
-              <ExternalLink className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <div className="min-w-0">
-              <h2 id="embed-modal-title" className="text-lg font-semibold text-gray-900 dark:text-white truncate">Share form</h2>
-              <p className="text-sm text-gray-500 dark:text-slate-400 truncate">Share, embed, or export your form</p>
-            </div>
+        <div className={DIALOG_HEADER}>
+          <div className="min-w-0 flex-1 pr-2">
+            <h2 id="embed-modal-title" className={DIALOG_TITLE}>Share form</h2>
+            <p className={DIALOG_DESCRIPTION}>A link, code to embed it, a QR code, and exports.</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 min-h-11 min-w-11 shrink-0 inline-flex items-center justify-center hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors cursor-pointer"
+            className={DIALOG_CLOSE}
             aria-label="Close"
+            title="Close"
           >
-            <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
+            <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex border-b border-gray-200 px-3 dark:border-slate-800 sm:px-6">
+        {/* Tabs. On a phone the names stand without their icons: four bare icons said nothing
+            about what they opened. */}
+        <div className={DIALOG_TABS}>
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -278,15 +276,10 @@ function closeFormPopup() {
               onClick={() => setActiveTab(tab.id)}
               aria-label={tab.label}
               aria-current={activeTab === tab.id ? 'true' : undefined}
-              className={cn(
-                'flex min-w-0 flex-1 items-center justify-center gap-2 border-b-2 px-2 py-3 text-sm font-medium motion-safe:transition-colors -mb-px cursor-pointer rounded-t-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50 sm:flex-none sm:px-4',
-                activeTab === tab.id
-                  ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                  : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
-              )}
+              className={dialogTab(activeTab === tab.id)}
             >
               {tab.icon}
-              <span className="hidden sm:inline">{tab.label}</span>
+              <span>{tab.label}</span>
             </button>
           ))}
         </div>
@@ -295,7 +288,7 @@ function closeFormPopup() {
             so no share link, embed, or QR code can reach it from anywhere else. Say so
             plainly instead of handing out dead links. */}
         {browserLocalDemo && (
-          <div className="mx-6 mt-4 flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-lg border border-amber-200 dark:border-amber-500/30">
+          <div className="mx-4 mt-4 flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-xl border border-amber-200 dark:border-amber-500/30 sm:mx-6">
             <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-amber-500" />
             <span>
               This is a demo form — it lives only in this browser and was never saved to the server, so the
@@ -309,7 +302,7 @@ function closeFormPopup() {
             which only serves published forms to anonymous visitors (the owner's own session
             can still open it, which is what makes this easy to miss while testing). */}
         {!browserLocalDemo && publicUnfillableFields.length > 0 && (
-          <div className="mx-6 mt-4 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+          <div className="mx-4 mt-4 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300 sm:mx-6">
             <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
             <span>
               {publicUnfillableFields.length === 1
@@ -321,7 +314,7 @@ function closeFormPopup() {
         )}
 
         {!browserLocalDemo && formStatus && formStatus !== 'published' && (
-          <div className="mx-6 mt-4 flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-lg border border-amber-200 dark:border-amber-500/30">
+          <div className="mx-4 mt-4 flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-xl border border-amber-200 dark:border-amber-500/30 sm:mx-6">
             <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-amber-500" />
             <span>
               This form is still a {formStatus === 'archived' ? 'archived' : 'draft'}. The link, embed code, and QR
@@ -331,7 +324,7 @@ function closeFormPopup() {
         )}
 
         {/* Content — fixed height so the dialog doesn't jump between tabs. */}
-        <div className="h-[460px] max-h-[60vh] overflow-y-auto p-6">
+        <div className="h-[460px] max-h-[60dvh] min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6">
           {/* Share Link Tab */}
           {activeTab === 'link' && (
             <div className="space-y-6">
@@ -342,7 +335,7 @@ function closeFormPopup() {
                 <p className="text-sm text-gray-500 dark:text-slate-400 mb-3">
                   {browserLocalDemo
                     ? 'Open this link in the current browser to test your form.'
-                    : 'Share this link with anyone to let them fill out your form'}
+                    : 'Anyone with this link can fill in the form.'}
                 </p>
                 <div className="flex gap-2">
                   <input
@@ -350,40 +343,49 @@ function closeFormPopup() {
                     readOnly
                     value={formUrl}
                     aria-label="Form link"
-                    className="flex-1 min-w-0 px-3 py-2 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-600 dark:text-slate-300 truncate focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400"
+                    className="flex-1 min-w-0 px-3 py-2 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg font-mono text-sm text-gray-600 dark:text-slate-300 truncate focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 max-sm:min-h-11"
                   />
                   <Button
                     variant="outline"
+                    className="flex-none px-3 max-sm:min-h-11"
                     onClick={() => handleCopy(formUrl, 'link')}
                     aria-label={copied === 'link' ? 'Copied' : 'Copy link'}
+                    title={copied === 'link' ? 'Copied' : 'Copy link'}
                   >
                     {copied === 'link' ? <Check className="h-4 w-4 text-primary-600 dark:text-primary-400" /> : <Copy className="h-4 w-4" />}
                   </Button>
                   <Button
                     variant="outline"
+                    className="flex-none px-3 max-sm:min-h-11"
                     onClick={() => window.open(formUrl, '_blank', 'noopener,noreferrer')}
                     aria-label="Open form in new tab"
+                    title="Open form in new tab"
                   >
                     <ExternalLink className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
 
-              <div className="bg-gray-50 dark:bg-slate-800/50 rounded-xl p-4">
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 mb-2">Quick preview</h4>
-                <div className="bg-white dark:bg-slate-900 rounded border border-gray-200 dark:border-slate-700 p-4 flex items-center justify-center">
-                  <div ref={qrRef} className="inline-block">
-                    <QRCodeSVG
-                      value={formUrl}
-                      size={120}
-                      level="M"
-                      includeMargin
-                    />
-                  </div>
+              {/* The code and what it is for stand side by side, at the left: centred in a wide
+                  empty box, it read as a preview of the form that had failed to load. */}
+              <div className="flex flex-wrap items-center gap-4 rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+                <div ref={qrRef} className="inline-block flex-none overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-slate-600">
+                  <QRCodeSVG
+                    value={formUrl}
+                    size={120}
+                    level="M"
+                    includeMargin
+                  />
                 </div>
-                <p className="text-xs text-gray-500 dark:text-slate-400 mt-2 text-center">
-                  Scan to open form on mobile
-                </p>
+                <div className="min-w-0 flex-1 basis-40">
+                  <h4 className={GROUP_TITLE}>QR code</h4>
+                  <p className="mt-1 text-sm text-gray-600 dark:text-slate-300">
+                    Scan it with a phone's camera to open the form there.
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">
+                    A larger one to print or download is under QR code.
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -396,7 +398,8 @@ function closeFormPopup() {
                 <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">
                   Embed type
                 </label>
-                <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                {/* A card's two lines are never cut: on a phone the three stand one under another. */}
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3">
                   {embedTypes.map((type) => (
                     <button
                       key={type.id}
@@ -404,20 +407,22 @@ function closeFormPopup() {
                       onClick={() => setEmbedType(type.id)}
                       aria-pressed={embedType === type.id}
                       className={cn(
-                        'min-w-0 p-3 rounded-xl border-2 text-left motion-safe:transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50',
+                        'flex min-w-0 items-center gap-3 p-3 rounded-xl border text-left motion-safe:transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 sm:block',
                         embedType === type.id
-                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
+                          ? 'border-primary-500 ring-1 ring-primary-500 bg-primary-50 dark:bg-primary-500/10'
                           : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
                       )}
                     >
                       <div className={cn(
-                        'mb-1',
+                        'flex-none sm:mb-1',
                         embedType === type.id ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400 dark:text-slate-500'
                       )}>
                         {type.icon}
                       </div>
-                      <p className="font-medium text-gray-900 dark:text-white text-sm truncate">{type.label}</p>
-                      <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{type.description}</p>
+                      <div className="min-w-0">
+                        <p className="font-medium text-gray-900 dark:text-white text-sm">{type.label}</p>
+                        <p className="text-xs text-gray-500 dark:text-slate-400">{type.description}</p>
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -425,7 +430,7 @@ function closeFormPopup() {
 
               {/* Size Options (only for standard embed) */}
               {embedType === 'standard' && (
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">
                       Width
@@ -433,9 +438,10 @@ function closeFormPopup() {
                     <select
                       value={width}
                       onChange={(e) => setWidth(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 text-gray-900 dark:text-white"
+                      aria-label="Width"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 text-sm text-gray-900 dark:text-white max-sm:min-h-11 max-sm:text-base"
                     >
-                      <option value="100%">100% (Full width)</option>
+                      <option value="100%">100% (full width)</option>
                       <option value="800px">800px</option>
                       <option value="600px">600px</option>
                       <option value="500px">500px</option>
@@ -448,11 +454,12 @@ function closeFormPopup() {
                     <select
                       value={height}
                       onChange={(e) => setHeight(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 text-gray-900 dark:text-white"
+                      aria-label="Height"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 text-sm text-gray-900 dark:text-white max-sm:min-h-11 max-sm:text-base"
                     >
                       <option value="400">400px</option>
                       <option value="500">500px</option>
-                      <option value="600">600px (Recommended)</option>
+                      <option value="600">600px (recommended)</option>
                       <option value="700">700px</option>
                       <option value="800">800px</option>
                     </select>
@@ -493,59 +500,59 @@ function closeFormPopup() {
 
           {/* Export Tab */}
           {activeTab === 'export' && (
-            <div className="space-y-6">
-              <p className="text-sm text-gray-600 dark:text-slate-400">
-                Download your form schema or response data in various formats
+            <div className="space-y-4">
+              <p className="text-sm text-gray-500 dark:text-slate-400">
+                Download the form and its responses as a file.
               </p>
 
-              <div className="grid sm:grid-cols-2 gap-3 sm:gap-4">
+              {/* Two rows of a short list (what it is, what is in it), not two tall tiles. */}
+              <div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
                 <button
                   type="button"
                   onClick={handleExportJson}
                   disabled={exporting === 'json'}
-                  className="flex flex-col items-center justify-center min-w-0 p-6 bg-gray-50 dark:bg-slate-800/50 rounded-xl border-2 border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 disabled:opacity-60 disabled:cursor-default motion-safe:transition-all group cursor-pointer"
+                  className="flex min-h-14 min-w-0 items-center gap-3 px-3 py-2 text-left bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 hover:border-primary-400 dark:hover:border-primary-500/50 hover:bg-primary-50/60 dark:hover:bg-primary-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-60 disabled:cursor-default motion-safe:transition-colors cursor-pointer"
                 >
-                  <div className="w-12 h-12 bg-primary-100 dark:bg-primary-500/15 rounded-xl flex items-center justify-center mb-3 group-hover:bg-primary-200 dark:group-hover:bg-primary-500/25 motion-safe:transition-colors">
-                    <FileJson className="h-6 w-6 text-primary-600 dark:text-primary-400" />
-                  </div>
-                  <span className="font-medium text-gray-900 dark:text-white">JSON schema</span>
-                  <span className="text-xs text-gray-500 dark:text-slate-400 mt-1">Form structure + responses</span>
-                  {exporting === 'json' && (
-                    <span className="text-xs text-primary-600 dark:text-primary-400 mt-2">Downloading…</span>
-                  )}
+                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400">
+                    <FileJson className="h-5 w-5" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-gray-900 dark:text-white">JSON schema</span>
+                    <span className="block text-xs text-gray-500 dark:text-slate-400">
+                      {exporting === 'json' ? 'Downloading…' : 'The form’s structure and its responses'}
+                    </span>
+                  </span>
                 </button>
 
                 <button
                   type="button"
                   onClick={handleExportCsv}
                   disabled={exporting === 'csv'}
-                  className="flex flex-col items-center justify-center min-w-0 p-6 bg-gray-50 dark:bg-slate-800/50 rounded-xl border-2 border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 disabled:opacity-60 disabled:cursor-default motion-safe:transition-all group cursor-pointer"
+                  className="flex min-h-14 min-w-0 items-center gap-3 px-3 py-2 text-left bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 hover:border-primary-400 dark:hover:border-primary-500/50 hover:bg-primary-50/60 dark:hover:bg-primary-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-60 disabled:cursor-default motion-safe:transition-colors cursor-pointer"
                 >
-                  <div className="w-12 h-12 bg-primary-100 dark:bg-primary-500/15 rounded-xl flex items-center justify-center mb-3 group-hover:bg-primary-200 dark:group-hover:bg-primary-500/25 motion-safe:transition-colors">
-                    <FileSpreadsheet className="h-6 w-6 text-primary-600 dark:text-primary-400" />
-                  </div>
-                  <span className="font-medium text-gray-900 dark:text-white">CSV data</span>
-                  <span className="text-xs text-gray-500 dark:text-slate-400 mt-1">Responses spreadsheet</span>
-                  {exporting === 'csv' && (
-                    <span className="text-xs text-primary-600 dark:text-primary-400 mt-2">Downloading…</span>
-                  )}
+                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400">
+                    <FileSpreadsheet className="h-5 w-5" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-gray-900 dark:text-white">CSV data</span>
+                    <span className="block text-xs text-gray-500 dark:text-slate-400">
+                      {exporting === 'csv' ? 'Downloading…' : 'The responses, as a spreadsheet'}
+                    </span>
+                  </span>
                 </button>
               </div>
 
-              <div className="bg-primary-50/60 dark:bg-primary-500/[0.07] border border-primary-200/70 dark:border-primary-500/25 rounded-xl p-4">
-                <h4 className="text-sm font-medium text-gray-900 dark:text-primary-300 mb-1">Need more export options?</h4>
-                <p className="text-sm text-gray-600 dark:text-slate-300">
-                  Visit the Analytics page for SQLite database exports and detailed response data.
-                </p>
-              </div>
+              <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
+                The form's Analytics page has a SQLite database export and each response in full.
+              </p>
             </div>
           )}
 
           {/* QR Code Tab */}
           {activeTab === 'qr' && (
-            <div className="space-y-6">
-              <div className="flex flex-col items-center">
-                <div className="bg-white dark:bg-white p-6 rounded-xl border-2 border-gray-200 dark:border-gray-300 inline-block" ref={qrRef}>
+            <div className="flex flex-wrap items-start gap-x-6 gap-y-4">
+              <div className="flex flex-col items-start">
+                <div className="bg-white dark:bg-white p-4 rounded-xl border border-gray-200 dark:border-gray-300 inline-block" ref={qrRef}>
                   <QRCodeSVG
                     value={formUrl}
                     size={200}
@@ -559,34 +566,33 @@ function closeFormPopup() {
                     }}
                   />
                 </div>
-                <p className="text-sm text-gray-600 dark:text-slate-400 mt-4 text-center">
-                  Scan this QR code to open the form on any device
-                </p>
               </div>
 
-              <div className="flex justify-center">
-                <Button onClick={handleDownloadQR} variant="outline">
+              <div className="min-w-0 flex-1 basis-56 space-y-4">
+                <p className="text-sm text-gray-600 dark:text-slate-300">
+                  Scan this QR code with a phone's camera to open the form on it.
+                </p>
+                <Button onClick={handleDownloadQR} variant="outline" className="max-sm:min-h-11">
                   <Download className="h-4 w-4 mr-2" />
                   Download QR code
                 </Button>
-              </div>
-
-              <div className="bg-gray-50 dark:bg-slate-800/50 rounded-xl p-4">
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 mb-2">Uses for QR codes</h4>
-                <ul className="text-sm text-gray-600 dark:text-slate-400 space-y-1 list-disc pl-5">
-                  <li>Print on flyers, posters, or business cards</li>
-                  <li>Add to presentations or documents</li>
-                  <li>Display at events or conferences</li>
-                  <li>Include in email signatures</li>
-                </ul>
+                <div>
+                  <h4 className={cn(GROUP_TITLE, 'mb-2')}>Where a QR code helps</h4>
+                  <ul className="text-sm text-gray-600 dark:text-slate-400 space-y-1 list-disc pl-5">
+                    <li>Printed on flyers, posters or business cards</li>
+                    <li>In presentations or documents</li>
+                    <li>On a screen at an event</li>
+                    <li>In an email signature</li>
+                  </ul>
+                </div>
               </div>
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 flex justify-end">
-          <Button variant="outline" onClick={onClose}>
+        <div className={cn(DIALOG_FOOTER, 'flex justify-end')}>
+          <Button variant="outline" onClick={onClose} className="max-sm:min-h-11">
             Close
           </Button>
         </div>

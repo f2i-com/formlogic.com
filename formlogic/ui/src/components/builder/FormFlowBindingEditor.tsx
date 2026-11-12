@@ -186,7 +186,7 @@ export function FormFlowBindingEditor({
                       type="button"
                       onClick={() => removeRow(i)}
                       aria-label={`Remove input row ${i + 1}`}
-                      className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                      className="inline-flex flex-none items-center justify-center p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 max-sm:min-h-11 max-sm:min-w-11"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -204,7 +204,7 @@ export function FormFlowBindingEditor({
                       type="button"
                       onClick={() => removeRow(i)}
                       aria-label={`Remove input row ${i + 1}`}
-                      className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                      className="inline-flex flex-none items-center justify-center p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 max-sm:min-h-11 max-sm:min-w-11"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>

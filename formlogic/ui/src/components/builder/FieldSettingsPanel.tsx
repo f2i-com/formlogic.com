@@ -1,4 +1,4 @@
-import { useState, memo, type ChangeEvent } from 'react';
+import { useMemo, useState, memo, type ChangeEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
@@ -18,6 +18,13 @@ import { ValidationEditor } from './ValidationEditor';
 import { CalculatedFieldEditor } from './CalculatedFieldEditor';
 import { LinkedRecordSettings } from './LinkedRecordSettings';
 import { type FormField, type ConditionalLogic } from '../../types/form';
+import { cn, createFieldVariableMap, replaceIdsWithVariables } from '../../lib/utils';
+
+// A group of settings that only one kind of field has: a small heading over it and a hairline
+// above, so the panel reads as the field's own settings and then what its kind adds.
+const SECTION = 'space-y-3 border-t border-gray-200 pt-4 dark:border-slate-800';
+const SECTION_TITLE = 'text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400';
+const OPTION_BUTTON = 'h-9 w-8 flex-none px-0 max-sm:w-10';
 
 export const FieldSettingsPanel = memo(function FieldSettingsPanel({
   field,
@@ -97,23 +104,34 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
 
   // Check if field has conditional logic
   const hasLogic = !!field.conditionalLogic?.expression;
+  // The rule as the logic editor shows it: the other fields by their names. It is stored with
+  // their ids, which say nothing to a person.
+  const logicAsRead = useMemo(() => {
+    const expression = field.conditionalLogic?.expression ?? '';
+    if (!expression) return '';
+    const others = allFields.filter((f) => f.id !== field.id && !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
+    return replaceIdsWithVariables(expression, createFieldVariableMap(others).toVar);
+  }, [allFields, field.conditionalLogic?.expression, field.id]);
   // Check if field has validation rules
   const hasValidation = (field.validation?.length || 0) > 0;
 
   return (
-    <div className="h-full flex flex-col">
+    // The panel is 320 px wide beside the canvas: its boxes are a size smaller than a page
+    // form's there. As a sheet on a phone they keep the full size (a finger's height, and text
+    // of 16 px: smaller, and iOS zooms the page in when a box takes the cursor).
+    <div className="h-full flex flex-col md:[&_input:not([type=checkbox])]:py-2 md:[&_input:not([type=checkbox])]:text-sm">
 
-      {/* Tabs */}
+      {/* Tabs: the three share the panel's width, so the strip reads as one control. */}
       <Tabs key={field.id} defaultValue="basic" className="flex-1 flex flex-col">
-        <TabsList className="mx-4 mt-2">
-          <TabsTrigger value="basic">Basic</TabsTrigger>
-          <TabsTrigger value="validation">
+        <TabsList className="mx-4 mt-3" aria-label="Field settings">
+          <TabsTrigger value="basic" className="flex-1 justify-center text-center">Basic</TabsTrigger>
+          <TabsTrigger value="validation" className="inline-flex flex-1 items-center justify-center">
             Validation
-            {hasValidation && <Badge variant="info" className="ml-1" size="sm">{field.validation?.length}</Badge>}
+            {hasValidation && <Badge variant="primary" className="ml-1.5 px-1.5 tabular-nums" size="sm">{field.validation?.length}</Badge>}
           </TabsTrigger>
-          <TabsTrigger value="logic">
+          <TabsTrigger value="logic" className="inline-flex flex-1 items-center justify-center">
             Logic
-            {hasLogic && <Zap className="ml-1 h-3 w-3 text-yellow-500" />}
+            {hasLogic && <Zap className="ml-1 h-3 w-3 text-primary-600 dark:text-primary-400" />}
           </TabsTrigger>
         </TabsList>
 
@@ -147,14 +165,14 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
               checked={field.required}
               onChange={(checked) => onUpdate({ required: checked })}
               label="Required"
-              description="Make this field mandatory"
+              description="The form cannot be sent without an answer"
             />
           )}
 
           {/* Options for choice fields */}
           {['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type) && (
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Options</h4>
+            <section className={SECTION}>
+              <h4 className={SECTION_TITLE}>Options</h4>
               <div className="space-y-2">
                 {field.properties.options?.map((option, index) => {
                   const optionCount = field.properties.options?.length ?? 0;
@@ -164,27 +182,32 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                     onUpdate({ properties: { ...field.properties, options: newOptions } });
                   };
                   return (
-                  <div key={option.id} className="flex gap-1.5">
-                    <Input
-                      value={option.label}
-                      aria-label={`Option ${index + 1} label`}
-                      onChange={(e) => {
-                        const newOptions = [...(field.properties.options || [])];
-                        newOptions[index] = { ...option, label: e.target.value };
-                        onUpdate({ properties: { ...field.properties, options: newOptions } });
-                      }}
-                      placeholder={`Option ${index + 1}`}
-                    />
-                    <Button variant="ghost" size="sm" aria-label={`Move option ${index + 1} up`} disabled={index === 0} onClick={() => moveOption(index - 1)}>
+                  // The three buttons are narrow, so the option's own text keeps most of the row.
+                  <div key={option.id} className="flex items-center gap-0.5">
+                    <div className="mr-1 min-w-0 flex-1">
+                      <Input
+                        value={option.label}
+                        aria-label={`Option ${index + 1} label`}
+                        onChange={(e) => {
+                          const newOptions = [...(field.properties.options || [])];
+                          newOptions[index] = { ...option, label: e.target.value };
+                          onUpdate({ properties: { ...field.properties, options: newOptions } });
+                        }}
+                        placeholder={`Option ${index + 1}`}
+                      />
+                    </div>
+                    <Button variant="ghost" size="sm" className={OPTION_BUTTON} aria-label={`Move option ${index + 1} up`} title="Move up" disabled={index === 0} onClick={() => moveOption(index - 1)}>
                       <ChevronUp className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="sm" aria-label={`Move option ${index + 1} down`} disabled={index === optionCount - 1} onClick={() => moveOption(index + 1)}>
+                    <Button variant="ghost" size="sm" className={OPTION_BUTTON} aria-label={`Move option ${index + 1} down`} title="Move down" disabled={index === optionCount - 1} onClick={() => moveOption(index + 1)}>
                       <ChevronDown className="h-4 w-4" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
+                      className={cn(OPTION_BUTTON, 'hover:text-red-600 dark:hover:text-red-400')}
                       aria-label="Remove option"
+                      title="Remove option"
                       onClick={() => {
                         const newOptions = field.properties.options?.filter((_, i) => i !== index);
                         onUpdate({ properties: { ...field.properties, options: newOptions } });
@@ -220,31 +243,31 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                   }}
                   leftIcon={<Plus className="h-4 w-4" />}
                 >
-                  Add Option
+                  Add option
                 </Button>
               </div>
-            </div>
+            </section>
           )}
 
           {/* Rating settings */}
           {field.type === 'rating' && (
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Rating Settings</h4>
+            <section className={SECTION}>
+              <h4 className={SECTION_TITLE}>Rating</h4>
               <Input
-                label="Max Stars"
+                label="Max stars"
                 type="number"
                 min={1}
                 max={10}
                 {...wholeNumber('maxStars', field.properties.maxStars || 5, 1, 10, (maxStars) =>
                   onUpdate({ properties: { ...field.properties, maxStars } }))}
               />
-            </div>
+            </section>
           )}
 
           {/* Scale settings */}
           {field.type === 'scale' && (
-            <div className="space-y-3">
-              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Scale Settings</h4>
+            <section className={SECTION}>
+              <h4 className={SECTION_TITLE}>Scale</h4>
               <div className="grid grid-cols-2 gap-2">
                 <Input
                   label="Start"
@@ -300,32 +323,32 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                 />
               </div>
               <Input
-                label="Start Label"
+                label="Start label"
                 value={field.properties.scaleStartLabel || ''}
                 onChange={(e) =>
                   onUpdate({
                     properties: { ...field.properties, scaleStartLabel: e.target.value },
                   })
                 }
-                placeholder="e.g., Not likely"
+                placeholder="e.g. Not likely"
               />
               <Input
-                label="End Label"
+                label="End label"
                 value={field.properties.scaleEndLabel || ''}
                 onChange={(e) =>
                   onUpdate({
                     properties: { ...field.properties, scaleEndLabel: e.target.value },
                   })
                 }
-                placeholder="e.g., Very likely"
+                placeholder="e.g. Very likely"
               />
-            </div>
+            </section>
           )}
 
           {/* Number settings */}
           {field.type === 'number' && (
-            <div className="space-y-3">
-              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Number Settings</h4>
+            <section className={SECTION}>
+              <h4 className={SECTION_TITLE}>Number</h4>
               <div className="grid grid-cols-3 gap-2">
                 <Input
                   label="Min"
@@ -377,14 +400,14 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                   placeholder="any"
                 />
               </div>
-              <p className="text-xs text-gray-400 dark:text-slate-500">Applied as native min/max/step on the input. Leave blank for no constraint.</p>
-            </div>
+              <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">The smallest and largest number the box takes, and the step between numbers. Leave one blank for no limit.</p>
+            </section>
           )}
 
           {/* Layout-screen media (statement / welcome / thank-you) */}
           {['statement', 'welcome_screen', 'thank_you'].includes(field.type) && (
-            <div className="space-y-3">
-              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Screen Media (optional)</h4>
+            <section className={SECTION}>
+              <h4 className={SECTION_TITLE}>Picture or video (optional)</h4>
               <Input
                 label="Media URL"
                 value={field.properties.mediaUrl || ''}
@@ -423,14 +446,14 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                   placeholder="e.g. Get started"
                 />
               )}
-            </div>
+            </section>
           )}
 
           {/* File upload settings */}
           {field.type === 'file_upload' && (
-            <div className="space-y-3">
-              <h4 className="font-medium text-gray-900 dark:text-white mb-2">
-                {field.properties.captureMode === 'camera' ? 'Camera Settings' : 'File Upload Settings'}
+            <section className={SECTION}>
+              <h4 className={SECTION_TITLE}>
+                {field.properties.captureMode === 'camera' ? 'Camera' : 'File upload'}
               </h4>
               <Switch
                 label="Capture from camera"
@@ -451,7 +474,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                 </p>
               )}
               <Input
-                label="Max File Size (MB)"
+                label="Max file size (MB)"
                 type="number"
                 min={1}
                 max={500}
@@ -460,7 +483,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                 hint="Per-file limit. The server may enforce a lower cap."
               />
               <Input
-                label="Accepted File Types"
+                label="Accepted file types"
                 value={typesDraft?.fieldId === field.id ? typesDraft.text : (field.properties.acceptedFileTypes || []).join(', ')}
                 onChange={(e) => {
                   setTypesDraft({ fieldId: field.id, text: e.target.value });
@@ -490,11 +513,11 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                   hint="Between 1 and 50."
                 />
               )}
-              <p className="text-xs text-amber-700 dark:text-amber-400/90 bg-amber-50 dark:bg-amber-500/10 border border-amber-200/70 dark:border-amber-500/25 rounded-lg px-3 py-2 leading-relaxed">
+              <p className="text-xs text-amber-700 dark:text-amber-400/90 bg-amber-50 dark:bg-amber-500/10 border border-amber-200/70 dark:border-amber-500/25 rounded-xl px-3 py-2 leading-5">
                 Files uploaded to a <strong>public standalone form</strong> can be opened by anyone
                 with the file link. For member-only access, collect uploads through an app form.
               </p>
-            </div>
+            </section>
           )}
 
           {/* Calculated field expression */}
@@ -513,7 +536,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
           {/* Hidden field: never shown to respondents; stores computed/script-set data */}
           {field.type === 'hidden' && (
             <div className="space-y-4">
-              <div className="rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 p-3 text-xs text-gray-500 dark:text-slate-400">
+              <div className="rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 p-3 text-xs leading-5 text-gray-500 dark:text-slate-400">
                 This field is never shown to respondents. Use it to store computed or script-set
                 data — it's saved with each response and appears in exports.
               </div>
@@ -553,10 +576,10 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
         {/* Validation Tab */}
         <TabsContent value="validation" className="flex-1 overflow-y-auto p-4">
           {['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'hidden'].includes(field.type) ? (
-            <div className="text-center py-8 text-gray-500 dark:text-slate-500">
-              <ShieldCheck className="h-8 w-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
-              <p>Validation is not applicable for this field type.</p>
-            </div>
+            <p className="flex items-start gap-2 text-sm text-gray-500 dark:text-slate-400">
+              <ShieldCheck className="mt-0.5 h-4 w-4 flex-none text-gray-400 dark:text-slate-500" />
+              This kind of field takes no answer to check, so it has no validation rules.
+            </p>
           ) : (
             <ValidationEditor
               rules={field.validation || []}
@@ -568,35 +591,36 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
 
         {/* Logic Tab */}
         <TabsContent value="logic" className="flex-1 overflow-y-auto p-4">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="font-medium text-gray-900 dark:text-white">Conditional Logic</h4>
-                <p className="text-sm text-gray-500 dark:text-slate-500">
-                  Show, hide, require, or skip this field based on conditions
-                </p>
-              </div>
+          <div className="space-y-3">
+            <div>
+              <h4 className={SECTION_TITLE}>Conditional logic</h4>
+              <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
+                Show, hide or require this field by the answers to other fields.
+              </p>
             </div>
 
             {hasLogic ? (
-              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/50 rounded-lg p-4">
-                <div className="flex items-start gap-3">
-                  <Zap className="h-5 w-5 text-yellow-600 dark:text-yellow-500 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
+              // A rule that is set is a fact about the field, not a warning: a plain box, the
+              // accent on its mark. The rule reads with the other fields' names, as the editor
+              // shows it, not with their ids.
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                <div className="flex items-start gap-2.5">
+                  <Zap className="mt-0.5 h-4 w-4 flex-none text-primary-600 dark:text-primary-400" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">
                       {field.conditionalLogic?.action === 'show' && 'Show when:'}
                       {field.conditionalLogic?.action === 'hide' && 'Hide when:'}
                       {field.conditionalLogic?.action === 'require' && 'Require when:'}
                       {field.conditionalLogic?.action === 'skip' && 'Skip when:'}
                     </p>
-                    <code className="text-xs text-yellow-700 dark:text-yellow-400 block mt-1 break-all">
-                      {field.conditionalLogic?.expression}
+                    <code className="mt-1 block break-words font-mono text-xs leading-5 text-gray-600 dark:text-slate-300">
+                      {logicAsRead}
                     </code>
                   </div>
                 </div>
-                <div className="flex gap-2 mt-3">
+                <div className="mt-3 flex gap-2">
                   <Button size="sm" variant="outline" onClick={() => setShowLogicEditor(true)}>
-                    Edit Logic
+                    Edit rule
                   </Button>
                   <Button
                     size="sm"
@@ -610,11 +634,11 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
             ) : (
               <Button
                 variant="outline"
-                className="w-full"
+                className="w-full max-sm:min-h-11"
                 onClick={() => setShowLogicEditor(true)}
                 leftIcon={<Zap className="h-4 w-4" />}
               >
-                Add Conditional Logic
+                Add a rule
               </Button>
             )}
 

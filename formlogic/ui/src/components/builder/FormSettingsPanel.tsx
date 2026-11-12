@@ -10,6 +10,7 @@ import { WebhookManager } from './WebhookManager';
 import { EncryptionSettings } from './EncryptionSettings';
 import { DataPlacementCard } from './DataPlacementCard';
 import { normalizeFormSettings, type FormSettings } from '../../types/form';
+import { DIALOG_CLOSE, DIALOG_DESCRIPTION, DIALOG_FOOTER, DIALOG_HEADER, DIALOG_OVERLAY, DIALOG_PANEL, DIALOG_TABS, DIALOG_TITLE, GROUP_TITLE, dialogTab } from './builderDialog';
 
 interface FormSettingsModalProps {
   isOpen: boolean;
@@ -80,40 +81,34 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+    <div className={DIALOG_OVERLAY}>
       {/* Deliberately NOT click-to-close: this dialog holds unsaved edits (including a
           long textarea), and a stray backdrop click silently discarded all of them.
           The X in the header and Cancel are the exits. */}
       <div className="absolute inset-0" aria-hidden="true" />
-      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="form-settings-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800 focus:outline-none" onMouseDown={(e) => e.stopPropagation()}>
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="form-settings-title" className={cn(DIALOG_PANEL, 'max-w-2xl')} onMouseDown={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
-              <Settings className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <div>
-              <h2 id="form-settings-title" className="text-lg font-semibold text-gray-900 dark:text-white">Form settings</h2>
-              <p className="text-sm text-gray-500 dark:text-slate-400">Configure how your form behaves</p>
-            </div>
+        <div className={DIALOG_HEADER}>
+          <div className="min-w-0 flex-1 pr-2">
+            <h2 id="form-settings-title" className={DIALOG_TITLE}>Form settings</h2>
+            <p className={DIALOG_DESCRIPTION}>How the form is shown, what follows an answer, and who may fill it in.</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg motion-safe:transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+            className={DIALOG_CLOSE}
             aria-label="Close"
             title="Close"
           >
-            <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
+            <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Tabs. Below 640px the labels are hidden, so without an accessible name these
-            became five anonymous icons — "button" five times to a screen reader, and no
-            tooltip for anyone else. The name always ships; only its VISIBILITY is
-            responsive. Marked up as a real tablist so the five panels are announced as
-            one set rather than five loose buttons. */}
-        <div role="tablist" aria-label="Form settings sections" className="flex border-b border-gray-200 dark:border-slate-800 px-6">
+        {/* Tabs. The name always ships as the accessible name, whatever is shown of it.
+            Marked up as a real tablist so the five panels are announced as one set rather
+            than five loose buttons. On a phone the names stand without their icons and the
+            row scrolls sideways: five bare icons said nothing about what they opened. */}
+        <div role="tablist" aria-label="Form settings sections" className={DIALOG_TABS}>
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -123,32 +118,27 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
               aria-label={tab.label}
               title={tab.label}
               onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                'flex min-h-11 items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 motion-safe:transition-colors -mb-px cursor-pointer rounded-t-md focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500',
-                activeTab === tab.id
-                  ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                  : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
-              )}
+              className={dialogTab(activeTab === tab.id)}
             >
               {tab.icon}
-              <span className="hidden sm:inline">{tab.label}</span>
+              <span>{tab.label}</span>
             </button>
           ))}
         </div>
 
         {/* Content */}
-        {/* Fixed-height body so switching tabs doesn't resize the dialog (the vh cap
+        {/* Fixed-height body so switching tabs doesn't resize the dialog (the dvh cap
             keeps the header/footer visible on short viewports). */}
-        <div className="h-[460px] max-h-[60vh] overflow-y-auto p-6">
+        <div className="h-[460px] max-h-[60dvh] min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6">
           {/* Presentation Tab */}
           {activeTab === 'presentation' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Form layout</h3>
+                <h3 className={cn(GROUP_TITLE, 'mb-3')}>Form layout</h3>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Presentation mode</label>
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3">
                       {[
                         { value: 'focused', label: 'Focused', desc: 'One question at a time' },
                         { value: 'classic', label: 'Classic', desc: 'All questions visible' },
@@ -158,10 +148,11 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
                           key={mode.value}
                           type="button"
                           onClick={() => updateSettings({ presentationMode: mode.value as FormSettings['presentationMode'] })}
+                          aria-pressed={editedSettings.presentationMode === mode.value}
                           className={cn(
-                            'p-3 rounded-lg border-2 text-left motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                            'p-3 rounded-xl border text-left motion-safe:transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 max-sm:min-h-11',
                             editedSettings.presentationMode === mode.value
-                              ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
+                              ? 'border-primary-500 bg-primary-50 ring-1 ring-primary-500 dark:bg-primary-500/10'
                               : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
                           )}
                         >
@@ -178,7 +169,8 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
                       <select
                         value={editedSettings.defaultPresentationMode}
                         onChange={(e) => updateSettings({ defaultPresentationMode: e.target.value as 'focused' | 'classic' })}
-                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 text-gray-900 dark:text-white text-sm motion-safe:transition-all duration-150 ease-in-out appearance-none cursor-pointer"
+                        // The browser's own arrow is kept: without it the picker read as a text box.
+                        className="w-full max-w-sm px-3 py-2.5 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 text-gray-900 dark:text-white text-sm motion-safe:transition-colors cursor-pointer max-sm:min-h-11 max-sm:text-base"
                       >
                         <option value="focused">Focused (one at a time)</option>
                         <option value="classic">Classic (scrollable)</option>
@@ -189,7 +181,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
               </div>
 
               <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Navigation</h3>
+                <h3 className={cn(GROUP_TITLE, 'mb-3')}>Navigation</h3>
                 <div className="space-y-4">
                   <Switch
                     checked={editedSettings.showProgressBar}
@@ -207,7 +199,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
               </div>
 
               <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Submit button</h3>
+                <h3 className={cn(GROUP_TITLE, 'mb-3')}>Submit button</h3>
                 <Input
                   label="Button text"
                   value={editedSettings.submitButtonText}
@@ -217,7 +209,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
               </div>
 
               <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Completeness check</h3>
+                <h3 className={cn(GROUP_TITLE, 'mb-3')}>Completeness check</h3>
                 <Switch
                   checked={editedSettings.showNigoDashboard === true}
                   onChange={(checked) => updateSettings({ showNigoDashboard: checked })}
@@ -232,7 +224,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
           {activeTab === 'behavior' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">After submission</h3>
+                <h3 className={cn(GROUP_TITLE, 'mb-3')}>After submission</h3>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">
@@ -254,7 +246,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
               </div>
 
               <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Response limits</h3>
+                <h3 className={cn(GROUP_TITLE, 'mb-3')}>Response limits</h3>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Response quota (optional)</label>
@@ -282,7 +274,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
           {activeTab === 'notifications' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Email notifications</h3>
+                <h3 className={cn(GROUP_TITLE, 'mb-3')}>Email notifications</h3>
                 <div className="space-y-4">
                   <Switch
                     checked={editedSettings.notifications.emailNotifications}
@@ -307,11 +299,9 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
                 </div>
               </div>
 
-              <div className="bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 rounded-lg p-4">
-                <p className="text-sm text-blue-700 dark:text-blue-400">
-                  Email notifications require a backend email service to be configured.
-                </p>
-              </div>
+              <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
+                Email is sent only where this FormLogic has a mail service set up.
+              </p>
             </div>
           )}
 
@@ -319,7 +309,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
           {activeTab === 'access' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Form availability</h3>
+                <h3 className={cn(GROUP_TITLE, 'mb-3')}>Form availability</h3>
                 <div className="space-y-4">
                   <Switch
                     checked={editedSettings.isClosed}
@@ -350,11 +340,9 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
               </div>
 
               {editedSettings.isClosed && (
-                <div className="bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-200 dark:border-yellow-500/20 rounded-lg p-4">
-                  <p className="text-sm text-yellow-700 dark:text-yellow-400">
-                    When closed, visitors will see the closed message instead of the form.
-                  </p>
-                </div>
+                <p className="text-xs leading-5 text-amber-700 dark:text-amber-400">
+                  While the form is closed, visitors see the closed message instead of the form.
+                </p>
               )}
 
               {/* E2EE: one-way "Encrypt this form" action (private mode is irreversible),
@@ -362,7 +350,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
                   the builder passes isPrivate only in that context. */}
               {formId && isPrivate !== undefined && (
                 <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">End-to-end encryption</h3>
+                  <h3 className={cn(GROUP_TITLE, 'mb-3')}>End-to-end encryption</h3>
                   <EncryptionSettings
                     formId={formId}
                     isPrivate={isPrivate}
@@ -384,11 +372,11 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>
+        <div className={cn(DIALOG_FOOTER, 'flex justify-end gap-2')}>
+          <Button variant="outline" onClick={onClose} className="max-sm:min-h-11">
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={!dirty}>
+          <Button onClick={handleSave} disabled={!dirty} className="max-sm:min-h-11">
             Save settings
           </Button>
         </div>

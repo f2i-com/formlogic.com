@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState, useMemo, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useState, useMemo, useCallback, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -25,6 +25,7 @@ import {
   MonitorPlay,
   LayoutDashboard,
   Workflow,
+  Lock,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -44,7 +45,6 @@ import {
 } from '@dnd-kit/sortable';
 import { cn } from '../lib/utils';
 import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DeleteFieldDialog } from '../components/builder/DeleteFieldDialog';
 import { IconPicker } from '../components/ui/IconPicker';
@@ -148,10 +148,58 @@ interface BuilderHeaderAction {
   countBadge?: number;
   disabled?: boolean;
   domId?: string;
+  /** A control that opens and closes a panel says which state it is in. */
+  pressed?: boolean;
 }
 
-function BuilderToolbarDivider() {
-  return <div className="hidden h-4 w-px flex-none bg-gray-200 dark:bg-slate-700 sm:block" aria-hidden="true" />;
+// The bar's labels give way one group at a time as the bar narrows: first how the form looks,
+// then how it behaves, then what happens to it, and Publish last. The widths are the bar's own
+// (`@container/bar`), not the window's: a docked chat takes 384 px of the window, and a window
+// query would show the labels exactly when the bar has least room. Each step is the width at
+// which that group's labels fit beside a title of 15rem with all three look controls shown
+// (measured: the controls take 418 px as icons and 479, 567, 698 and 856 px as each group's
+// labels come in; what stands left of the title and right of it takes 148 px, and the bar's
+// own padding, which a container's width leaves out, 24 px more). Below the last step the
+// first two groups move into the menu (see builderChrome).
+const BAR_LABEL = {
+  look: 'hidden @[78rem]/bar:inline',
+  behave: 'hidden @[68rem]/bar:inline',
+  act: 'hidden @[60rem]/bar:inline',
+  publish: 'hidden @[55rem]/bar:inline',
+} as const;
+
+/** Controls that belong together, drawn as one piece of the bar. */
+function BuilderToolbarGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      className="flex flex-none items-center gap-0.5 whitespace-nowrap rounded-xl border border-gray-200 bg-white p-0.5 dark:border-slate-700/80 dark:bg-slate-900/60 max-sm:border-0 max-sm:bg-transparent max-sm:p-0 dark:max-sm:bg-transparent"
+    >
+      {children}
+    </div>
+  );
+}
+
+/** The head of a side panel: one line, the same height as the canvas's own bar beside it. */
+function BuilderDockHeader({ title, note, closeLabel, onClose }: { title: string; note?: string; closeLabel: string; onClose: () => void }) {
+  return (
+    <div className="flex h-11 flex-none items-center justify-between gap-2 border-b border-gray-200 pl-4 pr-1.5 dark:border-slate-800">
+      <h2 className="min-w-0 truncate text-sm font-semibold text-gray-900 dark:text-white">
+        {title}
+        {note && <span className="ml-2 font-normal text-gray-500 dark:text-slate-400">{note}</span>}
+      </h2>
+      <button
+        type="button"
+        onClick={onClose}
+        className="hidden h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:hover:bg-slate-800 dark:hover:text-slate-300 md:inline-flex"
+        aria-label={closeLabel}
+        title="Collapse"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
 }
 
 function BuilderSaveIndicator({
@@ -204,7 +252,7 @@ function BuilderSaveIndicator({
         className={
           compact
             ? 'flex h-8 w-8 flex-none cursor-pointer items-center justify-center text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300'
-            : 'flex flex-none cursor-pointer items-center gap-1 text-xs font-medium text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300'
+            : 'flex flex-none cursor-pointer items-center gap-1 text-xs font-medium text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 max-sm:min-h-11'
         }
       >
         {icon}
@@ -237,18 +285,17 @@ function BuilderSaveIndicator({
 
 function BuilderHeaderButton({
   action,
-  showLabel,
-  variant = 'outline',
+  labelClass,
 }: {
   action: BuilderHeaderAction;
-  showLabel: boolean;
-  variant?: 'primary' | 'secondary' | 'outline' | 'ghost';
+  /** When the label shows: one of BAR_LABEL. The icon, the dot and the count always show. */
+  labelClass: string;
 }) {
   const Icon = action.icon;
   return (
     <Button
       id={action.domId}
-      variant={variant}
+      variant="ghost"
       size="sm"
       onClick={action.onSelect}
       disabled={action.disabled}
@@ -256,13 +303,17 @@ function BuilderHeaderButton({
       // The descriptive title IS the accessible name (pre-redesign behavior — e2e and SR
       // users rely on names like "Backend Logic Script", not the short visual label).
       aria-label={action.title ?? action.label}
-      className="whitespace-nowrap"
+      aria-pressed={action.pressed}
+      className={cn(
+        'whitespace-nowrap px-2.5 focus-visible:ring-offset-0',
+        action.pressed && 'bg-primary-50 text-primary-700 hover:bg-primary-100 hover:text-primary-800 dark:bg-primary-500/15 dark:text-primary-300 dark:hover:bg-primary-500/20 dark:hover:text-primary-200',
+      )}
     >
       <Icon className="h-4 w-4" />
-      {showLabel && <span>{action.label}</span>}
+      <span className={labelClass}>{action.label}</span>
       {action.badgeDot && <span className="h-2 w-2 rounded-full bg-green-500" aria-label="Configured" />}
       {typeof action.countBadge === 'number' && (
-        <span className="ml-0.5 min-w-[1.1rem] rounded-full bg-primary-100 px-1.5 py-0.5 text-center text-[10px] font-semibold text-primary-700 dark:bg-primary-500/20 dark:text-primary-200">
+        <span className="min-w-[1.1rem] rounded-full bg-primary-100 px-1.5 py-0.5 text-center text-[10px] font-semibold tabular-nums text-primary-700 dark:bg-primary-500/20 dark:text-primary-200">
           {action.countBadge}
         </span>
       )}
@@ -1152,15 +1203,16 @@ export default function FormBuilder() {
     }
   };
 
-  const showHeaderLabels = builderChrome === 'full';
-  const foldMiddleClusters = builderChrome === 'tiny';
+  // The bar has too little room for the first two groups (a phone, or a narrow window with the
+  // chat docked): they are listed in the menu instead, under their groups' names.
+  const foldMiddleClusters = builderChrome === 'menu';
   const designActions: BuilderHeaderAction[] = [
-    { id: 'theme', label: 'Theme', title: 'Theme Customization', icon: Palette, onSelect: () => setActiveModal('theme') },
+    { id: 'theme', label: 'Theme', icon: Palette, onSelect: () => setActiveModal('theme') },
     { id: 'screen', label: 'Screen', title: 'Custom screen (Beta)', icon: MonitorPlay, onSelect: () => navigate(paths.screenEdit(form.id)) },
     ...(form.customScreen?.enabled ? [{ id: 'dashboard', label: 'Dashboard', title: 'View dashboard', icon: LayoutDashboard, onSelect: () => setActiveModal('screen') }] : []),
   ];
   const dataActions: BuilderHeaderAction[] = [
-    { id: 'settings', label: 'Settings', title: 'Form Settings', icon: Settings, onSelect: () => setActiveModal('settings') },
+    { id: 'settings', label: 'Settings', title: 'Form settings', icon: Settings, onSelect: () => setActiveModal('settings') },
     { id: 'script', label: 'Script', title: 'Backend Logic Script', icon: Code2, onSelect: () => setActiveModal('script'), badgeDot: !!form.logicScript },
     {
       id: 'flows',
@@ -1168,24 +1220,32 @@ export default function FormBuilder() {
       title: canUseFormFlows ? 'Flows for this form' : 'Save the form first to add flows',
       icon: Workflow,
       onSelect: handleFlowsSelect,
-      countBadge: canUseFormFlows ? flowBindingCount : 0,
+      // A count of none is not shown: the bare name already says there is nothing attached.
+      countBadge: canUseFormFlows && flowBindingCount > 0 ? flowBindingCount : undefined,
       disabled: !canUseFormFlows,
       domId: 'builder-flows-button',
+      pressed: canUseFormFlows ? flowsOpen : undefined,
     },
   ];
   const previewActions: BuilderHeaderAction[] = [
     { id: 'preview', label: 'Preview', title: 'Preview (opens in a new tab)', icon: Eye, onSelect: handlePreview },
-    { id: 'share', label: 'Share', title: 'Share & Embed', icon: Share2, onSelect: () => setActiveModal('embed') },
+    { id: 'share', label: 'Share', title: 'Share and embed', icon: Share2, onSelect: () => setActiveModal('embed') },
   ];
-  const overflowActions: BuilderHeaderAction[] = [
-    ...(foldMiddleClusters ? [...designActions, ...dataActions] : []),
+  const moreActions: BuilderHeaderAction[] = [
     { id: 'softn', label: 'Download app project', title: 'Create an editable app project', icon: Code2, onSelect: () => setActiveModal('softn') },
-    { id: 'versions', label: 'Versions', title: 'Version History', icon: History, onSelect: () => setActiveModal('versions') },
-    { id: 'shortcuts', label: 'Shortcuts', title: 'Keyboard Shortcuts (Ctrl+?)', icon: Keyboard, onSelect: () => setActiveModal('shortcuts') },
+    { id: 'versions', label: 'Version history', icon: History, onSelect: () => setActiveModal('versions') },
+    { id: 'shortcuts', label: 'Keyboard shortcuts', title: 'Keyboard shortcuts (Ctrl+/)', icon: Keyboard, onSelect: () => setActiveModal('shortcuts') },
     // Publishing a pack happens under the CALLER's marketplace identity — an admin
     // acting on someone else's form must not publish it as their own.
     ...(acting ? [] : [{ id: 'publish-pack', label: 'Publish as pack', icon: Package, onSelect: handlePublishPack }]),
   ];
+  const overflowSections: Array<{ id: string; label?: string; actions: BuilderHeaderAction[] }> = foldMiddleClusters
+    ? [
+      { id: 'look', label: 'Look', actions: designActions },
+      { id: 'behave', label: 'Behavior', actions: dataActions },
+      { id: 'more', label: 'More', actions: moreActions },
+    ]
+    : [{ id: 'more', actions: moreActions }];
   const chooseOverflowAction = (action: BuilderHeaderAction) => {
     setShowOverflowMenu(false);
     action.onSelect();
@@ -1194,12 +1254,15 @@ export default function FormBuilder() {
   return (
     // Height subtracts the acting/demo banner (var is 0px outside those contexts)
     // so the builder's internal panels fit the viewport instead of overflowing
-    // under the fold by the banner's height.
-    <div className={`min-h-[calc(100vh-var(--fl-demo-banner-h,0px))] flex flex-col transition-[margin] duration-200 ${chatDockOffset ? 'mr-96' : ''}`}>
+    // under the fold by the banner's height. A height, not a least height: with a least
+    // height the palette (taller than a laptop's screen) and a long form stretched the whole
+    // builder, so the window scrolled, the bar went out of sight with it and no panel
+    // scrolled on its own. dvh: what a phone shows with its toolbars out.
+    <div className={`h-[calc(100dvh-var(--fl-demo-banner-h,0px))] flex flex-col overflow-hidden transition-[margin] duration-200 ${chatDockOffset ? 'mr-96' : ''}`}>
       {/* Header */}
-      <header ref={observeHeader} className="relative z-30 h-14 bg-white/95 dark:bg-slate-900/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-          <Button variant="ghost" size="sm" onClick={() => navigate(backTo.path)} title={backTo.label ? `Back to ${backTo.label}` : 'Back to Forms'} aria-label={backTo.label ? `Back to ${backTo.label}` : 'Back to Forms'}>
+      <header ref={observeHeader} className="@container/bar relative z-30 flex h-14 flex-shrink-0 items-center gap-2 border-b border-gray-200/80 bg-white/95 px-2 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 sm:px-3">
+        <div className="flex min-w-0 flex-1 items-center gap-1 sm:gap-2">
+          <Button variant="ghost" size="sm" className="flex-none px-2.5" onClick={() => navigate(backTo.path)} title={backTo.label ? `Back to ${backTo.label}` : 'Back to Forms'} aria-label={backTo.label ? `Back to ${backTo.label}` : 'Back to Forms'}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           {/* Hidden on phones so the title input keeps usable width (the header is
@@ -1213,9 +1276,12 @@ export default function FormBuilder() {
             />
           </div>
           {/* Only the title + save indicator are clipped — they're what can collide with
-              the right-side clusters when the header is squeezed. */}
-          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 overflow-hidden">
-            <Input
+              the right-side clusters when the header is squeezed. The padding leaves the
+              title's focus ring inside the clip. */}
+          <div className="-my-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden p-1 sm:gap-2">
+            {/* The title takes the room the bar has (to a line's sensible length) and shows that
+                it is cut when it is, instead of a box of one fixed width whatever the room. */}
+            <input
               value={localTitle}
               onChange={(e) => setLocalTitle(e.target.value)}
               onBlur={flushTitle}
@@ -1225,53 +1291,72 @@ export default function FormBuilder() {
               placeholder="Untitled Form"
               maxLength={120}
               onFocus={(e) => { if (localTitle === 'Untitled Form') e.target.select(); }}
-              className="border border-transparent bg-transparent font-semibold text-base sm:text-lg hover:border-gray-300 dark:hover:border-slate-600 focus:ring-2 focus:ring-primary-500 px-2 py-1 min-h-11 min-w-0 w-full sm:w-48 md:w-auto"
+              className="h-10 min-w-0 max-w-md flex-1 text-ellipsis rounded-lg border border-transparent bg-transparent px-2 text-base font-semibold text-gray-900 transition-colors placeholder:text-gray-400 hover:border-gray-300 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:text-white dark:placeholder:text-slate-500 dark:hover:border-slate-600 max-sm:h-11"
             />
             {/* Save indicator — reflects the real storage mode (cloud vs local) and
-                is announced to screen readers. Full at lg+, compact below, and clipped
-                with the title so it can never overlap the right group. */}
-            <div className="hidden flex-none lg:flex">
-              <BuilderSaveIndicator isSaving={isSaving} hasSaveError={hasSaveError} onRetry={retrySaves} storageMode={storageMode} browserLocal={browserLocalForm} />
-            </div>
-            <div className="flex flex-none lg:hidden">
-              <BuilderSaveIndicator isSaving={isSaving} hasSaveError={hasSaveError} onRetry={retrySaves} storageMode={storageMode} browserLocal={browserLocalForm} compact />
-            </div>
+                is announced to screen readers. In words where the bar has room for them, a
+                glyph where it has not, and clipped with the title so it can never overlap
+                the right group. On a phone it stands in the row under the bar, where there
+                is room for it, and the title gets its place here. */}
+            {!isMobile && (
+              <>
+                <div className="hidden flex-none @[60rem]/bar:flex">
+                  <BuilderSaveIndicator isSaving={isSaving} hasSaveError={hasSaveError} onRetry={retrySaves} storageMode={storageMode} browserLocal={browserLocalForm} />
+                </div>
+                <div className="flex flex-none @[60rem]/bar:hidden">
+                  <BuilderSaveIndicator isSaving={isSaving} hasSaveError={hasSaveError} onRetry={retrySaves} storageMode={storageMode} browserLocal={browserLocalForm} compact />
+                </div>
+              </>
+            )}
             {isPrivateForm && (
               <span
                 className="hidden sm:inline-flex flex-none items-center gap-1 rounded-full border border-green-300 dark:border-green-500/40 bg-green-50 dark:bg-green-500/10 px-2 py-0.5 text-[11px] font-medium text-green-700 dark:text-green-300"
                 title="End-to-end encrypted — responses are sealed in the submitter's browser; the server cannot read them"
                 aria-label="End-to-end encrypted — responses are sealed in the submitter's browser; the server cannot read them"
               >
-                🔒 Private
+                <Lock className="h-3 w-3" aria-hidden="true" />
+                Private
               </span>
             )}
           </div>
         </div>
 
-        <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
-
+        {/* How it looks, how it behaves, what happens to it: three groups, then the rest. */}
+        <div className="flex flex-none items-center gap-1 sm:gap-1.5">
           {!foldMiddleClusters && (
             <>
-              <div className="flex flex-none items-center gap-1 whitespace-nowrap">
-                {designActions.map((action) => <BuilderHeaderButton key={action.id} action={action} showLabel={showHeaderLabels} />)}
-              </div>
-              <BuilderToolbarDivider />
-              <div className="flex flex-none items-center gap-1 whitespace-nowrap">
-                {dataActions.map((action) => <BuilderHeaderButton key={action.id} action={action} showLabel={showHeaderLabels} />)}
-              </div>
-              <BuilderToolbarDivider />
+              <BuilderToolbarGroup label="Look">
+                {designActions.map((action) => <BuilderHeaderButton key={action.id} action={action} labelClass={BAR_LABEL.look} />)}
+              </BuilderToolbarGroup>
+              <BuilderToolbarGroup label="Behavior">
+                {dataActions.map((action) => <BuilderHeaderButton key={action.id} action={action} labelClass={BAR_LABEL.behave} />)}
+              </BuilderToolbarGroup>
             </>
           )}
 
-          <div className="flex flex-none items-center gap-1 whitespace-nowrap">
-            {previewActions.map((action) => <BuilderHeaderButton key={action.id} action={action} showLabel={showHeaderLabels} />)}
-          </div>
+          <BuilderToolbarGroup label="Preview and share">
+            {previewActions.map((action) => <BuilderHeaderButton key={action.id} action={action} labelClass={BAR_LABEL.act} />)}
+          </BuilderToolbarGroup>
+
+          {/* Publish — make it a real activation moment: confirm + surface the
+              live link so first-time users know it worked and where it lives. */}
+          <Button
+            size="sm"
+            title={form.status === 'published' ? 'Published' : 'Publish'}
+            aria-label={form.status === 'published' ? 'Published' : 'Publish'}
+            leftIcon={<Rocket className="h-4 w-4" />}
+            onClick={() => void handlePublish()}
+            className="h-9 flex-none whitespace-nowrap max-sm:h-11"
+          >
+            <span className={BAR_LABEL.publish}>{form.status === 'published' ? 'Published' : 'Publish'}</span>
+          </Button>
 
           <div className="relative flex-none" ref={overflowMenuRef}>
             <Button
               ref={overflowButtonRef}
               variant="ghost"
               size="sm"
+              className="h-9 px-2.5 max-sm:h-11"
               onClick={() => setShowOverflowMenu((open) => !open)}
               aria-label="More options"
               aria-haspopup="menu"
@@ -1285,62 +1370,62 @@ export default function FormBuilder() {
                 role="menu"
                 aria-label="More builder actions"
                 onKeyDown={handleOverflowMenuKeyDown}
-                className="absolute right-0 top-full z-50 mt-1.5 w-56 origin-top-right animate-scale-in rounded-xl border border-gray-200/80 bg-white py-1 shadow-xl shadow-gray-900/10 dark:border-slate-700/60 dark:bg-slate-900 dark:shadow-black/30"
+                className="absolute right-0 top-full z-50 mt-1.5 max-h-[calc(100dvh-4.5rem)] w-60 origin-top-right animate-scale-in overflow-y-auto rounded-xl border border-gray-200/80 bg-white py-1 shadow-xl shadow-gray-900/10 dark:border-slate-700/60 dark:bg-slate-900 dark:shadow-black/30"
               >
-                {overflowActions.map((action) => {
-                  const Icon = action.icon;
-                  return (
-                    <button
-                      key={action.id}
-                      type="button"
-                      role="menuitem"
-                      disabled={action.disabled}
-                      onClick={() => chooseOverflowAction(action)}
-                      className="flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 focus:bg-gray-50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800 dark:focus:bg-slate-800"
-                    >
-                      <Icon className="h-4 w-4 flex-none text-gray-400 dark:text-slate-500" />
-                      <span className="min-w-0 flex-1 truncate">{action.label}</span>
-                      {action.badgeDot && <span className="h-2 w-2 rounded-full bg-green-500" aria-label="Configured" />}
-                      {typeof action.countBadge === 'number' && (
-                        <span className="rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-semibold text-primary-700 dark:bg-primary-500/20 dark:text-primary-200">
-                          {action.countBadge}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
+                {overflowSections.map((section, index) => (
+                  <div key={section.id} role="group" aria-label={section.label} className={cn(index > 0 && 'mt-1 border-t border-gray-100 pt-1 dark:border-slate-800')}>
+                    {section.label && (
+                      <p aria-hidden="true" className="px-4 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">
+                        {section.label}
+                      </p>
+                    )}
+                    {section.actions.map((action) => {
+                      const Icon = action.icon;
+                      return (
+                        <button
+                          key={action.id}
+                          type="button"
+                          role="menuitem"
+                          disabled={action.disabled}
+                          title={action.title}
+                          onClick={() => chooseOverflowAction(action)}
+                          className="flex min-h-10 w-full cursor-pointer items-center gap-3 px-4 py-2 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 focus:bg-gray-50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800 dark:focus:bg-slate-800 max-sm:min-h-11"
+                        >
+                          <Icon className="h-4 w-4 flex-none text-gray-400 dark:text-slate-500" />
+                          <span className="min-w-0 flex-1">{action.label}</span>
+                          {action.badgeDot && <span className="h-2 w-2 rounded-full bg-green-500" aria-label="Configured" />}
+                          {typeof action.countBadge === 'number' && (
+                            <span className="rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary-700 dark:bg-primary-500/20 dark:text-primary-200">
+                              {action.countBadge}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
             )}
           </div>
-
-          {/* Publish — make it a real activation moment: confirm + surface the
-              live link so first-time users know it worked and where it lives. */}
-          <Button
-            size="sm"
-            title={form.status === 'published' ? 'Published' : 'Publish'}
-            aria-label={form.status === 'published' ? 'Published' : 'Publish'}
-            leftIcon={<Rocket className="h-4 w-4" />}
-            onClick={() => void handlePublish()}
-          >
-            {showHeaderLabels && <span>{form.status === 'published' ? 'Published' : 'Publish'}</span>}
-          </Button>
         </div>
       </header>
 
       {/* Mobile controls */}
       {isMobile && (
-        <div className="bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 px-3 py-2 flex-shrink-0 flex items-center gap-2">
+        <div className="bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 px-3 py-1 flex-shrink-0 flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={openPalette} leftIcon={<Plus className="h-4 w-4" />} className="flex-shrink-0">
-            Add Field
+            Add field
           </Button>
-          <span className="min-w-0 flex-1 text-center text-xs text-gray-400 dark:text-slate-500">
-            {formFields.length} field{formFields.length === 1 ? '' : 's'}
+          {/* A save that failed takes the count's place, in words: it matters more. */}
+          <span className="flex min-w-0 flex-1 items-center justify-center gap-1 text-xs tabular-nums text-gray-500 dark:text-slate-400">
+            {!(hasSaveError && !isSaving) && <span>{formFields.length} field{formFields.length === 1 ? '' : 's'}</span>}
+            <BuilderSaveIndicator isSaving={isSaving} hasSaveError={hasSaveError} onRetry={retrySaves} storageMode={storageMode} browserLocal={browserLocalForm} compact={!(hasSaveError && !isSaving)} />
           </span>
           <div className="flex items-center gap-0.5 flex-shrink-0">
-            <button onClick={handleUndo} disabled={!canUndo} aria-label="Undo" className="inline-flex items-center justify-center min-h-10 min-w-10 rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed">
+            <button type="button" onClick={handleUndo} disabled={!canUndo} aria-label="Undo" className="inline-flex items-center justify-center min-h-11 min-w-11 rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed">
               <Undo2 className="h-4 w-4" />
             </button>
-            <button onClick={handleRedo} disabled={!canRedo} aria-label="Redo" className="inline-flex items-center justify-center min-h-10 min-w-10 rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed">
+            <button type="button" onClick={handleRedo} disabled={!canRedo} aria-label="Redo" className="inline-flex items-center justify-center min-h-11 min-w-11 rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed">
               <Redo2 className="h-4 w-4" />
             </button>
           </div>
@@ -1348,26 +1433,20 @@ export default function FormBuilder() {
       )}
 
       {/* Main Content */}
-      <div ref={observeBuilderBody} className="flex-1 flex overflow-hidden">
+      <div ref={observeBuilderBody} className="flex min-h-0 flex-1 overflow-hidden">
         {/* Field Palette — inline when there is room, otherwise opened as a sheet. */}
         {builderLayout.palette === 'inline' && (
           <aside className="w-full md:w-72 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-left motion-safe:transition-[width] motion-safe:duration-200">
-            <div className="flex items-center justify-between gap-2 p-4 border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
-              <h2 className="font-semibold text-gray-900 dark:text-white">Add a field</h2>
-              <button
-                onClick={() => {
-                  setPaletteOpenPref(false);
-                  // The Add Field toggle only renders once the palette is closed — focus it on
-                  // the next frame, after React has put it back in the toolbar.
-                  requestAnimationFrame(() => addFieldToggleRef.current?.focus());
-                }}
-                className="hidden md:inline-flex items-center justify-center min-h-8 min-w-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                aria-label="Collapse fields panel"
-                title="Collapse"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+            <BuilderDockHeader
+              title="Add a field"
+              closeLabel="Collapse fields panel"
+              onClose={() => {
+                setPaletteOpenPref(false);
+                // The Add field toggle only renders once the palette is closed — focus it on
+                // the next frame, after React has put it back in the toolbar.
+                requestAnimationFrame(() => addFieldToggleRef.current?.focus());
+              }}
+            />
             {/* Own scroll, independent of the canvas */}
             <div className="flex-1 overflow-y-auto">
               <FieldPalette onAddField={handleAddField} isPrivate={isPrivateForm} />
@@ -1378,11 +1457,11 @@ export default function FormBuilder() {
         {/* Canvas */}
         <div className="flex-1 flex flex-col overflow-hidden">
             {/* Desktop builder toolbar: dock toggles + field count (always reachable) */}
-            <div className="hidden md:flex items-center justify-between gap-3 px-6 py-2.5 border-b border-gray-200/80 dark:border-slate-800 bg-white/70 dark:bg-slate-900/50 backdrop-blur flex-shrink-0">
+            <div className="hidden h-11 md:flex items-center justify-between gap-3 px-4 border-b border-gray-200/80 dark:border-slate-800 bg-white/70 dark:bg-slate-900/50 backdrop-blur flex-shrink-0">
               <div className="flex items-center gap-2">
                 {/* Redundant while the palette sidebar is showing (it has its own X) — the
                     button reappears the moment the palette closes. Mobile keeps its own
-                    always-visible Add Field button since the sidebar can't show there. */}
+                    always-visible Add field button since the sidebar can't show there. */}
                 {builderLayout.palette !== 'inline' && (
                   <Button
                     ref={addFieldToggleRef}
@@ -1390,8 +1469,9 @@ export default function FormBuilder() {
                     variant="outline"
                     onClick={() => toggleDock('palette')}
                     leftIcon={<Plus className="h-4 w-4" />}
+                    className="whitespace-nowrap"
                   >
-                    Add Field
+                    Add field
                   </Button>
                 )}
                 <div className={cn('flex items-center gap-0.5', builderLayout.palette !== 'inline' && 'border-l border-gray-200 dark:border-slate-700 pl-2')}>
@@ -1403,12 +1483,13 @@ export default function FormBuilder() {
                   </Button>
                 </div>
               </div>
-              <span className="text-xs text-gray-400 dark:text-slate-500">
+              <span className="whitespace-nowrap text-xs tabular-nums text-gray-500 dark:text-slate-400">
                 {formFields.length} field{formFields.length === 1 ? '' : 's'}
               </span>
               <Button
                 ref={settingsToggleRef}
                 size="sm"
+                className="whitespace-nowrap"
                 variant={fieldSettingsWanted && builderLayout.settings === 'inline' ? 'secondary' : 'ghost'}
                 onClick={() => {
                   if (!selectedField) return;
@@ -1425,28 +1506,31 @@ export default function FormBuilder() {
                 title={selectedField ? 'Toggle field settings' : 'Select a field to edit its settings'}
               >
                 <SlidersHorizontal className="h-4 w-4" />
-                <span className="hidden lg:inline ml-2">Settings</span>
+                {/* Named for what it opens: "Settings" alone is the form's, in the bar above. */}
+                <span>Field settings</span>
               </Button>
             </div>
 
-            {/* Own scroll, independent of the side panels */}
-            <div className="flex-1 overflow-y-auto p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] md:p-6">
-              <div className="max-w-2xl mx-auto">
+            {/* Own scroll, independent of the side panels. The fields are a list: it starts at the
+                left and takes the width the canvas has, and its last row scrolls clear of the
+                chat button in the corner. */}
+            <div className="flex-1 overflow-y-auto p-3 pb-24 md:p-4 md:pb-24">
+              <div>
                 {form.fields.length === 0 ? (
-                  <div className="text-center py-12 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl">
-                    <Plus className="h-12 w-12 text-gray-300 dark:text-slate-600 mx-auto mb-4" />
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-                      Add your first field
+                  <div className="rounded-2xl border border-dashed border-gray-300 px-4 py-10 text-center dark:border-slate-700">
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+                      This form has no fields yet
                     </h3>
-                    <p className="text-gray-500 dark:text-slate-400 mb-4">
-                      {isMobile ? 'Tap Add Field to get started' : 'Click "Add Field" to choose a field type.'}
+                    <p className="mx-auto mt-1 max-w-md text-sm text-gray-500 dark:text-slate-400">
+                      {builderLayout.palette === 'inline'
+                        ? 'Choose a kind of field from the list on the left, or describe the form to the assistant.'
+                        : 'Add a field to choose its kind, or describe the form to the assistant.'}
                     </p>
-                    <div className="flex items-center justify-center gap-2 flex-wrap">
-                      <Button onClick={openPalette} variant="outline" leftIcon={<Plus className="h-4 w-4" />}>
-                        Add Field
+                    <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                      <Button onClick={openPalette} variant="outline" leftIcon={<Plus className="h-4 w-4" />} className="max-sm:min-h-11">
+                        Add field
                       </Button>
-                      <span className="text-gray-400 dark:text-slate-500">or</span>
-                      <Button onClick={() => { useUIStore.getState().setChatOpen(true); useUIStore.getState().setChatMinimized(false); }}>
+                      <Button onClick={() => { useUIStore.getState().setChatOpen(true); useUIStore.getState().setChatMinimized(false); }} className="max-sm:min-h-11">
                         <Sparkles className="mr-2 h-4 w-4 text-primary-foreground/90" />
                         Chat with AI
                       </Button>
@@ -1462,7 +1546,7 @@ export default function FormBuilder() {
                       items={form.fields.map((f) => f.id)}
                       strategy={verticalListSortingStrategy}
                     >
-                      <div className="space-y-3">
+                      <div className="space-y-1.5">
                         {form.fields.map((field) => (
                           <SortableFieldCard
                             key={field.id}
@@ -1480,11 +1564,12 @@ export default function FormBuilder() {
 
                 {form.fields.length > 0 && (
                   <button
+                    type="button"
                     onClick={openPalette}
-                    className="mt-4 w-full py-3 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl text-gray-500 dark:text-slate-400 hover:border-primary-300 hover:text-primary-600 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                    className="mt-1.5 flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 text-sm font-medium text-gray-500 transition-colors hover:border-primary-400 hover:text-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:text-slate-400 dark:hover:border-primary-500/60 dark:hover:text-primary-400"
                   >
                     <Plus className="h-4 w-4" />
-                    Add Field
+                    Add field
                   </button>
                 )}
               </div>
@@ -1494,22 +1579,12 @@ export default function FormBuilder() {
         {/* Settings Panel — inline when there is room, otherwise opened as a sheet. */}
         {fieldSettingsWanted && builderLayout.settings === 'inline' && (
           <aside className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-right motion-safe:transition-[width] motion-safe:duration-200">
-            <div className="flex items-center justify-between gap-2 p-4 border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
-              <div className="min-w-0">
-                <h2 className="font-semibold text-gray-900 dark:text-white">Field settings</h2>
-                {selectedField && (
-                  <p className="text-sm text-gray-500 dark:text-slate-500 truncate">{FIELD_TYPE_INFO[selectedField.type]?.label}</p>
-                )}
-              </div>
-              <button
-                onClick={() => { setSettingsCollapsed(true); settingsToggleRef.current?.focus(); }}
-                className="hidden md:inline-flex items-center justify-center min-h-8 min-w-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                aria-label="Collapse settings panel"
-                title="Collapse"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+            <BuilderDockHeader
+              title="Field settings"
+              note={selectedField ? FIELD_TYPE_INFO[selectedField.type]?.label : undefined}
+              closeLabel="Collapse settings panel"
+              onClose={() => { setSettingsCollapsed(true); settingsToggleRef.current?.focus(); }}
+            />
             {/* Own scroll, independent of the canvas */}
             <div className="flex-1 overflow-y-auto">
               {selectedField ? (
@@ -1596,7 +1671,7 @@ export default function FormBuilder() {
         script={form.logicScript || ''}
         onSave={(script) => {
           updateForm(form.id, { logicScript: script });
-          toast.success('Script Saved', 'Your backend logic script has been saved');
+          toast.success('Script saved', 'Your backend logic script has been saved');
         }}
         formFields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
         formId={form.id}

@@ -6,6 +6,17 @@ import { cn } from '../../lib/utils';
 import { FIELD_TYPE_INFO, type FormField } from '../../types/form';
 import { ICON_MAP } from './fieldIcons';
 
+// A row's own buttons: 32 px for a mouse, a finger's 44 px below md (where the builder is a
+// phone layout and the row has the whole width).
+const ROW_BUTTON = 'inline-flex flex-none items-center justify-center motion-safe:transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset';
+const ROW_ACTION = cn(ROW_BUTTON, 'h-8 w-8 cursor-pointer self-center rounded-lg max-md:h-11 max-md:w-11');
+const ROW_MARK = 'flex-none rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-gray-200/70 text-gray-500 dark:bg-slate-700/70 dark:text-slate-400';
+
+/**
+ * One field of the form, as a row of the builder's list: the handle that drags it, what kind
+ * of field it is, its label, and its two actions. A row is 56 px, so a form of thirty fields is
+ * three screens and not seven.
+ */
 export const SortableFieldCard = memo(function SortableFieldCard({
   field,
   isSelected,
@@ -35,6 +46,7 @@ export const SortableFieldCard = memo(function SortableFieldCard({
 
   const fieldInfo = FIELD_TYPE_INFO[field.type] ?? { label: field.type, icon: 'HelpCircle', category: 'other' };
   const IconComponent = ICON_MAP[fieldInfo.icon] || HelpCircle;
+  const hasLogic = !!field.conditionalLogic?.expression?.trim();
 
   const handleSelect = useCallback(() => onSelect(field.id), [onSelect, field.id]);
   const handleDelete = useCallback((e: React.MouseEvent) => {
@@ -51,71 +63,96 @@ export const SortableFieldCard = memo(function SortableFieldCard({
       ref={setNodeRef}
       style={style}
       className={cn(
-        'group relative bg-white dark:bg-slate-900 rounded-lg border-2 motion-safe:transition-all',
+        // The keyboard's place is drawn round the whole row, outside its border, so it reads on
+        // the selected row too (whose border is already the accent).
+        'group relative flex min-h-14 items-stretch rounded-xl border motion-safe:transition-colors',
+        'has-[[data-field-select]:focus-visible]:outline has-[[data-field-select]:focus-visible]:outline-2 has-[[data-field-select]:focus-visible]:outline-offset-2 has-[[data-field-select]:focus-visible]:outline-primary-500',
         isSelected
-          ? 'border-primary-500 bg-primary-50/40 dark:bg-primary-500/5 ring-2 ring-primary-500/20 shadow-lg'
-          : 'border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700',
-        isDragging && 'opacity-50 shadow-lg'
+          ? 'border-primary-500 bg-primary-50 ring-1 ring-primary-500 dark:bg-primary-500/10'
+          : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:bg-slate-800/60',
+        isDragging && 'z-10 opacity-60 shadow-lg'
       )}
     >
-      <div className="flex items-start gap-3 p-4">
-        <button
-          {...attributes}
-          {...listeners}
-          onClick={(e) => e.stopPropagation()}
-          className="-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-grab active:cursor-grabbing touch-none motion-safe:transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-          aria-label="Drag to reorder"
-          title="Drag to reorder"
-        >
-          <GripVertical className="h-4 w-4" />
-        </button>
+      <button
+        {...attributes}
+        {...listeners}
+        onClick={(e) => e.stopPropagation()}
+        // The handle is the row's whole left end, top to bottom: easy to catch with a finger.
+        className={cn(ROW_BUTTON, 'w-8 cursor-grab touch-none rounded-l-[11px] text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus-visible:ring-primary-500 active:cursor-grabbing dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-300 max-md:w-11')}
+        aria-label="Drag to reorder"
+        title="Drag to reorder"
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
 
-        {/* The content block is the selection control so keyboard users can focus +
-            select a field (focus ring + pressed state), not just mouse users. */}
-        <button
-          type="button"
-          id={`field-select-${field.id}`}
-          onClick={handleSelect}
-          aria-pressed={isSelected}
-          aria-label={`Edit field: ${field.label || fieldInfo.label}`}
-          className="flex-1 min-w-0 text-left cursor-pointer rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-        >
-          <div className="flex min-w-0 items-center gap-2 mb-1">
-            <IconComponent className="h-4 w-4 shrink-0 text-gray-400 dark:text-slate-500" />
-            <span className="min-w-0 truncate text-xs text-gray-500 dark:text-slate-500">{fieldInfo.label}</span>
-            {field.required && (
-              <span className="shrink-0 text-xs font-semibold leading-none text-red-500 dark:text-red-400" title="Required field">*</span>
-            )}
-            {field.type === 'hidden' && (
-              <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-200/70 dark:bg-slate-700 text-gray-500 dark:text-slate-400">
-                Not shown
-              </span>
-            )}
-          </div>
-          <p className="font-medium text-gray-900 dark:text-white truncate">{field.label}</p>
-          {field.description && (
-            <p className="text-sm text-gray-500 dark:text-slate-500 truncate mt-1">{field.description}</p>
+      {/* The content block is the selection control so keyboard users can focus +
+          select a field (focus ring + pressed state), not just mouse users. */}
+      <button
+        type="button"
+        id={`field-select-${field.id}`}
+        data-field-select=""
+        onClick={handleSelect}
+        aria-pressed={isSelected}
+        aria-label={`Edit field: ${field.label || fieldInfo.label}`}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 py-2 pl-1 pr-2 text-left focus:outline-none"
+      >
+        <span
+          aria-hidden="true"
+          className={cn(
+            'flex h-8 w-8 flex-none items-center justify-center rounded-lg',
+            isSelected
+              ? 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300'
+              : 'bg-gray-100 text-gray-500 dark:bg-slate-800 dark:text-slate-400',
           )}
-        </button>
-
-        <button
-          onClick={handleDuplicate}
-          aria-label={`Duplicate ${field.label || 'field'}`}
-          title="Duplicate field"
-          className="-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md text-gray-300 dark:text-slate-600 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-500/10 motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:text-primary-600 dark:focus-visible:text-primary-400 focus-visible:ring-2 focus-visible:ring-primary-500"
         >
-          <Copy className="h-4 w-4" />
-        </button>
+          <IconComponent className="h-4 w-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-start gap-1">
+            {/* With room the label is one line. On a phone it takes the lines it needs and is
+                not cut: there the mark follows its last word, where a mark of its own beside a
+                label of two lines stood alone at the row's far end. */}
+            <span className="min-w-0 break-words text-sm font-medium leading-5 text-gray-900 dark:text-white md:line-clamp-1">
+              {field.label || fieldInfo.label}
+              {field.required && (
+                <span className="font-semibold text-red-500 dark:text-red-400 md:hidden" title="Required field"> *</span>
+              )}
+            </span>
+            {field.required && (
+              <span className="flex-none text-sm font-semibold leading-5 text-red-500 dark:text-red-400 max-md:hidden" title="Required field">*</span>
+            )}
+          </span>
+          <span className="flex min-w-0 items-center gap-1 text-xs leading-4 text-gray-500 dark:text-slate-400">
+            <span className="flex-none">{fieldInfo.label}</span>
+            {field.description && (
+              <>
+                <span aria-hidden="true" className="flex-none text-gray-300 dark:text-slate-600">·</span>
+                <span className="min-w-0 truncate">{field.description}</span>
+              </>
+            )}
+          </span>
+        </span>
+        {field.type === 'hidden' && <span className={ROW_MARK}>Not shown</span>}
+        {hasLogic && <span className={cn(ROW_MARK, 'max-sm:hidden')} title="This field has a logic rule">Logic</span>}
+      </button>
 
-        <button
-          onClick={handleDelete}
-          aria-label={`Delete ${field.label || 'field'}`}
-          title="Delete field"
-          className="-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md text-gray-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:text-red-500 dark:focus-visible:text-red-400 focus-visible:ring-2 focus-visible:ring-red-500"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-      </div>
+      <button
+        onClick={handleDuplicate}
+        aria-label={`Duplicate ${field.label || 'field'}`}
+        title="Duplicate field"
+        className={cn(ROW_ACTION, 'text-gray-400 hover:bg-primary-50 hover:text-primary-600 focus-visible:text-primary-600 focus-visible:ring-primary-500 dark:text-slate-500 dark:hover:bg-primary-500/10 dark:hover:text-primary-400 dark:focus-visible:text-primary-400')}
+      >
+        <Copy className="h-4 w-4" />
+      </button>
+
+      <button
+        onClick={handleDelete}
+        aria-label={`Delete ${field.label || 'field'}`}
+        title="Delete field"
+        className={cn(ROW_ACTION, 'mr-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 focus-visible:text-red-500 focus-visible:ring-red-500 dark:text-slate-500 dark:hover:bg-red-500/10 dark:hover:text-red-400 dark:focus-visible:text-red-400 max-md:mr-0.5')}
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
     </div>
   );
 });

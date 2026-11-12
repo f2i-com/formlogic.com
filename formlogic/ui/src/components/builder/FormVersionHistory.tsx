@@ -108,52 +108,64 @@ function FormVersionHistoryVisit({ isOpen, onClose, formId, onRestored }: FormVe
 
   return (
     <>
-      <Modal isOpen={isOpen} onClose={onClose} title="Version History" size="md">
-        <div className="p-6">
+      {/* Taken before each save, so even the newest row is not what the form holds now. */}
+      <Modal
+        isOpen={isOpen}
+        onClose={onClose}
+        title="Version history"
+        description="Each version is the form as it was just before a save, newest first."
+        size="lg"
+      >
+        <div className="p-4 sm:p-6">
           {loading ? (
             <div className="flex items-center justify-center py-10">
               <Loader2 className="h-6 w-6 animate-spin text-gray-400 dark:text-slate-500" />
             </div>
           ) : loadError ? (
-            <div role="alert" className="text-center py-10">
-              <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-amber-500" />
-              <p className="text-sm font-medium text-gray-900 dark:text-white">Could not load version history</p>
-              <p className="text-xs mt-1 text-gray-500 dark:text-slate-400">{loadError}</p>
-              <Button variant="outline" size="sm" className="mt-3" onClick={() => void load()}>Try again</Button>
+            <div role="alert" className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 flex-none text-amber-500" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-gray-900 dark:text-white">Could not load version history</p>
+                <p className="text-xs mt-1 text-gray-500 dark:text-slate-400">{loadError}</p>
+                <Button variant="outline" size="sm" className="mt-3" onClick={() => void load()}>Try again</Button>
+              </div>
             </div>
           ) : versions.length === 0 ? (
-            <div className="text-center py-10 text-gray-400 dark:text-slate-500">
-              <Inbox className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm font-medium">No version history yet</p>
-              <p className="text-xs mt-1">A snapshot is saved each time you edit the form.</p>
+            <div className="flex items-start gap-3 text-gray-500 dark:text-slate-400">
+              <Inbox className="mt-0.5 h-5 w-5 flex-none text-gray-400 dark:text-slate-500" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-gray-900 dark:text-white">No version history yet</p>
+                <p className="text-xs mt-1">A snapshot is saved each time you edit the form.</p>
+              </div>
             </div>
           ) : (
-            <>
-              {/* Taken before each save, so even the newest row is not what the form holds now. */}
-              <p className="text-xs text-gray-500 dark:text-slate-400 mb-3">Each version is the form as it was just before a save, newest first.</p>
-              <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+            // A list: one line a version, hairlines between, the number in tabular figures.
+            <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-slate-700">
+              <ul className="divide-y divide-gray-200 dark:divide-slate-700">
                 {versions.map((v) => (
-                  <div key={v.id} className="flex items-start justify-between gap-3 p-3 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900">
+                  <li key={v.id} className="flex items-center gap-3 py-1.5 pl-3 pr-2 hover:bg-gray-50 dark:hover:bg-slate-800/50">
+                    <History className="h-3.5 w-3.5 flex-none text-gray-400 dark:text-slate-500" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <History className="h-3.5 w-3.5 text-gray-400" />
-                        <span className="text-sm font-semibold text-gray-900 dark:text-white">Version {v.version}</span>
-                      </div>
-                      {v.changelog && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 line-clamp-2">{v.changelog}</p>}
-                      <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">{formatRelativeTime(v.createdAt)}</p>
+                      <p className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                        <span className="font-medium tabular-nums text-gray-900 dark:text-white">Version {v.version}</span>
+                        <span className="text-xs text-gray-500 dark:text-slate-400">{formatRelativeTime(v.createdAt)}</span>
+                      </p>
+                      {v.changelog && <p className="text-xs text-gray-500 dark:text-slate-400 line-clamp-2">{v.changelog}</p>}
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => setRestoreTarget(v.version)} leftIcon={<RotateCcw className="h-3.5 w-3.5" />}>
+                    <Button variant="outline" size="sm" className="flex-none" onClick={() => setRestoreTarget(v.version)} leftIcon={<RotateCcw className="h-3.5 w-3.5" />}>
                       Restore
                     </Button>
-                  </div>
+                  </li>
                 ))}
-                {hasOlder && (
+              </ul>
+              {hasOlder && (
+                <div className="border-t border-gray-200 p-1 dark:border-slate-700">
                   <Button variant="ghost" size="sm" className="w-full" onClick={() => void loadOlder()} isLoading={loadingOlder}>
                     Show older versions
                   </Button>
-                )}
-              </div>
-            </>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </Modal>

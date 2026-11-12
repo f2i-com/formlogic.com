@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Trash2 } from 'lucide-react';
+import { ChevronRight, Trash2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Dropdown } from '../ui/Dropdown';
@@ -16,13 +16,13 @@ interface ValidationEditorProps {
 
 const VALIDATION_TYPES: Record<string, { label: string; hasValue: boolean; valueType: 'number' | 'text' }[]> = {
   text: [
-    { label: 'Minimum Length', hasValue: true, valueType: 'number' },
-    { label: 'Maximum Length', hasValue: true, valueType: 'number' },
-    { label: 'Pattern (Regex)', hasValue: true, valueType: 'text' },
+    { label: 'Minimum length', hasValue: true, valueType: 'number' },
+    { label: 'Maximum length', hasValue: true, valueType: 'number' },
+    { label: 'Pattern (regex)', hasValue: true, valueType: 'text' },
   ],
   number: [
-    { label: 'Minimum Value', hasValue: true, valueType: 'number' },
-    { label: 'Maximum Value', hasValue: true, valueType: 'number' },
+    { label: 'Minimum value', hasValue: true, valueType: 'number' },
+    { label: 'Maximum value', hasValue: true, valueType: 'number' },
   ],
   // 'Custom Expression' (type 'custom') is not offered: no screen a form is filled in
   // and not the server checks one, so offering it was misleading. A custom rule saved
@@ -32,11 +32,11 @@ const VALIDATION_TYPES: Record<string, { label: string; hasValue: boolean; value
 };
 
 const TYPE_TO_VALIDATION: Record<string, string> = {
-  'Minimum Length': 'minLength',
-  'Maximum Length': 'maxLength',
-  'Pattern (Regex)': 'pattern',
-  'Minimum Value': 'min',
-  'Maximum Value': 'max',
+  'Minimum length': 'minLength',
+  'Maximum length': 'maxLength',
+  'Pattern (regex)': 'pattern',
+  'Minimum value': 'min',
+  'Maximum value': 'max',
 };
 
 function getValidationOptions(fieldType: FieldType) {
@@ -109,34 +109,24 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium text-gray-700 dark:text-slate-200">Validation Rules</h4>
-        {/* Only show the picker when this field type actually has rules to add —
-            otherwise "+ Add Rule" opened an empty menu (e.g. for 11 field types). */}
-        {options.length > 0 && (
-          <Dropdown
-            options={options.map((o) => ({ value: o.label, label: o.label }))}
-            value=""
-            onChange={addRule}
-            placeholder="+ Add Rule"
-            className="w-48"
-          />
-        )}
+    <div className="space-y-3">
+      <div>
+        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Validation rules</h4>
+        <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
+          {rules.length === 0
+            ? options.length > 0
+              ? 'No rules yet. A rule refuses an answer that does not fit.'
+              : 'This kind of field has no rules to add.'
+            : 'An answer that breaks a rule is refused with the rule’s message.'}
+        </p>
       </div>
 
-      {rules.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-slate-400 text-center py-4">
-          {options.length > 0
-            ? 'No validation rules. Add a rule to validate field input.'
-            : 'This field type has no configurable validation rules.'}
-        </p>
-      ) : (
+      {rules.length > 0 && (
         <div className="space-y-2">
           {rules.map((rule) => (
             <div
               key={rule.id}
-              className="border border-gray-200 dark:border-slate-800 rounded-lg overflow-hidden bg-white dark:bg-slate-900"
+              className="border border-gray-200 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-900"
             >
               {/* Rule Header */}
               <div
@@ -144,33 +134,36 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                 tabIndex={0}
                 aria-expanded={expandedRuleId === rule.id}
                 className={cn(
-                  'flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-800/50 cursor-pointer',
-                  expandedRuleId === rule.id && 'border-b border-gray-200 dark:border-slate-800'
+                  'flex min-h-10 items-center justify-between gap-2 py-1 pl-3 pr-1 bg-gray-50 dark:bg-slate-800/50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 max-sm:min-h-11',
+                  expandedRuleId === rule.id && 'border-b border-gray-200 dark:border-slate-700'
                 )}
                 onClick={() => toggleRule(rule.id)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleRule(rule.id); } }}
               >
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-700 dark:text-slate-200">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <ChevronRight className={cn('h-3.5 w-3.5 flex-none text-gray-400 transition-transform dark:text-slate-500', expandedRuleId === rule.id && 'rotate-90')} aria-hidden="true" />
+                  <span className="min-w-0 break-words text-sm font-medium text-gray-700 dark:text-slate-200">
                     {getRuleLabel(rule)}
                   </span>
-                </div>
+                </span>
                 <Button
                   variant="ghost"
                   size="sm"
+                  className="h-8 w-8 flex-none px-0 text-gray-400 hover:text-red-600 dark:text-slate-500 dark:hover:text-red-400 max-sm:w-11"
                   aria-label="Remove validation rule"
+                  title="Remove rule"
                   onClick={(e) => {
                     e.stopPropagation();
                     removeRule(rule.id);
                   }}
                 >
-                  <Trash2 className="h-4 w-4 text-red-500" />
+                  <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
 
               {/* Rule Content */}
               {expandedRuleId === rule.id && (
-                <div className="p-4 space-y-4">
+                <div className="p-3 space-y-3">
                   {/* Value Input for rules that need it */}
                   {['minLength', 'maxLength', 'min', 'max'].includes(rule.type) && (
                     <Input
@@ -195,7 +188,7 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                     if (!patternError && isUnsafePattern(raw)) patternError = 'This pattern could freeze a visitor’s browser, so it is checked only when the answer is sent. To check it as they type, give a repeated group a fixed step, such as a separator.';
                     return (
                       <Input
-                        label="Pattern (Regular Expression)"
+                        label="Pattern (regular expression)"
                         value={rule.value as string}
                         onChange={(e) => updateRule(rule.id, { value: e.target.value })}
                         placeholder="^[a-zA-Z]+$"
@@ -209,7 +202,7 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                     <div className="space-y-2 text-sm text-gray-600 dark:text-slate-300">
                       <p>
                         This expression rule is not checked when the form is filled in or submitted, by any
-                        screen or by the server. To refuse an answer, use a rule from Add Rule or the
+                        screen or by the server. To refuse an answer, use a rule from Add a rule or the
                         form&apos;s onSubmit script (return <code>{'{ reject: true, message }'}</code>), then
                         remove this rule.
                       </p>
@@ -222,7 +215,7 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                   ) : (
                     /* Error Message */
                     <Input
-                      label="Error Message"
+                      label="Error message"
                       value={rule.message}
                       onChange={(e) => updateRule(rule.id, { message: e.target.value })}
                       placeholder="This field is invalid"
@@ -233,6 +226,18 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
             </div>
           ))}
         </div>
+      )}
+
+      {/* Only show the picker when this field type actually has rules to add —
+          otherwise "Add a rule" opened an empty menu (e.g. for 11 field types). Under the
+          rules and as wide as the panel: beside the heading it took most of the line. */}
+      {options.length > 0 && (
+        <Dropdown
+          options={options.map((o) => ({ value: o.label, label: o.label }))}
+          value=""
+          onChange={addRule}
+          placeholder="Add a rule"
+        />
       )}
     </div>
   );

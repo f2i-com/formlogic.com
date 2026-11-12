@@ -70,7 +70,7 @@ function typeInto(input: HTMLInputElement, value: string) {
 describe('a condition on a choice question', () => {
   it('picks from the options, and writes the value of the one picked', () => {
     render([dropdown]);
-    act(() => buttonNamed('Add Condition').click());
+    act(() => buttonNamed('Add condition').click());
 
     choose(valueBox()!.querySelector<HTMLButtonElement>('[role="combobox"]')!, 'Yes');
 
@@ -79,7 +79,7 @@ describe('a condition on a choice question', () => {
 
   it('offers the options for does not equal and contains as well', () => {
     render([dropdown]);
-    act(() => buttonNamed('Add Condition').click());
+    act(() => buttonNamed('Add condition').click());
 
     choose(operatorBox(), 'does not equal');
     choose(valueBox()!.querySelector<HTMLButtonElement>('[role="combobox"]')!, 'No');
@@ -92,14 +92,14 @@ describe('a condition on a choice question', () => {
 
   it('keeps a typed box for what does not compare with an option', () => {
     render([dropdown]);
-    act(() => buttonNamed('Add Condition').click());
+    act(() => buttonNamed('Add condition').click());
     choose(operatorBox(), 'is greater than');
     expect(valueBox()?.tagName).toBe('INPUT');
   });
 
   it('still shows a value no option holds, and leaves it in the rule', () => {
     render([notes, dropdown]);
-    act(() => buttonNamed('Add Condition').click());
+    act(() => buttonNamed('Add condition').click());
     typeInto(valueBox() as HTMLInputElement, 'Yes');
 
     choose(comboboxes()[1], 'Plan');
@@ -114,7 +114,7 @@ describe('a condition on a choice question', () => {
     render([dropdown], onSave, field('follow_up', 'short_text', 'Follow up', { conditionalLogic: { expression: 'plan === "Yes"', action: 'show' } }));
     expect(document.body.querySelector('textarea')?.value).toBe('plan === "Yes"');
 
-    act(() => buttonNamed('Save Condition').click());
+    act(() => buttonNamed('Save rule').click());
 
     expect(onSave).toHaveBeenCalledWith({ expression: 'plan === "Yes"', action: 'show' });
   });
@@ -133,14 +133,14 @@ describe('a condition on a Checkboxes field', () => {
 
   it('offers what a list can answer, and no equals', () => {
     render([pick]);
-    act(() => buttonNamed('Add Condition').click());
+    act(() => buttonNamed('Add condition').click());
 
     expect(offered()).toEqual(['contains', 'does not contain', 'is not empty', 'is empty']);
   });
 
   it('starts on contains, with the options to pick from', () => {
     render([pick]);
-    act(() => buttonNamed('Add Condition').click());
+    act(() => buttonNamed('Add condition').click());
 
     choose(valueBox()!.querySelector<HTMLButtonElement>('[role="combobox"]')!, 'Ham');
 
@@ -149,7 +149,7 @@ describe('a condition on a Checkboxes field', () => {
 
   it('writes does not contain', () => {
     render([pick]);
-    act(() => buttonNamed('Add Condition').click());
+    act(() => buttonNamed('Add condition').click());
     choose(valueBox()!.querySelector<HTMLButtonElement>('[role="combobox"]')!, 'Egg');
 
     choose(operatorBox(), 'does not contain');
@@ -161,7 +161,7 @@ describe('a condition on a Checkboxes field', () => {
 
   it('moves off equals when the condition moves to one, and back when it leaves', () => {
     render([notes, pick]);
-    act(() => buttonNamed('Add Condition').click());
+    act(() => buttonNamed('Add condition').click());
     expect(operatorBox().textContent).toContain('equals');
 
     choose(comboboxes()[1], 'Toppings');
@@ -174,7 +174,7 @@ describe('a condition on a Checkboxes field', () => {
 
   it('keeps what it can: is empty still means that on another field', () => {
     render([notes, pick]);
-    act(() => buttonNamed('Add Condition').click());
+    act(() => buttonNamed('Add condition').click());
     choose(comboboxes()[1], 'Toppings');
     choose(operatorBox(), 'is empty');
 
@@ -185,7 +185,7 @@ describe('a condition on a Checkboxes field', () => {
 
   it('still offers every comparison for a field that holds one answer', () => {
     render([dropdown]);
-    act(() => buttonNamed('Add Condition').click());
+    act(() => buttonNamed('Add condition').click());
     expect(offered()).toContain('equals');
     expect(offered()).not.toContain('does not contain');
   });
@@ -196,7 +196,7 @@ describe('a condition on a Checkboxes field', () => {
     render([pick], onSave, field('follow_up', 'short_text', 'Follow up', { conditionalLogic: stored }));
     expect(document.body.querySelector('textarea')?.value).toBe('toppings === "option_1"');
 
-    act(() => buttonNamed('Save Condition').click());
+    act(() => buttonNamed('Save rule').click());
 
     expect(onSave).toHaveBeenCalledWith(stored);
   });
@@ -205,7 +205,7 @@ describe('a condition on a Checkboxes field', () => {
 describe('a condition on a date', () => {
   it('asks for a date, so the value has the shape the answer does', () => {
     render([when]);
-    act(() => buttonNamed('Add Condition').click());
+    act(() => buttonNamed('Add condition').click());
     expect((valueBox() as HTMLInputElement).type).toBe('date');
 
     choose(operatorBox(), 'is greater than');
@@ -227,7 +227,7 @@ describe('saving a rule', () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(box, 'role === "manager" && manager !== ""');
       box.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    act(() => buttonNamed('Save Condition').click());
+    act(() => buttonNamed('Save rule').click());
 
     expect(onSave).toHaveBeenCalledWith({ expression: 'role_1 === "manager" && mgr_1 !== ""', action: 'show' });
   });

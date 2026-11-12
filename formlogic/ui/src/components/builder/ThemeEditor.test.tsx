@@ -46,7 +46,7 @@ function render(start: FormTheme = theme) {
 }
 
 const input = (label: string) => document.body.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
-const apply = () => Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent?.includes('Apply Theme')) as HTMLButtonElement;
+const apply = () => Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent?.includes('Apply theme')) as HTMLButtonElement;
 const alertText = () => document.body.querySelector('[role="alert"]')?.textContent;
 
 async function pick(label: string, picked: File) {
@@ -157,7 +157,7 @@ describe('uploading a logo or background', () => {
   });
 });
 
-describe('Apply Theme', () => {
+describe('Apply theme', () => {
   it('says the theme is saved only when it was', async () => {
     render();
     await act(async () => apply().click());

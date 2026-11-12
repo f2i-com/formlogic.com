@@ -2,24 +2,24 @@ import { describe, expect, it } from 'vitest';
 import { BUILDER_CHROME, resolveBuilderChrome } from './builderChrome';
 
 describe('resolveBuilderChrome', () => {
-  it('shows full labels at and above the full-width threshold', () => {
-    expect(resolveBuilderChrome(BUILDER_CHROME.FULL_MIN_W)).toBe('full');
-    expect(resolveBuilderChrome(BUILDER_CHROME.FULL_MIN_W + 1)).toBe('full');
+  it('keeps every control in the bar at and above the width that holds them as icons', () => {
+    expect(resolveBuilderChrome(BUILDER_CHROME.BAR_MIN_W)).toBe('bar');
+    expect(resolveBuilderChrome(BUILDER_CHROME.BAR_MIN_W + 1)).toBe('bar');
+    expect(resolveBuilderChrome(1920)).toBe('bar');
   });
 
-  it('uses compact icon-only chrome between the full and tiny thresholds', () => {
-    expect(resolveBuilderChrome(BUILDER_CHROME.FULL_MIN_W - 1)).toBe('compact');
-    expect(resolveBuilderChrome(BUILDER_CHROME.COMPACT_MIN_W)).toBe('compact');
+  it('keeps them in the bar on a tablet held upright, whose bar is 744 px inside its padding', () => {
+    expect(resolveBuilderChrome(768 - 24)).toBe('bar');
   });
 
-  it('folds middle clusters into overflow below the compact threshold', () => {
-    expect(resolveBuilderChrome(BUILDER_CHROME.COMPACT_MIN_W - 1)).toBe('tiny');
-    expect(resolveBuilderChrome(390)).toBe('tiny');
+  it('lists the first two groups in the menu below that width', () => {
+    expect(resolveBuilderChrome(BUILDER_CHROME.BAR_MIN_W - 1)).toBe('menu');
+    expect(resolveBuilderChrome(390)).toBe('menu');
   });
 
-  it('falls back to full before ResizeObserver reports a measured width', () => {
-    expect(resolveBuilderChrome(null)).toBe('full');
-    expect(resolveBuilderChrome(0)).toBe('full');
-    expect(resolveBuilderChrome(Number.NaN)).toBe('full');
+  it('keeps them in the bar before ResizeObserver reports a measured width', () => {
+    expect(resolveBuilderChrome(null)).toBe('bar');
+    expect(resolveBuilderChrome(0)).toBe('bar');
+    expect(resolveBuilderChrome(Number.NaN)).toBe('bar');
   });
 });

@@ -1,12 +1,17 @@
-// Pure Form Builder chrome density resolver.
+// Where the form builder's bar keeps its first two groups of controls.
 //
-// The header can be squeezed by docked builder panels or a snapped desktop window, so labels and
-// overflow are driven by the measured header width rather than viewport breakpoints.
-export type BuilderChromeTier = 'full' | 'compact' | 'tiny';
+// The bar can be squeezed by a docked chat or a snapped desktop window, so this is decided from
+// the bar's measured width rather than from viewport breakpoints. With room, every control
+// stands in the bar ('bar'); its labels give way to icons by container query (BAR_LABEL in
+// FormBuilder), which needs no measuring. Without room for the icons themselves, the "look" and
+// "behavior" groups are listed in the More menu instead ('menu'). That changes what the menu
+// holds, which a style rule cannot do, so it is decided here.
+export type BuilderChromeTier = 'bar' | 'menu';
 
 export const BUILDER_CHROME = {
-  FULL_MIN_W: 1080,
-  COMPACT_MIN_W: 760,
+  // The narrowest bar, inside its padding, that holds every control as an icon (418 px of them)
+  // beside the back button, the form's icon and a title of about 8rem.
+  BAR_MIN_W: 700,
 } as const;
 
 function measured(width: number | null | undefined): width is number {
@@ -14,8 +19,6 @@ function measured(width: number | null | undefined): width is number {
 }
 
 export function resolveBuilderChrome(headerWidth: number | null | undefined): BuilderChromeTier {
-  if (!measured(headerWidth)) return 'full';
-  if (headerWidth >= BUILDER_CHROME.FULL_MIN_W) return 'full';
-  if (headerWidth >= BUILDER_CHROME.COMPACT_MIN_W) return 'compact';
-  return 'tiny';
+  if (!measured(headerWidth)) return 'bar';
+  return headerWidth >= BUILDER_CHROME.BAR_MIN_W ? 'bar' : 'menu';
 }

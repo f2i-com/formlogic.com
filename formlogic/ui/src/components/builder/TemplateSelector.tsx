@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { X, Plus, Clock, LayoutGrid, Building, MessageCircle, CalendarDays, Users, GraduationCap, Mail, Briefcase, Newspaper, Bug, PartyPopper, FileText } from 'lucide-react';
+import { X, Plus, Clock, LayoutGrid, Building, MessageCircle, CalendarDays, Users, GraduationCap, Mail, Briefcase, Newspaper, Bug, PartyPopper, FileText, Check, Lock } from 'lucide-react';
+import { DIALOG_CLOSE, DIALOG_DESCRIPTION, DIALOG_FOOTER, DIALOG_HEADER, DIALOG_OVERLAY, DIALOG_PANEL, DIALOG_TITLE, GROUP_TITLE } from './builderDialog';
 import { Button } from '../ui/Button';
 import { EmptyState } from '../ui/EmptyState';
 import { cn } from '../../lib/utils';
@@ -38,18 +39,14 @@ const categoryIconMap: Record<string, React.ReactNode> = {
   GraduationCap: <GraduationCap className="h-4 w-4" />,
 };
 
-const categoryColors: Record<string, string> = {
-  business: 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400',
-  feedback: 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400',
-  events: 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400',
-  hr: 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400',
-  education: 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400',
-  other: 'bg-gray-100 text-gray-600 dark:bg-slate-700 dark:text-slate-400',
-};
+// A template's picture: plain, and the accent when it is the one chosen. A colour for each
+// category (blue, purple, orange, green, yellow) said nothing the category list beside it does
+// not, and none of them is one of the product's colours.
+const PLAIN_TILE = 'bg-gray-100 text-gray-600 dark:bg-slate-700/70 dark:text-slate-300';
+const SELECTED_TILE = 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300';
 
 export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePrivate = false, isCreating = false }: TemplateSelectorProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [hoveredTemplate, setHoveredTemplate] = useState<string | null>(null);
   const [makePrivate, setMakePrivate] = useState(false);
   const [name, setName] = useState('');
   const [query, setQuery] = useState('');
@@ -82,39 +79,43 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
   // sidebar/nav that has backdrop-filter (which creates a containing block), a bare
   // `position: fixed` overlay would otherwise be trapped inside that element.
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4">
+    <div className={DIALOG_OVERLAY}>
       <div className="absolute inset-0" onClick={() => { if (!isCreating) onClose(); }} aria-hidden="true" />
-      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="template-selector-title" aria-busy={isCreating} className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-4xl h-[calc(100dvh-1rem)] sm:h-[85dvh] max-h-[calc(100dvh-1rem)] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800 focus:outline-none">
+      {/* A chooser: it keeps one height whatever the category holds, and on a phone most of the screen. */}
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="template-selector-title" aria-busy={isCreating} className={cn(DIALOG_PANEL, 'h-[88dvh] max-w-5xl max-sm:h-[92dvh] max-sm:max-h-[92dvh]')}>
         {/* Header */}
-        <div className="shrink-0 flex items-center justify-between px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-white dark:from-slate-900 dark:to-slate-800/50">
-          <div>
-            <h2 id="template-selector-title" className="text-xl font-semibold text-gray-900 dark:text-white">Create new form</h2>
-            <p className="text-sm text-gray-500 dark:text-slate-400">Start from scratch or choose a template</p>
+        <div className={DIALOG_HEADER}>
+          <div className="min-w-0 flex-1 pr-2">
+            <h2 id="template-selector-title" className={DIALOG_TITLE}>Create new form</h2>
+            <p className={DIALOG_DESCRIPTION}>Start with a blank form or with a template.</p>
           </div>
           <button
             type="button"
             onClick={onClose}
             disabled={isCreating}
-            className="p-2 min-h-11 min-w-11 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg motion-safe:transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+            className={cn(DIALOG_CLOSE, 'disabled:cursor-not-allowed disabled:opacity-50')}
             aria-label="Close"
+            title="Close"
           >
-            <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
+            <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Content — stack on mobile (category tabs on top), side-by-side on desktop */}
         <div className="flex-1 overflow-hidden flex flex-col md:flex-row min-h-0">
           {/* Sidebar - Categories */}
-          <div className="w-48 shrink-0 overflow-y-auto border-r border-gray-200 dark:border-slate-800 p-4 hidden md:block bg-gray-50/50 dark:bg-slate-900/50">
-            <nav className="space-y-1">
+          <div className="w-48 shrink-0 overflow-y-auto border-r border-gray-200 dark:border-slate-800 p-3 hidden md:block bg-gray-50/50 dark:bg-slate-900/50">
+            <nav aria-label="Template categories" className="space-y-0.5">
               {templateCategories.map((category) => (
                 <button
                   key={category.id}
+                  type="button"
                   onClick={() => setSelectedCategory(category.id)}
+                  aria-current={(templateCategories.some(item => item.id === selectedCategory) ? selectedCategory : 'all') === category.id ? 'true' : undefined}
                   className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg motion-safe:transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                    'w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded-lg motion-safe:transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
                     (templateCategories.some(item => item.id === selectedCategory) ? selectedCategory : 'all') === category.id
-                      ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400 font-medium'
+                      ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-400 font-medium'
                       : 'text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800'
                   )}
                 >
@@ -153,7 +154,8 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
                   onChange={(e) => setMakePrivate(e.target.checked)}
                   className="h-4 w-4 shrink-0 rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
                 />
-                🔒 Private form (end-to-end encrypted, beta)
+                <Lock className="h-3.5 w-3.5 shrink-0 text-gray-400 dark:text-slate-500" aria-hidden="true" />
+                Private form (end-to-end encrypted, beta)
               </label>
              )}
           {/* Explainer + irreversibility (plan D1/D8): shown BEFORE the point of no return. */}
@@ -166,31 +168,39 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
             </p>
           )}
             </div>}
-            {/* Blank form option */}
-            <div className="mb-6">
+            {/* Blank form option. What is chosen is drawn the same way here and on a template:
+                the accent on the border and a tick, so it is plain which one Create form makes. */}
+            <div className="mb-5">
               <button
+                type="button"
                 onClick={() => setSelected(null)}
                 disabled={isCreating}
                 aria-pressed={currentTemplate === null}
-                className="w-full flex items-center gap-4 p-4 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl hover:border-primary-500 dark:hover:border-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/10 motion-safe:transition-all group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900"
+                className={cn(
+                  'w-full flex items-center gap-3 p-3 border rounded-xl motion-safe:transition-colors group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
+                  currentTemplate === null
+                    ? 'border-primary-500 ring-1 ring-primary-500 bg-primary-50 dark:bg-primary-500/10'
+                    : 'border-dashed border-gray-300 dark:border-slate-700 hover:border-primary-400 dark:hover:border-primary-500/60 hover:bg-primary-50/60 dark:hover:bg-primary-500/5',
+                )}
               >
-                <div className="p-3 bg-gray-100 dark:bg-slate-800 rounded-lg group-hover:bg-primary-100 dark:group-hover:bg-primary-900/30 motion-safe:transition-colors">
-                  <Plus className="h-6 w-6 text-gray-600 dark:text-slate-400 group-hover:text-primary-600 dark:group-hover:text-primary-400" />
+                <div className={cn('p-2 rounded-lg flex-shrink-0', currentTemplate === null ? SELECTED_TILE : PLAIN_TILE)}>
+                  <Plus className="h-6 w-6" />
                 </div>
-                <div className="text-left min-w-0">
-                  <h3 className="font-medium text-gray-900 dark:text-white">Blank form {currentTemplate === null ? '✓' : ''}</h3>
+                <div className="text-left min-w-0 flex-1">
+                  <h3 className="text-sm font-medium text-gray-900 dark:text-white">Blank form</h3>
                   <p className="text-sm text-gray-500 dark:text-slate-400">Start from scratch with an empty form</p>
                 </div>
+                {currentTemplate === null && <Check className="h-4 w-4 flex-none text-primary-600 dark:text-primary-400" aria-hidden="true" />}
               </button>
             </div>
 
             {/* Templates */}
             <div>
-              <h3 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-4">
+              <h3 className={cn(GROUP_TITLE, 'mb-3')}>
                 Templates
               </h3>
               {loading && <p role="status" className="mb-4 text-sm text-gray-500 dark:text-slate-400">Loading templates…</p>}
-              {error && <div role="alert" className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{error} You can still start with a blank form. <button type="button" onClick={refresh} className="min-h-11 px-2 underline">Try again</button></div>}
+              {error && <div role="alert" className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{error} You can still start with a blank form. <button type="button" onClick={refresh} className="min-h-11 cursor-pointer px-2 underline">Try again</button></div>}
               {skipped > 0 && <p role="status" className="mb-4 text-sm text-amber-700 dark:text-amber-300">Some templates could not be loaded. The administrator can check the template files and server log.</p>}
               {!loading && !error && filteredTemplates.length === 0 ? (
                 <EmptyState
@@ -199,32 +209,36 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
                   description="Try another search or category, or start from a blank form."
                 />
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                   {filteredTemplates.map((template) => (
+                    // A card under the pointer shows it with its border; the one chosen keeps the
+                    // accent and a tick. Drawn alike, as they were, hovering looked like choosing.
                     <button
                       key={template.id}
+                      type="button"
                       onClick={() => { setSelected(template); if (!name.trim() || name === selected?.name) setName(template.name); }}
                       disabled={isCreating}
                       aria-pressed={currentTemplate?.id === template.id}
-                      onMouseEnter={() => setHoveredTemplate(template.id)}
-                      onMouseLeave={() => setHoveredTemplate(null)}
                       className={cn(
-                        'text-left p-4 border rounded-xl motion-safe:transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
-                        hoveredTemplate === template.id || currentTemplate?.id === template.id
-                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/10 shadow-sm motion-safe:-translate-y-0.5'
-                          : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-800/50 hover:border-gray-300 dark:hover:border-slate-700'
+                        'text-left p-3 border rounded-xl motion-safe:transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
+                        currentTemplate?.id === template.id
+                          ? 'border-primary-500 ring-1 ring-primary-500 bg-primary-50 dark:bg-primary-500/10'
+                          : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 hover:border-primary-400 dark:hover:border-primary-500/60'
                       )}
                     >
                       <div className="flex items-start gap-3">
-                        <div className={cn('p-2 rounded-lg flex-shrink-0', categoryColors[template.category] || categoryColors.other)}>
+                        <div className={cn('p-2 rounded-lg flex-shrink-0', currentTemplate?.id === template.id ? SELECTED_TILE : PLAIN_TILE)}>
                           {iconMap[template.icon] || <FileText className="h-6 w-6" />}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h4 className="font-medium text-gray-900 dark:text-white break-words">{template.name} {currentTemplate?.id === template.id ? '✓' : ''}</h4>
+                          <h4 className="flex items-start gap-1.5 text-sm font-medium text-gray-900 dark:text-white">
+                            <span className="min-w-0 flex-1 break-words">{template.name}</span>
+                            {currentTemplate?.id === template.id && <Check className="mt-0.5 h-4 w-4 flex-none text-primary-600 dark:text-primary-400" aria-hidden="true" />}
+                          </h4>
                           <p className="text-sm text-gray-500 dark:text-slate-400 line-clamp-2 mt-0.5">
                             {template.description}
                           </p>
-                          <div className="flex items-center gap-3 mt-2 text-xs text-gray-400 dark:text-slate-500 tabular-nums">
+                          <div className="flex items-center gap-3 mt-2 text-xs text-gray-500 dark:text-slate-400 tabular-nums">
                             <span className="flex items-center gap-1">
                               <Clock className="h-3 w-3" />
                               {template.estimatedTime}
@@ -242,14 +256,13 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
         </div>
 
         {/* Footer */}
-        <div className="shrink-0 px-4 py-3 sm:px-6 sm:py-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
-          <div className="grid grid-cols-2 gap-3 sm:flex sm:justify-end">
-            <Button variant="outline" onClick={onClose} disabled={isCreating}>
+        <div className={DIALOG_FOOTER}>
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+            <Button variant="outline" onClick={onClose} disabled={isCreating} className="max-sm:min-h-11">
               Cancel
             </Button>
-            <Button onClick={() => onSelectTemplate(currentTemplate, makePrivate, name.trim())} disabled={isCreating || (loading && selected !== null)} isLoading={isCreating}>Create form</Button>
+            <Button onClick={() => onSelectTemplate(currentTemplate, makePrivate, name.trim())} disabled={isCreating || (loading && selected !== null)} isLoading={isCreating} className="max-sm:min-h-11">Create form</Button>
           </div>
-
         </div>
       </div>
     </div>,

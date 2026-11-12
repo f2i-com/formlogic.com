@@ -1,7 +1,9 @@
 import { useRef } from 'react';
-import { X, Keyboard } from 'lucide-react';
+import { X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { cn } from '../../lib/utils';
+import { DIALOG_CLOSE, DIALOG_DESCRIPTION, DIALOG_FOOTER, DIALOG_HEADER, DIALOG_OVERLAY, DIALOG_PANEL, DIALOG_TITLE, GROUP_TITLE } from './builderDialog';
 
 interface ShortcutItem {
   keys: string;
@@ -25,31 +27,31 @@ const shortcutSections: ShortcutSection[] = [
   {
     title: 'General',
     shortcuts: [
-      { keys: `${cmdKey}+S`, description: 'Save form' },
-      { keys: `${cmdKey}+P`, description: 'Preview form' },
-      { keys: `${cmdKey}+Shift+?`, description: 'Show keyboard shortcuts' },
-      { keys: 'Esc', description: 'Close modals / Deselect' },
+      { keys: `${cmdKey}+S`, description: 'Save the form' },
+      { keys: `${cmdKey}+P`, description: 'Preview the form' },
+      { keys: `${cmdKey}+Shift+?`, description: 'Show these shortcuts' },
+      { keys: 'Esc', description: 'Close a dialog, or deselect the field' },
     ],
   },
   {
-    title: 'Field Operations',
+    title: 'Fields',
     shortcuts: [
-      { keys: `${cmdKey}+D`, description: 'Duplicate selected field' },
+      { keys: `${cmdKey}+D`, description: 'Duplicate the selected field' },
       { keys: `${cmdKey}+Z`, description: 'Undo' },
       { keys: `${cmdKey}+Shift+Z`, description: 'Redo' },
-      { keys: 'Delete / Backspace', description: 'Delete selected field' },
-      { keys: '↑ / ↓', description: 'Navigate between fields' },
-      { keys: `${cmdKey}+↑`, description: 'Move field up' },
-      { keys: `${cmdKey}+↓`, description: 'Move field down' },
+      { keys: 'Delete / Backspace', description: 'Delete the selected field' },
+      { keys: '↑ / ↓', description: 'Go to the field above or below' },
+      { keys: `${cmdKey}+↑`, description: 'Move the field up' },
+      { keys: `${cmdKey}+↓`, description: 'Move the field down' },
     ],
   },
   {
-    title: 'Quick Add Fields',
+    title: 'Add a field',
     shortcuts: [
-      { keys: 'T', description: 'Add Text field' },
-      { keys: 'E', description: 'Add Email field' },
-      { keys: 'N', description: 'Add Number field' },
-      { keys: 'R', description: 'Add Rating field' },
+      { keys: 'T', description: 'Short text' },
+      { keys: 'E', description: 'Email' },
+      { keys: 'N', description: 'Number' },
+      { keys: 'R', description: 'Rating' },
     ],
   },
 ];
@@ -65,65 +67,62 @@ export function KeyboardShortcutsHelp({ isOpen, onClose }: KeyboardShortcutsHelp
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onKeyDown={handleKeyDown}>
+    <div className={DIALOG_OVERLAY} onKeyDown={handleKeyDown}>
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
-      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="keyboard-shortcuts-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800 focus:outline-none">
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="keyboard-shortcuts-title" className={cn(DIALOG_PANEL, 'max-w-3xl')}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
-              <Keyboard className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <div>
-              <h2 id="keyboard-shortcuts-title" className="text-lg font-semibold text-gray-900 dark:text-white">Keyboard Shortcuts</h2>
-              <p className="text-sm text-gray-500 dark:text-slate-400">Speed up your workflow</p>
-            </div>
+        <div className={DIALOG_HEADER}>
+          <div className="min-w-0 flex-1 pr-2">
+            <h2 id="keyboard-shortcuts-title" className={DIALOG_TITLE}>Keyboard shortcuts</h2>
+            <p className={DIALOG_DESCRIPTION}>For the form builder. Single letters and arrows work while no text box has the cursor.</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+            className={DIALOG_CLOSE}
             aria-label="Close"
+            title="Close"
           >
-            <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
+            <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Content: the groups flow into two columns where there is room, so the whole list is
+            in sight without scrolling. */}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:columns-2 sm:gap-8 sm:p-6">
           {shortcutSections.map((section) => (
-            <div key={section.title}>
-              <h3 className="text-sm font-medium text-gray-500 dark:text-slate-500 uppercase tracking-wider mb-3">
+            <div key={section.title} className="mb-5 break-inside-avoid last:mb-0">
+              <h3 className={cn(GROUP_TITLE, 'mb-1.5')}>
                 {section.title}
               </h3>
-              <div className="space-y-2">
+              <dl className="divide-y divide-gray-100 dark:divide-slate-800">
                 {section.shortcuts.map((shortcut) => (
                   <div
                     key={shortcut.keys}
-                    className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                    className="flex min-h-9 items-center justify-between gap-3 py-1"
                   >
-                    <span className="text-sm text-gray-700 dark:text-slate-300">{shortcut.description}</span>
-                    <div className="flex items-center gap-1">
+                    <dt className="min-w-0 text-sm text-gray-700 dark:text-slate-300">{shortcut.description}</dt>
+                    <dd className="flex flex-none items-center gap-1">
                       {shortcut.keys.split('+').map((key, index) => (
                         <span key={index}>
                           {index > 0 && <span className="text-gray-400 dark:text-slate-500 mx-0.5">+</span>}
-                          <kbd className="px-2 py-1 text-xs font-semibold text-gray-600 dark:text-slate-300 bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded shadow-sm">
+                          <kbd className="px-1.5 py-0.5 font-mono text-xs font-semibold text-gray-600 dark:text-slate-300 bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-md">
                             {key.trim()}
                           </kbd>
                         </span>
                       ))}
-                    </div>
+                    </dd>
                   </div>
                 ))}
-              </div>
+              </dl>
             </div>
           ))}
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 flex justify-end">
-          <Button onClick={onClose}>
-            Got it
+        <div className={cn(DIALOG_FOOTER, 'flex justify-end')}>
+          <Button variant="outline" onClick={onClose} className="max-sm:min-h-11">
+            Close
           </Button>
         </div>
       </div>

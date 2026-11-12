@@ -7,6 +7,8 @@ import { api } from '../../lib/api';
 import { logger } from '../../lib/logger';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
+import { cn } from '../../lib/utils';
+import { DIALOG_CLOSE, DIALOG_DESCRIPTION, DIALOG_FOOTER, DIALOG_HEADER, DIALOG_OVERLAY, DIALOG_PANEL, DIALOG_TABS, DIALOG_TITLE, dialogTab } from './builderDialog';
 
 interface ScriptEditorProps {
   isOpen: boolean;
@@ -493,12 +495,12 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
 
   const handleAIGenerate = async () => {
     if (!aiPrompt.trim()) {
-      toast.error('Prompt Required', 'Please describe what you want the script to do');
+      toast.error('A description is needed', 'Please describe what you want the script to do');
       return;
     }
 
     if (formFields.length === 0) {
-      toast.error('No Fields', 'Add some fields to your form first');
+      toast.error('No fields', 'Add some fields to your form first');
       return;
     }
 
@@ -511,7 +513,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
       const result = await api.generateScript(aiPrompt, formFields, buildExampleScript(formFields));
 
       if (result.error) {
-        toast.error('Generation Failed', result.error);
+        toast.error('Generation failed', result.error);
         return;
       }
 
@@ -519,11 +521,11 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
         setEditedScript(result.data.data.script);
         setAiExplanation(result.data.data.explanation);
         setActiveTab('editor');
-        toast.success('Script Generated', 'Review the generated script in the editor');
+        toast.success('Script generated', 'Review the generated script in the editor');
       }
     } catch (error) {
       logger.error('AI script generation error:', error);
-      toast.error('Generation Failed', error instanceof Error ? error.message : 'An unexpected error occurred');
+      toast.error('Generation failed', error instanceof Error ? error.message : 'An unexpected error occurred');
     } finally {
       setIsGenerating(false);
     }
@@ -531,12 +533,12 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
 
   const handleAIImprove = async () => {
     if (!aiPrompt.trim()) {
-      toast.error('Prompt Required', 'Please describe how you want to improve the script');
+      toast.error('A description is needed', 'Please describe how you want to improve the script');
       return;
     }
 
     if (!editedScript.trim()) {
-      toast.error('No Script', 'Write or generate a script first');
+      toast.error('No script', 'Write or generate a script first');
       return;
     }
 
@@ -547,7 +549,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
       const result = await api.improveScript(editedScript, aiPrompt, formFields);
 
       if (result.error) {
-        toast.error('Improvement Failed', result.error);
+        toast.error('Improvement failed', result.error);
         return;
       }
 
@@ -555,41 +557,39 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
         setEditedScript(result.data.data.script);
         setAiExplanation(result.data.data.explanation);
         setActiveTab('editor');
-        toast.success('Script Improved', 'Review the updated script in the editor');
+        toast.success('Script improved', 'Review the updated script in the editor');
       }
     } catch (error) {
       logger.error('AI script improvement error:', error);
-      toast.error('Improvement Failed', error instanceof Error ? error.message : 'An unexpected error occurred');
+      toast.error('Improvement failed', error instanceof Error ? error.message : 'An unexpected error occurred');
     } finally {
       setIsGenerating(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onKeyDown={handleKeyDown}>
+    <div className={DIALOG_OVERLAY} onKeyDown={handleKeyDown}>
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
-      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="script-editor-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col mx-4 border border-gray-200 dark:border-slate-800 focus:outline-none">
+      {/* A code editor: as tall as the screen allows whatever its tab holds, and wide. */}
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="script-editor-title" className={cn(DIALOG_PANEL, 'h-[90dvh] max-w-6xl max-sm:h-[85dvh]')}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">
-          <div className="flex items-center gap-3">
-            <Code2 className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-            <div>
-              <h2 id="script-editor-title" className="text-lg font-semibold text-gray-900 dark:text-white">Backend Logic Script</h2>
-              <p className="text-sm text-gray-500 dark:text-slate-400">Write code that runs when forms are submitted</p>
-            </div>
+        <div className={DIALOG_HEADER}>
+          <div className="min-w-0 flex-1 pr-2">
+            <h2 id="script-editor-title" className={DIALOG_TITLE}>Backend logic script</h2>
+            <p className={DIALOG_DESCRIPTION}>Code that runs on the server each time the form is submitted.</p>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close script editor" className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer">
-            <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
+          <button type="button" onClick={onClose} aria-label="Close script editor" title="Close" className={DIALOG_CLOSE}>
+            <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div role="tablist" aria-label="Script editor sections" className="flex border-b border-gray-200 dark:border-slate-700 px-6 overflow-x-auto scrollbar-hide">
+        <div role="tablist" aria-label="Script editor sections" className={DIALOG_TABS}>
           {([
             { key: 'editor' as const, label: 'Editor', icon: Code2 },
-            { key: 'ai' as const, label: 'AI Generate', icon: Sparkles },
-            { key: 'docs' as const, label: 'API Reference', icon: Book },
-            { key: 'fields' as const, label: 'Form Fields', icon: undefined },
+            { key: 'ai' as const, label: 'Write with AI', icon: Sparkles },
+            { key: 'docs' as const, label: 'API reference', icon: Book },
+            { key: 'fields' as const, label: 'Form fields', icon: undefined },
           ] as const).filter((tab) => tab.key !== 'ai' || showAiTab).map((tab) => (
             <button
               key={tab.key}
@@ -597,11 +597,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
               role="tab"
               aria-selected={activeTab === tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-inset ${
-                activeTab === tab.key
-                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
-                  : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
-              }`}
+              className={dialogTab(activeTab === tab.key)}
             >
               {tab.icon && <tab.icon className="h-4 w-4" />}
               {tab.label}
@@ -610,10 +606,10 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-hidden bg-white dark:bg-slate-900">
+        <div className="min-h-0 flex-1 overflow-hidden bg-white dark:bg-slate-900">
           {activeTab === 'editor' && (
             <div className="h-full flex flex-col">
-              <div className="flex-1 p-4">
+              <div className="min-h-0 flex-1 p-3 sm:p-4">
                 <textarea
                   value={editedScript}
                   onChange={(e) => {
@@ -632,11 +628,11 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
                 <div className="mx-4 mb-2">
                   <div className="flex items-center justify-between mb-1">
                     <label htmlFor="fl-sample-answers" className="text-xs font-medium text-gray-500 dark:text-slate-400">
-                      Sample answers (JSON) — passed as <code>ctx.answers</code> to Run Test
+                      Sample answers (JSON), passed as <code>ctx.answers</code> to Run test
                     </label>
                     <button
                       type="button"
-                      className="text-xs text-primary-600 dark:text-primary-400 hover:underline"
+                      className="flex-none cursor-pointer rounded-md text-xs text-primary-700 dark:text-primary-400 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 max-sm:min-h-11 max-sm:px-2"
                       onClick={() => setSampleAnswers(JSON.stringify(buildSampleAnswers(formFields), null, 2))}
                     >
                       Reset to defaults
@@ -691,7 +687,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
                   <div className="flex items-start gap-2">
                     <Sparkles className="h-4 w-4 text-primary-600 dark:text-primary-400 mt-0.5 shrink-0" />
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-primary-900 dark:text-primary-300">AI Generated</p>
+                      <p className="text-sm font-medium text-primary-900 dark:text-primary-300">Written by AI</p>
                       <p className="text-sm text-primary-700 dark:text-primary-400/80 mt-0.5">{aiExplanation}</p>
                     </div>
                   </div>
@@ -701,8 +697,8 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
           )}
 
           {activeTab === 'ai' && showAiTab && (
-            <div className="h-full overflow-y-auto p-6">
-              <div className="max-w-2xl mx-auto space-y-6">
+            <div className="h-full overflow-y-auto overscroll-contain p-4 sm:p-6">
+              <div className="max-w-3xl space-y-5">
                 {/* Field context — shows the AI is grounded in this form */}
                 {formFields.length > 0 && (
                   <div className="rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-800/40 px-4 py-3">
@@ -800,29 +796,31 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
           )}
 
           {activeTab === 'docs' && (
-            <div className="h-full overflow-y-auto p-6 bg-white dark:bg-slate-900">
-              <div className="max-w-3xl space-y-6">
+            <div className="h-full overflow-y-auto overscroll-contain p-4 sm:p-6 bg-white dark:bg-slate-900">
+              <div className="max-w-4xl space-y-6">
                 {DOCS.map((section) => (
                   <div key={section.title}>
-                    <h3 className="font-semibold text-gray-900 dark:text-white mb-2">{section.title}</h3>
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">{section.title}</h3>
                     {section.description && (
                       <p className="text-sm text-gray-600 dark:text-slate-400 mb-3">{section.description}</p>
                     )}
                     {section.code && (
-                      <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm font-mono overflow-x-auto mb-3 border border-gray-800">
+                      <pre className="bg-gray-900 text-gray-100 p-4 rounded-xl text-sm font-mono overflow-x-auto mb-3 border border-gray-800">
                         {section.code}
                       </pre>
                     )}
                     {section.items.length > 0 && (
-                      <div className="bg-gray-50 dark:bg-slate-800 rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
+                      // On a phone a name stands over what it does: side by side, a long name
+                      // that may not break pushed its account out of the box.
+                      <div className="bg-gray-50 dark:bg-slate-800/60 rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700">
                         <table className="w-full text-sm">
                           <tbody>
                             {section.items.map((item, i) => (
-                              <tr key={item.name} className={i > 0 ? 'border-t border-gray-200 dark:border-slate-700' : ''}>
-                                <td className="px-4 py-2 font-mono text-primary-600 dark:text-primary-400 whitespace-nowrap align-top">
+                              <tr key={item.name} className={cn('max-sm:block max-sm:px-3 max-sm:py-2', i > 0 && 'border-t border-gray-200 dark:border-slate-700')}>
+                                <td className="px-4 py-2 font-mono text-primary-700 dark:text-primary-400 align-top sm:whitespace-nowrap max-sm:block max-sm:break-words max-sm:p-0">
                                   {item.name}
                                 </td>
-                                <td className="px-4 py-2 text-gray-600 dark:text-slate-400">
+                                <td className="px-4 py-2 text-gray-600 dark:text-slate-400 max-sm:block max-sm:p-0">
                                   {item.desc}
                                 </td>
                               </tr>
@@ -835,8 +833,8 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
                 ))}
 
                 <div>
-                  <h3 className="font-semibold text-gray-900 dark:text-white mb-3">Execution Limits</h3>
-                  <div className="bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-900/20 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-400">
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">Execution limits</h3>
+                  <div className="bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-xl p-4 text-sm text-gray-600 dark:text-slate-300">
                     <ul className="space-y-1">
                       <li>Maximum 50,000 instructions per execution</li>
                       <li>Maximum 2 second wall-clock time</li>
@@ -848,8 +846,8 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
                 </div>
 
                 <div>
-                  <h3 className="font-semibold text-gray-900 dark:text-white mb-3">HTTP Request Limits</h3>
-                  <div className="bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-900/20 rounded-lg p-4 text-sm text-blue-800 dark:text-blue-400">
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">HTTP request limits</h3>
+                  <div className="bg-gray-50 dark:bg-slate-800/60 border border-gray-200 dark:border-slate-700 rounded-xl p-4 text-sm text-gray-600 dark:text-slate-300">
                     <ul className="space-y-1">
                       <li>Each request stops after 2 seconds, the script's own time limit, and a longer timeout has no effect</li>
                       <li>All requests in a run, redirects included, share 3 seconds</li>
@@ -865,35 +863,37 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
           )}
 
           {activeTab === 'fields' && (
-            <div className="h-full overflow-y-auto p-6 bg-white dark:bg-slate-900">
-              <div className="max-w-3xl">
-                <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
-                  Access these fields in your script via <code className="bg-gray-100 dark:bg-slate-800 px-1 rounded text-gray-800 dark:text-slate-200">ctx.answers.fieldId</code>
+            <div className="h-full overflow-y-auto overscroll-contain p-4 sm:p-6 bg-white dark:bg-slate-900">
+              <div>
+                <p className="text-sm text-gray-600 dark:text-slate-400 mb-3">
+                  A script reads an answer as <code className="bg-gray-100 dark:bg-slate-800 px-1 rounded font-mono text-gray-800 dark:text-slate-200">ctx.answers.fieldId</code>, with the field's ID from this list.
                 </p>
                 {formFields.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500 dark:text-slate-500">
-                    No fields added to the form yet
-                  </div>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">
+                    The form has no fields yet.
+                  </p>
                 ) : (
-                  <div className="bg-gray-50 dark:bg-slate-800 rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
+                  // The label takes the spare width; on a phone the ID breaks instead of
+                  // pushing the other two columns out of the box.
+                  <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700">
                     <table className="w-full text-sm">
-                      <thead className="bg-gray-100 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
-                        <tr>
-                          <th className="px-4 py-2 text-left font-medium text-gray-700 dark:text-slate-300">Field ID</th>
-                          <th className="px-4 py-2 text-left font-medium text-gray-700 dark:text-slate-300">Label</th>
-                          <th className="px-4 py-2 text-left font-medium text-gray-700 dark:text-slate-300">Type</th>
+                      <thead className="bg-gray-50 dark:bg-slate-800/60 border-b border-gray-200 dark:border-slate-700">
+                        <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+                          <th className="px-3 py-2 font-semibold sm:px-4">Label</th>
+                          <th className="px-3 py-2 font-semibold sm:px-4">Field ID</th>
+                          <th className="px-3 py-2 font-semibold sm:px-4">Type</th>
                         </tr>
                       </thead>
                       <tbody>
                         {formFields.map((field, i) => (
-                          <tr key={field.id} className={i > 0 ? 'border-t border-gray-200 dark:border-slate-700' : ''}>
-                            <td className="px-4 py-2 font-mono text-primary-600 dark:text-primary-400">
-                              {field.id}
-                            </td>
-                            <td className="px-4 py-2 text-gray-900 dark:text-slate-300">
+                          <tr key={field.id} className={cn('hover:bg-gray-50 dark:hover:bg-slate-800/40', i > 0 && 'border-t border-gray-200 dark:border-slate-700')}>
+                            <td className="px-3 py-2 align-top text-gray-900 dark:text-slate-200 sm:px-4">
                               {field.label}
                             </td>
-                            <td className="px-4 py-2 text-gray-500 dark:text-slate-400">
+                            <td className="px-3 py-2 align-top font-mono text-xs leading-5 text-primary-700 dark:text-primary-400 break-all sm:px-4 sm:whitespace-nowrap">
+                              {field.id}
+                            </td>
+                            <td className="px-3 py-2 align-top text-gray-500 dark:text-slate-400 sm:px-4 sm:whitespace-nowrap">
                               {field.type}
                             </td>
                           </tr>
@@ -908,24 +908,25 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
         </div>
 
         {/* Footer */}
-        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between px-6 py-4 border-t border-gray-200 dark:border-slate-700">
+        {/* On a phone the tools stand over Cancel and Save, which end the dialog at the thumb. */}
+        <div className={cn(DIALOG_FOOTER, 'flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between')}>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={handleInsertExample} title="Generate a starter script from your form's fields">
               Starter script
             </Button>
             <Button variant="outline" size="sm" onClick={handleTest} disabled={isTesting} leftIcon={<Play className="h-4 w-4" />}>
-              {isTesting ? 'Running…' : 'Run Test'}
+              {isTesting ? 'Running…' : 'Run test'}
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setShowSample((s) => !s)}>
+            <Button variant="ghost" size="sm" onClick={() => setShowSample((s) => !s)} aria-expanded={showSample}>
               {showSample ? 'Hide sample data' : 'Sample data'}
             </Button>
           </div>
           <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={onClose}>
+            <Button variant="outline" onClick={onClose} className="max-sm:min-h-11">
               Cancel
             </Button>
-            <Button onClick={handleSave}>
-              Save Script
+            <Button onClick={handleSave} className="max-sm:min-h-11">
+              Save script
             </Button>
           </div>
         </div>

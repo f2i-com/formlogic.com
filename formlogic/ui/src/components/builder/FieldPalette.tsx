@@ -64,23 +64,25 @@ export function FieldPalette({ onAddField, isPrivate = false }: { onAddField: (t
   }, [fieldsByCategory, query]);
 
   return (
-    <div className="p-4 space-y-5">
+    <div className="space-y-4 p-3">
       <div className="relative">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+        {/* On a phone the box is a finger tall and its text 16 px: smaller, and iOS zooms the
+            page in when the box takes the cursor. */}
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search fields"
           aria-label="Search field types"
-          className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-1.5 pl-8 pr-2.5 text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+          className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-1.5 pl-8 pr-2.5 text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:min-h-11 max-sm:text-base"
         />
       </div>
       {grouped.length === 0 && (
-        <p className="text-xs text-gray-400 dark:text-slate-500">No fields match "{query}".</p>
+        <p className="text-xs text-gray-500 dark:text-slate-400">No fields match "{query}".</p>
       )}
       {grouped.map(({ category, title, fields }) => (
         <div key={category}>
-          <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider mb-2">
+          <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
             {title}
           </h3>
           <div className={searching ? 'grid grid-cols-1 gap-1.5' : 'grid grid-cols-2 gap-1.5'}>
@@ -109,8 +111,11 @@ export function FieldPalette({ onAddField, isPrivate = false }: { onAddField: (t
                       while SEARCHING — when the list is short and the owner is actively
                       looking for the right question type. Otherwise they stay in the
                       tooltip and the density the builder is designed around is kept. */}
+                  {/* A name is never cut: a long one ("Multiple Choice", "Linked Record") takes a
+                      second line in its tile. Cut, five of the types read "Multiple C…",
+                      "Date & Ti…", "Checkbox…", "Linked Re…" and "Hidden Fi…". */}
                   <span className="min-w-0">
-                    <span className="block truncate text-gray-700 dark:text-slate-300">{field.label}</span>
+                    <span className="block text-[13px] leading-4 text-gray-700 dark:text-slate-300">{field.label}</span>
                     {searching && field.description && (
                       <span className="mt-0.5 block text-[11px] leading-snug text-gray-400 dark:text-slate-500">
                         {field.description}

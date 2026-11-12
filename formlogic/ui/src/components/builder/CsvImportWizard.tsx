@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   Check,
   AlertTriangle,
-  X,
   Loader2,
 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
@@ -39,6 +38,7 @@ interface ImportResult {
 }
 
 type Step = 'upload' | 'map' | 'preview' | 'results';
+const STEPS: Step[] = ['upload', 'map', 'preview', 'results'];
 
 export function CsvImportWizard({
   isOpen,
@@ -257,50 +257,30 @@ export function CsvImportWizard({
       title="Import CSV"
       description={
         step === 'upload'
-          ? 'Upload a CSV file to import responses'
+          ? 'Choose a CSV file whose rows become responses.'
           : step === 'map'
-            ? 'Map CSV columns to form fields'
+            ? 'Say which form field each column of the file fills.'
             : step === 'preview'
-              ? 'Review data before importing'
-              : 'Import complete'
+              ? 'Check the first rows before they are imported.'
+              : 'The import has finished.'
       }
-      size="xl"
+      // Wide enough for a table of the file's columns; one width for every step, so the
+      // dialog does not change size between them.
+      size="full"
     >
-      <div className="p-6">
-        {/* Step indicators */}
-        <div className="flex items-center gap-2 mb-6">
-          {(['upload', 'map', 'preview', 'results'] as Step[]).map((s, i) => (
-            <div key={s} className="flex items-center gap-2">
-              {i > 0 && (
-                <div
-                  className={`h-px w-6 ${
-                    (['upload', 'map', 'preview', 'results'] as Step[]).indexOf(step) >= i
-                      ? 'bg-primary-500'
-                      : 'bg-gray-200 dark:bg-slate-700'
-                  }`}
-                />
-              )}
-              <div
-                className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium ${
-                  step === s
-                    ? 'bg-primary-600 text-primary-foreground'
-                    : (['upload', 'map', 'preview', 'results'] as Step[]).indexOf(step) > i
-                      ? 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-400'
-                      : 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500'
-                }`}
-              >
-                {(['upload', 'map', 'preview', 'results'] as Step[]).indexOf(step) > i ? (
-                  <Check className="h-3.5 w-3.5" />
-                ) : (
-                  i + 1
-                )}
-              </div>
-            </div>
+      <div className="p-4 sm:p-6">
+        {/* How far along: four thin marks. The line under the title says what this step is. */}
+        <div className="mb-5 flex items-center gap-1.5" role="img" aria-label={`Step ${STEPS.indexOf(step) + 1} of ${STEPS.length}`}>
+          {STEPS.map((s, i) => (
+            <span
+              key={s}
+              className={`h-1 flex-1 rounded-full ${STEPS.indexOf(step) >= i ? 'bg-primary-500' : 'bg-gray-200 dark:bg-slate-700'}`}
+            />
           ))}
         </div>
 
         {(step === 'map' || step === 'preview') && fileNotes.length > 0 && (
-          <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-lg">
+          <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-xl">
             {fileNotes.map((note) => (
               <p key={note} className="text-sm text-amber-700 dark:text-amber-400">
                 {note}
@@ -321,7 +301,7 @@ export function CsvImportWizard({
               onDragLeave={handleDragLeave}
               onClick={() => fileInputRef.current?.click()}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click(); } }}
-              className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
+              className={`border border-dashed rounded-xl px-4 py-8 text-center cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
                 isDragOver
                   ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
                   : 'border-gray-300 dark:border-slate-700 hover:border-primary-400 dark:hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-slate-800/50'
@@ -329,20 +309,20 @@ export function CsvImportWizard({
             >
               {isLoading ? (
                 <div className="flex flex-col items-center gap-3">
-                  <Loader2 className="h-10 w-10 text-primary-500 animate-spin" />
-                  <p className="text-sm text-gray-500 dark:text-slate-400">Parsing CSV file...</p>
+                  <Loader2 className="h-8 w-8 text-primary-500 animate-spin" />
+                  <p className="text-sm text-gray-500 dark:text-slate-400">Reading the file…</p>
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-3">
                   <div className="p-3 bg-gray-100 dark:bg-slate-800 rounded-xl">
-                    <Upload className="h-8 w-8 text-gray-400 dark:text-slate-500" />
+                    <Upload className="h-6 w-6 text-gray-400 dark:text-slate-500" />
                   </div>
                   <div>
                     <p className="text-sm font-medium text-gray-900 dark:text-white">
-                      Drop a CSV file here, or click to browse
+                      Drop a CSV file here, or press to choose one
                     </p>
-                    <p className="text-xs text-gray-500 dark:text-slate-500 mt-1">
-                      Maximum 5MB, up to 1,000 rows
+                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
+                      Up to 5MB and 1,000 rows
                     </p>
                   </div>
                 </div>
@@ -371,39 +351,41 @@ export function CsvImportWizard({
               </span>
             </div>
 
-            <div className="border border-gray-200 dark:border-slate-700 rounded-lg overflow-x-auto">
-              <table className="w-full min-w-[480px]">
-                <thead className="bg-gray-50 dark:bg-slate-800">
-                  <tr>
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase">
-                      CSV Column
+            {/* One row a column: its name, then the field it fills. On a phone the two stand one
+                over the other, where the table used to scroll sideways. */}
+            <div className="border border-gray-200 dark:border-slate-700 rounded-xl overflow-hidden">
+              <table className="w-full">
+                <thead className="bg-gray-50 dark:bg-slate-800/60 border-b border-gray-200 dark:border-slate-700 max-sm:hidden">
+                  <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+                    <th className="px-4 py-2 font-semibold">
+                      CSV column
                     </th>
-                    <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase w-10">
+                    <th className="w-10 px-2 py-2">
                     </th>
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase">
-                      Form Field
+                    <th className="px-4 py-2 font-semibold">
+                      Form field
                     </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
                   {parseResult.headers.map((header, column) => (
-                    <tr key={column} className="hover:bg-gray-50 dark:hover:bg-slate-800/50">
-                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white font-medium">
+                    <tr key={column} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 max-sm:block max-sm:space-y-1.5 max-sm:p-3">
+                      <td className="px-4 py-1.5 text-sm text-gray-900 dark:text-white font-medium break-words max-sm:block max-sm:p-0">
                         {header}
                       </td>
-                      <td className="px-2 py-3 text-center">
+                      <td className="px-2 py-1.5 text-center max-sm:hidden">
                         <ArrowRight className="h-4 w-4 text-gray-400 dark:text-slate-500 mx-auto" />
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-1.5 max-sm:block max-sm:p-0">
                         <select
                           aria-label={`Map column ${column + 1}, "${header}", to field`}
                           value={columnMapping[column] || 'skip'}
                           onChange={(e) =>
                             setColumnMapping((prev) => prev.map((fieldId, i) => (i === column ? e.target.value : fieldId)))
                           }
-                          className="w-full px-3 py-1.5 text-sm bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-gray-900 dark:text-white"
+                          className="w-full px-3 py-1.5 text-sm bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-gray-900 dark:text-white max-sm:min-h-11 max-sm:text-base"
                         >
-                          <option value="skip">-- Skip --</option>
+                          <option value="skip">Skip this column</option>
                           {inputFields.map((field) => {
                             const isUsedElsewhere = usedFieldIds.has(field.id) && columnMapping[column] !== field.id;
                             return (
@@ -420,18 +402,19 @@ export function CsvImportWizard({
               </table>
             </div>
 
-            <div className="mt-4 flex items-center justify-between">
-              <p className="text-sm text-gray-500 dark:text-slate-400">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm tabular-nums text-gray-500 dark:text-slate-400">
                 {mappedFieldCount} of {parseResult.headers.length} columns mapped
               </p>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setStep('upload')}>
+                <Button variant="outline" onClick={() => setStep('upload')} className="max-sm:min-h-11">
                   <ArrowLeft className="h-4 w-4 mr-1" />
                   Back
                 </Button>
                 <Button
                   onClick={() => setStep('preview')}
                   disabled={mappedFieldCount === 0}
+                  className="max-sm:min-h-11"
                 >
                   Preview
                   <ArrowRight className="h-4 w-4 ml-1" />
@@ -452,9 +435,11 @@ export function CsvImportWizard({
               </span>
             </div>
 
-            <div className="border border-gray-200 dark:border-slate-700 rounded-lg overflow-x-auto">
+            {/* A look at the file's own rows, as wide as its columns are many: it scrolls
+                sideways inside its box, the dialog does not. */}
+            <div className="border border-gray-200 dark:border-slate-700 rounded-xl overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gray-50 dark:bg-slate-800">
+                <thead className="bg-gray-50 dark:bg-slate-800/60 border-b border-gray-200 dark:border-slate-700">
                   <tr>
                     {mappedColumns.map((column) => {
                       const fieldId = columnMapping[column];
@@ -462,7 +447,7 @@ export function CsvImportWizard({
                       return (
                         <th
                           key={column}
-                          className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase whitespace-nowrap"
+                          className="px-4 py-2 text-left text-[11px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider whitespace-nowrap"
                         >
                           {field?.label || fieldId}
                         </th>
@@ -476,7 +461,7 @@ export function CsvImportWizard({
                       {mappedColumns.map((column) => (
                         <td
                           key={column}
-                          className="px-4 py-2.5 text-sm text-gray-900 dark:text-white max-w-[200px] truncate"
+                          className="px-4 py-2 text-sm text-gray-900 dark:text-white max-w-[240px] truncate"
                           title={cells[column] || ''}
                         >
                           {cells[column] || (
@@ -492,20 +477,20 @@ export function CsvImportWizard({
               </table>
             </div>
 
-            <div role="status" className="mt-4 p-3 bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/30 rounded-lg">
-              <p className="text-sm text-primary-700 dark:text-primary-300">
-                <span className="font-medium">{parseResult.rowCount}</span> rows will be
-                imported with <span className="font-medium">{mappedFieldCount}</span> mapped
+            <div role="status" className="mt-4 p-3 bg-gray-50 dark:bg-slate-800/50 border border-gray-200 dark:border-slate-700 rounded-xl">
+              <p className="text-sm text-gray-900 dark:text-white">
+                <span className="font-medium tabular-nums">{parseResult.rowCount}</span> rows will be
+                imported with <span className="font-medium tabular-nums">{mappedFieldCount}</span> mapped
                 fields.
               </p>
-              <p className="mt-1 text-sm text-primary-700 dark:text-primary-300">
+              <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">
                 Each row becomes a new record with its own ID and time. Records already here aren't
                 updated, so importing the same file twice adds its rows twice.
               </p>
             </div>
 
             {importNotes.length > 0 && (
-              <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-lg">
+              <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-xl">
                 {importNotes.map((note) => (
                   <p key={note} className="text-sm text-amber-700 dark:text-amber-400">
                     {note}
@@ -514,14 +499,14 @@ export function CsvImportWizard({
               </div>
             )}
 
-            <div className="mt-4 flex items-center justify-between">
-              <Button variant="outline" onClick={() => setStep('map')}>
+            <div className="mt-4 flex items-center justify-between gap-2">
+              <Button variant="outline" onClick={() => setStep('map')} className="max-sm:min-h-11">
                 <ArrowLeft className="h-4 w-4 mr-1" />
                 Back
               </Button>
-              <Button onClick={handleImport} isLoading={isLoading}>
+              <Button onClick={handleImport} isLoading={isLoading} className="max-sm:min-h-11">
                 <Upload className="h-4 w-4 mr-1" />
-                Import {parseResult.rowCount} Rows
+                Import {parseResult.rowCount} {parseResult.rowCount === 1 ? 'row' : 'rows'}
               </Button>
             </div>
           </div>
@@ -530,57 +515,57 @@ export function CsvImportWizard({
         {/* Step 4: Results */}
         {step === 'results' && importResult && (
           <div>
-            <div className="text-center mb-6">
+            {/* What happened, in a line with its mark, then the three counts as name over
+                value: at the left, as every result in the product reads. */}
+            <div className="mb-4 flex items-center gap-2.5">
               {importResult.created > 0 ? (
-                <div className="flex flex-col items-center gap-3">
-                  <div className="p-3 bg-green-100 dark:bg-green-500/10 rounded-full">
-                    <Check className="h-8 w-8 text-green-600 dark:text-green-400" />
-                  </div>
-                  <p className="text-lg font-semibold text-gray-900 dark:text-white">
-                    Import Successful
+                <>
+                  <Check className="h-5 w-5 flex-none text-green-600 dark:text-green-400" />
+                  <p className="text-base font-semibold text-gray-900 dark:text-white">
+                    Import finished
                   </p>
-                </div>
+                </>
               ) : (
-                <div className="flex flex-col items-center gap-3">
-                  <div className="p-3 bg-amber-100 dark:bg-amber-500/10 rounded-full">
-                    <AlertTriangle className="h-8 w-8 text-amber-600 dark:text-amber-400" />
-                  </div>
-                  <p className="text-lg font-semibold text-gray-900 dark:text-white">
-                    No Rows Imported
+                <>
+                  <AlertTriangle className="h-5 w-5 flex-none text-amber-600 dark:text-amber-400" />
+                  <p className="text-base font-semibold text-gray-900 dark:text-white">
+                    No rows imported
                   </p>
-                </div>
+                </>
               )}
             </div>
 
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <div className="text-center p-4 bg-green-50 dark:bg-green-500/10 rounded-lg border border-green-200 dark:border-green-500/30">
-                <p className="text-2xl font-bold text-green-600 dark:text-green-400 tabular-nums">
+            <dl className="mb-5 grid grid-cols-3 gap-2 sm:gap-3">
+              <div className="p-3 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
+                <dt className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Created</dt>
+                <dd className="mt-0.5 text-xl font-semibold text-green-600 dark:text-green-400 tabular-nums">
                   {importResult.created}
-                </p>
-                <p className="text-sm text-green-700 dark:text-green-500">Created</p>
+                </dd>
               </div>
-              <div className="text-center p-4 bg-amber-50 dark:bg-amber-500/10 rounded-lg border border-amber-200 dark:border-amber-500/30">
-                <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 tabular-nums">
+              <div className="p-3 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
+                <dt className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Skipped</dt>
+                <dd className={`mt-0.5 text-xl font-semibold tabular-nums ${importResult.skipped > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-900 dark:text-white'}`}>
                   {importResult.skipped}
-                </p>
-                <p className="text-sm text-amber-700 dark:text-amber-500">Skipped</p>
+                </dd>
               </div>
-              <div className="text-center p-4 bg-gray-50 dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700">
-                <p className="text-2xl font-bold text-gray-900 dark:text-white tabular-nums">
+              <div className="p-3 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
+                <dt className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Total</dt>
+                <dd className="mt-0.5 text-xl font-semibold text-gray-900 dark:text-white tabular-nums">
                   {importResult.total}
-                </p>
-                <p className="text-sm text-gray-500 dark:text-slate-400">Total</p>
+                </dd>
               </div>
-            </div>
+            </dl>
 
             {importResult.errors.length > 0 && (
               <div className="mb-4">
                 <button
+                  type="button"
                   onClick={() => setShowErrors(!showErrors)}
-                  className="flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors cursor-pointer"
+                  aria-expanded={showErrors}
+                  className="flex items-center gap-2 rounded-md text-sm text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 max-sm:min-h-11"
                 >
                   <AlertTriangle className="h-4 w-4" />
-                  {importResult.errors.length} row(s) had errors
+                  {importResult.errors.length} {importResult.errors.length === 1 ? 'row' : 'rows'} had errors
                   <span className="text-xs">
                     {showErrors ? '(hide)' : '(show)'}
                   </span>
@@ -606,8 +591,7 @@ export function CsvImportWizard({
             )}
 
             <div className="flex justify-end">
-              <Button onClick={handleClose}>
-                <X className="h-4 w-4 mr-1" />
+              <Button onClick={handleClose} className="max-sm:min-h-11">
                 Done
               </Button>
             </div>

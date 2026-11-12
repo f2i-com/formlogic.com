@@ -234,43 +234,58 @@ export function LogicEditor({
         options.unshift({ value: cond.value, label: `${cond.value} (not an option)` });
       }
       return (
-        <div role="group" aria-label={`Value for condition ${index + 1}`} className="w-full sm:w-40">
+        <div role="group" aria-label={`Value for condition ${index + 1}`} className="w-full sm:w-52 sm:flex-none">
           <Dropdown options={options} value={cond.value} onChange={setValue} placeholder="Choose an option" />
         </div>
       );
     }
     const dateInput = conditionField && cond.operator !== 'contains' ? DATE_INPUTS[conditionField.type] : undefined;
     return (
-      <Input
-        type={dateInput ?? 'text'}
-        value={cond.value}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder="Value"
-        aria-label={`Value for condition ${index + 1}`}
-        className={dateInput ? 'w-full sm:w-44' : 'w-full sm:w-32'}
-      />
+      // The box's own wrapper takes the width it is given, which in a row is all that is left:
+      // the field's picker beside it was squeezed to two lines. Sized here, the field's
+      // picker gets the spare width.
+      <div className="w-full sm:w-52 sm:flex-none">
+        <Input
+          type={dateInput ?? 'text'}
+          value={cond.value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Value"
+          aria-label={`Value for condition ${index + 1}`}
+        />
+      </div>
     );
   };
 
   return (
+    // Wide enough for a condition's row (a field, how it is compared, a value): at 32rem the
+    // row ran out of the dialog's right edge from the second condition on.
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Conditional Logic"
-      size="lg"
-    >
-      <div className="p-6 space-y-6">
-        {/* Field Info */}
-        <div className="bg-gray-50 dark:bg-slate-800 rounded-lg p-4">
-          <p className="text-sm text-gray-600 dark:text-slate-400">
-            Configure when the field <strong>"{field.label}"</strong> should be shown, hidden, or required.
-          </p>
+      title="Conditional logic"
+      description={`When "${field.label}" is shown, hidden or required.`}
+      size="full"
+      footer={(
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Button variant="ghost" onClick={handleClear} className="max-sm:min-h-11">
+            Clear rule
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose} className="max-sm:min-h-11">
+              Cancel
+            </Button>
+            <Button onClick={handleSave} className="max-sm:min-h-11">
+              Save rule
+            </Button>
+          </div>
         </div>
-
+      )}
+    >
+      <div className="space-y-5 p-4 sm:p-6">
         {/* Action Selector */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">
-            When condition is met:
+        <div className="max-w-sm">
+          <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
+            When the condition is met
           </label>
           <Dropdown
             options={ACTIONS}
@@ -285,24 +300,24 @@ export function LogicEditor({
 
         {/* Mode Tabs */}
         <Tabs value={mode} onValueChange={(v) => setMode(v as 'simple' | 'expression')}>
-          <TabsList>
-            <TabsTrigger value="simple">
+          <TabsList className="w-fit max-w-full" aria-label="How the condition is written">
+            <TabsTrigger value="simple" className="inline-flex items-center">
               <Wand2 className="h-4 w-4 mr-2" />
-              Simple Mode
+              Simple
             </TabsTrigger>
-            <TabsTrigger value="expression">
+            <TabsTrigger value="expression" className="inline-flex items-center">
               <Code className="h-4 w-4 mr-2" />
-              Expression Mode
+              Expression
             </TabsTrigger>
           </TabsList>
 
           {/* Simple Mode */}
           <TabsContent value="simple" className="mt-4">
             {availableFields.length === 0 ? (
-              <div className="text-center py-8 text-gray-500 dark:text-slate-500">
-                <HelpCircle className="h-8 w-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
-                <p>Add more fields to your form to create conditions.</p>
-              </div>
+              <p className="flex items-start gap-2 text-sm text-gray-500 dark:text-slate-400">
+                <HelpCircle className="mt-0.5 h-4 w-4 flex-none text-gray-400 dark:text-slate-500" />
+                A condition compares another field's answer. Add another field to the form first.
+              </p>
             ) : (
               <div className="space-y-4">
                 {conditions.length > 1 && (
@@ -334,11 +349,11 @@ export function LogicEditor({
                 )}
 
                 {/* Condition Rows */}
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {conditions.map((cond, index) => (
-                    <div key={cond.id} className="flex flex-col sm:flex-row items-start sm:items-center gap-2 bg-gray-50 dark:bg-slate-800 p-3 rounded-lg border border-gray-100 dark:border-slate-700">
+                    <div key={cond.id} className="flex flex-col sm:flex-row items-start sm:items-center gap-2 bg-gray-50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-gray-200 dark:border-slate-700">
                       {index > 0 && (
-                        <span className="text-xs text-gray-500 dark:text-slate-500 uppercase font-medium w-10 shrink-0">
+                        <span className="text-xs text-gray-500 dark:text-slate-400 uppercase font-semibold tracking-wider w-8 shrink-0">
                           {combinator}
                         </span>
                       )}
@@ -346,23 +361,24 @@ export function LogicEditor({
                         options={fieldOptions}
                         value={cond.fieldId}
                         onChange={(v) => handleConditionFieldChange(cond, v)}
-                        className="flex-1 min-w-[150px]"
+                        className="w-full min-w-0 sm:w-auto sm:flex-1 sm:min-w-[150px]"
                       />
                       <Dropdown
                         options={operatorsFor(cond.fieldId).map((op) => ({ value: op.value, label: op.label }))}
                         value={cond.operator}
                         onChange={(v) => handleConditionChange(cond.id, { operator: v })}
-                        className="w-full sm:w-48"
+                        className="w-full sm:w-60"
                       />
                       {!['notEmpty', 'empty'].includes(cond.operator) && conditionValue(cond, index)}
                       <Button
                         variant="ghost"
                         size="sm"
                         aria-label={`Remove condition ${index + 1}`}
+                        title="Remove condition"
                         onClick={() => handleRemoveCondition(cond.id)}
-                        className="self-end sm:self-center"
+                        className="flex-none self-end px-2.5 text-gray-400 hover:text-red-600 dark:text-slate-500 dark:hover:text-red-400 sm:self-center"
                       >
-                        <Trash2 className="h-4 w-4 text-red-500" />
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   ))}
@@ -374,13 +390,13 @@ export function LogicEditor({
                   onClick={handleAddCondition}
                   leftIcon={<Plus className="h-4 w-4" />}
                 >
-                  Add Condition
+                  Add condition
                 </Button>
 
                 {/* Generated Expression Preview */}
                 {conditions.length > 0 && (
-                  <div className="mt-4 p-3 bg-gray-100 dark:bg-slate-900 rounded-lg">
-                    <p className="text-xs text-gray-500 dark:text-slate-500 mb-1">Generated Expression:</p>
+                  <div className="p-3 bg-gray-50 dark:bg-slate-800/50 border border-gray-200 dark:border-slate-700 rounded-xl">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 mb-1">Generated expression</p>
                     <code className="text-sm text-gray-700 dark:text-slate-300 font-mono break-all">{expression}</code>
                   </div>
                 )}
@@ -391,8 +407,8 @@ export function LogicEditor({
           {/* Expression Mode */}
           <TabsContent value="expression" className="mt-4 space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">
-                FormLogic Expression
+              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
+                FormLogic expression
               </label>
               <Textarea
                 value={expression}
@@ -410,8 +426,9 @@ export function LogicEditor({
                     return (
                       <button
                         key={f.id}
+                        type="button"
                         onClick={() => setExpression((prev) => prev + (prev && !/\s$/.test(prev) ? ' ' : '') + varName)}
-                        className="px-2 py-0.5 text-xs bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 rounded hover:bg-primary-200 dark:hover:bg-primary-500/30 transition-colors font-mono cursor-pointer"
+                        className="max-w-full break-all px-2 py-0.5 text-left text-xs bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 rounded-md hover:bg-primary-200 dark:hover:bg-primary-500/30 transition-colors font-mono cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 max-sm:min-h-11 max-sm:px-3"
                         title={f.label}
                       >
                         {varName}
@@ -423,9 +440,9 @@ export function LogicEditor({
             </div>
 
             {/* Quick Reference */}
-            <div className="bg-primary-50 dark:bg-primary-500/10 rounded-lg p-4 border border-primary-100 dark:border-primary-500/20">
-              <h4 className="text-sm font-medium text-primary-800 dark:text-primary-400 mb-2">Quick Reference</h4>
-              <div className="grid grid-cols-2 gap-2 text-xs text-primary-700 dark:text-primary-300/80">
+            <div className="bg-gray-50 dark:bg-slate-800/50 rounded-xl p-3 border border-gray-200 dark:border-slate-700">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 mb-2">Quick reference</h4>
+              <div className="grid grid-cols-1 gap-x-4 gap-y-1.5 text-xs text-gray-600 dark:text-slate-300 sm:grid-cols-2 lg:grid-cols-4 [&_code]:font-mono [&_code]:text-primary-700 dark:[&_code]:text-primary-300">
                 <div><code>===</code> equals</div>
                 <div><code>!==</code> not equals</div>
                 <div><code>&&</code> AND</div>
@@ -438,13 +455,13 @@ export function LogicEditor({
             </div>
 
             {/* Test Panel */}
-            <div className="border border-gray-200 dark:border-slate-700 rounded-lg p-4 bg-white dark:bg-slate-800/50">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Test Expression</h4>
+            <div className="border border-gray-200 dark:border-slate-700 rounded-xl p-3 bg-white dark:bg-slate-800/50">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 mb-2">Test the expression</h4>
               <div className="space-y-3">
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs text-gray-500 dark:text-slate-500">
-                      Test Context (JSON) — pre-filled from your fields; refine the values
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <label className="block text-xs leading-5 text-gray-500 dark:text-slate-400">
+                      Answers to test with (JSON), filled in from your fields: change the values to try
                     </label>
                     {editedContext && editedContext.fieldId === field.id && (
                       <button
@@ -495,21 +512,6 @@ export function LogicEditor({
             </div>
           </TabsContent>
         </Tabs>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-slate-700">
-          <Button variant="ghost" onClick={handleClear}>
-            Clear Logic
-          </Button>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button onClick={handleSave}>
-              Save Condition
-            </Button>
-          </div>
-        </div>
       </div>
     </Modal>
   );

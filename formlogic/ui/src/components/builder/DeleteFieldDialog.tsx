@@ -23,8 +23,9 @@ interface DeleteFieldDialogProps {
  */
 export function DeleteFieldDialog({ isOpen, onClose, fieldLabel, usageCount, onKeepData, onDeleteData, isDeleting = false }: DeleteFieldDialogProps) {
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="sm" showCloseButton={false} ariaLabel="This field has data">
-      <div className="p-6">
+    // Wide enough for its three buttons on one line: at 24rem the last one fell to a line of its own.
+    <Modal isOpen={isOpen} onClose={onClose} size="md" showCloseButton={false} ariaLabel="This field has data">
+      <div className="p-4 sm:p-6">
         <div className="flex gap-4">
           <div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center">
             <Database className="h-5 w-5 text-amber-500 dark:text-amber-400" />
@@ -47,7 +48,7 @@ export function DeleteFieldDialog({ isOpen, onClose, fieldLabel, usageCount, onK
             Keep data (hide field)
           </Button>
           <Button variant="danger" size="sm" onClick={onDeleteData} isLoading={isDeleting}>
-            Delete field & data
+            Delete field and data
           </Button>
         </div>
       </div>

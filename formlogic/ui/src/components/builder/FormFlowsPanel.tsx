@@ -353,15 +353,17 @@ export function FormFlowsPanel({
           : 'h-full w-full',
       )}
     >
+      {/* The head of the builder's other side panels: one line, 44 px, beside the canvas's bar. */}
       {variant === 'dock' && (
-        <div className="flex items-center justify-between gap-2 p-4 border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
-          <div className="min-w-0">
-            <h2 className="font-semibold text-gray-900 dark:text-white">Flows</h2>
-            <p className="text-sm text-gray-500 dark:text-slate-500 truncate">{totalBindings} trigger{totalBindings === 1 ? '' : 's'}</p>
-          </div>
+        <div className="flex h-11 flex-none items-center justify-between gap-2 border-b border-gray-200 pl-4 pr-1.5 dark:border-slate-800">
+          <h2 className="min-w-0 truncate text-sm font-semibold text-gray-900 dark:text-white">
+            Flows
+            <span className="ml-2 font-normal tabular-nums text-gray-500 dark:text-slate-400">{totalBindings} trigger{totalBindings === 1 ? '' : 's'}</span>
+          </h2>
           <button
+            type="button"
             onClick={onClose}
-            className="inline-flex items-center justify-center min-h-8 min-w-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+            className="inline-flex h-8 w-8 flex-none items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
             aria-label="Close flows panel"
             title="Close"
           >
@@ -372,31 +374,33 @@ export function FormFlowsPanel({
 
       <div className={cn('flex-1 overflow-y-auto p-4 space-y-4', variant === 'sheet' && 'pb-[calc(1rem+env(safe-area-inset-bottom))]')}>
         {demoMode && (
-          <p className="rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-xs text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-200">
+          <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
             Demo: your flows stay in this browser.
           </p>
         )}
-        <div className="rounded-xl border border-primary-200/70 dark:border-primary-500/25 bg-primary-50/70 dark:bg-primary-500/10 p-3 space-y-3">
+        {/* What a flow is here, and the one press that makes one: a plain box, the accent on
+            its button alone. */}
+        <div className="rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 p-3 space-y-3">
           <div className="flex items-start gap-2">
-            <Zap className="h-4 w-4 mt-0.5 text-primary-600 dark:text-primary-300" />
+            <Zap className="h-4 w-4 mt-0.5 flex-none text-primary-600 dark:text-primary-400" />
             <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Do something when this form is submitted</h3>
-              <p className="text-xs text-gray-600 dark:text-slate-300">
-                We’ll set up an automation that runs on every submission and already knows this form’s questions.
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">A flow for this form</h3>
+              <p className="mt-0.5 text-xs leading-5 text-gray-600 dark:text-slate-300">
+                It runs each time the form is submitted, and starts out knowing this form’s questions.
               </p>
             </div>
           </div>
           {hasApps && !demoMode && (
             appSections.length === 1 ? (
-              <p className="text-xs text-primary-700 dark:text-primary-200">
-                This form belongs to {appSections[0].label}; new flows default to that app.
+              <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
+                This form belongs to {appSections[0].label}, so a new flow is made in that app.
               </p>
             ) : (
               <select
                 aria-label="Where to create this automation"
                 value={createScopeKey}
                 onChange={(e) => setCreateScopeKey(e.target.value)}
-                className="w-full rounded-lg border border-primary-200 bg-white px-3 py-2 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-primary-500/30 dark:bg-slate-900 dark:text-white"
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-900 dark:text-white max-sm:min-h-11 max-sm:text-base"
               >
                 <option value="workspace">Workspace</option>
                 {appSections.map((section) => <option key={section.key} value={section.key}>{section.label}</option>)}
@@ -405,7 +409,7 @@ export function FormFlowsPanel({
           )}
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={createFlowForForm} disabled={creating || loading || answerFields.length === 0}>
-              <Plus className="h-3.5 w-3.5" /> {creating ? 'Creating...' : 'Create flow for this form'}
+              <Plus className="h-3.5 w-3.5" /> {creating ? 'Creating…' : 'Create flow for this form'}
             </Button>
             {createdFlowId && (
               <Button variant="outline" size="sm" onClick={() => navigate(`/flows?flow=${encodeURIComponent(createdFlowId)}`, { state: returnToState(`/builder/${formId}`, 'Form builder') })}>
@@ -414,29 +418,29 @@ export function FormFlowsPanel({
             )}
           </div>
           {answerFields.length === 0 && (
-            <p className="text-xs text-amber-700 dark:text-amber-300">Add at least one answer field before seeding a submit flow.</p>
+            <p className="text-xs leading-5 text-amber-700 dark:text-amber-300">Add a field that takes an answer first: the flow starts from the form’s answers.</p>
           )}
         </div>
 
         {loading ? (
-          <p className="text-sm text-gray-400 dark:text-slate-500">Loading flows...</p>
+          <p className="text-sm text-gray-500 dark:text-slate-400">Loading flows…</p>
         ) : (
           sections.map((section) => {
             const readOnly = demoMode && section.kind === 'app' && !isDemoLocalId(section.appId);
             return (
             <section key={section.key} className="space-y-2">
               <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">{section.label}</h3>
-                {section.note && <p className="text-xs text-gray-400 dark:text-slate-500">{section.note}</p>}
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">{section.label}</h3>
+                {section.note && <p className="mt-0.5 text-xs leading-5 text-gray-500 dark:text-slate-400">{section.note}</p>}
               </div>
 
               {section.unread ? (
-                <div role="alert" className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-3 text-xs text-amber-800 dark:text-amber-300">
+                <div role="alert" className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-3 text-xs text-amber-800 dark:text-amber-300">
                   <p>Could not load this app&apos;s flows, so some may be missing here.</p>
                   <Button variant="ghost" size="sm" className="mt-1" onClick={refresh}>Try again</Button>
                 </div>
               ) : section.flows.length === 0 && section.bindings.length === 0 && (
-                <p className="rounded-lg border border-dashed border-gray-300 dark:border-slate-700 px-3 py-4 text-center text-xs text-gray-500 dark:text-slate-400">
+                <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
                   No flows in this scope yet.
                 </p>
               )}
@@ -445,10 +449,10 @@ export function FormFlowsPanel({
                 const name = flowName(section, binding);
                 const editTarget: EditingTarget = { sectionKey: section.key, binding };
                 return (
-                  <div key={binding.id} className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-800/40 p-3 space-y-3">
+                  <div key={binding.id} className="rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/40 p-3 space-y-3">
                     <div className="flex items-start gap-2">
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{name}</p>
+                        <p className="break-words text-sm font-medium text-gray-900 dark:text-white">{name}</p>
                         <div className="mt-1 flex flex-wrap items-center gap-1.5">
                           <span className="inline-flex rounded-full border border-gray-200 dark:border-slate-700 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:text-slate-300">
                             {bindingModeLabel(binding.mode)}
@@ -489,7 +493,8 @@ export function FormFlowsPanel({
                             onClick={() => setEditing(editTarget)}
                             disabled={readOnly}
                             aria-label={`Edit binding for ${name}`}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-primary-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                            title="Edit"
+                            className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-primary-500/10 dark:hover:text-primary-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 max-sm:h-11 max-sm:w-11"
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
@@ -498,7 +503,8 @@ export function FormFlowsPanel({
                             onClick={() => setDeleteTarget({ sectionKey: section.key, binding })}
                             disabled={readOnly}
                             aria-label={`Delete binding for ${name}`}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                            title="Remove"
+                            className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-500/10 dark:hover:text-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 max-sm:h-11 max-sm:w-11"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>

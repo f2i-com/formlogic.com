@@ -4,6 +4,13 @@ import { Switch } from '../ui/Switch';
 import { api } from '../../lib/api';
 import type { FieldProperties } from '../../types/form';
 
+// A picker of this panel. On a phone it is a finger tall with text of 16 px (smaller, and iOS
+// zooms the page in when it opens).
+const SELECT = 'w-full min-w-0 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50 max-sm:min-h-11 max-sm:text-base';
+// One field to tick in a list of them.
+const TICK_ROW = 'flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer text-sm max-sm:min-h-11';
+const TICK_BOX = 'rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500';
+
 interface AppForm {
   formId: string;
   displayName: string;
@@ -89,14 +96,14 @@ export function LinkedRecordSettings({
 
   if (!appId) {
     return (
-      <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-4">
-        <div className="flex gap-3">
-          <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+      <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3">
+        <div className="flex gap-2.5">
+          <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">App Context Required</p>
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Open this form from its app</p>
             <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">
-              Linked Record fields can only be configured when the form belongs to an app.
-              Open this form from the app&apos;s form manager to configure linked records.
+              A linked record points at another form of the same app, so it can only be set up
+              when the form is opened from the app&apos;s form manager.
             </p>
           </div>
         </div>
@@ -105,19 +112,19 @@ export function LinkedRecordSettings({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 mb-1">
-        <Link2 className="h-4 w-4 text-primary-500 dark:text-primary-400" />
-        <h4 className="font-medium text-gray-900 dark:text-white">Linked Record Settings</h4>
-      </div>
+    <div className="space-y-4 border-t border-gray-200 pt-4 dark:border-slate-800">
+      <h4 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+        <Link2 className="h-3.5 w-3.5 text-primary-600 dark:text-primary-400" />
+        Linked record
+      </h4>
 
       {/* Target Form Selector */}
       <div>
         <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
-          Target Form
+          Target form
         </label>
         {loading ? (
-          <div className="text-sm text-gray-400 dark:text-slate-500">Loading forms...</div>
+          <div className="text-sm text-gray-500 dark:text-slate-400">Loading forms…</div>
         ) : (
           <select
             value={targetFormId}
@@ -129,9 +136,10 @@ export function LinkedRecordSettings({
                 searchFieldIds: [],
               });
             }}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            aria-label="Target form"
+            className={SELECT}
           >
-            <option value="">Select a form...</option>
+            <option value="">Select a form…</option>
             {appForms.map((form) => (
               <option key={form.formId} value={form.formId}>
                 {form.displayName}
@@ -145,16 +153,16 @@ export function LinkedRecordSettings({
       {targetFormId && targetFields.length > 0 && (
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
-            Display Fields
+            Display fields
           </label>
           <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">
-            Choose which fields to show as the record label
+            The fields that are shown as the record's label
           </p>
           <div className="space-y-1.5 max-h-48 overflow-y-auto">
             {targetFields.map((field) => (
               <label
                 key={field.id}
-                className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer text-sm"
+                className={TICK_ROW}
               >
                 <input
                   type="checkbox"
@@ -165,7 +173,7 @@ export function LinkedRecordSettings({
                       : displayFieldIds.filter((id) => id !== field.id);
                     onChange({ ...properties, displayFieldIds: newIds });
                   }}
-                  className="rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
+                  className={TICK_BOX}
                 />
                 <span className="text-gray-700 dark:text-slate-300">{field.label}</span>
                 <span className="text-xs text-gray-400 dark:text-slate-500">({field.type})</span>
@@ -179,16 +187,16 @@ export function LinkedRecordSettings({
       {targetFormId && targetFields.length > 0 && (
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
-            Search Fields
+            Search fields
           </label>
           <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">
-            Which fields to search when typing (defaults to display fields)
+            The fields searched as a person types (the display fields when none is ticked)
           </p>
           <div className="space-y-1.5 max-h-48 overflow-y-auto">
             {targetFields.filter((f) => ['short_text', 'long_text', 'email', 'phone', 'number', 'url'].includes(f.type)).map((field) => (
               <label
                 key={field.id}
-                className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer text-sm"
+                className={TICK_ROW}
               >
                 <input
                   type="checkbox"
@@ -199,7 +207,7 @@ export function LinkedRecordSettings({
                       : searchFieldIds.filter((id) => id !== field.id);
                     onChange({ ...properties, searchFieldIds: newIds });
                   }}
-                  className="rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
+                  className={TICK_BOX}
                 />
                 <span className="text-gray-700 dark:text-slate-300">{field.label}</span>
               </label>
@@ -213,8 +221,8 @@ export function LinkedRecordSettings({
         <Switch
           checked={allowMultiple}
           onChange={(checked) => onChange({ ...properties, allowMultiple: checked })}
-          label="Allow Multiple"
-          description="Let users select more than one record"
+          label="Allow multiple"
+          description="Let people choose more than one record"
         />
       )}
 
@@ -239,7 +247,7 @@ export function LinkedRecordSettings({
                   : { ...properties, matchField: undefined, targetMatchField: undefined });
               }}
               aria-label="Field on this form"
-              className="min-w-0 flex-1 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              className={SELECT}
             >
               <option value="">No match field</option>
               {ownFields.map((f) => (
@@ -252,7 +260,7 @@ export function LinkedRecordSettings({
               onChange={(e) => onChange({ ...properties, targetMatchField: e.target.value || undefined })}
               disabled={!properties.matchField}
               aria-label="Field on the target form"
-              className="min-w-0 flex-1 px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50"
+              className={SELECT}
             >
               <option value="">Same field key</option>
               {targetFields.map((f) => (
@@ -271,7 +279,7 @@ export function LinkedRecordSettings({
             checked={!(properties.relatedHidden ?? false)}
             onChange={(checked) => onChange({ ...properties, relatedHidden: !checked })}
             label="Show as a related grid"
-            description="List these records on the linked record's page (the Display Fields above become the columns)"
+            description="List these records on the linked record's page (the display fields above become the columns)"
           />
           {!(properties.relatedHidden ?? false) && (
             <>
@@ -290,7 +298,7 @@ export function LinkedRecordSettings({
                       return (
                         <label
                           key={field.id}
-                          className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer text-sm"
+                          className={TICK_ROW}
                         >
                           <input
                             type="checkbox"
@@ -299,7 +307,7 @@ export function LinkedRecordSettings({
                               const next = e.target.checked ? [...cols, field.id] : cols.filter((id) => id !== field.id);
                               onChange({ ...properties, relatedColumnFieldIds: next.length ? next : undefined });
                             }}
-                            className="rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
+                            className={TICK_BOX}
                           />
                           <span className="text-gray-700 dark:text-slate-300">{field.label}</span>
                           <span className="text-xs text-gray-400 dark:text-slate-500">({field.type})</span>
