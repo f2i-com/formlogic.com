@@ -97,7 +97,12 @@ function ActionButton({
   );
 }
 
-export function DesktopConnectionPopover() {
+/**
+ * `placement`: where its trigger is drawn. 'sidebar' is a line at the foot of the workspace's
+ * sidebar, beside the storage line, where it covers nothing; 'floating' is a chip over the page's
+ * bottom-left corner, which is what a phone has (it has no sidebar).
+ */
+export function DesktopConnectionPopover({ placement = 'floating' }: { placement?: 'floating' | 'sidebar' } = {}) {
   const user = useAuthStore((s) => s.user);
   const isDemo = !!user?.isDemo;
   const [open, setOpen] = useState(false);
@@ -276,7 +281,8 @@ export function DesktopConnectionPopover() {
   // content and the global nav. This chip is not essential there — Desktop status
   // stays available on Flows and in Settings. Nor is it with no desktop at all: on a
   // phone it floats over the page's own fields to say only that nothing is linked.
-  if (isMobile && (view.kind === 'none' || pathClaimsBottomEdge(location.pathname))) return null;
+  const docked = placement === 'sidebar';
+  if (!docked && isMobile && (view.kind === 'none' || pathClaimsBottomEdge(location.pathname))) return null;
 
   return (
     <>
@@ -286,19 +292,40 @@ export function DesktopConnectionPopover() {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={`Desktop connection: ${view.label}`}
+        title={docked && sidebarCollapsed ? `Desktop connection: ${view.label}` : undefined}
+        data-placement={placement}
         onClick={() => setOpen((v) => !v)}
-        className={cn(
-          'fixed z-40 flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur',
-          'border-gray-200 bg-white/95 text-gray-700 transition-colors hover:bg-gray-50',
-          'dark:border-slate-700 dark:bg-slate-900/90 dark:text-slate-200 dark:hover:bg-slate-800',
-          isMobile
-            ? 'left-4 bottom-[var(--fl-mobile-float)]'
-            : cn('bottom-4', sidebarCollapsed ? 'left-[4.75rem]' : 'left-[16.75rem]')
-        )}
+        className={docked
+          ? cn(
+            // A line of the sidebar's foot, as the storage line under it: it lies over nothing.
+            'relative flex items-center gap-2 rounded-md text-xs text-gray-500 transition-colors cursor-pointer',
+            'hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100',
+            sidebarCollapsed ? 'mx-auto h-9 w-9 justify-center' : 'w-full px-2 py-1.5 text-left'
+          )
+          : cn(
+            'fixed z-40 flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur',
+            'border-gray-200 bg-white/95 text-gray-700 transition-colors hover:bg-gray-50',
+            'dark:border-slate-700 dark:bg-slate-900/90 dark:text-slate-200 dark:hover:bg-slate-800',
+            isMobile
+              ? 'left-4 bottom-[var(--fl-mobile-float)]'
+              : cn('bottom-4', sidebarCollapsed ? 'left-[4.75rem]' : 'left-[16.75rem]')
+          )}
       >
-        <span className={cn('h-2 w-2 flex-shrink-0 rounded-full', connectionDotClass(view.kind))} aria-hidden="true" />
-        <Monitor className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
-        <span className="max-w-[10rem] truncate">{view.label}</span>
+        {docked ? (
+          <>
+            <span className="relative flex-shrink-0">
+              <Monitor className={sidebarCollapsed ? 'h-5 w-5' : 'h-3.5 w-3.5'} aria-hidden="true" />
+              <span className={cn('absolute -right-1 -top-1 h-2 w-2 rounded-full ring-2 ring-white dark:ring-slate-950', connectionDotClass(view.kind))} aria-hidden="true" />
+            </span>
+            {!sidebarCollapsed && <span className="min-w-0 truncate">{view.label}</span>}
+          </>
+        ) : (
+          <>
+            <span className={cn('h-2 w-2 flex-shrink-0 rounded-full', connectionDotClass(view.kind))} aria-hidden="true" />
+            <Monitor className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+            <span className="max-w-[10rem] truncate">{view.label}</span>
+          </>
+        )}
       </button>
 
       <Popover

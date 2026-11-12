@@ -91,7 +91,7 @@ function LocationProbe() {
   return null;
 }
 
-async function renderPopover(initialPath = '/flows') {
+async function renderPopover(initialPath = '/flows', placement?: 'floating' | 'sidebar') {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -99,7 +99,7 @@ async function renderPopover(initialPath = '/flows') {
     root.render(
       <MemoryRouter initialEntries={[initialPath]}>
         <LocationProbe />
-        <DesktopConnectionPopover />
+        <DesktopConnectionPopover placement={placement} />
       </MemoryRouter>
     );
   });
@@ -256,6 +256,32 @@ describe('DesktopConnectionPopover — local presence', () => {
     h.presence = { kind: 'remote', label: 'OTHER-PC', lastSeenMs: Date.now() };
     await renderPopover('/apps/new');
     expect(trigger().textContent).toContain('Desktop — OTHER-PC');
+  });
+
+  it('is a line of the sidebar where it is placed there, lying over nothing, and says no desktop is linked', async () => {
+    h.presence = { kind: 'none' };
+    await renderPopover('/apps/a1/softn/edit', 'sidebar');
+    expect(trigger().dataset.placement).toBe('sidebar');
+    expect(trigger().className).not.toContain('fixed');
+    expect(trigger().getAttribute('aria-label')).toBe('Desktop connection: No desktop');
+    expect(trigger().textContent).toBe('No desktop');
+    // It opens the same panel.
+    await openPanel();
+    expect(panel()!.textContent).toContain('Link a desktop');
+  });
+
+  it('keeps its name when the sidebar is folded to icons', async () => {
+    useUIStore.setState({ sidebarCollapsed: true });
+    await renderPopover('/apps', 'sidebar');
+    expect(trigger().textContent).toBe('');
+    expect(trigger().getAttribute('aria-label')).toBe('Desktop connection: Desktop — this device');
+    expect(trigger().getAttribute('title')).toBe('Desktop connection: Desktop — this device');
+  });
+
+  it('floats where nothing places it, as a phone has it', async () => {
+    await renderPopover();
+    expect(trigger().dataset.placement).toBe('floating');
+    expect(trigger().className).toContain('fixed');
   });
 
   it('shows the local label and lists services + plugins from the loopback client', async () => {

@@ -28,6 +28,7 @@ import { useAppStore } from '../../stores/appStore';
 import { Button } from '../ui/Button';
 import { Logo } from '../ui/Logo';
 import { AppTile } from '../apps/AppTile';
+import { DesktopConnectionPopover } from '../desktop/DesktopConnectionPopover';
 import { appClickPath } from '../../lib/appNavigation';
 import { statusLabel } from '../../lib/appStatus';
 import type { AppListItem } from '../../types/app';
@@ -345,18 +346,24 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
         <SidebarNavLink to="/settings" icon={Settings} label="Settings" collapsed={sidebarCollapsed} />
       </div>
 
-      {/* Storage Mode Indicator */}
-      {!sidebarCollapsed && (
-        <div className="px-4 py-2">
-          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400">
+      {/* What the workspace is connected to, on one line: the desktop (a button: its services,
+          plugins and AI source open from it) and where its data is kept. Here, and not floating
+          over the page's corner, so it never lies over a page's own content; one line, so the
+          menu above keeps the room it had. */}
+      <div className={cn('flex items-center gap-1 py-0.5', sidebarCollapsed ? 'px-3' : 'px-2')}>
+        <div className="min-w-0 flex-1">
+          <DesktopConnectionPopover placement="sidebar" />
+        </div>
+        {!sidebarCollapsed && (
+          <div className="flex flex-none items-center gap-1.5 px-2 py-1.5 text-xs text-gray-500 dark:text-slate-400">
             {storageMode === 'api' ? (
               <><Cloud className="h-3.5 w-3.5" /><span>Cloud Storage</span></>
             ) : (
               <><HardDrive className="h-3.5 w-3.5" /><span>Local Storage</span></>
             )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Collapse Button */}
       <div className="p-3 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-transparent">
