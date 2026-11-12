@@ -440,12 +440,13 @@ export function ScreensStep({
     <div className="grid grid-cols-1 items-start gap-5 @3xl/studio:grid-cols-[14rem_minmax(0,1fr)] @5xl/studio:grid-cols-[15rem_minmax(0,1fr)]">
       {/* Keep only screen navigation in the sidebar. Editing tools sit below the
           preview, where the wider content column can balance them side by side. */}
-      <section className="hidden overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm @3xl/studio:block dark:border-white/[0.06] dark:bg-slate-900/50">
-          <div className="border-b border-gray-200/80 p-5 dark:border-white/[0.06]">
+      <section className="hidden overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-sm @3xl/studio:block dark:border-white/[0.06] dark:bg-slate-900/50">
+          <div className="border-b border-gray-200/80 px-4 py-3 dark:border-white/[0.06]">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">App screens</h3>
           </div>
-          <p className="px-4 pt-3 text-xs leading-relaxed text-gray-500 dark:text-slate-400">Choose a screen to change its layout and appearance.</p>
-          <div className="scrollbar-thin flex snap-x gap-1.5 overflow-x-auto p-3 @xl/studio:block @xl/studio:max-h-[340px] @xl/studio:space-y-1 @xl/studio:overflow-x-visible @xl/studio:overflow-y-auto">
+          {/* The list is as tall as the window allows: it used to stop at 340px and scroll
+              inside itself beside a preview twice its height. */}
+          <div className="scrollbar-thin flex snap-x gap-1.5 overflow-x-auto p-2 @xl/studio:block @xl/studio:max-h-[max(340px,calc(100dvh-16rem))] @xl/studio:space-y-1 @xl/studio:overflow-x-visible @xl/studio:overflow-y-auto">
             <ScreenItem
               icon={Home}
               label="App home"
@@ -489,10 +490,10 @@ export function ScreensStep({
         </section>
       <div className="min-w-0 space-y-5">
       {nativeHome && selection.kind === 'home' ? <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-        <div className="flex flex-wrap items-center justify-between gap-3 p-4"><div><h3 className="font-semibold text-slate-900 dark:text-white">Website preview</h3><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-400">Your installed interface is the app home. This is a live preview using its current session and records.</p></div><a className="inline-flex min-h-11 items-center text-sm font-medium text-indigo-600 dark:text-indigo-300" href={`/app/${app.slug}`} target="_blank" rel="noopener noreferrer">Open website</a></div>
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4"><div><h3 className="font-semibold text-slate-900 dark:text-white">Website preview</h3><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-400">Your installed interface is the app home. This is a live preview using its current session and records.</p></div><a className="inline-flex min-h-11 items-center text-sm font-medium text-primary-600 dark:text-primary-300" href={`/app/${app.slug}`} target="_blank" rel="noopener noreferrer">Open website</a></div>
         {/* The installed app in place, not its page framed: a FormLogic page may not be framed. */}
         <div key={nativeRevision} data-testid="installed-website-preview" className="h-[620px] w-full p-2"><NativeAppView slug={app.slug} /></div>
-      </section> : <section className="h-fit overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
+      </section> : <section className="h-fit overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
         <div className="space-y-4 border-b border-gray-200/80 p-4 dark:border-white/[0.06]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -641,7 +642,7 @@ export function ScreensStep({
         {/* Screen settings */}
         <section className="h-fit overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
           <div className="flex items-center justify-between border-b border-gray-200/80 p-5 dark:border-white/[0.06]">
-            <h3 ref={settingsHeading} tabIndex={-1} className="scroll-mt-64 rounded text-sm font-semibold text-gray-900 focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-white">
+            <h3 ref={settingsHeading} tabIndex={-1} className="scroll-mt-24 rounded text-sm font-semibold text-gray-900 focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-white">
               {selection.kind === 'home' ? 'Home settings' : 'Screen settings'}
             </h3>
             <Settings2 className="h-4 w-4 text-gray-500 dark:text-slate-400" aria-hidden="true" />

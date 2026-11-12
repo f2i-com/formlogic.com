@@ -6,6 +6,8 @@ import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { toast } from '../../stores/toastStore';
 import { Header } from '../../components/layout/Header';
+import { PageBody, PAGE_GUTTER } from '../../components/layout/PageBody';
+import { Panel } from '../../components/ui/Panel';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { Input } from '../../components/ui/Input';
@@ -363,33 +365,231 @@ export function AppFormManager() {
     await loadForms();
   };
 
-  if (loading) {
-    return <div className="flex items-center justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading forms" /></div>;
-  }
+  const back = { onClick: () => navigate(backTo.path, { state: backTo.state }), label: backTo.label ? `Back to ${backTo.label}` : 'Back to app settings' };
 
-  if (loadError) {
+  // The page's frame from the first paint: the header and Back, then what is known so far.
+  if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 py-16 text-center px-4">
-        <p className="text-sm text-gray-600 dark:text-slate-300">{loadError}</p>
-        <Button variant="outline" size="sm" onClick={() => loadForms()}>Try again</Button>
+      <div className="min-h-screen">
+        <Header title="Manage forms" back={back} />
+        <div className={cn('flex items-center gap-3 py-8 text-sm text-gray-500 dark:text-slate-400', PAGE_GUTTER)}>
+          <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading forms" />
+          Loading the app’s forms…
+        </div>
       </div>
     );
   }
 
+  if (loadError) {
+    return (
+      <div className="min-h-screen">
+        <Header title="Manage forms" back={back} />
+        <div role="alert" className={cn('py-8', PAGE_GUTTER)}>
+          <p className="text-sm text-gray-600 dark:text-slate-300">{loadError}</p>
+          <Button variant="outline" size="sm" className="mt-3" onClick={() => loadForms()}>Try again</Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── What one included form's row, or its card on a phone, is made of ──────────────────────
+  // `finger` draws a control at a touch target's size, for the card.
+  const iconButton = (finger: boolean) => cn(
+    'inline-flex flex-none cursor-pointer items-center justify-center text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:cursor-default disabled:opacity-30 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-slate-200',
+    finger ? 'h-11 w-11 rounded-lg' : 'h-8 w-8 rounded-md',
+  );
+  /** Its place in the app's menu: one step up, one step down. */
+  const moveButtons = (af: AppForm, index: number, finger: boolean) => (
+    <span className="inline-flex flex-none items-center">
+      <button type="button" onClick={() => handleMove(index, -1)} disabled={index === 0} aria-label={`Move ${af.displayName} up`} title="Move up" className={iconButton(finger)}>
+        <ChevronUp className="h-4 w-4" />
+      </button>
+      <button type="button" onClick={() => handleMove(index, 1)} disabled={index === appForms.length - 1} aria-label={`Move ${af.displayName} down`} title="Move down" className={iconButton(finger)}>
+        <ChevronDown className="h-4 w-4" />
+      </button>
+    </span>
+  );
+  /** Its name in this app, or the field that renames it. */
+  const formName = (af: AppForm, finger: boolean) => editingNameId === af.formId ? (
+    <input
+      autoFocus
+      value={editNameValue}
+      onChange={(e) => setEditNameValue(e.target.value)}
+      onKeyDown={(e) => { if (e.key === 'Enter') saveRename(af.formId); if (e.key === 'Escape') setEditingNameId(null); }}
+      onBlur={() => saveRename(af.formId)}
+      aria-label="Display name"
+      className={cn('min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-900 dark:text-white', finger ? 'min-h-11 text-base' : 'text-sm')}
+    />
+  ) : (
+    <span className={cn('min-w-0 flex-1 truncate font-semibold text-gray-900 dark:text-white', finger && 'text-[15px]')}>{af.displayName}</span>
+  );
+  /** Whether members see it: in the menu, by link only, as data only, or not at all. */
+  const visibility = (af: AppForm, describedBy: string, finger: boolean) => (
+    <select
+      value={formNavState(af)}
+      onChange={(e) => applyNavState(af, e.target.value as FormNavState)}
+      disabled={busyFormId === af.formId}
+      aria-label={`Visibility for ${af.displayName}`}
+      aria-describedby={describedBy}
+      className={cn(
+        'w-full min-w-0 cursor-pointer rounded-lg border border-gray-200 bg-white px-1.5 transition-colors disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900',
+        finger ? 'min-h-11 text-base' : 'h-8 text-xs',
+        formNavState(af) === 'shown' ? 'text-green-600' : formNavState(af) === 'off' ? 'text-gray-500 dark:text-slate-400' : 'text-amber-600 dark:text-amber-400'
+      )}
+    >
+      <option value="shown">Shown</option>
+      <option value="unlisted">Unlisted</option>
+      <option value="data-only">Data-only</option>
+      <option value="off">Off</option>
+    </select>
+  );
+  /** Rename (or keep the new name), edit the form, take it out of the app. */
+  const rowActions = (af: AppForm, finger: boolean) => (
+    <span className="inline-flex flex-none items-center">
+      {editingNameId === af.formId ? (
+        <button type="button" onMouseDown={(e) => { e.preventDefault(); saveRename(af.formId); }} aria-label="Save name" title="Save name" className={cn(iconButton(finger), 'text-green-600 dark:text-green-500')}>
+          <Check className="h-4 w-4" />
+        </button>
+      ) : (
+        <button type="button" onClick={() => startRename(af)} aria-label={`Rename ${af.displayName}`} title="Rename display label" className={iconButton(finger)}>
+          <Tag className="h-4 w-4" />
+        </button>
+      )}
+      <button type="button" onClick={() => navigate(paths.builder(af.formId, appId))} aria-label={`Edit ${af.displayName}`} title="Edit form" className={iconButton(finger)}>
+        <Pencil className="h-4 w-4" />
+      </button>
+      <button type="button" onClick={() => handleRemoveRequest(af.formId)} disabled={busyFormId === af.formId} aria-label={`Remove ${af.displayName}`} title="Remove from the app" className={cn(iconButton(finger), 'hover:bg-red-50 hover:text-red-600 disabled:opacity-50 dark:hover:bg-red-500/10 dark:hover:text-red-400')}>
+        {busyFormId === af.formId ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" /> : <X className="h-4 w-4" />}
+      </button>
+    </span>
+  );
+  /** The apps it is shared with, and the linked-record fields to and from it. */
+  const formLinks = (af: AppForm) => {
+    const sharedApps = getSharedApps(af);
+    if (sharedApps.length === 0 && !relationBadges[af.formId]?.length) return null;
+    return (
+      <div className="mt-1 flex flex-wrap gap-1">
+        {sharedApps.length > 0 && (
+          <span
+            className="inline-flex items-center gap-1 rounded bg-violet-50 px-1.5 py-0.5 text-xs text-violet-600 dark:bg-violet-500/10 dark:text-violet-400"
+            title={`This form and its responses are shared with ${sharedApps.join(', ')} — the apps read and write the same data.`}
+          >
+            <Share2 className="h-3 w-3" />
+            <span className="font-medium">Shared</span>
+            <span className="opacity-60">· also in {sharedApps.length <= 2 ? sharedApps.join(' & ') : `${sharedApps.length} other apps`}</span>
+          </span>
+        )}
+        {relationBadges[af.formId]?.map((badge, i) => (
+          <span
+            key={i}
+            className={cn(
+              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs',
+              badge.type === 'outgoing'
+                ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400'
+                : 'bg-gray-100 text-gray-500 dark:bg-slate-700 dark:text-slate-400'
+            )}
+            title={badge.type === 'outgoing'
+              ? `"${badge.fieldLabel}" links to ${badge.formName}`
+              : `${badge.formName} links here via "${badge.fieldLabel}"`
+            }
+          >
+            {badge.type === 'outgoing' ? <Link2 className="h-3 w-3" /> : <ArrowLeftIcon className="h-3 w-3" />}
+            <span className="font-medium">{badge.fieldLabel}</span>
+            <span className="opacity-60">{badge.type === 'outgoing' ? '→' : '←'} {badge.formName}</span>
+            <span className="opacity-50">{badge.allowMultiple ? '1:N' : '1:1'}</span>
+          </span>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen">
-      <Header
-        title="Manage forms"
-        back={{ onClick: () => navigate(backTo.path, { state: backTo.state }), label: backTo.label ? `Back to ${backTo.label}` : 'Back to app settings' }}
-      />
-      <div className="@container/page w-full flex-1 p-4 @xl/page:p-6 @3xl/page:p-8">
-      <div className="max-w-5xl mx-auto">
+      <Header title="Manage forms" back={back} />
+      {/* Left-aligned and as wide as the page: the app's forms as one table, and beside it (under
+          it on a narrower screen) the forms that can be added and the companion app. */}
+      <PageBody className="@container/page">
+        <p className="text-sm text-gray-500 dark:text-slate-400">
+          The forms in <span className="font-medium text-gray-900 dark:text-white">{sourceAppName ?? 'this app'}</span>: their order in the app’s menu, what members see of each, and the forms you can add.
+        </p>
+        <div className="mt-4 grid items-start gap-4 @5xl/page:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
+        {/* Included forms */}
+        <section aria-labelledby="included-forms" className="@container/list min-w-0">
+          <h2 id="included-forms" className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">Included forms ({appForms.length})</h2>
+          {appForms.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-gray-300 p-4 text-sm text-gray-500 dark:border-slate-700 dark:text-slate-400">No forms included yet</p>
+          ) : (
+            <>
+              {/* A phone: a card per form. Nothing scrolls sideways, and every control is a finger wide. */}
+              <ul className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm @2xl/list:hidden dark:border-slate-700 dark:bg-slate-900/60">
+                {appForms.map((af, index) => (
+                  <li key={af.formId} className="border-b border-gray-100 px-3 py-2 last:border-b-0 dark:border-slate-800">
+                    <div className="flex min-w-0 items-center gap-1">
+                      {formName(af, true)}
+                      {moveButtons(af, index, true)}
+                    </div>
+                    <div className="mt-1 flex items-center gap-1">
+                      <div className="min-w-0 flex-1">{visibility(af, `nav-state-card-${af.formId}`, true)}</div>
+                      {rowActions(af, true)}
+                    </div>
+                    {/* What the chosen visibility actually does, in the row. It used to
+                        live only in a `title` tooltip, which never appears on touch and
+                        is the one place the four states are explained at all. */}
+                    <p id={`nav-state-card-${af.formId}`} className="mt-1.5 text-xs leading-5 text-gray-500 dark:text-slate-400">
+                      {NAV_STATE_HELP[formNavState(af)]}
+                    </p>
+                    {formLinks(af)}
+                  </li>
+                ))}
+              </ul>
 
-      <div className="grid grid-cols-1 gap-6 @3xl/page:grid-cols-2">
+              {/* With room for it: the table, a form a row. The four visibilities are explained
+                  once, under the rows, where each row used to repeat its own sentence; a screen
+                  reader still hears the chosen one's with the choice. */}
+              <div className="hidden overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm @2xl/list:block dark:border-slate-700 dark:bg-slate-900/60">
+                <table className="w-full table-fixed border-collapse text-left text-[13px] leading-5">
+                  <caption className="sr-only">Forms included in this app, in the order of its menu</caption>
+                  <thead className="border-b border-gray-200 bg-gray-50 text-[11px] text-gray-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400">
+                    <tr>
+                      <th scope="col" className="h-8 w-[76px] py-0 pl-3 pr-1 font-semibold uppercase tracking-wider">Order</th>
+                      <th scope="col" className="px-2 font-semibold uppercase tracking-wider">Form</th>
+                      <th scope="col" className="w-[116px] px-2 font-semibold uppercase tracking-wider">Visibility</th>
+                      <th scope="col" className="w-[112px] px-2 pr-3"><span className="sr-only">Actions</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {appForms.map((af, index) => (
+                      <tr key={af.formId} className="border-b border-gray-100 align-top last:border-b-0 hover:bg-gray-50 dark:border-slate-800 dark:hover:bg-white/[0.03]">
+                        <td className="py-1 pl-2 pr-1">{moveButtons(af, index, false)}</td>
+                        <th scope="row" className="px-2 py-1.5 font-normal">
+                          <div className="flex min-h-7 min-w-0 items-center">{formName(af, false)}</div>
+                          {formLinks(af)}
+                        </th>
+                        <td className="px-2 py-1">
+                          {visibility(af, `nav-state-${af.formId}`, false)}
+                          <span id={`nav-state-${af.formId}`} className="sr-only">{NAV_STATE_HELP[formNavState(af)]}</span>
+                        </td>
+                        <td className="py-1 pl-2 pr-2 text-right">{rowActions(af, false)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <dl className="grid gap-x-6 gap-y-1 border-t border-gray-200 px-3 py-2 text-xs leading-5 text-gray-500 @4xl/list:grid-cols-2 dark:border-slate-700 dark:text-slate-400">
+                  {(['shown', 'unlisted', 'data-only', 'off'] as const).map((state) => (
+                    <div key={state} className="flex gap-1.5">
+                      <dt className="flex-none font-semibold text-gray-700 dark:text-slate-300">{{ shown: 'Shown', unlisted: 'Unlisted', 'data-only': 'Data-only', off: 'Off' }[state]}</dt>
+                      <dd>{NAV_STATE_HELP[state]}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            </>
+          )}
+        </section>
+
+        <div className="grid min-w-0 items-start gap-4 @3xl/page:grid-cols-2 @5xl/page:grid-cols-1">
         {/* Available forms */}
-        <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
-          <h3 className="font-medium text-gray-900 dark:text-white mb-1 tracking-tight">Available forms</h3>
-          <p className="mb-3 text-xs text-gray-500 dark:text-slate-400">Your forms not yet in this app. Adding a form that another app already uses shares it — both apps read and write the same data.</p>
+        <Panel title="Available forms" icon={<Plus className="h-4 w-4" />} description="Your forms not yet in this app. Adding a form that another app already uses shares it — both apps read and write the same data.">
           {attachable.length > 5 && (
             <Input
               value={availableSearch}
@@ -401,18 +601,18 @@ export function AppFormManager() {
             />
           )}
           {availableForms.length === 0 ? (
-            <p className="py-4 text-center text-sm text-gray-500 dark:text-slate-400">
+            <p className="text-sm text-gray-500 dark:text-slate-400">
               {attachable.length === 0
                 ? (allForms.length === 0 ? 'No forms created yet. Create forms first.' : 'No forms to add — all your forms are already in this app or managed by a pack.')
                 : `No forms match "${availableSearch.trim()}".`}
             </p>
           ) : (
-            <div className="space-y-2">
+            <div className="-mx-2 divide-y divide-gray-100 dark:divide-slate-800">
               {availableForms.map((form) => {
                 const usedBy = formAppUsage[form.id] ?? [];
                 return (
-                <div key={form.id} className="flex items-center justify-between gap-2 p-3 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0 flex-1">
+                <div key={form.id} className="flex items-center justify-between gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-gray-50 dark:hover:bg-white/[0.04]">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="text-sm font-medium text-gray-900 dark:text-white">{form.title}</span>
                     <Badge variant={form.status === 'published' ? 'success' : 'default'} size="sm" className="capitalize">{form.status}</Badge>
                     {usedBy.length > 0 && (
@@ -425,7 +625,7 @@ export function AppFormManager() {
                       </span>
                     )}
                   </div>
-                  <button onClick={() => handleAdd(form.id)} disabled={busyFormId === form.id} aria-label={`Add ${form.title}`} className="flex-shrink-0 p-1.5 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 text-primary-600 dark:text-primary-400 disabled:opacity-50 transition-colors cursor-pointer">
+                  <button type="button" onClick={() => handleAdd(form.id)} disabled={busyFormId === form.id} aria-label={`Add ${form.title}`} title="Add to this app" className="inline-flex h-9 w-9 flex-none cursor-pointer items-center justify-center rounded-lg text-primary-600 transition-colors hover:bg-primary-50 disabled:opacity-50 max-sm:h-11 max-sm:w-11 dark:text-primary-400 dark:hover:bg-primary-500/10">
                     {busyFormId === form.id ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" /> : <Plus className="h-4 w-4" />}
                   </button>
                 </div>
@@ -433,148 +633,11 @@ export function AppFormManager() {
               })}
             </div>
           )}
-        </div>
-
-        {/* Included forms */}
-        <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
-          <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Included forms ({appForms.length})</h3>
-          {appForms.length === 0 ? (
-            <p className="text-sm text-gray-400 dark:text-slate-400 py-4 text-center">No forms included yet</p>
-          ) : (
-            <div className="space-y-2">
-              {appForms.map((af, index) => {
-                const sharedApps = getSharedApps(af);
-                return (
-                <div key={af.formId} className="p-3 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-gray-50 dark:bg-slate-800/50">
-                  <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                  {/* Reorder controls sized for a finger: 18px targets were below the
-                      24px floor and sat directly beside each other. */}
-                  <div className="-my-1 flex flex-shrink-0 flex-col">
-                    <button
-                      onClick={() => handleMove(index, -1)}
-                      disabled={index === 0}
-                      aria-label={`Move ${af.displayName} up`}
-                      className="flex h-6 w-7 cursor-pointer items-center justify-center rounded text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:cursor-default disabled:opacity-30 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
-                    >
-                      <ChevronUp className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => handleMove(index, 1)}
-                      disabled={index === appForms.length - 1}
-                      aria-label={`Move ${af.displayName} down`}
-                      className="flex h-6 w-7 cursor-pointer items-center justify-center rounded text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:cursor-default disabled:opacity-30 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </button>
-                  </div>
-                  {editingNameId === af.formId ? (
-                    <input
-                      autoFocus
-                      value={editNameValue}
-                      onChange={(e) => setEditNameValue(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') saveRename(af.formId); if (e.key === 'Escape') setEditingNameId(null); }}
-                      onBlur={() => saveRename(af.formId)}
-                      aria-label="Display name"
-                      className="flex-1 min-w-0 text-sm px-2 py-1 rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:outline-none"
-                    />
-                  ) : (
-                    <span className="text-sm font-medium text-gray-900 dark:text-white flex-1 min-w-0 truncate">{af.displayName}</span>
-                  )}
-                  </div>
-                  {/* Action cluster — wraps to its own line on narrow screens (flex-wrap
-                      on the row) so the name isn't squeezed and targets stay tappable. */}
-                  <div className="ml-auto flex min-w-0 flex-wrap items-center gap-0.5">
-                  {editingNameId === af.formId ? (
-                    <button onMouseDown={(e) => { e.preventDefault(); saveRename(af.formId); }} aria-label="Save name" className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-green-600 transition-colors cursor-pointer">
-                      <Check className="h-4 w-4" />
-                    </button>
-                  ) : (
-                    <button onClick={() => startRename(af)} aria-label={`Rename ${af.displayName}`} title="Rename display label" className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors cursor-pointer">
-                      <Tag className="h-4 w-4" />
-                    </button>
-                  )}
-                  <button onClick={() => navigate(paths.builder(af.formId, appId))} aria-label={`Edit ${af.displayName}`} title="Edit form" className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors cursor-pointer">
-                    <Pencil className="h-4 w-4" />
-                  </button>
-                  <select
-                    value={formNavState(af)}
-                    onChange={(e) => applyNavState(af, e.target.value as FormNavState)}
-                    disabled={busyFormId === af.formId}
-                    aria-label={`Visibility for ${af.displayName}`}
-                    aria-describedby={`nav-state-${af.formId}`}
-                    className={cn(
-                      'min-h-8 cursor-pointer rounded-lg border border-gray-200 bg-white px-1.5 py-1 text-xs transition-colors disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900',
-                      formNavState(af) === 'shown' ? 'text-green-600' : formNavState(af) === 'off' ? 'text-gray-500 dark:text-slate-400' : 'text-amber-600 dark:text-amber-400'
-                    )}
-                  >
-                    <option value="shown">Shown</option>
-                    <option value="unlisted">Unlisted</option>
-                    <option value="data-only">Data-only</option>
-                    <option value="off">Off</option>
-                  </select>
-                  <button onClick={() => handleRemoveRequest(af.formId)} disabled={busyFormId === af.formId} aria-label={`Remove ${af.displayName}`} className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50 transition-colors cursor-pointer">
-                    {busyFormId === af.formId ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" /> : <X className="h-4 w-4" />}
-                  </button>
-                  </div>
-                  </div>
-                  {/* What the chosen visibility actually does, in the row. It used to
-                      live only in a `title` tooltip, which never appears on touch and
-                      is the one place the four states are explained at all. */}
-                  <p id={`nav-state-${af.formId}`} className="mt-1.5 text-[11px] leading-4 text-gray-500 dark:text-slate-400">
-                    {NAV_STATE_HELP[formNavState(af)]}
-                  </p>
-
-                  {/* Shared-data + relation badges */}
-                  {(sharedApps.length > 0 || relationBadges[af.formId]?.length > 0) && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {sharedApps.length > 0 && (
-                        <span
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400"
-                          title={`This form and its responses are shared with ${sharedApps.join(', ')} — the apps read and write the same data.`}
-                        >
-                          <Share2 className="h-3 w-3" />
-                          <span className="font-medium">Shared</span>
-                          <span className="opacity-60">· also in {sharedApps.length <= 2 ? sharedApps.join(' & ') : `${sharedApps.length} other apps`}</span>
-                        </span>
-                      )}
-                      {relationBadges[af.formId]?.map((badge, i) => (
-                        <span
-                          key={i}
-                          className={cn(
-                            'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs',
-                            badge.type === 'outgoing'
-                              ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400'
-                              : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400'
-                          )}
-                          title={badge.type === 'outgoing'
-                            ? `"${badge.fieldLabel}" links to ${badge.formName}`
-                            : `${badge.formName} links here via "${badge.fieldLabel}"`
-                          }
-                        >
-                          {badge.type === 'outgoing' ? <Link2 className="h-3 w-3" /> : <ArrowLeftIcon className="h-3 w-3" />}
-                          <span className="font-medium">{badge.fieldLabel}</span>
-                          <span className="opacity-60">{badge.type === 'outgoing' ? '\u2192' : '\u2190'} {badge.formName}</span>
-                          <span className="opacity-50">{badge.allowMultiple ? '1:N' : '1:1'}</span>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
+        </Panel>
 
       {/* Companion app — id anchors the Settings → Manage tile, which used to land
           on this page's top with the card far below the fold. */}
-      <div id="companion" className="mt-6 bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
-        <h3 className="font-medium text-gray-900 dark:text-white mb-1 tracking-tight flex items-center gap-2">
-          <Layers className="h-4 w-4 text-violet-500 dark:text-violet-400" />
-          Create a companion app
-        </h3>
+      <Panel id="companion" title="Create a companion app" icon={<Layers className="h-4 w-4" />}>
         <p className="text-xs text-gray-500 dark:text-slate-400 mb-3">
           A second app — e.g. an admin console — over these same forms and data. Members and roles stay separate; pick what to bring across below.
         </p>
@@ -613,7 +676,7 @@ export function AppFormManager() {
         <p className="text-xs text-gray-500 dark:text-slate-400 mb-3">
           Each app runs its own app-level custom logic and screens; form-level logic travels with the shared forms.
         </p>
-        <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+        <div className="flex flex-wrap items-center gap-2">
           <input
             value={companionName}
             onChange={(e) => { companionTouchedRef.current = true; setCompanionName(e.target.value); }}
@@ -621,15 +684,16 @@ export function AppFormManager() {
             placeholder={sourceAppName ? `${sourceAppName} Admin` : 'Companion app name'}
             aria-label="Companion app name"
             disabled={companionBusy}
-            className="flex-1 min-w-0 text-sm px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:outline-none disabled:opacity-50"
+            className="min-w-0 flex-1 basis-48 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:opacity-50 max-sm:min-h-11 max-sm:text-base dark:border-slate-600 dark:bg-slate-900 dark:text-white"
           />
           <Button size="sm" onClick={handleCreateCompanion} isLoading={companionBusy} leftIcon={<Layers className="h-4 w-4" />} className="flex-shrink-0">
             Create companion app
           </Button>
         </div>
-      </div>
-    </div>
-    </div>
+      </Panel>
+        </div>
+        </div>
+      </PageBody>
 
       {/* Referential integrity warning dialog */}
       <ConfirmDialog

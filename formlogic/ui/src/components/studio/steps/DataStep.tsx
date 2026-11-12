@@ -394,10 +394,12 @@ export function DataStep({
     <div className="grid gap-4 @2xl/studio:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] @2xl/studio:gap-5 @5xl/studio:grid-cols-[minmax(0,20.5rem)_minmax(0,1fr)]">
       {!acting && nativeDatabase && <NativeDatabaseTables key={app.id} app={app} database={nativeDatabase} />}
       {/* Data types rail */}
-      <section className="h-fit overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
-        <div className="flex flex-col gap-3 border-b border-gray-200/80 p-4 dark:border-white/[0.06]">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">App forms</h3>
-          <div className="flex items-center gap-1">
+      <section className="h-fit overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
+        <div className="flex flex-col gap-2 border-b border-gray-200/80 p-3 dark:border-white/[0.06]">
+          <h3 className="px-1 text-sm font-semibold text-gray-900 dark:text-white">App forms</h3>
+          {/* The actions wrap as whole buttons: in the narrow rail "Export data" used to break
+              into two lines inside its own button. */}
+          <div className="flex flex-wrap items-center gap-1 whitespace-nowrap">
             {/* The section that owns the app's data is where an owner looks for the
                 data itself. Exporting it was four hops away, under App settings →
                 Manage → Records. Acting admins keep their own export gate on that
@@ -421,10 +423,10 @@ export function DataStep({
             </Button>
           </div>
         </div>
-        <p className="px-4 pt-3 pb-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">Each form stores a set of records, such as customers or appointments. Select one to edit its fields.</p>
+        {/* What a form is, and what to do here, is said once: in the line under the section row. */}
         {appForms.length > 0 && (
-          <div className="px-4 py-3">
-            <Input type="search" aria-label="Search app forms" placeholder="Find a form…" value={formSearch} onChange={event => setFormSearch(event.target.value)} leftIcon={<Search className="h-4 w-4" />} className="min-h-11 text-base sm:text-sm" />
+          <div className="px-3 pt-3">
+            <Input type="search" aria-label="Search app forms" placeholder="Find a form…" value={formSearch} onChange={event => setFormSearch(event.target.value)} leftIcon={<Search className="h-4 w-4" />} className="min-h-11 text-base sm:min-h-10 sm:text-sm" />
             {formSearch.trim() && <p role="status" className="mt-2 text-xs text-gray-500 dark:text-slate-400">{matchingForms.length} of {appForms.length} forms</p>}
           </div>
         )}
@@ -495,7 +497,7 @@ export function DataStep({
 
       {/* Selected data type */}
       {formsFailed && appForms.length === 0 ? (
-        <section className="flex flex-col items-center justify-center rounded-xl border border-dashed border-amber-300 px-6 py-16 text-center dark:border-amber-400/30">
+        <section className="flex h-fit flex-col items-start rounded-2xl border border-dashed border-amber-300 p-6 dark:border-amber-400/30">
           <AlertTriangle className="h-8 w-8 text-amber-500" />
           <p className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">Couldn't load this app's data types</p>
           <p className="mt-1 max-w-sm text-sm text-gray-500 dark:text-slate-400">
@@ -506,7 +508,7 @@ export function DataStep({
           </Button>
         </section>
       ) : appForms.length === 0 ? (
-        <section className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 px-6 py-16 text-center dark:border-white/15">
+        <section className="flex h-fit flex-col items-start rounded-2xl border border-dashed border-gray-300 p-6 dark:border-white/15">
           <Database className="h-8 w-8 text-gray-400 dark:text-slate-500" />
           <p className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">{nativeDatabase?.installed ? 'Add a FormLogic form when you need one' : 'No data types yet'}</p>
           <p className="mt-1 max-w-sm text-sm text-gray-500 dark:text-slate-400">
@@ -517,8 +519,8 @@ export function DataStep({
           </Button>
         </section>
       ) : selected?.form ? (
-        <section className="@container/field-editor overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
-          <div className="flex flex-col gap-4 border-b border-gray-200/80 p-5 @xl/studio:flex-row @xl/studio:items-start @xl/studio:justify-between dark:border-white/[0.06]">
+        <section className="@container/field-editor overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
+          <div className="flex flex-col gap-3 border-b border-gray-200/80 p-4 @xl/studio:flex-row @xl/studio:items-start @xl/studio:justify-between dark:border-white/[0.06]">
             <div className="flex min-w-0 items-start gap-3">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400">
                 <Database className="h-5 w-5" />
@@ -577,7 +579,7 @@ export function DataStep({
             </div>
           </div>
 
-          <div className="border-b border-gray-200/70 px-5 dark:border-white/[0.06]">
+          <div className="border-b border-gray-200/70 px-4 dark:border-white/[0.06]">
             <div className="flex gap-5" role="tablist" aria-label="Data type sections">
               {([
                 { id: 'fields', label: 'Fields' },
@@ -621,7 +623,7 @@ export function DataStep({
           </div>
 
           {tab === 'fields' && (
-            <div id="data-panel-fields" role="tabpanel" aria-labelledby="data-tab-fields" className="p-4 sm:p-5">
+            <div id="data-panel-fields" role="tabpanel" aria-labelledby="data-tab-fields" className="p-4">
               <div className="mb-4 flex flex-col items-start justify-between gap-3 @lg/field-editor:flex-row">
                 <p className="text-xs text-gray-500 dark:text-slate-400">
                   Screens update automatically. Open the builder for validation, logic and reordering.
@@ -692,7 +694,7 @@ export function DataStep({
                    `sm:` grid switched the four columns on exactly when there was no room
                    and the overflow-hidden panel silently ate Type and Required. */
                 <div className="@container/fields overflow-hidden rounded-xl border border-gray-200 dark:border-white/[0.08]">
-                  <div className="hidden grid-cols-[minmax(160px,1fr)_140px_104px] bg-gray-50 px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:bg-white/[0.03] dark:text-slate-400 @lg/fields:grid">
+                  <div className="hidden grid-cols-[minmax(160px,1fr)_140px_104px] bg-gray-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:bg-white/[0.03] dark:text-slate-400 @lg/fields:grid">
                     <span>Field</span>
                     <span>Type</span>
                     <span>Required</span>
@@ -701,7 +703,9 @@ export function DataStep({
                     {selected.form.fields.map((field) => (
                       <div
                         key={field.id}
-                        className="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 transition hover:bg-gray-50 dark:hover:bg-white/[0.025] @lg/fields:grid-cols-[minmax(160px,1fr)_140px_104px] @lg/fields:gap-0"
+                        // A table's row where there is room (40px), a finger-high row where the
+                        // type is tucked under the name.
+                        className="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 transition hover:bg-gray-50 dark:hover:bg-white/[0.025] @lg/fields:min-h-10 @lg/fields:grid-cols-[minmax(160px,1fr)_140px_104px] @lg/fields:gap-0"
                       >
                         {/* Only the label/type cells navigate, so the Required cell can
                             hold a real control instead of a read-only badge. */}
@@ -709,7 +713,7 @@ export function DataStep({
                           type="button"
                           onClick={() => openFieldInBuilder(selected.form!.id, field)}
                           title={`Edit ${field.label} in the form builder`}
-                          className="flex min-w-0 cursor-pointer items-center gap-1.5 py-2 text-left"
+                          className="flex min-w-0 cursor-pointer items-center gap-1.5 py-2 text-left @lg/fields:py-1.5"
                         >
                           <span className="min-w-0">
                             <span className="block truncate text-xs font-semibold text-gray-800 dark:text-slate-200">{field.label}</span>
@@ -722,7 +726,7 @@ export function DataStep({
                         <span className="hidden text-xs text-gray-600 dark:text-slate-300 @lg/fields:block">
                           {FIELD_TYPE_LABELS[field.type] ?? field.type}
                         </span>
-                        <label className="flex min-h-11 cursor-pointer items-center gap-2 justify-self-end @lg/fields:justify-self-start">
+                        <label className="flex min-h-11 cursor-pointer items-center gap-2 justify-self-end @lg/fields:min-h-10 @lg/fields:justify-self-start">
                           <input
                             type="checkbox"
                             checked={field.required === true}
@@ -759,7 +763,7 @@ export function DataStep({
           )}
 
           {tab === 'relationships' && (
-            <div id="data-panel-relationships" role="tabpanel" aria-labelledby="data-tab-relationships" className="p-4 sm:p-5">
+            <div id="data-panel-relationships" role="tabpanel" aria-labelledby="data-tab-relationships" className="p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <p className="text-xs text-gray-500 dark:text-slate-400">
                   Linked-record fields connect this data type to others in the app.
@@ -814,7 +818,7 @@ export function DataStep({
           )}
         </section>
       ) : unreadable && selected && unreadableFormIds.includes(selected.id) ? (
-        <section className="flex flex-col items-center justify-center rounded-xl border border-dashed border-amber-300 px-6 py-16 text-center dark:border-amber-400/30">
+        <section className="flex h-fit flex-col items-start rounded-2xl border border-dashed border-amber-300 p-6 dark:border-amber-400/30">
           <AlertTriangle className="h-8 w-8 text-amber-500" />
           <p className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">
             Couldn't load {formNameById[selected.id] ?? 'this data type'}

@@ -137,29 +137,26 @@ export function AutomationsStep({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col justify-between gap-3 rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-5 shadow-sm sm:flex-row sm:items-center">
-        <p className="px-1 text-xs text-gray-500 dark:text-slate-400">
-          Choose the steps that run for this app, then connect a form event, schedule or other trigger.
-        </p>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => navigate('/flows')} leftIcon={<Workflow className="h-4 w-4" />}>
-            All automations
+      {/* The section's two actions, in a row at the left. What the section is for is said in
+          the line above it, so the boxed sentence that stood here is gone. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {flows.length > 0 && (
+          <Button size="sm" onClick={() => setShowNew(true)} isLoading={creating} leftIcon={<Plus className="h-4 w-4" />}>
+            New automation
           </Button>
-          {flows.length > 0 && (
-            <Button size="sm" onClick={() => setShowNew(true)} isLoading={creating} leftIcon={<Plus className="h-4 w-4" />}>
-              New automation
-            </Button>
-          )}
-        </div>
+        )}
+        <Button variant="secondary" size="sm" onClick={() => navigate('/flows')} leftIcon={<Workflow className="h-4 w-4" />}>
+          All automations
+        </Button>
       </div>
 
       <NativeRecordTriggers key={app.id} appId={app.id} flows={flows} bindings={bindings} onReload={onReloadFlows} />
 
       {flows.length === 0 ? (
-        <section className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 dark:border-white/15 px-6 py-16 text-center">
-          <GitBranch className="h-8 w-8 text-gray-300 dark:text-slate-600" />
+        <section className="flex flex-col items-start rounded-2xl border border-dashed border-gray-300 p-6 dark:border-white/15">
+          <GitBranch className="h-7 w-7 text-gray-300 dark:text-slate-600" />
           <p className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">No automations yet</p>
-          <p className="mt-1 max-w-md text-sm text-gray-500 dark:text-slate-400">
+          <p className="mt-1 max-w-2xl text-sm text-gray-500 dark:text-slate-400">
             Automate what happens when a form is submitted, a status changes, or on a schedule —
             notifications, record updates, AI steps and more.
           </p>
@@ -170,8 +167,8 @@ export function AutomationsStep({
       ) : (
         <div className="grid gap-4 @3xl/studio:grid-cols-[minmax(0,.85fr)_minmax(0,1.15fr)]">
           {/* Automation list */}
-          <section className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm h-fit">
-            <div className="border-b border-gray-200/80 dark:border-white/[0.06] p-4">
+          <section className="overflow-hidden rounded-2xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm h-fit">
+            <div className="border-b border-gray-200/80 dark:border-white/[0.06] px-4 py-3">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Automations</h3>
               <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">Plain-language rules behind this app.</p>
             </div>
@@ -213,7 +210,8 @@ export function AutomationsStep({
                               {flow.enabled ? 'Enabled' : 'Paused'}
                             </Badge>
                           </span>
-                          <span className="mt-1.5 block text-[10px] leading-4 text-gray-500 dark:text-slate-400 line-clamp-2">
+                          {/* No `block` beside the clamp: it overrides the display the clamp needs, and the text ran on unclamped. */}
+                          <span className="mt-1.5 text-[10px] leading-4 text-gray-500 dark:text-slate-400 line-clamp-2">
                             {flowBindings.length > 0
                               ? flowBindings.map((b) => eventLabel(b.event)).join(' · ')
                               : 'No trigger yet — runs manually or from other flows'}
@@ -242,8 +240,8 @@ export function AutomationsStep({
 
           {/* Simple editor for the selected automation */}
           {selected && (
-            <section className="overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm">
-              <div className="flex flex-col gap-3 border-b border-gray-200/80 dark:border-white/[0.06] p-5 sm:flex-row sm:items-start sm:justify-between">
+            <section className="overflow-hidden rounded-2xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 shadow-sm">
+              <div className="flex flex-col gap-3 border-b border-gray-200/80 dark:border-white/[0.06] p-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-lg font-semibold text-gray-900 dark:text-white truncate">{selected.name}</h3>

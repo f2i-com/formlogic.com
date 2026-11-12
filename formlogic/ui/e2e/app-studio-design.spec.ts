@@ -41,20 +41,33 @@ for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
       return route.fulfill({ json: { forms: [], flows: [], bindings: [], roles: [], permissions: [], users: [], invitations: [], groups: [], versions: [], domains: [], blueprints: [], notices: [], apps: [], count: 0, total: 0, deployment: null, installations: [], connections: [] } });
     });
     await page.goto('/apps/studio-review/studio/plan');
-    await expect(page.getByRole('heading', { name: 'Overview', level: 2, exact: true })).toBeVisible();
+    // The open section's name is painted once, in the row of sections. Its heading is there
+    // for a screen reader's outline (it is the page's first h2), not drawn.
+    const sectionHeading = (label: string) => page.getByRole('heading', { name: label, level: 2, exact: true });
+    await expect(sectionHeading('Overview')).toBeAttached();
     expect(await page.evaluate(() => (window as typeof window & { studioInitialHeadings: string[] }).studioInitialHeadings)).not.toContain('Data & forms');
     expect(appLoads).toBe(1);
+    // The page's frame: the Header with the app's name and Back, and no banner over the section.
+    await expect(page.locator('header').getByRole('heading', { name: 'Customer hub', level: 1, exact: true })).toBeVisible();
+    await expect(page.locator('header').getByRole('button', { name: 'Back to apps', exact: true })).toBeVisible();
+    await expect(page.getByText(/Section \d of \d/)).toHaveCount(0);
+    // The sections are links in one row, each at its own address. A link's name is the section's
+    // followed by what it holds ("Data & forms 2 data types"), so it is matched by how it starts.
     const nav = page.getByRole('navigation', { name: 'App Studio sections', exact: true });
-    for (const [, label] of sections) {
-      const button = nav.getByRole('button', { name: label, exact: true });
-      await expect(button).toBeInViewport();
-      await expect(button.locator('span').filter({ hasText: label }).first()).toBeVisible();
-    }
+    const section = (label: string) => nav.getByRole('link', { name: new RegExp(`^${label}`) });
     for (const [id, label] of sections) {
-      await nav.getByRole('button', { name: label, exact: true }).click();
+      await expect(section(label)).toHaveAttribute('href', new RegExp(`/studio/${id}$`));
+      await expect(section(label)).toContainText(label);
+    }
+    // The row scrolls sideways where six names do not fit; the page itself never does.
+    await expect(section('Overview')).toBeInViewport();
+    for (const [id, label] of sections) {
+      await section(label).click();
       await expect(page).toHaveURL(new RegExp(`/studio/${id}$`));
-      await expect(page.getByRole('heading', { name: label, level: 2, exact: true })).toBeVisible();
-      await expect(nav.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-current', 'page');
+      await expect(sectionHeading(label)).toBeAttached();
+      await expect(section(label)).toHaveAttribute('aria-current', 'page');
+      // Opening a section brings its own name into the row's view.
+      await expect(section(label)).toBeInViewport();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
       if (id === 'data') {
         const search = page.getByRole('searchbox', { name: 'Search app forms' });
@@ -140,12 +153,15 @@ for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
       }
       await page.screenshot({ path: testInfo.outputPath(`${id}.png`), fullPage: true });
     }
+    // The links at the foot of a section open the next one from its top.
     await page.getByRole('button', { name: 'Previous: Users & roles', exact: true }).click();
     await expect(page).toHaveURL(/\/studio\/access$/);
-    await expect(page.getByRole('heading', { name: 'Users & roles', level: 2, exact: true })).toBeInViewport();
+    await expect(section('Users & roles')).toHaveAttribute('aria-current', 'page');
+    await expect(section('Users & roles')).toBeInViewport();
     await page.getByRole('button', { name: 'Next: Review & publish', exact: true }).click();
     await expect(page).toHaveURL(/\/studio\/publish$/);
-    await expect(page.getByRole('heading', { name: 'Review & publish', level: 2, exact: true })).toBeInViewport();
+    await expect(section('Review & publish')).toHaveAttribute('aria-current', 'page');
+    await expect(section('Review & publish')).toBeInViewport();
     expect(mutations).toBe(0);
     expect(errors).toEqual([]);
   });

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Compass, RotateCcw, Sparkles } from 'lucide-react';
+import { Header } from '../../components/layout/Header';
+import { PageBody, PAGE_GUTTER } from '../../components/layout/PageBody';
 import { Button } from '../../components/ui/Button';
-import { StudioTopBar } from '../../components/studio/StudioTopBar';
-import { StudioRail } from '../../components/studio/StudioRail';
+import { StudioHeaderActions, StudioStateLine } from '../../components/studio/StudioTopBar';
+import { StudioSectionNav } from '../../components/studio/StudioRail';
 import { StudioCommandPalette } from '../../components/studio/StudioCommandPalette';
 import { StudioAppMenu } from '../../components/studio/StudioAppMenu';
 import { StudioSaveErrorStrip } from '../../components/studio/StudioSaveErrorStrip';
@@ -24,7 +26,6 @@ import { AutomationsStep } from '../../components/studio/steps/AutomationsStep';
 import { AccessStep } from '../../components/studio/steps/AccessStep';
 import { PublishStep } from '../../components/studio/steps/PublishStep';
 import { useUIStore } from '../../stores/uiStore';
-import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { returnToState } from '../../hooks/useReturnTo';
 import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
 import { isDemoLocalId } from '../../lib/demoLocal';
@@ -45,10 +46,12 @@ const STEP_PROMPTS: Record<StudioStepId, string> = {
 };
 
 /**
- * The App Studio: one workspace per app with a top bar, a six-section nav —
- * Plan, Data, Screens, Automations, Access, Publish — and a single line of
- * guidance. Everything reads and writes the real app APIs; deep surfaces (form
- * builder, flow canvas, diagram, screen studios) open from their sections.
+ * The App Studio: one workspace per forms app. The same frame as every page that
+ * manages an app: the page Header with the app's name, then a row of six sections —
+ * Overview, Data, Screens, Automations, Access, Publish — each at its own address,
+ * with the app's state at the row's end. Everything reads and writes the real app
+ * APIs; deep surfaces (form builder, flow canvas, diagram, screen studios) open
+ * from their sections.
  *
  * It is deliberately NOT a wizard. An owner opens this screen for the life of
  * the app, so there is no step counter, no progress bar and no Previous/Next
@@ -59,13 +62,11 @@ export function AppStudio() {
   const { appId, step: stepParam } = useParams<{ appId: string; step?: string }>();
   const navigate = useNavigate();
   const data = useStudioData(appId);
-  const isOnline = useOnlineStatus();
   const setChatSeed = useUIStore((s) => s.setChatSeed);
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
-  const isMobile = useUIStore((s) => s.isMobile);
 
   const askAi = (prompt?: string) => {
     if (prompt) setChatSeed(prompt);
@@ -205,25 +206,30 @@ export function AppStudio() {
 
   if (!appId) return <Navigate to="/apps" replace />;
 
+  const backToApps = { onClick: () => navigate('/apps'), label: 'Back to apps' };
+
   // A transport failure is not a missing app: telling an owner their app was
   // deleted because a request dropped is both wrong and a dead end.
   if (data.appError && !data.app) {
     const missing = data.appError.kind === 'notFound';
     return (
-      <div className="flex flex-col items-center justify-center px-4 py-24 text-center">
-        <p className="text-lg font-medium text-gray-700 dark:text-slate-300">
-          {missing ? 'App not found' : "Couldn't load this app"}
-        </p>
-        <p className="mt-1 max-w-sm text-sm text-gray-500 dark:text-slate-400">
-          {missing ? "It may have been deleted, or you don't have access." : data.appError.message}
-        </p>
-        <div className="mt-4 flex flex-wrap justify-center gap-2">
-          {!missing && (
-            <Button onClick={() => void data.reload()} leftIcon={<RotateCcw className="h-4 w-4" />}>
-              Try again
-            </Button>
-          )}
-          <Button variant="outline" onClick={() => navigate('/apps')}>Back to apps</Button>
+      <div className="min-h-screen">
+        <Header title="App Studio" back={backToApps} />
+        <div className={cn('py-8', PAGE_GUTTER)} role="alert">
+          <p className="text-base font-semibold text-gray-900 dark:text-white">
+            {missing ? 'App not found' : "Couldn't load this app"}
+          </p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
+            {missing ? "It may have been deleted, or you don't have access." : data.appError.message}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {!missing && (
+              <Button onClick={() => void data.reload()} leftIcon={<RotateCcw className="h-4 w-4" />}>
+                Try again
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => navigate('/apps')}>Back to apps</Button>
+          </div>
         </div>
       </div>
     );
@@ -231,8 +237,12 @@ export function AppStudio() {
 
   if (!data.app || data.initialLoading) {
     return (
-      <div className="flex items-center justify-center py-32" role="status" aria-label="Loading App Studio">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+      <div className="min-h-screen">
+        <Header title={data.app?.name ?? 'App Studio'} back={backToApps} />
+        <div className={cn('flex items-center gap-3 py-8 text-sm text-gray-500 dark:text-slate-400', PAGE_GUTTER)} role="status" aria-label="Loading App Studio">
+          <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-primary-600" />
+          Loading the app…
+        </div>
       </div>
     );
   }
@@ -253,43 +263,23 @@ export function AppStudio() {
   const active = STUDIO_STEPS[activeIndex];
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
-      {/*
-        ONE sticky wrapper for both rows, instead of two that each recomputed the
-        banner/offline offset by hand (which had already drifted once and let the top
-        bar paint over the nav).
-
-        On a phone the wrapper's top is pulled up by exactly the identity row's height
-        (h-12 = 3rem), so that row scrolls out of the scrollport while the section nav
-        pins at y=0 — 101px of permanently-nailed chrome becomes 45px while you work,
-        with no scroll listener, no state and no jank. It returns the moment you scroll
-        back to the top. No `overflow` here: UserMenu's dropdown is absolutely
-        positioned inside the header and would be clipped.
-      */}
-      <div
-        className={cn(
-          '@container/topbar sticky z-30 border-b border-gray-200/60 bg-white/95 backdrop-blur-xl dark:border-white/[0.06] dark:bg-slate-900/80',
-          isMobile
-            ? (isOnline
-                ? 'top-[calc(var(--fl-demo-banner-h,0px)-3rem)]'
-                : 'top-[calc(2rem+var(--fl-demo-banner-h,0px)-3rem)]')
-            : (isOnline
-                ? 'top-[var(--fl-demo-banner-h,0px)]'
-                : 'top-[calc(2rem+var(--fl-demo-banner-h,0px))]')
-        )}
-      >
-        <StudioTopBar
-          app={data.app}
-          changes={changes}
-          aiAvailable={aiAvailable}
-          onOpenPublish={() => setStep('publish')}
-          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
-          onOpenAppMenu={() => setAppMenuOpen(true)}
-        />
-        <StudioRail activeStep={activeStep} badges={badges} onStepChange={setStep} />
-        {/* A transient success may scroll away; a failure never may. */}
-        <StudioSaveErrorStrip />
-      </div>
+    <div className="min-h-screen">
+      <Header
+        title={data.app.name}
+        back={backToApps}
+        actions={
+          <StudioHeaderActions
+            app={data.app}
+            changes={changes}
+            aiAvailable={aiAvailable}
+            onOpenPublish={() => setStep('publish')}
+            onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+            onOpenAppMenu={() => setAppMenuOpen(true)}
+          />
+        }
+      />
+      {/* A transient success may scroll away; a failure never may: it stays under the header. */}
+      <StudioSaveErrorStrip />
 
       {appMenuOpen && (
         <StudioAppMenu
@@ -322,29 +312,42 @@ export function AppStudio() {
       )}
 
       {/*
-        A query CONTAINER, not a viewport breakpoint: the studio's usable width is the
-        viewport minus the app sidebar (0 / 64 / 256px) minus the docked chat rail
-        (384px), so a viewport-based layout is wrong for half of those combinations.
-        Sections size themselves off `@container/studio` and stay right at every width.
-        On a phone the bottom padding is just a gutter: AppShell already reserves the
-        mobile nav, and the studio no longer carries floating furniture. On desktop the
-        chat launcher is positioned by VIEWPORT, so `sm:` really is the right unit for
-        its clearance.
+        The page body, left-aligned and as wide as the page, and a query CONTAINER: the
+        studio's usable width is the viewport minus the app sidebar (0 / 64 / 256px) minus
+        the docked chat rail (384px), so a viewport-based layout is wrong for half of those
+        combinations. Sections size themselves off `@container/studio` and stay right at
+        every width.
       */}
-      <div className="@container/studio mx-auto max-w-[1540px] px-5 py-5 pb-8 sm:p-7 sm:pb-28 lg:p-8 lg:pb-28">
-        {/* The section's own name, painted. It was `sr-only`, so the studio had no
-            visible page title at all and the flattest type hierarchy in the app. */}
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
-          <div className="min-w-0">
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-primary-600 dark:text-primary-300">App Studio · Section {activeIndex + 1} of {STUDIO_STEPS.length}</p>
-            <h2 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white sm:text-2xl">{active.label}</h2>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-gray-600 dark:text-slate-400">{active.description}</p>
-          </div>
+      <PageBody className="@container/studio">
+        <StudioSectionNav
+          appId={appId}
+          activeStep={activeStep}
+          badges={badges}
+          end={<StudioStateLine app={data.app} changes={changes} onOpenPublish={() => setStep('publish')} />}
+        />
+
+        {/* The section's name is in the row above, so it is not painted again: a heading for
+            a screen reader's outline, and ONE line under the row.
+            The line is the recommendation when there is one about THIS section, and what the
+            section is for otherwise. The recommendation used to be a permanent strip that
+            showed the same section-agnostic advice on all six sections, then a card of its
+            own above the section; said in the section's one line it reads as advice, and
+            the section starts right under it. */}
+        <div className="mb-4 mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <h2 className="sr-only">{active.label}</h2>
+          {nextAction && nextAction.step === activeStep ? (
+            <p className="flex min-w-0 items-start gap-2 text-sm text-gray-500 dark:text-slate-400">
+              <Compass className="mt-0.5 h-4 w-4 shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+              <span className="min-w-0"><span className="font-semibold text-gray-900 dark:text-white">{nextAction.title}.</span> {nextAction.detail}</span>
+            </p>
+          ) : (
+            <p className="min-w-0 text-sm text-gray-500 dark:text-slate-400">{active.description}</p>
+          )}
           {aiAvailable && (
             <button
               type="button"
               onClick={() => askAi(STEP_PROMPTS[activeStep])}
-              className="inline-flex min-h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 text-[11px] font-medium text-gray-600 transition hover:border-primary-300 hover:text-primary-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
+              className="inline-flex min-h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 text-[11px] font-medium text-gray-600 transition hover:border-primary-300 hover:text-primary-700 max-sm:min-h-11 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
             >
               <Sparkles className="h-3.5 w-3.5 text-primary-500 dark:text-primary-400" aria-hidden="true" />
               {STEP_PROMPTS[activeStep]}
@@ -352,30 +355,15 @@ export function AppStudio() {
           )}
         </div>
 
-        {/* ONE recommendation, and only when it is about THIS section. It used to be a
-            permanent two-row strip that showed the same section-agnostic advice on all
-            six sections — measured as "Connect an automation" on Plan, Data, Screens,
-            Automations, Access AND Publish. A card you scroll past reads as advice; a
-            pinned strip reads as an unresolved error. */}
-        {nextAction && nextAction.step === activeStep && (
-          <section className="mb-4 flex flex-col gap-2 rounded-xl border border-primary-200/70 bg-primary-50/60 p-3 dark:border-primary-500/20 dark:bg-primary-500/[0.07] @xl/studio:flex-row @xl/studio:items-center @xl/studio:gap-4">
-            <Compass className="h-5 w-5 shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-gray-900 dark:text-white">{nextAction.title}</p>
-              <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-300">{nextAction.detail}</p>
-            </div>
-          </section>
-        )}
-
         {/* A SoftN app's interface and data are its SoftN project: its own workspace is where
             the owner sees it running, edits it and manages its database. */}
         {isSoftnApp(data.app) && (
-          <section className="mb-4 flex flex-col gap-3 rounded-xl border border-indigo-200/80 bg-indigo-50/70 p-3 dark:border-indigo-500/20 dark:bg-indigo-500/[0.07] @xl/studio:flex-row @xl/studio:items-center">
+          <section className="mb-4 flex flex-col gap-3 rounded-xl border border-primary-200/80 bg-primary-50/70 p-3 dark:border-primary-500/20 dark:bg-primary-500/[0.07] @xl/studio:flex-row @xl/studio:items-center">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-gray-900 dark:text-white">This is a SoftN app</p>
               <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-300">Preview it, change it with AI Studio or the Visual Builder, manage its data and publish it in its workspace. The studio here adds forms, automations and access.</p>
             </div>
-            <Link to={softnWorkspacePath(data.app.id)} className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700">Open the app workspace</Link>
+            <Link to={softnWorkspacePath(data.app.id)} className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg bg-primary-600 px-4 text-sm font-semibold text-primary-foreground hover:bg-primary-700">Open the app workspace</Link>
           </section>
         )}
 
@@ -461,11 +449,11 @@ export function AppStudio() {
 
         {/* Forward movement lives at the END of the content, where a reader
             actually finishes — not pinned over it in a fixed bar. */}
-        <nav aria-label="Previous and next Studio sections" className="mt-7 flex flex-col gap-3 border-t border-gray-200 pt-5 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+        <nav aria-label="Previous and next Studio sections" className="mt-6 flex flex-col gap-3 border-t border-gray-200 pt-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
           {previous ? <Button variant="ghost" onClick={() => setStep(previous.id)} className="min-h-11 whitespace-normal text-left"><ArrowLeft className="mr-2 h-4 w-4 shrink-0" />Previous: {previous.label}</Button> : <span className="text-xs text-gray-500 dark:text-slate-400">You can return to any section as your app grows.</span>}
           {next && <Button variant="outline" onClick={() => setStep(next.id)} className="min-h-11 whitespace-normal">Next: {next.label}<ArrowRight className="ml-2 h-4 w-4 shrink-0" /></Button>}
         </nav>
-      </div>
+      </PageBody>
     </div>
   );
 }

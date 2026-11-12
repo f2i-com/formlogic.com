@@ -21,7 +21,9 @@ export const STUDIO_STEPS: StudioStep[] = [
   // resolve; the section itself is now the app's Overview (identity, contents and
   // the planning tools that used to fill the slot on their own).
   { id: 'plan', label: 'Overview', shortLabel: 'Overview', description: 'Give your app a name and purpose. See what is already built and plan what to add.' },
-  { id: 'data', label: 'Data & forms', shortLabel: 'Data', description: 'Browse your app’s database tables and records, or add forms and link related information.' },
+  // This sentence is the one line of help the section shows, so it says what a form is: the
+  // list of forms no longer repeats it.
+  { id: 'data', label: 'Data & forms', shortLabel: 'Data', description: 'Each form stores a set of records, such as customers or appointments. Select one to edit its fields, or browse the app’s database tables and records.' },
   { id: 'screens', label: 'Screens', shortLabel: 'Screens', description: 'Design what people see: the home screen, pages, navigation and overall appearance.' },
   { id: 'automations', label: 'Automations', shortLabel: 'Automations', description: 'Connect steps into flows that respond to form submissions, app events or a manual run.' },
   { id: 'access', label: 'Users & roles', shortLabel: 'Access', description: 'Invite people and choose what each role can view, create or change.' },

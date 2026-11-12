@@ -5,9 +5,11 @@ import { ArrowRight, Plus, Trash2, Link2, ExternalLink, X } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useResourcePaths } from '../../components/admin/AdminActingContext';
 import { Header } from '../../components/layout/Header';
+import { PageBody, PAGE_GUTTER } from '../../components/layout/PageBody';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { RelationFormModal } from './RelationFormModal';
+import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
 import { deferEffect } from '../../lib/deferredEffect';
 import { saveFormFields } from '../../lib/formFields';
@@ -139,15 +141,51 @@ export function AppRelationsManager() {
     await loadRelations();
   };
 
+  const back = { onClick: () => navigate(backTo.path, { state: backTo.state }), label: backTo.label ? `Back to ${backTo.label}` : 'Back to app settings' };
+
+  // The page's frame from the first paint: the header and Back, then what is known so far.
   if (loading) {
-    return <div className="flex items-center justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading relations" /></div>;
+    return (
+      <div className="min-h-screen">
+        <Header title="Relations" back={back} />
+        <div className={cn('flex items-center gap-3 py-8 text-sm text-gray-500 dark:text-slate-400', PAGE_GUTTER)}>
+          <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading relations" />
+          Loading relations…
+        </div>
+      </div>
+    );
   }
+
+  const kind = (rel: Relation) => rel.field.properties.allowMultiple ? '1 : N' : '1 : 1';
+  const shows = (rel: Relation) => {
+    const count = rel.field.properties.displayFieldIds?.length ?? 0;
+    return count > 0 ? `${count} display field${count !== 1 ? 's' : ''} configured` : '';
+  };
+  /** What can be done with a relation; `finger` draws the two at a touch target's size. */
+  const actions = (rel: Relation, finger: boolean) => {
+    const button = cn(
+      'inline-flex flex-none cursor-pointer items-center justify-center text-gray-500 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400',
+      finger ? 'h-11 w-11 rounded-lg' : 'h-8 w-8 rounded-md',
+    );
+    return (
+      <>
+        <button type="button" onClick={() => handleEdit(rel)} aria-label={`Edit ${rel.field.label} in builder`} title="Open in Form Builder for full configuration"
+          className={cn(button, 'hover:bg-gray-100 hover:text-primary-700 dark:hover:bg-white/5 dark:hover:text-primary-300')}>
+          <ExternalLink className="h-4 w-4" />
+        </button>
+        <button type="button" onClick={() => setDeleteTarget(rel)} aria-label="Delete relation" title="Delete relation"
+          className={cn(button, 'hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400')}>
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </>
+    );
+  };
 
   return (
     <div className="min-h-screen">
       <Header
         title="Relations"
-        back={{ onClick: () => navigate(backTo.path, { state: backTo.state }), label: backTo.label ? `Back to ${backTo.label}` : 'Back to app settings' }}
+        back={back}
         actions={
           <>
             <Button size="sm" aria-label="Add relation" onClick={handleAdd} disabled={appForms.length < 2} title={appForms.length < 2 ? 'Add at least two forms to this app first' : undefined} leftIcon={<Plus className="h-4 w-4" />}>
@@ -157,91 +195,101 @@ export function AppRelationsManager() {
         }
       />
 
-      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
-        <div className="max-w-5xl mx-auto">
-          {deleteError && (
-            <div className="flex items-center justify-between text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 px-4 py-3 rounded-lg mb-4 border border-red-100 dark:border-red-500/20">
-              <span>{deleteError}</span>
-              <button onClick={() => setDeleteError(null)} className="ml-2 text-red-400 hover:text-red-600 dark:hover:text-red-300" aria-label="Dismiss error">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          )}
-          {unreadableForms.length > 0 && (
-            <div role="alert" className="flex items-center justify-between gap-3 text-sm text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 rounded-lg mb-4 border border-amber-200 dark:border-amber-500/20">
-              <span>Could not load {unreadableForms.join(', ')}, so any relations from {unreadableForms.length === 1 ? 'that form' : 'those forms'} are not shown here.</span>
-              <Button variant="ghost" size="sm" onClick={() => void loadRelations()}>Try again</Button>
-            </div>
-          )}
-          {relations.length === 0 && unreadableForms.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-12 text-center">
-              <div className="mx-auto w-12 h-12 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-4">
-                <Link2 className="h-6 w-6 text-primary-600 dark:text-primary-400" />
-              </div>
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1 tracking-tight">No relations yet</h3>
-              <p className="text-sm text-gray-500 dark:text-slate-400 mb-6 max-w-sm mx-auto">
-                {appForms.length < 2
-                  ? 'A relation links records between two forms. Add at least two forms to this app first.'
-                  : 'Relations link records between forms. Create one to connect your data.'}
-              </p>
-              <Button size="sm" aria-label="Add relation" onClick={handleAdd} disabled={appForms.length < 2} leftIcon={<Plus className="h-4 w-4" />}>
-                Add relation
-              </Button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* Left-aligned and as wide as the page: the relations as one table, a row each, with the
+          forms it joins in columns of their own. On a phone the same rows are cards. */}
+      <PageBody>
+        <p className="mb-3 text-sm text-gray-500 dark:text-slate-400">A relation is a linked-record field: it lets a record in one form point at a record in another.</p>
+        {deleteError && (
+          <div className="mb-3 flex items-center justify-between rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
+            <span>{deleteError}</span>
+            <button onClick={() => setDeleteError(null)} className="ml-2 inline-flex h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-lg text-red-400 hover:text-red-600 max-sm:h-11 max-sm:w-11 dark:hover:text-red-300" aria-label="Dismiss error">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+        {unreadableForms.length > 0 && (
+          <div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+            <span>Could not load {unreadableForms.join(', ')}, so any relations from {unreadableForms.length === 1 ? 'that form' : 'those forms'} are not shown here.</span>
+            <Button variant="ghost" size="sm" onClick={() => void loadRelations()}>Try again</Button>
+          </div>
+        )}
+        {relations.length === 0 && unreadableForms.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-gray-300 p-5 dark:border-slate-700">
+            <Link2 className="h-6 w-6 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+            <h2 className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">No relations yet</h2>
+            <p className="mb-4 mt-1 max-w-2xl text-sm text-gray-500 dark:text-slate-400">
+              {appForms.length < 2
+                ? 'A relation links records between two forms. Add at least two forms to this app first.'
+                : 'Relations link records between forms. Create one to connect your data.'}
+            </p>
+            <Button size="sm" aria-label="Add relation" onClick={handleAdd} disabled={appForms.length < 2} leftIcon={<Plus className="h-4 w-4" />}>
+              Add relation
+            </Button>
+          </div>
+        ) : relations.length > 0 && (
+          <div className="@container/list">
+            {/* A phone: a card per relation. Nothing scrolls sideways, and every action is a finger wide. */}
+            <ul className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm @xl/list:hidden dark:border-slate-700 dark:bg-slate-900/60">
               {relations.map((rel) => (
-                <div
-                  key={`${rel.sourceFormId}-${rel.field.id}`}
-                  className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200"
-                >
-                  {/* Relation label */}
-                  <div className="flex items-center gap-2 mb-3">
-                    <Link2 className="h-4 w-4 text-primary-600 dark:text-primary-400 shrink-0" />
-                    <span className="text-sm font-semibold text-gray-900 dark:text-white">{rel.field.label}</span>
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400">
-                      {rel.field.properties.allowMultiple ? '1 : N' : '1 : 1'}
-                    </span>
-                  </div>
-
-                  {/* Source -> Target */}
-                  <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-gray-50 dark:bg-slate-800/50">
-                    <span className="text-xs font-medium text-gray-500 dark:text-slate-400 truncate">{rel.sourceFormName}</span>
-                    <ArrowRight className="h-3.5 w-3.5 text-gray-400 dark:text-slate-500 shrink-0" />
-                    <span className="text-xs font-medium text-gray-500 dark:text-slate-400 truncate">{rel.targetFormName}</span>
-                  </div>
-
-                  {/* Display fields badge */}
-                  {(rel.field.properties.displayFieldIds?.length ?? 0) > 0 && (
-                    <p className="text-xs text-gray-500 dark:text-slate-400 mb-3">
-                      {rel.field.properties.displayFieldIds!.length} display field{rel.field.properties.displayFieldIds!.length !== 1 ? 's' : ''} configured
+                <li key={`${rel.sourceFormId}-${rel.field.id}`} className="flex items-center gap-2 border-b border-gray-100 py-1.5 pl-3 pr-1 last:border-b-0 dark:border-slate-800">
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-center gap-2">
+                      <span className="min-w-0 truncate text-[15px] font-semibold text-gray-900 dark:text-white">{rel.field.label}</span>
+                      <span className="flex-none rounded bg-primary-50 px-1.5 py-0.5 text-[10px] font-semibold text-primary-700 dark:bg-primary-500/10 dark:text-primary-300">{kind(rel)}</span>
                     </p>
-                  )}
-
-                  {/* Actions */}
-                  <div className="flex gap-1 border-t border-gray-100 dark:border-slate-800 pt-3">
-                    <button
-                      onClick={() => handleEdit(rel)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors cursor-pointer"
-                      title="Open in Form Builder for full configuration"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      Edit in builder
-                    </button>
-                    <button
-                      onClick={() => setDeleteTarget(rel)}
-                      className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer ml-auto"
-                      aria-label="Delete relation"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
+                      <span className="min-w-0 truncate">{rel.sourceFormName}</span>
+                      <ArrowRight className="h-3.5 w-3.5 flex-none text-gray-400 dark:text-slate-500" aria-hidden="true" />
+                      <span className="min-w-0 truncate">{rel.targetFormName}</span>
+                    </p>
+                    {shows(rel) && <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">{shows(rel)}</p>}
                   </div>
-                </div>
+                  <span className="flex flex-none items-center">{actions(rel, true)}</span>
+                </li>
               ))}
+            </ul>
+
+            {/* With room for it: the table. */}
+            <div className="hidden overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm @xl/list:block dark:border-slate-700 dark:bg-slate-900/60">
+              <table className="w-full table-fixed border-collapse text-left text-[13px] leading-5">
+                <caption className="sr-only">Relations between this app’s forms</caption>
+                <thead className="border-b border-gray-200 bg-gray-50 text-[11px] text-gray-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400">
+                  <tr>
+                    <th scope="col" className="h-8 py-0 pl-3 pr-2 font-semibold uppercase tracking-wider">Relation</th>
+                    <th scope="col" className="w-[22%] px-2 font-semibold uppercase tracking-wider">From</th>
+                    <th scope="col" className="w-[22%] px-2 font-semibold uppercase tracking-wider">To</th>
+                    <th scope="col" className="w-16 px-2 font-semibold uppercase tracking-wider">Kind</th>
+                    <th scope="col" className="hidden w-52 px-2 font-semibold uppercase tracking-wider @4xl/list:table-cell">Shows</th>
+                    <th scope="col" className="w-[84px] px-2 pr-3"><span className="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {relations.map((rel) => (
+                    <tr key={`${rel.sourceFormId}-${rel.field.id}`} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50 dark:border-slate-800 dark:hover:bg-white/[0.03]">
+                      <th scope="row" className="py-1 pl-3 pr-2 font-normal">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Link2 className="h-4 w-4 flex-none text-primary-600 dark:text-primary-400" aria-hidden="true" />
+                          <span className="min-w-0 truncate font-semibold text-gray-900 dark:text-white">{rel.field.label}</span>
+                        </div>
+                      </th>
+                      <td className="truncate px-2 text-gray-700 dark:text-slate-300">{rel.sourceFormName}</td>
+                      <td className="px-2 text-gray-700 dark:text-slate-300">
+                        <span className="flex min-w-0 items-center gap-1.5"><ArrowRight className="h-3.5 w-3.5 flex-none text-gray-400 dark:text-slate-500" aria-hidden="true" /><span className="truncate">{rel.targetFormName}</span></span>
+                      </td>
+                      <td className="px-2 tabular-nums text-gray-700 dark:text-slate-300">{kind(rel)}</td>
+                      <td className="hidden truncate px-2 text-gray-500 @4xl/list:table-cell dark:text-slate-400">{shows(rel)}</td>
+                      <td className="py-0.5 pl-2 pr-2 text-right"><span className="inline-flex items-center justify-end gap-0.5">{actions(rel, false)}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="border-t border-gray-200 px-3 py-1.5 text-xs text-gray-500 dark:border-slate-700 dark:text-slate-400">
+                {relations.length.toLocaleString()} relation{relations.length === 1 ? '' : 's'} across {appForms.length.toLocaleString()} form{appForms.length === 1 ? '' : 's'}
+              </div>
             </div>
-          )}
-        </div>
-      </div>
+          </div>
+        )}
+      </PageBody>
 
       {/* Add modal (create-only — edit goes to builder) */}
       <RelationFormModal

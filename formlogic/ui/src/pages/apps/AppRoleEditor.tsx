@@ -5,6 +5,7 @@ import { Plus, Trash2, Shield, X, Pencil, Check } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useResourcePaths } from '../../components/admin/AdminActingContext';
 import { Header } from '../../components/layout/Header';
+import { PageBody } from '../../components/layout/PageBody';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { PermissionMatrix } from '../../components/ui/PermissionMatrix';
@@ -196,25 +197,26 @@ function AppRoleEditorContent() {
         title="Roles & permissions"
         back={{ onClick: () => navGuarded(backTo.path, backTo.state), label: backTo.label ? `Back to ${backTo.label}` : 'Back to app settings' }}
       />
-      <div className="@container/roles w-full flex-1 p-4 @xl/roles:p-6 @3xl/roles:p-8">
-      <div className="max-w-6xl mx-auto">
+      {/* Left-aligned and as wide as the page: the roles at the left, the open role's
+          permissions taking the rest. On a narrow screen one stands under the other. */}
+      <PageBody className="@container/roles">
 
       {roleError && (
-        <div className="flex items-center justify-between text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 px-4 py-3 rounded-lg mb-4 border border-red-100 dark:border-red-500/20">
+        <div role="alert" className="mb-4 flex items-center justify-between rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
           <span>{roleError}</span>
-          <button onClick={() => setRoleError(null)} className="ml-2 text-red-400 hover:text-red-600 dark:hover:text-red-300" aria-label="Dismiss error">
+          <button onClick={() => setRoleError(null)} className="ml-2 inline-flex h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-lg text-red-400 hover:text-red-600 max-sm:h-11 max-sm:w-11 dark:hover:text-red-300" aria-label="Dismiss error">
             <X className="h-4 w-4" />
           </button>
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6 @3xl/roles:grid-cols-4">
+      <div className="grid grid-cols-1 items-start gap-4 @3xl/roles:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] @6xl/roles:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
         {/* Role list */}
-        <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4 overflow-hidden">
-          <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Roles</h3>
-          <div className="space-y-1 mb-4">
+        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+          <h2 className="mb-2 px-1 text-sm font-semibold text-gray-900 dark:text-white">Roles</h2>
+          <div className="mb-3 space-y-0.5">
             {roles.map((role) => (
-              <div key={role.id} className={cn('flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors',
+              <div key={role.id} className={cn('flex min-h-9 cursor-pointer items-center justify-between rounded-lg px-2 transition-colors max-sm:min-h-11',
                 selectedRoleId === role.id ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-400' : 'hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300'
               )}>
                 {editingRoleId === role.id ? (
@@ -233,44 +235,46 @@ function AppRoleEditorContent() {
                     // Selection was conveyed by background colour only, so a screen-reader
                     // user could not tell which role the matrix on the right belonged to.
                     aria-current={role.id === selectedRoleId ? 'true' : undefined}
-                    className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
+                    className="flex min-h-9 min-w-0 flex-1 cursor-pointer items-center gap-2 text-left text-sm max-sm:min-h-11"
                   >
                     <Shield className="h-4 w-4 flex-shrink-0" />
                     <span className="truncate">{role.name}</span>
                     {role.isSystem && <span className="text-xs text-gray-400 flex-shrink-0">(system)</span>}
                   </button>
                 )}
+                {/* The row's actions at a size a pointer, and on a phone a finger, can hit: they
+                    were 20px squares. */}
                 {!role.isSystem && editingRoleId !== role.id && (
-                  <button onClick={() => startRenameRole(role)}
-                    className="p-1 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer" aria-label="Rename role"><Pencil className="h-3 w-3" /></button>
+                  <button onClick={() => startRenameRole(role)} title="Rename role"
+                    className="inline-flex h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-primary-50 hover:text-primary-600 max-sm:h-11 max-sm:w-11 dark:hover:bg-primary-500/10 dark:hover:text-primary-400" aria-label="Rename role"><Pencil className="h-3.5 w-3.5" /></button>
                 )}
                 {!role.isSystem && editingRoleId === role.id && (
-                  <button onMouseDown={(e) => { e.preventDefault(); saveRenameRole(role.id); }}
-                    className="p-1 text-green-600 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors cursor-pointer" aria-label="Save role name"><Check className="h-3 w-3" /></button>
+                  <button onMouseDown={(e) => { e.preventDefault(); saveRenameRole(role.id); }} title="Save role name"
+                    className="inline-flex h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-lg text-green-600 transition-colors hover:bg-gray-100 max-sm:h-11 max-sm:w-11 dark:hover:bg-slate-700" aria-label="Save role name"><Check className="h-3.5 w-3.5" /></button>
                 )}
                 {!role.isSystem && (
-                  <button onClick={() => setDeleteRoleId(role.id)}
-                    className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Delete role"><Trash2 className="h-3 w-3" /></button>
+                  <button onClick={() => setDeleteRoleId(role.id)} title="Delete role"
+                    className="inline-flex h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 max-sm:h-11 max-sm:w-11 dark:hover:bg-red-500/10 dark:hover:text-red-400" aria-label="Delete role"><Trash2 className="h-3.5 w-3.5" /></button>
                 )}
               </div>
             ))}
           </div>
           <div className="flex gap-2">
-            <input type="text" value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} placeholder="New role"
+            <input type="text" value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} placeholder="New role" aria-label="New role name"
               onKeyDown={(e) => { if (e.key === 'Enter' && newRoleName.trim()) handleCreateRole(); }}
-              className="flex-1 min-w-0 px-2.5 py-1.5 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white transition-all duration-200 focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
-            <button onClick={handleCreateRole} disabled={!newRoleName.trim()} className="p-1.5 text-primary-600 hover:text-primary-700 disabled:opacity-50 cursor-pointer rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors" aria-label="Create role">
+              className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 transition-all duration-200 focus:border-transparent focus:ring-2 focus:ring-primary-500 max-sm:min-h-11 max-sm:text-base dark:border-slate-600 dark:bg-slate-800 dark:text-white" />
+            <button onClick={handleCreateRole} disabled={!newRoleName.trim()} title="Create role" className="inline-flex h-9 w-9 flex-none cursor-pointer items-center justify-center rounded-lg text-primary-600 transition-colors hover:bg-primary-50 hover:text-primary-700 disabled:opacity-50 max-sm:h-11 max-sm:w-11 dark:hover:bg-primary-500/10" aria-label="Create role">
               <Plus className="h-4 w-4" />
             </button>
           </div>
         </div>
 
         {/* Permission matrix */}
-        <div className="rounded-2xl border border-gray-200/80 bg-white p-6 @3xl/roles:col-span-3 dark:border-slate-700/60 dark:bg-slate-900/50">
+        <div className="min-w-0 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           {selectedRole ? (
             <>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-medium text-gray-900 dark:text-white tracking-tight">Permissions for "{selectedRole.name}"</h3>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Permissions for "{selectedRole.name}"</h2>
                 <Button size="sm" onClick={handleSavePermissions} disabled={saving || isOwnerRole || !dirty || !permsLoaded}>
                   {saving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save permissions'}
                 </Button>
@@ -280,16 +284,17 @@ function AppRoleEditorContent() {
               ) : permsError ? (
                 /* Nothing is shown or editable until the real set loads — saving over an
                    unknown set would revoke every grant the role actually holds. */
-                <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+                <div className="flex flex-col items-start gap-2 py-2">
                   <p className="text-sm font-medium text-gray-900 dark:text-white">Couldn't read this role's permissions</p>
-                  <p className="max-w-sm text-sm text-gray-500 dark:text-slate-400">{permsError}</p>
+                  <p className="max-w-2xl text-sm text-gray-500 dark:text-slate-400">{permsError}</p>
                   <Button variant="outline" size="sm" className="mt-2" onClick={() => setPermsReloadToken((t) => t + 1)}>
                     Try again
                   </Button>
                 </div>
               ) : !permsLoaded ? (
-                <div className="flex items-center justify-center py-10">
-                  <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-primary-600" role="status" aria-label="Loading permissions" />
+                <div className="flex items-center gap-3 py-4 text-sm text-gray-500 dark:text-slate-400">
+                  <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-primary-600" role="status" aria-label="Loading permissions" />
+                  Loading permissions…
                 </div>
               ) : (
                 <PermissionMatrix
@@ -301,12 +306,11 @@ function AppRoleEditorContent() {
               )}
             </>
           ) : (
-            <p className="text-sm text-gray-500 dark:text-slate-400 text-center py-8">Select a role to edit permissions</p>
+            <p className="text-sm text-gray-500 dark:text-slate-400">Select a role to edit permissions</p>
           )}
         </div>
       </div>
-    </div>
-    </div>
+      </PageBody>
 
       <ConfirmDialog
         isOpen={deleteRoleId !== null}

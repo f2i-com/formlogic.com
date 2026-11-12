@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useLocation, useParams, useNavigate } from 'react-router-dom';
 import { useReturnTo } from '../../hooks/useReturnTo';
-import { UserPlus, Trash2, Pencil, Users, Check, Copy } from 'lucide-react';
+import { UserPlus, Trash2, Pencil, Users, Check, Copy, Mail } from 'lucide-react';
 import { useAppUserStore } from '../../stores/appUserStore';
 import { useAppStore } from '../../stores/appStore';
 import { useViewerOwnsApp } from '../../hooks/useViewerOwnsApp';
@@ -9,12 +9,13 @@ import { useResourcePaths } from '../../components/admin/AdminActingContext';
 import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
 import { Header } from '../../components/layout/Header';
+import { PageBody } from '../../components/layout/PageBody';
+import { SectionNav } from '../../components/ui/SectionNav';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Modal } from '../../components/ui/Modal';
 import { DataTable, type Column } from '../../components/ui/DataTable';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
-import { statusBadgeVariant, formatStatusLabel, formatDate, parseServerDate, copyToClipboard } from '../../lib/utils';
+import { cn, statusBadgeVariant, formatStatusLabel, formatDate, parseServerDate, copyToClipboard } from '../../lib/utils';
 import { Badge } from '../../components/ui/Badge';
 import { OWNER_ONLY_MEMBER_REASON as OWNER_ONLY_REASON, roleGrantsOwnerGuarded, type AppUser, type AppInvitation, type AppRole, type AppUserGroup } from '../../types/app';
 
@@ -23,9 +24,17 @@ import { OWNER_ONLY_MEMBER_REASON as OWNER_ONLY_REASON, roleGrantsOwnerGuarded, 
 // re-enable). Keeps the UI honest without dropping the built-out group code.
 const GROUPS_ENABLED = false;
 
+// The shared DataTable drawn as the dense table the app pages' lists are: a small uppercase
+// heading row and rows a finger of a mouse high. The table is shared with other pages, so its
+// spacing is tightened from here, for this page's two lists.
+const DENSE_TABLE = '[&_thead_th]:py-2 [&_thead_th]:text-[11px] [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-wider [&_thead_button]:font-semibold [&_thead_button]:uppercase [&_thead_button]:tracking-wider [&_tbody_td]:py-1';
+
 export function AppUserManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  // The open section is the address's #hash: Users (none), #invitations, #groups.
+  const section = location.hash === '#invitations' ? 'invitations' : GROUPS_ENABLED && location.hash === '#groups' ? 'groups' : 'users';
   const paths = useResourcePaths();
   // Origin-relative Back: opened from the App Studio this returns to its step.
   const backTo = useReturnTo(paths.appSub(`${appId}`, 'settings?tab=access'));
@@ -230,18 +239,24 @@ export function AppUserManager() {
           </>
         }
       />
-      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
-      <div className="max-w-5xl mx-auto">
+      {/* Left-aligned and as wide as the page. The page's sections are links in a row, each at
+          its own address (#invitations), so a link lands on it; the count stands beside the name.
+          The way back this page was opened with (useReturnTo) travels with the link. */}
+      <PageBody>
+        <SectionNav
+          label="User management sections"
+          current={section}
+          items={[
+            { value: 'users', label: 'Users', icon: Users, mark: appUsers.length, to: { search: location.search, hash: '' }, replace: true, state: location.state },
+            { value: 'invitations', label: 'Invitations', icon: Mail, mark: appInvitations.length, to: { search: location.search, hash: '#invitations' }, replace: true, state: location.state },
+            ...(GROUPS_ENABLED ? [{ value: 'groups', label: 'Groups', mark: appGroups.length, to: { search: location.search, hash: '#groups' }, replace: true, state: location.state }] : []),
+          ]}
+          end={app ? <p className="py-2 text-xs text-gray-500 dark:text-slate-400"><span className="text-sm font-semibold text-gray-900 dark:text-white">{app.name}</span></p> : undefined}
+        />
 
-      <Tabs defaultValue="users">
-        <TabsList variant="underline" aria-label="User management sections" className="mb-6">
-          <TabsTrigger value="users" variant="underline">Users ({appUsers.length})</TabsTrigger>
-          <TabsTrigger value="invitations" variant="underline">Invitations ({appInvitations.length})</TabsTrigger>
-          {GROUPS_ENABLED && <TabsTrigger value="groups" variant="underline">Groups ({appGroups.length})</TabsTrigger>}
-        </TabsList>
-
-        <TabsContent value="users">
+        {section === 'users' && (
           <DataTable
+            className={cn('mt-4', DENSE_TABLE)}
             data={appUsers as unknown as Record<string, unknown>[]}
             columns={userColumns as unknown as Column<Record<string, unknown>>[]}
             searchable
@@ -274,10 +289,11 @@ export function AppUserManager() {
               );
             }}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="invitations">
+        {section === 'invitations' && (
           <DataTable
+            className={cn('mt-4', DENSE_TABLE)}
             data={appInvitations as unknown as Record<string, unknown>[]}
             columns={[
               { key: 'email', label: 'Email', sortable: true },
@@ -305,9 +321,9 @@ export function AppUserManager() {
               ) : null
             )}
           />
-        </TabsContent>
+        )}
 
-        {GROUPS_ENABLED && <TabsContent value="groups">
+        {GROUPS_ENABLED && section === 'groups' && <div className="mt-4">
           <div className="flex gap-2 mb-4">
             <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="New group name"
               className="flex-1 max-w-xs px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm transition-all duration-200 focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
@@ -331,11 +347,8 @@ export function AppUserManager() {
               </div>
             )}
           />
-        </TabsContent>}
-      </Tabs>
-
-    </div>
-    </div>
+        </div>}
+      </PageBody>
 
       <Modal isOpen={showInviteModal} onClose={closeInviteModal} title="Invite user" size="sm">
         {inviteLink ? (

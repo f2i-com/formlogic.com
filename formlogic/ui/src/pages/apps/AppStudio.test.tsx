@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-// App Studio smoke: the six-step shell loads real app data (mocked api),
-// derives step completion from actual state, and step navigation via the
-// rail + footer routes between steps.
+// App Studio smoke: the six-section shell loads real app data (mocked api),
+// derives what each section holds from actual state, and the section links
+// + footer route between sections.
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -134,6 +134,7 @@ async function renderStudio(path: string) {
           <Route path="/apps/:appId/studio" element={<AppStudio />} />
           <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
           <Route path="/apps/:appId/settings" element={<div />} />
+          <Route path="/apps" element={<div />} />
         </Routes>
       </MemoryRouter>
     );
@@ -221,7 +222,7 @@ describe('AppStudio', () => {
     expect(container.textContent).toContain('Repair request');
     expect(container.textContent).toContain('2 fields');
     expect(container.textContent).toContain('12 records');
-    // Live/version state from the top bar.
+    // Live/version state, at the end of the section row.
     expect(container.textContent).toContain('Live v2');
   });
 
@@ -321,21 +322,56 @@ describe('AppStudio', () => {
 
   it('the section nav states what each section holds and navigates between them', async () => {
     await renderStudio('/apps/a1/studio/data');
-    const nav = container.querySelector('[aria-label="App Studio sections"]')!;
+    const nav = container.querySelector('nav[aria-label="App Studio sections"]')!;
     expect(nav).toBeTruthy();
+    // Links, not buttons or tabs: each section is an address, so it opens in a new tab and
+    // Back returns to it.
+    const links = Array.from(nav.querySelectorAll('a'));
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(
+      ['plan', 'data', 'screens', 'automations', 'access', 'publish'].map((step) => `/apps/a1/studio/${step}`),
+    );
     // Counts, not completion ticks: 1 data type, 2 screens (form + home), 1 automation.
-    const dataTab = Array.from(nav.querySelectorAll('button')).find((b) => b.textContent?.startsWith('Data'))!;
-    // The badge number carries an sr-only expansion, so its meaning is not
-    // trapped in a hover title on a touch screen.
-    expect(dataTab.textContent).toContain('Data & forms');
-    expect(dataTab.getAttribute('aria-describedby')).toBe(dataTab.querySelector('.sr-only')!.id);
-    expect(dataTab.querySelector('.sr-only')!.textContent).toBe('1 data type');
-    expect(dataTab.getAttribute('aria-label')).toBe('Data & forms');
-    expect(dataTab.getAttribute('aria-current')).toBe('page');
-    const publishBtn = Array.from(nav.querySelectorAll('button')).find((b) => b.getAttribute('aria-label') === 'Review & publish')!;
-    await act(async () => { publishBtn.click(); });
+    const dataLink = links.find((a) => a.textContent?.startsWith('Data'))!;
+    // The mark is a bare number with an sr-only expansion, so its meaning is not
+    // trapped in a hover title on a touch screen; the number itself is not read twice.
+    expect(dataLink.textContent).toContain('Data & forms');
+    expect(dataLink.querySelector('.sr-only')!.textContent).toBe('1 data type');
+    expect(dataLink.querySelector('span[aria-hidden="true"]')!.textContent).toBe('1');
+    expect(dataLink.getAttribute('aria-current')).toBe('page');
+    // The app has a release with a change since: the publish section says how many wait.
+    const publishLink = links.find((a) => a.getAttribute('href') === '/apps/a1/studio/publish')!;
+    expect(publishLink.querySelector('.sr-only')!.textContent).toBe('1 change not published yet');
+    expect(publishLink.getAttribute('aria-current')).toBeNull();
+    await act(async () => { publishLink.click(); });
     await act(async () => { await Promise.resolve(); });
-    expect(container.textContent).toContain('Review & publish');
+    expect(pathRef.current).toBe('/apps/a1/studio/publish');
+    expect(nav.querySelector('a[aria-current="page"]')?.getAttribute('href')).toBe('/apps/a1/studio/publish');
+    expect(container.querySelector('h2')?.textContent).toBe('Review & publish');
+  });
+
+  // The frame every app page has: the page Header with the app's name and Back, the sections
+  // in one row with the app's state at its end, and no banner above the section.
+  it('stands in the page frame: a header with Back, no section banner', async () => {
+    await renderStudio('/apps/a1/studio/data');
+    expect(container.querySelector('header h1')?.textContent).toBe('Plumbing Operations');
+    expect(container.textContent).not.toMatch(/Section \d of \d/);
+    // The section's name is painted once, in the nav; its heading is for the outline only.
+    expect(container.querySelector('h2')?.className).toContain('sr-only');
+    await act(async () => { container.querySelector<HTMLButtonElement>('header button[aria-label="Back to apps"]')!.click(); });
+    expect(pathRef.current).toBe('/apps');
+  });
+
+  it('opens the app menu from the header, which a narrow screen shows in place of the actions', async () => {
+    await renderStudio('/apps/a1/studio/data');
+    const menu = container.querySelector<HTMLButtonElement>('header button[aria-label="Plumbing Operations — app menu"]')!;
+    expect(menu.getAttribute('aria-haspopup')).toBe('dialog');
+    await act(async () => { menu.click(); });
+    const sheet = document.body.querySelector('[role="dialog"][aria-labelledby="studio-app-menu-title"]')!;
+    expect(sheet).toBeTruthy();
+    // Every action the header holds on a wide screen, by the same name.
+    for (const name of ['Open app', 'Review & publish', 'Search App Studio', 'App settings', 'Records', 'Deploy & share']) {
+      expect(sheet.querySelector(`button[aria-label="${name}"]`), name).toBeTruthy();
+    }
   });
 
   it('reports a failed app load as a retryable error, not a deleted app', async () => {
@@ -371,9 +407,9 @@ describe('AppStudio', () => {
     expect(container.textContent).toContain('Owner');
   });
 
-  // The top-bar control opens real settings, not the directory of tiles: a button
+  // The header control opens real settings, not the directory of tiles: a button
   // labelled "Manage app" that landed on a nine-tile menu never opened a setting.
-  it('opens App settings from the Studio top bar', async () => {
+  it('opens App settings from the Studio header', async () => {
     await renderStudio('/apps/a1/studio/data');
     const settings = container.querySelector<HTMLButtonElement>('button[aria-label="App settings"]')!;
     expect(settings).toBeTruthy();

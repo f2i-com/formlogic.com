@@ -45,14 +45,14 @@ export function ConnectedWorkspacePanel({ app }: { app: { id: string; name: stri
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not create the dashboard.'); }
     finally { setBusy(false); }
   }
-  return <section className="min-w-0 rounded-xl border border-indigo-200 bg-indigo-50/60 p-5 dark:border-indigo-500/25 dark:bg-indigo-500/5">
-    <LayoutDashboard className="mb-3 h-5 w-5 text-indigo-600 dark:text-indigo-300" />
+  return <section className="min-w-0 rounded-xl border border-primary-200 bg-primary-50/60 p-5 dark:border-primary-500/25 dark:bg-primary-500/5">
+    <LayoutDashboard className="mb-3 h-5 w-5 text-primary-600 dark:text-primary-300" />
     <h3 className="font-semibold text-gray-900 dark:text-white">A connected app dashboard</h3>
     <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-slate-300">Package your dashboard as an editable app. Its forms, records and Aokie tools stay connected to this workspace.</p>
     <label className="mt-4 flex min-h-11 items-center gap-3 text-sm"><input type="checkbox" checked={aokie} onChange={event => setAokie(event.target.checked)} />Use the Aokie front desk interface</label>
     <Button className="mt-4 min-h-11 w-full" onClick={() => void create()} isLoading={busy} disabled={busy || ready}>Create connected dashboard</Button>
     <div className="mt-3 flex flex-wrap gap-3 text-sm">
-      <Link className="inline-flex min-h-11 items-center font-medium text-indigo-700 dark:text-indigo-300" to={`/app/${encodeURIComponent(app.slug)}/project`}>Open dashboard</Link>
+      <Link className="inline-flex min-h-11 items-center font-medium text-primary-700 dark:text-primary-300" to={`/app/${encodeURIComponent(app.slug)}/project`}>Open dashboard</Link>
       <button className="inline-flex min-h-11 items-center gap-2 text-gray-600 dark:text-slate-300" onClick={() => void downloadHostedClient(template.client, app.name).catch(() => setMessage('Download failed. Please try again.'))}><Download size={15} />Download starter</button>
     </div>
     <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-slate-400">The project uses your FormLogic session when hosted here. Downloads contain no account credentials.</p>

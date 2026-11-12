@@ -16,8 +16,6 @@ import {
 } from 'lucide-react';
 import { AppTile } from '../apps/AppTile';
 import { Badge } from '../ui/Badge';
-import { ThemeToggle } from '../ui/ThemeToggle';
-import { VaultChip } from '../vault/VaultChip';
 import { cn } from '../../lib/utils';
 import { statusLabel, statusTone } from '../../lib/appStatus';
 import { returnToState } from '../../hooks/useReturnTo';
@@ -34,10 +32,10 @@ import type { App } from '../../types/app';
  * phone user had to tap each square to find out what it did, and the app name was
  * squeezed to "Sales C…" to make room for them.
  *
- * They all live here now, named, behind one wide target: the app's own identity
- * block. This also gives phones their first route to the app's records, members,
- * roles and delivery pages, which were previously surfaces you could only fall
- * into from somewhere else.
+ * They all live here now, named, behind one target: the menu button beside the
+ * app's name in the page Header. This also gives phones their first route to the
+ * app's records, members, roles and delivery pages, which were previously surfaces
+ * you could only fall into from somewhere else.
  *
  * Its own sheet rather than `components/ui/BottomSheet`: that one has the right
  * ergonomics but no focus trap, no Escape and no focus restore, so a keyboard or
@@ -175,14 +173,8 @@ export function StudioAppMenu({
             <Row icon={Shield} label="Roles &amp; permissions" detail="What each role may do" onClick={() => go(`/apps/${app.id}/roles`)} />
             <Row icon={Globe2} label="Deploy &amp; share" detail="QR code, install as an app, custom domains" onClick={() => go(`/apps/${app.id}/deploy`)} />
           </Group>
-
-          <div className="flex items-center justify-between gap-3 border-t border-gray-200/80 px-4 py-3 dark:border-white/[0.06]">
-            <span className="text-xs font-medium text-gray-500 dark:text-slate-400">Appearance &amp; vault</span>
-            <span className="flex items-center gap-2">
-              <VaultChip />
-              <ThemeToggle />
-            </span>
-          </div>
+          {/* The theme switch and the vault are in the page Header at every width now, so
+              they are not repeated here. */}
         </div>
       </div>
     </>

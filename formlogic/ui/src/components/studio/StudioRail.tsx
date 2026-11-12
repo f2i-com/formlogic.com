@@ -1,41 +1,42 @@
-import { useId } from 'react';
+// The App Studio's six sections as the row of links every page with sections has (SectionNav).
+// Each section is an address (/apps/:appId/studio/:step), so it opens in a new tab, a copied link
+// lands on it and Back returns to it.
+import type { ReactNode } from 'react';
 import { Database, GitBranch, LayoutPanelTop, Map, Rocket, ShieldCheck } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { SectionNav, type SectionNavItem } from '../ui/SectionNav';
 import { STUDIO_STEPS, type SectionBadge, type StudioStepId } from './studioSteps';
 
 const STEP_ICONS = { plan: Map, data: Database, screens: LayoutPanelTop, automations: GitBranch, access: ShieldCheck, publish: Rocket };
 
-/** Every section stays labelled and reachable, including on a phone. */
-export function StudioRail({ activeStep, badges, onStepChange }: {
+export function StudioSectionNav({ appId, activeStep, badges, end }: {
+  appId: string;
   activeStep: StudioStepId;
+  /** What each section holds: a count, or the app's release state on Review & publish. */
   badges: Record<StudioStepId, SectionBadge | null>;
-  onStepChange: (step: StudioStepId) => void;
+  /** The app's state line, at the row's right end. */
+  end?: ReactNode;
 }) {
-  const badgePrefix = useId();
-  return (
-    <nav aria-label="App Studio sections" className="@container/rail">
-      <div className="mx-auto grid max-w-[1540px] grid-cols-3 gap-1.5 px-3 py-3 @4xl/rail:grid-cols-6 @4xl/rail:px-5">
-        {STUDIO_STEPS.map(step => {
-          const Icon = STEP_ICONS[step.id];
-          const active = step.id === activeStep;
-          const badge = badges[step.id];
-          return (
-            <button key={step.id} type="button" onClick={() => onStepChange(step.id)} aria-current={active ? 'page' : undefined}
-              aria-label={step.label} aria-describedby={badge ? `${badgePrefix}-${step.id}` : undefined} title={step.description}
-              className={cn('relative flex min-h-14 min-w-0 items-center gap-2 rounded-xl border px-2 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 @4xl/rail:px-3',
-                active ? 'border-primary-200 bg-primary-50 text-primary-800 dark:border-primary-500/30 dark:bg-primary-500/15 dark:text-primary-200'
-                  : 'border-transparent text-gray-600 hover:border-gray-200 hover:bg-gray-50 dark:text-slate-300 dark:hover:border-slate-700 dark:hover:bg-slate-800')}>
-              <Icon className={cn('h-4 w-4 shrink-0', active ? 'text-primary-600 dark:text-primary-300' : 'text-gray-400 dark:text-slate-500')} aria-hidden="true" />
-              <span className="min-w-0 flex-1">
-                <span className="block text-[11px] font-semibold leading-snug @4xl/rail:text-xs">{step.label}</span>
-                {badge && <span aria-hidden="true" className={cn('mt-1 hidden text-[10px] @4xl/rail:block', badge.tone === 'attention' ? 'text-amber-700 dark:text-amber-300' : 'text-gray-500 dark:text-slate-400')} title={badge.title}>{badge.title}</span>}
-              </span>
-              {badge && <span id={`${badgePrefix}-${step.id}`} className="sr-only">{badge.title}</span>}
-              {badge?.tone === 'attention' && <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />}
-            </button>
-          );
-        })}
-      </div>
-    </nav>
-  );
+  const items: SectionNavItem[] = STUDIO_STEPS.map((step) => {
+    const badge = badges[step.id];
+    return {
+      value: step.id,
+      label: step.label,
+      icon: STEP_ICONS[step.id],
+      to: `/apps/${appId}/studio/${step.id}`,
+      // The mark is a bare number: its meaning is spelled out for a screen reader and on hover,
+      // so it is not trapped in a colour or a tooltip on a touch screen. Amber means something
+      // is waiting on the owner (nothing built yet, changes not published).
+      // `relative` keeps the spelled-out text inside the scrolling row: positioned against the
+      // page instead, the text of a section scrolled out of view widened the page itself.
+      mark: badge ? (
+        <span title={badge.title} className={badge.tone === 'attention' ? 'relative text-amber-700 dark:text-amber-300' : 'relative'}>
+          <span aria-hidden="true">{badge.text}</span>
+          <span className="sr-only">{badge.title}</span>
+        </span>
+      ) : undefined,
+    };
+  });
+  // Six names are longer than a phone is wide: the row scrolls sideways, and SectionNav keeps
+  // the open section in its view.
+  return <SectionNav label="App Studio sections" current={activeStep} items={items} end={end} />;
 }

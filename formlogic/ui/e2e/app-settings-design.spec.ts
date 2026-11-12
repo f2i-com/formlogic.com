@@ -27,20 +27,28 @@ for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
       return route.fulfill({ json: { apps: [], forms: [], flows: [], roles: [], items: [], connections: [], keys: [], nodes: [], users: [], invitations: [], groups: [] } });
     });
     await page.goto('/apps/settings-review/settings');
-    const tabs = page.getByRole('tablist', { name: 'App settings sections' });
-    const tab = (name: string) => tabs.getByRole('tab', { name, exact: true });
+    // The page's sections are links in one row, each at its own address (?tab=…): the open one
+    // says so with aria-current, and its settings stand in a region named after it.
+    const sections = page.getByRole('navigation', { name: 'App settings sections' });
+    const tab = (name: string) => sections.getByRole('link', { name, exact: true });
+    const panel = (name: string) => page.getByRole('region', { name: `${name} settings`, exact: true });
     const save = page.getByRole('button', { name: 'Save changes', exact: true });
     await expect(save).toBeDisabled();
+    // Which app this is stands at the end of the row of sections: its name, state and address.
+    await expect(page.getByText('/app/customer-hub', { exact: true }).first()).toBeVisible();
     await page.getByLabel('App name', { exact: true }).fill('Customer hub draft');
     for (const [label, id] of [['General', 'general'], ['Appearance', 'theme'], ['Navigation', 'menu'], ['Access', 'access'], ['Manage', 'manage']]) {
       await tab(label).click();
-      await expect(tab(label)).toHaveAttribute('aria-selected', 'true');
-      await expect(page.getByRole('heading', { name: label, exact: true, level: 2 })).toBeVisible();
+      await expect(tab(label)).toHaveAttribute('aria-current', 'page');
+      await expect(tab(label)).toBeInViewport();
+      // The section's name is painted once, in the row; its heading is for the outline only.
+      await expect(page.getByRole('heading', { name: label, exact: true, level: 2 })).toBeAttached();
+      await expect(panel(label)).toBeVisible();
       expect(new URL(page.url()).searchParams.get('tab')).toBe(id === 'general' ? null : id);
       await expect(page.getByText('You have unsaved changes', { exact: true })).toBeVisible();
       await expect(save).toBeInViewport();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-      const clipped = await page.getByRole('tabpanel').locator('input, select, button').evaluateAll(elements => elements.flatMap(element => {
+      const clipped = await panel(label).locator('input, select, button').evaluateAll(elements => elements.flatMap(element => {
         const bounds = element.getBoundingClientRect();
         return bounds.width && (bounds.left < 0 || bounds.right > innerWidth + 1) ? [element.getAttribute('aria-label') || element.textContent?.trim() || element.tagName] : [];
       }));
@@ -48,13 +56,13 @@ for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.screenshot({ path: testInfo.outputPath(`${id}.png`), fullPage: true });
     }
-    // Tab selection survives keyboard navigation and drafts are held by the page.
-    await tab('Manage').focus();
-    await page.keyboard.press('Home');
-    await expect(tab('General')).toBeFocused();
-    await expect(page.getByLabel('App name', { exact: true })).toHaveValue('Customer hub draft');
-    await page.keyboard.press('ArrowRight');
+    // The sections are ordinary links to the keyboard, and drafts are held by the page.
+    await tab('General').focus();
+    await page.keyboard.press('Tab');
     await expect(tab('Appearance')).toBeFocused();
+    await tab('General').click();
+    await expect(page.getByLabel('App name', { exact: true })).toHaveValue('Customer hub draft');
+    await tab('Appearance').click();
     await page.getByLabel('Accent color hex value').fill('#0284c7');
     await tab('Navigation').click();
     await page.getByRole('combobox', { name: 'Starting screen' }).selectOption('appointments');
@@ -69,12 +77,12 @@ for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
     await tab('Access').click();
     await page.getByRole('switch', { name: 'Let people join from the app link', exact: true }).click();
     await expect(page.getByRole('combobox', { name: 'Default role for new members' })).toBeVisible();
-    // Invalid details should return to General from any tab, with focus on the field.
+    // Invalid details should return to General from any section, with focus on the field.
     await tab('General').click();
     await page.getByLabel('App name', { exact: true }).fill('X');
     await tab('Access').click();
     await save.click();
-    await expect(tab('General')).toHaveAttribute('aria-selected', 'true');
+    await expect(tab('General')).toHaveAttribute('aria-current', 'page');
     await expect(page.getByLabel('App name', { exact: true })).toBeFocused();
     expect(writes).toEqual([]);
     await page.getByLabel('App name', { exact: true }).fill('Customer hub draft');
@@ -96,14 +104,14 @@ for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
     expect(writes[1].body).toMatchObject({ name: 'Customer hub draft', theme: { primaryColor: '#0284c7' }, settings: { landingPage: 'appointments', allowSelfRegistration: true, services: app.settings.services }, navConfig: [{ displayName: 'Help', url: 'https://example.test/help' }] });
     expect(writes[1].body).not.toHaveProperty('status');
     await page.reload();
-    await expect(tab('Manage')).toHaveAttribute('aria-selected', 'true');
+    await expect(tab('Manage')).toHaveAttribute('aria-current', 'page');
     await tab('Navigation').click();
     await expect(page.getByLabel('Label', { exact: true })).toHaveValue('Help');
     await expect(page.getByRole('combobox', { name: 'Starting screen' })).toHaveValue('appointments');
-    // Subpages share a leading Back button and return to the originating settings tab.
+    // Subpages share a leading Back button and return to the originating settings section.
     for (const [section, action, destination] of [['Access', 'Users', 'Users & access'], ['Access', 'Roles', 'Roles & permissions'], ['Manage', 'Forms', 'Manage forms'], ['Manage', 'Relations', 'Relations'], ['Manage', 'Records', 'Records'], ['Manage', 'Deploy', 'Deploy & share']]) {
       await tab(section).click();
-      await page.getByRole('tabpanel').getByRole('button', { name: new RegExp(`^${action}\\b`) }).click();
+      await panel(section).getByRole('button', { name: new RegExp(`^${action}\\b`) }).click();
       const header = page.locator('header');
       const title = header.getByRole('heading', { name: destination, exact: true });
       await expect(title).toBeVisible();
@@ -125,7 +133,7 @@ for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
         await installName.fill(original);
       }
       await back.click();
-      await expect(tab(section)).toHaveAttribute('aria-selected', 'true');
+      await expect(tab(section)).toHaveAttribute('aria-current', 'page');
     }
     // The settings Back action also retains its unsaved-change guard in the new position.
     await tab('General').click();

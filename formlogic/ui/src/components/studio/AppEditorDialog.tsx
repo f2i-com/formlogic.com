@@ -173,14 +173,14 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
       <Button disabled={!ready || busy || aiPending || agentWorking} isLoading={busy} onClick={() => void apply()} leftIcon={<Check className="h-4 w-4" />}>{applyLabel}</Button>
     </header>
     {agent ? <AgentStatusBar status={agent} applyLabel={applyLabel} /> : aiPending && <p role="status" className="border-b border-slate-200 px-4 py-2 text-sm dark:border-slate-700">AI is editing your draft. Wait for it to finish, or choose Stop generating in Studio.</p>}
-    {briefToPaste && <div role="note" className="flex flex-wrap items-center gap-3 border-b border-indigo-200 bg-indigo-50 px-4 py-2 text-sm text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-950/40 dark:text-indigo-100">
-      <span className="min-w-0 flex-1">This version of AI Studio does not start from a request yet: paste yours into its AI chat. <span className="text-indigo-700 dark:text-indigo-300">“{briefToPaste.length > 140 ? `${briefToPaste.slice(0, 140)}…` : briefToPaste}”</span></span>
+    {briefToPaste && <div role="note" className="flex flex-wrap items-center gap-3 border-b border-primary-200 bg-primary-50 px-4 py-2 text-sm text-primary-900 dark:border-primary-500/30 dark:bg-primary-950/40 dark:text-primary-100">
+      <span className="min-w-0 flex-1">This version of AI Studio does not start from a request yet: paste yours into its AI chat. <span className="text-primary-700 dark:text-primary-300">“{briefToPaste.length > 140 ? `${briefToPaste.slice(0, 140)}…` : briefToPaste}”</span></span>
       <Button size="sm" variant="secondary" leftIcon={<Copy className="h-4 w-4" />} onClick={() => {
         // No clipboard (a plain-http address) or a refusal: the whole request is shown to copy by hand.
         if (!navigator.clipboard) { setCopied(false); setShowRequest(true); return; }
         void navigator.clipboard.writeText(briefToPaste).then(() => setCopied(true), () => { setCopied(false); setShowRequest(true); });
       }}>{copied ? 'Copied' : 'Copy request'}</Button>
-      {showRequest && <textarea readOnly aria-label="Your request" value={briefToPaste} rows={3} onFocus={event => event.currentTarget.select()} className="basis-full rounded-lg border border-indigo-200 bg-white p-2 text-sm text-slate-800 dark:border-indigo-500/30 dark:bg-slate-900 dark:text-slate-100" />}
+      {showRequest && <textarea readOnly aria-label="Your request" value={briefToPaste} rows={3} onFocus={event => event.currentTarget.select()} className="basis-full rounded-lg border border-primary-200 bg-white p-2 text-sm text-slate-800 dark:border-primary-500/30 dark:bg-slate-900 dark:text-slate-100" />}
       <Button size="sm" variant="ghost" onClick={() => setBriefToPaste(null)}>Dismiss</Button>
     </div>}
     {error && <p role="alert" className="border-b border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">{error}</p>}
@@ -195,7 +195,7 @@ function AgentStatusBar({ status, applyLabel }: { status: EditorAgentStatus; app
   const tone = status.state === 'failed' || status.state === 'stopped' || status.state === 'paused'
     ? 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100'
     : status.state === 'finished' ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-100'
-    : 'border-indigo-200 bg-indigo-50 text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-950/40 dark:text-indigo-100';
+    : 'border-primary-200 bg-primary-50 text-primary-900 dark:border-primary-500/30 dark:bg-primary-950/40 dark:text-primary-100';
   const message = (() => {
     switch (status.state) {
       case 'running': return <>AI Studio is building your app{status.step ? <>: <span className="font-medium">{status.step}</span></> : '…'} Watch it in the preview; your changes are kept when you choose “{applyLabel}” once it is done.</>;
