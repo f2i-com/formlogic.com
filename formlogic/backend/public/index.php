@@ -3620,7 +3620,8 @@ $app->get('/api/app/{slug}/entry', function ($request, $response) use ($containe
 // many people behind one address asking can never use up what the app's page and backend need; a
 // check that is refused is asked again at the page's next turn.
 $nativeVersionLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'native_version', true, true, null, true, false, true);
-$nativeOrVersionLimiter = static function ($request, $handler) use ($nativeLimiter, $nativeVersionLimiter) {
+// (Not a static closure: Slim binds a route's middleware to the container, and PHP refuses that of a static one.)
+$nativeOrVersionLimiter = function ($request, $handler) use ($nativeLimiter, $nativeVersionLimiter) {
     $probe = ($request->getQueryParams()['only'] ?? '') === 'version';
     return ($probe ? $nativeVersionLimiter : $nativeLimiter)->process($request, $handler);
 };

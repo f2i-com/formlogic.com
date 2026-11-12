@@ -205,6 +205,34 @@ final class RateLimitMiddlewareTest extends TestCase
         $this->assertSame(1, substr_count($index, '->add($appAccessGate)->add($nativeOrVersionLimiter)->add($authOptional);'), 'the app\'s runtime');
         $this->assertStringContainsString("\$nativeVersionLimiter = new RateLimitMiddleware(\$rateLimiter, 120, 60, 'native_version', true, true, null, true, false, true);", $index);
         $this->assertStringContainsString("return (\$probe ? \$nativeVersionLimiter : \$nativeLimiter)->process(\$request, \$handler);", $index);
+        // Slim binds a route's middleware closure to the container, which PHP refuses of a static one
+        // with a warning that is printed into the answer: written `static`, every request to the site
+        // answered 500. No middleware closure in index.php is static.
+        $this->assertSame(0, preg_match('/=\s*static\s+function\s*\(\s*\$request\s*,\s*\$handler\s*\)/', $index), 'a middleware closure must not be static');
+    }
+
+    /** The choice between the two limiters is a closure Slim can bind, as it binds every route middleware. */
+    public function testTheVersionLimitersClosureIsOneSlimCanBind(): void
+    {
+        $index = (string) file_get_contents(dirname(__DIR__, 2) . '/public/index.php');
+        $this->assertSame(1, preg_match('/\$nativeOrVersionLimiter = (function \(\$request, \$handler\) use \(\$nativeLimiter, \$nativeVersionLimiter\) \{.*?\n\};)/s', $index, $found));
+        $limiter = $this->createMock(RateLimiter::class);
+        $limiter->method('take')->willReturn(['allowed' => true, 'remaining' => 119, 'retryAfter' => 0]);
+        $nativeLimiter = new RateLimitMiddleware($limiter, 120, 60, 'native_apps', true, true, null, true, false, true);
+        $nativeVersionLimiter = new RateLimitMiddleware($limiter, 120, 60, 'native_version', true, true, null, true, false, true);
+        // The closure exactly as index.php writes it.
+        $closure = eval('return ' . rtrim($found[1], ';') . ';');
+        $warnings = [];
+        set_error_handler(static function (int $level, string $message) use (&$warnings): bool { $warnings[] = $message; return true; });
+        try { $bound = \Closure::bind($closure, new \stdClass()); }
+        finally { restore_error_handler(); }
+        $this->assertSame([], $warnings);
+        $this->assertInstanceOf(\Closure::class, $bound);
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface { return (new SlimResponse())->withStatus(200); }
+        };
+        $request = (new ServerRequestFactory())->createServerRequest('GET', 'http://formlogic.local/api/app/notes/native', ['REMOTE_ADDR' => '203.0.113.10'])->withQueryParams(['only' => 'version']);
+        $this->assertSame(200, $bound($request, $handler)->getStatusCode());
     }
 
     /** The version check and the app's own calls are counted in buckets apart, each per person or address, per app. */
