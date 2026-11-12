@@ -43,6 +43,7 @@ import { resolveDesktopLlmEndpoint } from './desktopLlm';
 import {
   listAiSources,
   listDesktopServices,
+  generateDesktopImage,
   resolveDesktopServiceBase,
   type AiSourceListing,
 } from './desktopService';
@@ -434,6 +435,7 @@ export function buildDefaultExecutorDeps(): FlowExecutorDeps {
       return typeof v === 'string' && v !== '' ? v : null;
     },
     resolveDesktopServiceBase: askingFirst((id: string) => resolveDesktopServiceBase(id)),
+    generateDesktopImage: askingFirst((body: Record<string, unknown>, signal?: AbortSignal) => generateDesktopImage(body, signal)),
     listDesktopServices: askingFirst(() => listDesktopServices()),
     // flow_call's browser FlowInvoker (plan §8.5) — shared guard core + APP backend.
     invokeChildFlow: (req) => invokeChildFlowWith(appChildFlowBackend(), req),
@@ -512,6 +514,7 @@ export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
     invokeDesktopAiChat: (providerId, body, signal) => invokeDesktopNamedAiChat(providerId, body, signal),
     getAppAiBase: () => null,
     resolveDesktopServiceBase: (id) => resolveDesktopServiceBase(id),
+    generateDesktopImage: (body, signal) => generateDesktopImage(body, signal),
     listDesktopServices: () => listDesktopServices(),
     // flow_call in WORKSPACE scope (Test Run drawer + workspace queued runs): the shared
     // guard core with the owner-scoped backend. NOTE the two builders wire DIFFERENT

@@ -1239,32 +1239,75 @@ describe('image_gen', () => {
   function imgNode(data: Record<string, unknown>): WorkflowGraphNode {
     return { id: 'img', type: 'image_gen', data: { prompt: 'a fox', ...data } };
   }
+  /** OAIY's own engine: what the step asks when it names neither a service nor an endpoint. */
+  function engineDeps(answer: { ok: true; data: Record<string, unknown> } | { ok: false; message: string } | null) {
+    const generateDesktopImage = vi.fn<(body: Record<string, unknown>, signal?: AbortSignal) => Promise<typeof answer>>(async () => answer);
+    const fetchFn = okBrowserFetchUnused();
+    return { deps: fakeDeps({ fetchFn, generateDesktopImage, resolveDesktopServiceBase: vi.fn(async () => null) }), generateDesktopImage, fetchFn };
+  }
 
-  it('returns imageUrl from the krea2 native /generate shape', async () => {
-    const fetchFn = routedFetch({ '/generate': { ok: true, imageUrl: 'http://127.0.0.1:17910/file?path=x.png' } });
-    const out = (await executeNode(ctxFor(imgNode({}), imageDeps(fetchFn)))) as Record<string, unknown>;
-    expect(out.imageUrl).toBe('http://127.0.0.1:17910/file?path=x.png');
+  it('asks the picture model in OAIY when the step names no service and no endpoint', async () => {
+    const { deps, generateDesktopImage, fetchFn } = engineDeps({ ok: true, data: { data: [{ b64_json: 'QUJD' }] } });
+    const out = (await executeNode(ctxFor(imgNode({}), deps))) as Record<string, unknown>;
+    expect(out.dataUrl).toBe('data:image/png;base64,QUJD');
+    // No model, no size and no service is named for OAIY: what is chosen there is used.
+    expect(generateDesktopImage.mock.calls[0][0]).toEqual({ prompt: 'a fox', n: 1, response_format: 'b64_json' });
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('accepts the OpenAI-compatible images shape (data[].url)', async () => {
+  it('sends a size and a model to OAIY only when the step gives them', async () => {
+    const { deps, generateDesktopImage } = engineDeps({ ok: true, data: { data: [{ b64_json: 'QUJD' }] } });
+    await executeNode(ctxFor(imgNode({ width: 768, model: 'the-one-i-picked', steps: 4 }), deps));
+    expect(generateDesktopImage.mock.calls[0][0]).toEqual({ prompt: 'a fox', n: 1, response_format: 'b64_json', size: '768x1024', model: 'the-one-i-picked' });
+  });
+
+  it('says what is missing, and names no model, when no OAIY is connected', async () => {
+    const { deps } = engineDeps(null);
+    const err = (await executeNode(ctxFor(imgNode({}), deps)).catch((e: unknown) => e)) as FlowExecError;
+    expect(err).toBeInstanceOf(FlowExecError);
+    expect(err.code).toBe('node_failed');
+    expect(err.message).toMatch(/picture model/);
+    expect(err.message).toMatch(/OAIY/);
+    expect(err.message).not.toMatch(/coming soon/i);
+    // A runtime that has no way to ask OAIY (no dep) says the same.
+    const bare = (await executeNode(ctxFor(imgNode({}), fakeDeps({ fetchFn: okBrowserFetchUnused() }))).catch((e: unknown) => e)) as FlowExecError;
+    expect(bare.message).toMatch(/picture model/);
+  });
+
+  it('passes on the sentence OAIY refused with', async () => {
+    const { deps } = engineDeps({ ok: false, message: 'no picture model is switched on' });
+    const err = (await executeNode(ctxFor(imgNode({}), deps)).catch((e: unknown) => e)) as FlowExecError;
+    expect(err.code).toBe('node_failed');
+    expect(err.message).toContain('no picture model is switched on');
+    expect(err.message).toMatch(/Engines/);
+  });
+
+  it('returns imageUrl from a named service of the person\'s own (its /generate shape)', async () => {
+    const fetchFn = routedFetch({ '/generate': { ok: true, imageUrl: 'http://127.0.0.1:17910/file?path=x.png' } });
+    const deps = imageDeps(fetchFn);
+    const out = (await executeNode(ctxFor(imgNode({ service: 'my-pictures' }), deps))) as Record<string, unknown>;
+    expect(out.imageUrl).toBe('http://127.0.0.1:17910/file?path=x.png');
+    expect(deps.resolveDesktopServiceBase).toHaveBeenCalledWith('my-pictures');
+  });
+
+  it('accepts the OpenAI-compatible images shape from a named service (data[].url)', async () => {
     const fetchFn = routedFetch({ '/generate': { data: [{ url: 'http://127.0.0.1:17910/img/1.png' }] } });
-    const out = (await executeNode(ctxFor(imgNode({}), imageDeps(fetchFn)))) as Record<string, unknown>;
+    const out = (await executeNode(ctxFor(imgNode({ service: 'my-pictures' }), imageDeps(fetchFn)))) as Record<string, unknown>;
     expect(out.imageUrl).toBe('http://127.0.0.1:17910/img/1.png');
   });
 
-  it('turns a base64 image (data[].b64_json) into a dataUrl', async () => {
+  it('turns a base64 image from a named service (data[].b64_json) into a dataUrl', async () => {
     const fetchFn = routedFetch({ '/generate': { data: [{ b64_json: 'QUJD' }] } });
-    const out = (await executeNode(ctxFor(imgNode({}), imageDeps(fetchFn)))) as Record<string, unknown>;
+    const out = (await executeNode(ctxFor(imgNode({ service: 'my-pictures' }), imageDeps(fetchFn)))) as Record<string, unknown>;
     expect(out.dataUrl).toBe('data:image/png;base64,QUJD');
   });
 
-  it('fails with an actionable (never "coming soon") message when krea2 is not reachable', async () => {
-    await executeNode(ctxFor(imgNode({}), imageDeps(okBrowserFetchUnused(), null))).catch((err: FlowExecError) => {
-      expect(err.code).toBe('node_failed');
-      expect(err.message).toMatch(/Krea-2/);
-      expect(err.message).not.toMatch(/coming soon/i);
-    });
-    await expect(executeNode(ctxFor(imgNode({}), imageDeps(okBrowserFetchUnused(), null)))).rejects.toBeInstanceOf(FlowExecError);
+  it('a named service that is not running says to start that service, by its id', async () => {
+    const err = (await executeNode(ctxFor(imgNode({ service: 'my-pictures' }), imageDeps(okBrowserFetchUnused(), null))).catch((e: unknown) => e)) as FlowExecError;
+    expect(err).toBeInstanceOf(FlowExecError);
+    expect(err.code).toBe('node_failed');
+    expect(err.message).toMatch(/my-pictures/);
+    expect(err.message).not.toMatch(/coming soon/i);
   });
 });
 

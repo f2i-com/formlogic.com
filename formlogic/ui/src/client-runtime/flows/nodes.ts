@@ -308,12 +308,22 @@ export interface FlowExecutorDeps {
   getAppAiBase?(): string | null;
   /**
    * Resolve a running OAIY local SERVICE's loopback base URL by its id
-   * (e.g. 'playwright-browser', 'krea2') via the paired Desktop's GET /api/services.
-   * Backs the desktop-service nodes (browser_action / image_gen). Null when Desktop is
-   * absent, unpaired, or the service isn't running — the node then fails with an
-   * actionable "install & start the service in OAIY" message.
+   * (e.g. 'playwright-browser') via the paired Desktop's GET /api/services.
+   * Backs the desktop-service nodes (browser_action, and image_gen when it names a service
+   * of the person's own). Null when Desktop is absent, unpaired, or the service isn't
+   * running — the node then fails with an actionable "install & start the service in OAIY"
+   * message.
    */
   resolveDesktopServiceBase?(serviceId: string): Promise<string | null>;
+  /**
+   * A picture from the paired OAIY's own engine: the picture model switched on there, or the
+   * one `body.model` names (an OpenAI-compatible images answer). image_gen's source when the
+   * node names neither an endpoint nor a service. Null when no OAIY is paired here.
+   */
+  generateDesktopImage?(
+    body: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; message: string } | null>;
   /**
    * List the paired Desktop's managed services (id/name/category/status/port +
    * loopback url when running) for the `desktop_services` node. Absent desktop
@@ -1376,42 +1386,80 @@ async function runBrowserAction(ctx: FlowNodeContext): Promise<unknown> {
   return out;
 }
 
-/** The krea2 (text-to-image) service id + human name (docs §4). */
-const IMAGE_SERVICE = { id: 'krea2', name: 'Krea-2 Turbo (Text-to-Image)' } as const;
-
 /**
- * image_gen — text-to-image via the local Krea-2 service (POST /generate → {imageUrl}) or a
- * configured OpenAI-compatible images endpoint (POST /v1/images/generations → {data:[{url|b64_json}]}).
- * A superset body drives both (extra fields are ignored by each). Output: { imageUrl | dataUrl }.
+ * image_gen — a picture from a prompt. Where it comes from, in order:
+ *   1. the node's own `endpoint`: the full POST address of a loopback service (its own
+ *      /generate → {imageUrl}, or OpenAI-compatible /v1/images/generations);
+ *   2. the node's own `service`: a picture service the person added to OAIY, by its id
+ *      (POST <base>/generate);
+ *   3. otherwise OAIY's own engine: the picture model switched on in OAIY (Engines), or the
+ *      one `model` names. No model and no service is named here: OAIY says what it has.
+ * Output: { imageUrl | dataUrl }.
  */
 async function runImageGen(ctx: FlowNodeContext): Promise<unknown> {
-  const { node, scope } = ctx;
+  const { node, scope, deps } = ctx;
   const data = nodeData(node);
-  const serviceId = typeof data.service === 'string' && data.service !== '' ? data.service : IMAGE_SERVICE.id;
-
-  // Endpoint: an explicit override is the full POST url; otherwise the resolved service base + /generate.
-  let endpoint: string;
-  if (typeof data.endpoint === 'string' && data.endpoint.trim() !== '') {
-    endpoint = data.endpoint;
-    if (!isAllowedFlowUrl(endpoint) && !isLoopbackUrl(endpoint)) {
-      throw new FlowExecError('capability_denied', `Node '${node.id}' image_gen endpoint is not allow-listed (a local loopback service or the FormLogic API only)`, node.id);
-    }
-    await confirmLocalEndpoint(ctx, endpoint);
-  } else {
-    endpoint = `${await resolveServiceBase(ctx, serviceId, IMAGE_SERVICE.name)}/generate`;
-  }
+  const ownEndpoint = typeof data.endpoint === 'string' && data.endpoint.trim() !== '' ? data.endpoint : null;
+  const ownService = typeof data.service === 'string' && data.service !== '' ? data.service : null;
 
   const prompt = interpolateTemplate(requireString(node, data, ['prompt']), scopeToContext(scope));
-  // Match the Rust runner's as_i64: a non-integer (e.g. 512.5) falls back to the
-  // default rather than being sent through as a fractional dimension.
-  const width = typeof data.width === 'number' && Number.isInteger(data.width) ? data.width : 1024;
-  const height = typeof data.height === 'number' && Number.isInteger(data.height) ? data.height : 1024;
-  const body: Record<string, unknown> = { prompt, width, height, size: `${width}x${height}` };
-  if (typeof data.steps === 'number') body.steps = data.steps;
-  if (typeof data.model === 'string' && data.model !== '') body.model = data.model;
+  // Match the Rust runner's as_i64: a non-integer (e.g. 512.5) is not sent through as a
+  // fractional dimension.
+  const givenWidth = typeof data.width === 'number' && Number.isInteger(data.width) ? data.width : null;
+  const givenHeight = typeof data.height === 'number' && Number.isInteger(data.height) ? data.height : null;
+  const model = typeof data.model === 'string' && data.model !== '' ? data.model : null;
 
-  const r = await serviceFetchJson(ctx, endpoint, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) }, IMAGE_SERVICE.name, true);
-  // krea2 native shape.
+  let r: Record<string, unknown>;
+  if (ownEndpoint !== null || ownService !== null) {
+    let endpoint: string;
+    if (ownEndpoint !== null) {
+      endpoint = ownEndpoint;
+      if (!isAllowedFlowUrl(endpoint) && !isLoopbackUrl(endpoint)) {
+        throw new FlowExecError('capability_denied', `Node '${node.id}' image_gen endpoint is not allow-listed (a local loopback service or the FormLogic API only)`, node.id);
+      }
+      await confirmLocalEndpoint(ctx, endpoint);
+    } else {
+      endpoint = `${await resolveServiceBase(ctx, ownService as string, ownService as string)}/generate`;
+    }
+    // A superset body drives both shapes (each ignores the other's fields).
+    const width = givenWidth ?? 1024;
+    const height = givenHeight ?? 1024;
+    const body: Record<string, unknown> = { prompt, width, height, size: `${width}x${height}` };
+    if (typeof data.steps === 'number') body.steps = data.steps;
+    if (model !== null) body.model = model;
+    r = await serviceFetchJson(ctx, endpoint, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) }, ownService ?? 'picture', ownService !== null);
+  } else {
+    // OAIY's engine: only what its images route takes. A size is sent when the step gives
+    // one; without it the picture model's own size applies.
+    const body: Record<string, unknown> = { prompt, n: 1, response_format: 'b64_json' };
+    if (givenWidth !== null || givenHeight !== null) body.size = `${givenWidth ?? 1024}x${givenHeight ?? 1024}`;
+    if (model !== null) body.model = model;
+    let made: Awaited<ReturnType<NonNullable<FlowExecutorDeps['generateDesktopImage']>>> = null;
+    if (deps.generateDesktopImage) {
+      try {
+        made = await deps.generateDesktopImage(body, ctx.signal);
+      } catch {
+        made = null;
+      }
+    }
+    if (made === null) {
+      throw new FlowExecError(
+        'node_failed',
+        `Node '${node.id}': this step needs a picture model. Connect OAIY and switch a picture model on there (Engines), ` +
+          `or set the step's endpoint to an OpenAI-compatible images address.`,
+        node.id
+      );
+    }
+    if (!made.ok) {
+      throw new FlowExecError(
+        'node_failed',
+        `Node '${node.id}': OAIY could not make the picture: ${made.message} (Is a picture model switched on in OAIY, under Engines?)`,
+        node.id
+      );
+    }
+    r = made.data;
+  }
+  // A service's own shape.
   if (typeof r.imageUrl === 'string' && r.imageUrl !== '') return { imageUrl: r.imageUrl };
   // OpenAI-compatible images shape.
   const first = Array.isArray(r.data) ? (r.data[0] as Record<string, unknown> | undefined) : undefined;

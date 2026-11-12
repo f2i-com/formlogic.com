@@ -32,7 +32,7 @@ export function PictureModelField({ id, models, listing, error, noList, value, o
           {unlisted && <option value={value}>{value} (not on the computer&apos;s list)</option>}
         </select>
       ) : (
-        <input id={id} className={field} value={value} placeholder="flux-3-image-klein" autoComplete="off" spellCheck={false} onChange={(event) => onChange(event.target.value.trim())} />
+        <input id={id} className={field} value={value} placeholder="The model’s name" autoComplete="off" spellCheck={false} onChange={(event) => onChange(event.target.value.trim())} />
       )}
       <p className="text-xs text-gray-500 dark:text-slate-400" role={error ? 'alert' : undefined}>
         {listing ? 'Asking the computer for its picture models…'

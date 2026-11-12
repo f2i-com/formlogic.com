@@ -114,9 +114,11 @@ describe('context-aware palette (docs §4)', () => {
     }
   });
 
-  it('uses the registry human name for the Krea image service picker/badge', () => {
+  it('the image step names no model and no bundled service', () => {
     const spec = getNodeSpec('image_gen')!;
-    expect(spec.requiresDesktopService).toBe('Krea-2 Turbo (Text-to-Image)');
+    expect(spec.requiresDesktopService).toBe('picture');
+    const words = [spec.description, ...spec.properties.flatMap((p) => [p.placeholder ?? '', p.help ?? ''])].join(' ');
+    expect(words).not.toMatch(/krea|flux|qwen|sdxl|turbo|127\.0\.0\.1:\d/i);
     expect(spec.properties.find((property) => property.key === 'service')?.type).toBe('desktopService');
   });
 });

@@ -1,6 +1,7 @@
 // FormLogic Desktop local-service routing for the desktop-service nodes (docs/FORMLOGIC_FLOWS.md §4).
 //
-// browser_action → the 'playwright-browser' service; image_gen → the 'krea2' service. When a node
+// browser_action → the 'playwright-browser' service; image_gen → OAIY's own picture model
+// (generateDesktopImage), or a service of the person's own that the node names. When a node
 // declares no explicit endpoint, the executor asks the PAIRED FormLogic Desktop for its managed
 // services (GET /api/services) and returns the loopback base URL of the RUNNING service with that
 // id — mirroring how llm_chat resolves a local AI service (desktopLlm.ts). Services run on their
@@ -12,7 +13,7 @@ import { getDesktopInfo } from '../desktop/desktopDetection';
 import { getDesktopToken } from '../desktop/desktopPairing';
 import { oaiyRouteAvailable } from '../oaiy/oaiyRuntime';
 import { listOaiyServices } from '../oaiy/oaiyServices';
-import { listOaiySources } from '../oaiy/oaiyAi';
+import { listOaiySources, oaiyEngineImage } from '../oaiy/oaiyAi';
 
 /** Loopback base of a RUNNING service by id, from a service listing. Shared by
  *  the OAIY and FormLogic Desktop paths so both resolve a base identically. */
@@ -45,6 +46,22 @@ export async function resolveDesktopServiceBase(serviceId: string): Promise<stri
   const res = await desktopClient.services.list();
   if (!res.ok) return null;
   return pickServiceBase(res.data, serviceId);
+}
+
+/** How asking OAIY's engine for a picture went (the `image_gen` node's default source). */
+export type DesktopImageOutcome =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; message: string };
+
+/**
+ * A picture from the paired OAIY's own engine: the picture model switched on there, or the one
+ * `body.model` names. Null when no OAIY is paired with this browser, so the node can say what
+ * is missing instead of reporting a failed call. Never throws.
+ */
+export async function generateDesktopImage(body: Record<string, unknown>, signal?: AbortSignal): Promise<DesktopImageOutcome | null> {
+  if (!oaiyRouteAvailable()) return null;
+  const res = await oaiyEngineImage(body, { signal });
+  return res.ok ? { ok: true, data: res.data } : { ok: false, message: res.error.message };
 }
 
 /** One Desktop service, shaped for flow logic (the `desktop_services` node). */

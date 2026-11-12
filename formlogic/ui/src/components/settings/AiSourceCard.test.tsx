@@ -286,10 +286,10 @@ describe('AiSourceCard', () => {
         enabled: true,
       },
       {
-        id: 'service:krea2',
+        id: 'service:my-pictures',
         kind: 'service',
-        refId: 'krea2',
-        name: 'Krea-2 Turbo',
+        refId: 'my-pictures',
+        name: 'My picture service',
         category: 'Image Generation',
         status: 'stopped',
         capabilities: ['image'],
@@ -305,7 +305,7 @@ describe('AiSourceCard', () => {
     expect(providerSelect!.value).toBe('service:llama-cpp');
     expect(providerSelect!.textContent).toContain('Llama.cpp Server');
     // Non-chat services never appear.
-    expect(providerSelect!.textContent).not.toContain('Krea-2 Turbo');
+    expect(providerSelect!.textContent).not.toContain('My picture service');
   });
 
   it('never tunnels for providers when no desktop is linked (presence none)', async () => {

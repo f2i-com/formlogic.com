@@ -102,6 +102,69 @@ export async function oaiyAiChat(
   };
 }
 
+/** A picture can take minutes on a modest computer; past this the step gives up. */
+const IMAGE_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * A picture from OAIY's own engine: the picture model switched on in OAIY (Engines), or the one
+ * `body.model` names. OAIY forwards `POST /api/ai/engine/gateway/v1/images/generations` to its
+ * engines for a paired app (scope `ai.use`) and answers in the OpenAI images shape
+ * (`{ data: [{ b64_json }] }`). The page names no model and no service: what OAIY has is what
+ * is used. Returns the raw answer as `data`, or a typed error with OAIY's own sentence; a
+ * transport failure is marked. Never throws.
+ */
+export async function oaiyEngineImage(
+  body: Record<string, unknown>,
+  opts?: { signal?: AbortSignal },
+): Promise<DesktopClientResult<Record<string, unknown>>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
+  const onAbort = () => controller.abort();
+  if (opts?.signal) {
+    if (opts.signal.aborted) controller.abort();
+    else opts.signal.addEventListener('abort', onAbort, { once: true });
+  }
+  let resp: Response;
+  try {
+    resp = await fetch(`${getOaiyBaseUrl()}/api/ai/engine/gateway/v1/images/generations`, {
+      method: 'POST',
+      credentials: 'omit',
+      cache: 'no-store',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return {
+      ok: false,
+      transportFailure: true,
+      error: { code: 'connector_unavailable', message: 'OAIY Desktop did not respond.' },
+    };
+  } finally {
+    clearTimeout(timer);
+    opts?.signal?.removeEventListener('abort', onAbort);
+  }
+
+  const text = await resp.text().catch(() => '');
+  const json = text ? safeParse(text) : undefined;
+  if (resp.ok) {
+    return { ok: true, data: (json ?? {}) as Record<string, unknown> };
+  }
+  forgetRefusedOaiyToken(resp.status, json);
+  // OAIY's own errors are { error: { code, message } }; the engines' are { error: { message } }
+  // or { error: "…" }.
+  const raw = (json as { error?: unknown } | undefined)?.error;
+  const err = raw && typeof raw === 'object' ? (raw as { code?: string; message?: string }) : undefined;
+  const said = typeof raw === 'string' ? raw : err?.message;
+  return {
+    ok: false,
+    error: {
+      code: mapOaiyErrorCode(err?.code ?? '', resp.status),
+      message: said && said.trim() !== '' ? said : `OAIY answered HTTP ${resp.status}`,
+    },
+  };
+}
+
 function safeParse(text: string): unknown {
   try {
     return JSON.parse(text);
