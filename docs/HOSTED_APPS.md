@@ -51,8 +51,18 @@ reason it cannot be hosted, file by file) shows before anything is created. Medi
 WAV, Ogg, Opus, AAC, FLAC, M4A), video (MP4, WebM), fonts (WOFF, WOFF2, TTF, OTF), 3D models (glTF,
 GLB and its `.bin`, OBJ, STL, FBX), and WGSL shaders, text and Markdown: what SoftN's frame serves
 an app's page (v0.0.28 on), which can also `fetch` them. Scene3D draws a model from them from
-SoftN v0.0.30 (before it, it refused the frame's `data:` URLs as "Unsafe model URL"). HTML, CSS
-and JavaScript files are not kept. A file name may not have two dots together, and `apiVersion` is written `1`, not `1.0`.
+SoftN v0.0.30 (before it, it refused the frame's `data:` URLs as "Unsafe model URL").
+
+Source files are the app's pages (`.html`, or `.ui` in an app made before SoftN's HTML pages), their
+logic (`.js`, or `.logic`; `.py` for Python), stylesheets (`.css`), JSON, seed data (`.xdb`), and a
+backend's `server/….logic` and `server/migrations/….sql`. An app written the way SoftN writes one
+now (`index.html` with `<script src="main.js">` and `<link rel="stylesheet" href="styles.css">`) is
+kept as it is. Until November 2026 only the earlier spellings were, and such an app was refused
+file by file. They are source text and nothing else here: the app's frame is handed them with the
+rest and reads them as SoftN, the app's stored copy is under `storage/`, which is never served, and
+no page of this site is made from them. Other kinds (`.htm`, `.mjs`, `.ts`, `.wasm`, a name in
+capitals) are refused, with what an app is made of said in the refusal. A file name may not have
+two dots together, and `apiVersion` is written `1`, not `1.0`.
 
 The owner manages it at `/apps/<id>/softn`, a page of six sections, each at its own address so a
 link or the back button lands where it was. The page itself is the **Overview**: whether the app

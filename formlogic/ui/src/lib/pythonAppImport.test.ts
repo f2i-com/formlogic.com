@@ -110,13 +110,37 @@ describe('Python client app import', () => {
     expect(reviewAppArchive(zipSync(encode({ ...client, [path]: python }))).review.backend).toBe('native');
   });
 
-  it.each(['logic/counter.PY', 'logic/code.js', 'logic/code.wasm', 'logic/code.bin'])('does not expand the upload surface to %s', async path => {
+  it.each(['logic/counter.PY', 'logic/code.wasm', 'logic/code.bin', 'logic/code.mjs', 'logic/code.JS', 'pages/index.htm'])('does not expand the upload surface to %s', async path => {
     const bytes = new Uint8Array([0, 255, 1]);
     await expect(importNativeProject(file({ ...native(), [path]: bytes }))).rejects.toThrow(`${path} is a kind of file this host cannot keep with an app`);
     expect(() => hostedPackageFromArchive(encode({ ...actions(), [path]: bytes }))).toThrow('native asset hosting');
     const { review } = reviewAppArchive(zipSync(encode({ ...client, [path]: bytes })));
     expect(review.assets).toBe(1);
     expect(review.blockers).toEqual([expect.stringContaining('asset hosting')]);
+  });
+
+  // SoftN writes an app's pages as .html and their logic as .js (and .css beside them) since its
+  // HTML pages: the app host keeps them as it keeps .ui and .logic, as text the app's frame reads.
+  // The older hosted-actions client is not widened: there they still need the app host.
+  it.each(['pages/about.html', 'main.js', 'styles.css'])('keeps a SoftN app’s %s with it', async path => {
+    const imported = await importNativeProject(file({ ...native(), [path]: '/* text */' }));
+    expect(imported.files[path]).toBe('/* text */');
+    expect(imported.assets).toEqual({});
+    expect(() => hostedPackageFromArchive(encode({ ...actions(), [path]: '/* text */' }))).toThrow('native asset hosting');
+  });
+
+  it('takes an app whose first page is index.html, with its script and stylesheet', async () => {
+    const app = { 'manifest.json': JSON.stringify({ name: 'Html app', version: '1.0.0', main: 'index.html', files: { ui: ['index.html'], logic: ['main.js'] } }), 'index.html': '<script src="main.js"></script>\n<link rel="stylesheet" href="styles.css">\n<App><Text>{greeting}</Text></App>', 'main.js': 'let greeting = "hello"', 'styles.css': '.card { padding: 1rem }' };
+    const imported = await importNativeProject(file(app));
+    expect(Object.keys(imported.files).sort()).toEqual(['index.html', 'main.js', 'manifest.json', 'styles.css']);
+    // The editors' inventory lists the page as a page, and leaves the logic list as the app wrote it.
+    const listed = JSON.parse(strFromU8(unzipSync(editorBundle(zipSync(encode(app))))['manifest.json'])).files;
+    expect(listed.ui).toEqual(['index.html']);
+    expect(listed.logic).toEqual(['main.js']);
+  });
+
+  it('still asks for a manifest that names a page', async () => {
+    await expect(importNativeProject(file({ 'manifest.json': JSON.stringify({ name: 'x', main: 'main.js' }), 'main.js': 'let a = 1' }))).rejects.toThrow('names a page of the app as its main');
   });
 
   it.each(['../counter.py', 'logic/../counter.py', '/counter.py', 'C:/counter.py', 'logic\\counter.py'])('keeps unsafe paths blocked: %s', path => {

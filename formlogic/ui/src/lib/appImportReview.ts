@@ -45,10 +45,11 @@ export function reviewAppArchive(bytes: Uint8Array): { review: AppImportReview; 
     try {
       const manifest = object(JSON.parse(strFromU8(archive[path])));
       const root = path.slice(0, -'manifest.json'.length);
-      return typeof manifest.main === 'string' && /\.ui$/.test(manifest.main) && archive[root + manifest.main] ? [{ manifest, root }] : [];
+      // A SoftN app's first page: .html, or .ui in an app made before SoftN's HTML pages.
+      return typeof manifest.main === 'string' && /\.(ui|html)$/.test(manifest.main) && archive[root + manifest.main] ? [{ manifest, root }] : [];
     } catch { return []; }
   });
-  if (candidates.length !== 1) throw new Error(candidates.length ? 'This archive contains several apps. Export one .softn app to import.' : 'No app manifest with an included .ui entry was found.');
+  if (candidates.length !== 1) throw new Error(candidates.length ? 'This archive contains several apps. Export one .softn app to import.' : 'No app manifest that names a page of the app as its main (a .html or .ui file) was found.');
   const { manifest, root } = candidates[0];
   const files = Object.fromEntries(Object.entries(archive).filter(([path]) => path.startsWith(root)).map(([path, data]) => [path.slice(root.length), data]));
   const names = Object.keys(files);

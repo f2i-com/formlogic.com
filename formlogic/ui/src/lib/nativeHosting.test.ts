@@ -48,9 +48,28 @@ describe('importNativeProject', () => {
   });
 
   it('refuses media the host cannot serve, and other kinds of file, by name', async () => {
-    await expect(importNativeProject(softn({ ...client, 'assets/page.html': '<script>1</script>' }))).rejects.toThrow('assets/page.html cannot be hosted with this app');
-    await expect(importNativeProject(softn({ ...client, 'assets/app.js': 'alert(1)' }))).rejects.toThrow('assets/app.js cannot be hosted with this app');
-    await expect(importNativeProject(softn({ ...client, 'styles/site.css': 'body {}' }))).rejects.toThrow('styles/site.css is a kind of file this host cannot keep with an app');
+    await expect(importNativeProject(softn({ ...client, 'assets/page.htm': '<script>1</script>' }))).rejects.toThrow('assets/page.htm cannot be hosted with this app');
+    await expect(importNativeProject(softn({ ...client, 'assets/app.mjs': 'alert(1)' }))).rejects.toThrow('assets/app.mjs cannot be hosted with this app');
+    await expect(importNativeProject(softn({ ...client, 'assets/tool.exe': 'MZ' }))).rejects.toThrow('assets/tool.exe cannot be hosted with this app');
+    await expect(importNativeProject(softn({ ...client, 'styles/site.scss': 'body {}' }))).rejects.toThrow('styles/site.scss is a kind of file this host cannot keep with an app');
+  });
+
+  it('keeps a SoftN app’s pages, scripts and stylesheets as source, wherever the app put them, never as media', async () => {
+    // SoftN writes pages as .html and their logic as .js, with .css beside them: text the app's frame reads as SoftN.
+    const imported = await importNativeProject(softn({ ...client, 'assets/page.html': '<App/>', 'assets/app.js': 'let a = 1', 'styles/site.css': 'body {}' }));
+    expect(imported.files['assets/page.html']).toBe('<App/>');
+    expect(imported.files['assets/app.js']).toBe('let a = 1');
+    expect(imported.files['styles/site.css']).toBe('body {}');
+    expect(imported.assets).toEqual({});
+  });
+
+  it('keeps the same source file kinds as the server', () => {
+    // NativeAppService::SOURCE_PATH and this file's must name the same extensions, or a file one takes the other refuses.
+    const php = readFileSync(resolve(process.cwd(), '../backend/src/Services/NativeAppService.php'), 'utf8');
+    const server = /SOURCE_PATH = '~[^']*\\\.\(\?:([^)]*)\)\$~D'/.exec(php)?.[1];
+    const browser = /SOURCE_PATH = \/[^\n]*\\\.\(\?:([^)]*)\)\$\//.exec(readFileSync(resolve(process.cwd(), 'src/lib/nativeHosting.ts'), 'utf8'))?.[1];
+    expect(server).toBe('html|ui|js|logic|py|css|json|sql|xdb');
+    expect(browser).toBe(server);
   });
 
   it('keeps the same media list as the server', () => {

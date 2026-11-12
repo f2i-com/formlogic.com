@@ -79,6 +79,16 @@ class NativeAppService
      * A migration stays at 1,000,000: the runner reads no more of one (its "Migration size").
      */
     public const MAX_SOURCE_FILES = 200;
+    /**
+     * A source file's name: a SoftN app's pages (`.html`; `.ui` in an app made before SoftN's HTML
+     * pages), page logic (`.js`; `.logic` before; `.py`), stylesheets (`.css`), its manifest and
+     * other JSON, seed data (`.xdb`), and a backend's `.logic` and `.sql`. All are text the app's
+     * frame or its runner is handed; none is ever served as a file of this site. The app page's
+     * import reads the same list first (ui/src/lib/nativeHosting.ts).
+     */
+    public const SOURCE_PATH = '~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|logic|py|css|json|sql|xdb)$~D';
+    /** Said where a file of another kind is refused. */
+    public const SOURCE_KINDS = 'An app\'s source files are .html or .ui pages, .js or .logic page logic (.py for Python), .css, .json, .xdb seed data, and a backend\'s server/….logic and server/migrations/….sql; pictures, sound and other media go under assets/.';
     public const MAX_SOURCE_FILE_BYTES = 1500000;
     public const MAX_MIGRATION_BYTES = 1000000;
     public const MAX_MEDIA_FILES = 1000;
@@ -1644,7 +1654,10 @@ class NativeAppService
         $bytes = 0;
         foreach ($files as $path => $source) {
             // `.xdb` is an app's seed data (its local collections), JSON text the app is shipped with.
-            if (!is_string($path) || !preg_match('~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|py|json|sql|xdb)$~D', $path) || str_contains($path, '..') || !is_string($source)) throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./-]{1,200}$~', $path) ? "Invalid app source file: {$path}" : 'Invalid app source file');
+            // `.html`, `.js` and `.css` are a SoftN app's pages, page logic and stylesheets as SoftN has
+            // written them since its HTML pages (`.ui` and `.logic` before): text the app's frame is
+            // handed with the rest and reads as SoftN, never a document or a script this site serves.
+            if (!is_string($path) || !preg_match(self::SOURCE_PATH, $path) || str_contains($path, '..') || !is_string($source)) throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./-]{1,200}$~', $path) ? "Invalid app source file: {$path}. " . (str_contains($path, '..') ? 'A name may not have two dots together.' : (preg_match(self::SOURCE_PATH, $path) ? 'Its content must be text.' : self::SOURCE_KINDS . ' A name is letters, digits, \'-\', \'_\' and \'.\', in folders.')) : 'Invalid app source file. ' . self::SOURCE_KINDS);
             // Said as the app page's import says it (nativeHosting.ts), which reads the same limit first.
             if (strlen($source) > self::MAX_SOURCE_FILE_BYTES) throw new InvalidArgumentException(preg_match('~^[\w./-]{1,200}$~', $path) ? "{$path} is larger than this host keeps (1.5 MB per source file)." : 'A source file is larger than this host keeps (1.5 MB per source file).');
             // `.py` is CLIENT logic written in Python, which runs in the member's frame on the ZIPP
@@ -1671,8 +1684,15 @@ class NativeAppService
             $decoded[$path] = $value;
         }
         if ($bytes > self::MAX_PROJECT_BYTES) throw new InvalidArgumentException('Native project exceeds ' . intdiv(self::MAX_PROJECT_BYTES, 1024 * 1024) . ' MB');
-        $manifest = json_decode($files['manifest.json'], true, 64, JSON_THROW_ON_ERROR);
-        if (!is_array($manifest) || (isset($manifest['id']) && (!is_string($manifest['id']) || !preg_match('/^[a-zA-Z0-9._-]{1,120}$/D', $manifest['id']))) || !is_string($manifest['main'] ?? null) || !isset($files[$manifest['main']]) || !str_ends_with($manifest['main'], '.ui')) throw new InvalidArgumentException('Invalid native app manifest');
+        // Each refusal says which part of the manifest it is about: whoever wrote it, a person or an AI, has only this to go on.
+        try { $manifest = json_decode($files['manifest.json'], true, 64, JSON_THROW_ON_ERROR); }
+        catch (\JsonException $unreadable) { throw new InvalidArgumentException('manifest.json is not valid JSON (' . $unreadable->getMessage() . ').'); }
+        if (!is_array($manifest) || array_is_list($manifest)) throw new InvalidArgumentException('manifest.json must be a JSON object.');
+        if (isset($manifest['id']) && (!is_string($manifest['id']) || !preg_match('/^[a-zA-Z0-9._-]{1,120}$/D', $manifest['id']))) throw new InvalidArgumentException('manifest.json\'s id can only be letters, digits, \'.\', \'_\' and \'-\' (up to 120 of them).');
+        $main = $manifest['main'] ?? null;
+        if (!is_string($main) || $main === '') throw new InvalidArgumentException('manifest.json names no first page: give it "main", the path of a page in the app (such as "index.html" or "ui/main.ui").');
+        if (!preg_match('/\.(?:ui|html)$/D', $main)) throw new InvalidArgumentException('manifest.json\'s main must be a page (a .html or .ui file): it names ' . (preg_match('~^[\w./-]{1,200}$~', $main) ? $main : 'something else') . '.');
+        if (!isset($files[$main])) throw new InvalidArgumentException('manifest.json\'s main names ' . (preg_match('~^[\w./-]{1,200}$~', $main) ? $main : 'a page') . ', which is not among the app\'s files.');
         // What the app asks of FormLogic itself (App AI, payments): FormLogic's sections, held to
         // their rules here so a malformed one is refused at install with the reason.
         AppFormlogicManifest::validate($manifest);

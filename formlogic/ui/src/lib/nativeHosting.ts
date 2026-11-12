@@ -138,8 +138,14 @@ export interface NativeStructureIndex { name: string; unique: boolean; origin: s
 export interface NativeForeignKey { columns: string[]; table: string; to: string[]; onUpdate: string; onDelete: string }
 /** A table's shape (GET …/native/records?table=T&view=structure). `referencedBy`: the shown tables whose foreign keys point here. */
 export interface NativeStructure { table: string; rows: number; columns: NativeStructureColumn[]; indexes: NativeStructureIndex[]; foreignKeys: NativeForeignKey[]; referencedBy: { table: string; columns: string[]; to: string[] }[]; readOnly?: boolean }
-/** A source file name the app host keeps (the server holds uploads to the same rule). */
-const SOURCE_PATH = /^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:ui|logic|py|json|sql|xdb)$/;
+/**
+ * A source file name the app host keeps (the server holds uploads to the same rule,
+ * NativeAppService::SOURCE_PATH): a SoftN app's pages (.html, or .ui in an app made before SoftN's
+ * HTML pages), page logic (.js, or .logic; .py), stylesheets, JSON, seed data, and a backend's
+ * .logic and .sql. All of it is text the app's frame or runner is handed, never a file this site serves.
+ */
+const SOURCE_KINDS = /\.(html|ui|js|logic|py|css|json|sql|xdb)$/;
+const SOURCE_PATH = /^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|logic|py|css|json|sql|xdb)$/;
 /** The private tree: backend code, which runs only under a server block. */
 const PRIVATE_TREE = /^(server|backend|private)\//i;
 /**
@@ -194,7 +200,7 @@ export async function importNativeProject(file: File): Promise<NativeProject> {
   for (const [path, bytes] of Object.entries(files)) {
     if (path.endsWith('.py') && PRIVATE_TREE.test(path)) throw new Error('Python is a client logic language; the app backend stays JavaScript.');
     // .xdb is the app's seed data: JSON text kept with it.
-    if (/\.(ui|logic|py|json|sql|xdb)$/.test(path)) {
+    if (SOURCE_KINDS.test(path)) {
       if (!SOURCE_PATH.test(path) || path.includes('..')) throw new Error(`${path}: this host keeps file names made of letters, digits, '-', '_' and '.' (never two dots together). Rename it and try again.`);
       if (bytes.length > NATIVE_LIMITS.sourceFileBytes) throw new Error(`${path} is larger than this host keeps (1.5 MB per source file).`);
       if (path.startsWith('server/migrations/') && path.endsWith('.sql') && bytes.length > NATIVE_LIMITS.migrationBytes) throw new Error(`${path} is larger than a migration may be (1 MB). Split it into two migrations.`);

@@ -6,7 +6,9 @@ export function editorBundle(bundle: Uint8Array): Uint8Array {
   const manifest = JSON.parse(strFromU8(files['manifest.json']));
   const client = Object.keys(files).filter(path => !/^(server|backend|private)\//i.test(path));
   const inventory = {
-    ui: client.filter(path => path.endsWith('.ui')),
+    // A page is .html, or .ui in an app made before SoftN's HTML pages. (A page names its own .js with
+    // <script src>, so .js files are not added to the logic list, which would run each in every page.)
+    ui: client.filter(path => /\.(ui|html)$/.test(path)),
     logic: client.filter(path => /\.(logic|py)$/.test(path)),
     assets: client.filter(path => path.startsWith('assets/')),
     xdb: client.filter(path => path.endsWith('.xdb')),
