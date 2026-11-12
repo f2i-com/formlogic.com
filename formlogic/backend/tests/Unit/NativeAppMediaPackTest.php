@@ -206,6 +206,63 @@ final class NativeAppMediaPackTest extends TestCase
         $this->assertSame(['assets/a.png' => self::PNG], self::unpack((string) $member->getBody()));
     }
 
+    /** A page that has the app open asks whether there is a newer version: the number, and nothing else of it. */
+    public function testAPageWithTheAppOpenIsToldItsVersionAndNothingElse(): void
+    {
+        $this->install('application', ['assets/a.png' => self::PNG], 4);
+        $controller = $this->controller();
+        $response = $this->get($controller, '/api/app/notes/native', ['only' => 'version']);
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame(['version' => 4], self::body($response));
+        $this->assertSame('', $response->getHeaderLine('Set-Cookie'));
+        // Any other word there is an ordinary opening, and the media route is never the version.
+        $this->assertArrayHasKey('project', self::body($this->get($controller, '/api/app/notes/native', ['only' => 'everything', 'media' => 'pack'])));
+        $this->assertStringStartsWith('FLMEDIA1', (string) $this->get($controller, '/api/app/notes/native/media', ['only' => 'version'])->getBody());
+    }
+
+    public function testTheVersionIsRefusedToWhoeverTheProjectIsRefusedTo(): void
+    {
+        $this->install('members', [], 7);
+        $users = $this->createMock(AppUserService::class);
+        $users->method('getAppUser')->willReturnCallback(static fn(string $app, string $user) => $user === 'member' ? ['status' => 'active', 'roleId' => 'viewer'] : ['status' => 'pending']);
+        $controller = $this->controller(['softnApp' => true], $users);
+        foreach ([null, 'stranger'] as $who) {
+            $response = $this->get($controller, '/api/app/notes/native', ['only' => 'version'], [], $who);
+            $this->assertContains($response->getStatusCode(), [401, 403], 'no version for ' . ($who ?? 'someone signed out'));
+            $this->assertArrayNotHasKey('version', self::body($response));
+        }
+        $this->assertSame(['version' => 7], self::body($this->get($controller, '/api/app/notes/native', ['only' => 'version'], [], 'member')));
+        $this->assertSame(['version' => 7], self::body($this->get($controller, '/api/app/notes/native', ['only' => 'version'], [], 'owner')));
+    }
+
+    /** Every page with the app open is told it is shown newer versions as they are published; the owner's asks sooner. */
+    public function testEveryoneIsShownNewerVersionsLiveAndTheOwnerSooner(): void
+    {
+        $this->install('application', []);
+        $controller = $this->controller();
+        $owner = self::body($this->get($controller, '/api/app/notes/native', ['media' => 'pack'], [], 'owner'));
+        $this->assertSame('live', $owner['updates'] ?? null);
+        $this->assertSame(20, $owner['updatesEvery'] ?? null);
+        foreach ([null, 'visitor-with-an-account'] as $who) {
+            $body = self::body($this->get($controller, '/api/app/notes/native', ['media' => 'pack'], [], $who));
+            $this->assertArrayHasKey('project', $body);
+            $this->assertSame('live', $body['updates'] ?? null, 'for ' . ($who ?? 'a visitor'));
+            $this->assertSame(60, $body['updatesEvery'] ?? null, 'less often for ' . ($who ?? 'a visitor'));
+        }
+    }
+
+    /** A members-only app's member is shown them too, and whoever it is refused to is told nothing. */
+    public function testAMemberIsShownNewerVersionsLiveAndAStrangerNothing(): void
+    {
+        $this->install('members', []);
+        $users = $this->createMock(AppUserService::class);
+        $users->method('getAppUser')->willReturnCallback(static fn(string $app, string $user) => $user === 'member' ? ['status' => 'active', 'roleId' => 'viewer'] : null);
+        $controller = $this->controller(['softnApp' => true], $users);
+        $member = self::body($this->get($controller, '/api/app/notes/native', ['media' => 'pack'], [], 'member'));
+        $this->assertSame(['live', 60], [$member['updates'] ?? null, $member['updatesEvery'] ?? null]);
+        $this->assertArrayNotHasKey('updates', self::body($this->get($controller, '/api/app/notes/native', ['media' => 'pack'], [], 'stranger')));
+    }
+
     public function testFilesAreSentToThePageAsTheOwnerChose(): void
     {
         $this->install('application', []);

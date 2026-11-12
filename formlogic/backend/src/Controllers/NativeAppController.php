@@ -17,6 +17,13 @@ class NativeAppController
     private const BUSY_RETRY_SECONDS = 2;
     /** NativeAppService's recovery-required refusals (resolveJournal, assertNotRecoveryRequired). */
     private const RECOVERY_REQUIRED = '/^(?:The app (?:database )?needs operator recovery|Restore the app database before installing another update)/';
+    /**
+     * How many seconds apart a page with the app open asks whether there is a newer version, while
+     * it is looked at (`updatesEvery`): its owner's page, and everyone else's. The asking has a
+     * budget of its own (index.php's version limiter), so it never spends the app's calls.
+     */
+    private const UPDATES_EVERY_OWNER = 20;
+    private const UPDATES_EVERY = 60;
 
     // $engines is required, not optional-with-a-default: this controller is autowired, and PHP-DI's
     // reflection autowiring SKIPS optional parameters (ReflectionBasedAutowiring), so an `= null`
@@ -275,14 +282,17 @@ class NativeAppController
         // pack (`?media=pack`). A page from before the pack is sent the media in the project, as always.
         $mediaRoute = $request->getMethod() === 'GET' && str_ends_with($request->getUri()->getPath(), '/native/media');
         $packed = $mediaRoute || ($request->getMethod() === 'GET' && ($request->getQueryParams()['media'] ?? '') === 'pack');
+        // Only the app's version (`?only=version`), for a page that has the app open and asks whether
+        // there is a newer one: admitted exactly as the project is, below, and nothing else is read or sent.
+        $probe = !$mediaRoute && $request->getMethod() === 'GET' && ($request->getQueryParams()['only'] ?? '') === 'version';
         // A visitor's cookie, set (or its age renewed) for an app that asks for visitors (AppVisitors).
         $setCookie = null;
-        $answer = $this->respond($response, function () use ($request, $response, $app, $user, $owner, $plugin, $mediaRoute, $packed, &$setCookie) {
+        $answer = $this->respond($response, function () use ($request, $response, $app, $user, $owner, $plugin, $mediaRoute, $packed, $probe, &$setCookie) {
             // Access is decided against the settled project (FL-S04), never an update's leftover project.json.
             // Read without its media where nothing here sends them: a game's are tens of megabytes. An
             // app's API call needs only its version and access, and decoded every picture and sound
             // for them on each call, a game with no backend to call included.
-            $light = $packed || $request->getMethod() !== 'GET';
+            $light = $packed || $probe || $request->getMethod() !== 'GET';
             $runtime = $light ? $this->native->runtimeProject($app['id']) : null;
             $project = $light ? ($runtime['project'] ?? null) : $this->native->project($app['id']);
             if (!$project) throw new \RuntimeException('Native app not found', 404);
@@ -300,7 +310,10 @@ class NativeAppController
             // same generic 503 every other failure here is; the refusal itself is a Response, which
             // respond() passes through, so it keeps the engine_changed code the parent remounts on.
             if ($stale = $this->refuseStaleEngine($request, $response, $app['id'])) return $stale;
-            $identity = $project['access'] === 'members' ? ['formlogic' => ['appId' => $app['id'], 'userId' => $user, 'roleId' => $owner ? 'owner' : ($membership['roleId'] ?? null)]] : [];
+            // The version alone, to whoever was just admitted to the project itself: no file of it, no
+            // visitor's cookie, nothing a full opening would not also say.
+            if ($probe) return ['version' => (int) ($project['version'] ?? 0)];
+            $identity =$project['access'] === 'members' ? ['formlogic' => ['appId' => $app['id'], 'userId' => $user, 'roleId' => $owner ? 'owner' : ($membership['roleId'] ?? null)]] : [];
             // What the app asks of FormLogic itself (AppFormlogicManifest). Only an app that declares
             // AI or payments is given visitors and the context that goes with them; every other app's
             // requests are exactly what they were (Coffee.Dating reads any `formlogic` it is given as
@@ -367,8 +380,14 @@ class NativeAppController
                     $formlogic = ['formlogic' => ['visitors' => $project['access'] === 'application', 'ai' => $asks['ai'] !== null, 'payments' => $asks['payments'] !== null]];
                     if ($project['access'] === 'application' && $this->visitors !== null) $setCookie = $this->visitors->cookieFor($request);
                 }
+                // Whoever has the app open is shown a newer version as it is published, in the page they
+                // have open (`updates: live`: the page asks for the version now and then, `?only=version`
+                // above, and hands a newer one to the running app). `updatesEvery` is how many seconds
+                // apart it asks while the page is looked at: the owner, who is the one publishing, sooner
+                // than everyone else, who are many. A plugin's pages change with the plugin, not here.
+                $updates = $plugin === null ? ['updates' => 'live', 'updatesEvery' => $owner ? self::UPDATES_EVERY_OWNER : self::UPDATES_EVERY] : [];
                 return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client] + $served + ['access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope] + $files + $formlogic]
-                    + $this->lookForRuntime($app, $plugin) + $this->engineForRuntime($app['id'], $languages);
+                    + $updates + $this->lookForRuntime($app, $plugin) + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();
             if (!is_array($input) || !is_string($input['path'] ?? null) || !preg_match('~^/api/[a-zA-Z0-9/_-]+$~D', $input['path']) || !in_array($input['method'] ?? null, ['GET','POST','PUT','DELETE'], true)) throw new \InvalidArgumentException('Provide an app API path and method');

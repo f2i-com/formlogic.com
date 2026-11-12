@@ -199,7 +199,39 @@ final class RateLimitMiddlewareTest extends TestCase
     {
         $index = (string) file_get_contents(dirname(__DIR__, 2) . '/public/index.php');
         $this->assertStringContainsString("\$nativeLimiter = new RateLimitMiddleware(\$rateLimiter, 120, 60, 'native_apps', true, true, null, true, false, true);", $index);
-        $this->assertSame(4, substr_count($index, '->add($appAccessGate)->add($nativeLimiter)->add($authOptional);'), 'the app\'s page, its runtime, its media and its backend calls');
+        $this->assertSame(3, substr_count($index, '->add($appAccessGate)->add($nativeLimiter)->add($authOptional);'), 'the app\'s page, its media and its backend calls');
+        // Its runtime too, but for the one question every open page asks now and then (`?only=version`),
+        // which has a bucket of its own: asking it never spends what the app's calls need.
+        $this->assertSame(1, substr_count($index, '->add($appAccessGate)->add($nativeOrVersionLimiter)->add($authOptional);'), 'the app\'s runtime');
+        $this->assertStringContainsString("\$nativeVersionLimiter = new RateLimitMiddleware(\$rateLimiter, 120, 60, 'native_version', true, true, null, true, false, true);", $index);
+        $this->assertStringContainsString("return (\$probe ? \$nativeVersionLimiter : \$nativeLimiter)->process(\$request, \$handler);", $index);
+    }
+
+    /** The version check and the app's own calls are counted in buckets apart, each per person or address, per app. */
+    public function testAskingForAnAppsVersionNeverSpendsItsCalls(): void
+    {
+        $keys = [];
+        $limiter = $this->createMock(RateLimiter::class);
+        $limiter->method('take')->willReturnCallback(static function (string $key) use (&$keys): array { $keys[] = $key; return ['allowed' => true, 'remaining' => 119, 'retryAfter' => 0]; });
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface { return (new SlimResponse())->withStatus(200); }
+        };
+        $calls = new RateLimitMiddleware($limiter, 120, 60, 'native_apps', true, true, null, true, false, true);
+        $version = new RateLimitMiddleware($limiter, 120, 60, 'native_version', true, true, null, true, false, true);
+        // index.php's choice between the two, as it is written there.
+        $either = static function ($request, $handler) use ($calls, $version) {
+            $probe = ($request->getQueryParams()['only'] ?? '') === 'version';
+            return ($probe ? $version : $calls)->process($request, $handler);
+        };
+        $at = static fn (string $query) => (new ServerRequestFactory())->createServerRequest('GET', 'http://formlogic.local/api/app/notes/native' . $query, ['REMOTE_ADDR' => '203.0.113.10'])->withQueryParams($query === '' ? [] : ['only' => ltrim(strstr($query, '='), '=')]);
+        $either($at('?only=version'), $handler);
+        $either($at(''), $handler);
+        $either($at('?only=everything'), $handler);
+        $this->assertCount(3, $keys);
+        $this->assertStringStartsWith('native_version:', $keys[0]);
+        $this->assertStringStartsWith('native_apps:', $keys[1]);
+        $this->assertSame($keys[1], $keys[2], 'any other word there is an ordinary opening');
+        $this->assertStringContainsString(':a:', $keys[0], 'each app apart');
     }
 
     /**

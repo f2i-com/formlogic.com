@@ -3615,9 +3615,18 @@ $nativeLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'native_apps', t
 $app->get('/api/app/{slug}/entry', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->entry($request, $response, $getArgs($request));
 })->add($appAccessGate)->add($nativeLimiter)->add($authOptional);
+// A page with the app open asks for its version alone, now and then (`?only=version`), to see whether
+// there is a newer one: everyone who has it open does. Counted apart from the app's own calls, so
+// many people behind one address asking can never use up what the app's page and backend need; a
+// check that is refused is asked again at the page's next turn.
+$nativeVersionLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'native_version', true, true, null, true, false, true);
+$nativeOrVersionLimiter = static function ($request, $handler) use ($nativeLimiter, $nativeVersionLimiter) {
+    $probe = ($request->getQueryParams()['only'] ?? '') === 'version';
+    return ($probe ? $nativeVersionLimiter : $nativeLimiter)->process($request, $handler);
+};
 $app->get('/api/app/{slug}/native', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->runtime($request, $response, $getArgs($request));
-})->add($appAccessGate)->add($nativeLimiter)->add($authOptional);
+})->add($appAccessGate)->add($nativeOrVersionLimiter)->add($authOptional);
 // The app's media as one pack, admitted as the project it belongs to is (NativeAppController::mediaPack).
 $app->get('/api/app/{slug}/native/media', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->runtime($request, $response, $getArgs($request));

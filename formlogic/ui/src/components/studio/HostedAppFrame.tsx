@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AppSplash } from "./AppSplash";
 import { readLook, type NativeLook } from "../../lib/appLook";
 import { api } from "../../lib/api";
@@ -22,7 +22,10 @@ type FrameEngine = { id: string; revision: string };
 /** `files`: the app may open the files the person picks and save files they ask for, as its owner chose and, where asked, the person agreed (NativeAppView). Settled before the frame opens. */
 // `visitor`: the app asks for FormLogic's visitors (NativeFormlogic), so its requests carry the marker;
 // `wallet`: it takes payments, so it may open FormLogic's wallet.
-type NativeFrame = { assets: Record<string, string>; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope; files?: boolean; look?: NativeLook | null; visitor?: boolean; wallet?: boolean };
+// `media`: the digest that names `assets` (the server's, of the app's media pack), where there is one.
+type NativeFrame = { assets: Record<string, string>; media?: string; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope; files?: boolean; look?: NativeLook | null; visitor?: boolean; wallet?: boolean };
+/** A newer version of a running app's files, to hand to its frame (the `update` prop). */
+type FrameUpdate = { version: number; client: Record<string, string>; assets?: Record<string, string>; media?: string; engine?: { id: string; revision: string } };
 const scopeAllowed = (native: NativeFrame) => isNativeStorageScope(native.storageScope) &&
   native.access === native.storageScope.access &&
   (native.storageScope.access === 'application' || native.storageScope.userId === currentSessionOwner());
@@ -56,7 +59,31 @@ export function HostedAppFrame({
   domain = false,
   plugin,
   onWallet,
+  update,
+  onUpdate,
 }: {
+  /**
+   * A newer version of this same app's files, to hand to the frame it is running in (SoftN v0.0.39's
+   * `formlogic:update`) rather than open a new frame, in which the app would start from nothing.
+   * From a later admitted runtime GET of the same session, and only where nothing else about the
+   * mount differs (its storage, access, origins, files: NativeAppView checks each): this component
+   * hands over files and reads nothing more from it. It is not part of what identifies the mount,
+   * so it never makes a new frame, and it stays for as long as it is the newest: a frame opened
+   * again for the same props is handed it too.
+   * - `assets`: the version's whole media. `media` is the digest that names them: they are sent
+   *   only to a frame that holds other media (each one sent is read whole). No `assets`: its media
+   *   are the ones the frame has.
+   * - `engine`: the engine the server runs this version on. A frame on another (this mount's, or
+   *   the one a refused action had it reopened on) is not handed it: `reopen`.
+   */
+  update?: FrameUpdate;
+  /**
+   * What became of `update`: `taken`, the frame has that version now (drawn in place, started
+   * again, or kept back for a problem it shows itself); or `reopen`, this frame cannot take it
+   * (an older runtime, an app not on screen, or the frame's own answer) and the caller opens the
+   * version the way it always did, with new props.
+   */
+  onUpdate?: (version: number, outcome: 'taken' | 'reopen') => void;
   /**
    * FormLogic's wallet for an app that takes payments (`native.wallet`): the app's
    * `formlogicWallet` action opens it over the frame, which can have no PayPal of its own, and is
@@ -145,6 +172,17 @@ export function HostedAppFrame({
   const engineId = current?.id ?? "";
   const engineRevision = current?.revision ?? "";
   const frameKey = `${decided}/${mountVersion}/${clientIdentity(mountClient)}/${mountNative ? clientIdentity(mountNative) : 0}/${storageEpoch}/${engineId}/${engineRevision}`;
+  // The same mount whatever its storage epoch: what a version taken in place belongs to (`taken`).
+  const mountBase = `${decided}/${mountVersion}/${clientIdentity(mountClient)}/${mountNative ? clientIdentity(mountNative) : 0}/${engineId}/${engineRevision}`;
+  // A version the running frame took in place (`update`). The props still name the version the app
+  // was opened with, so a frame opened again for these same props (another tab saved: a new storage
+  // epoch) starts from what was on screen, not from the older files. New props drop it.
+  const taken = useRef<{ base: string; version: number; client: Record<string, string>; assets?: Record<string, string>; media?: string } | null>(null);
+  // Hands a version to the mounted frame's port; false where this frame cannot be handed one.
+  const handUpdate = useRef<((next: FrameUpdate) => boolean) | null>(null);
+  const handed = useRef<{ key: string; version: number } | null>(null);
+  const onUpdateRef = useRef(onUpdate);
+  useLayoutEffect(() => { onUpdateRef.current = onUpdate; }, [onUpdate]);
   // Source/engine props cannot revive rejected authority. Only a fresh server
   // admission object can release this quarantine, even for the same actor.
   const [quarantined, setQuarantined] = useState(-1);
@@ -184,6 +222,51 @@ export function HostedAppFrame({
     let expired = false;
     let inFlight = 0;
     let remounting = false;
+    // The files this frame opens with: the props', or the version an earlier frame of this same mount
+    // took in place.
+    if (taken.current && taken.current.base !== mountBase) taken.current = null;
+    const opening = taken.current;
+    const openClient = opening?.client ?? mountClient;
+    const openAssets = opening?.assets ?? mountNative?.assets;
+    // Versions handed to this frame and not answered yet, by the id each went with: each with the
+    // files and the media that are its own, so two waiting at once never lend each other's.
+    const handing = new Map<string, { version: number; client: Record<string, string>; assets?: Record<string, string>; media?: string; timer: number }>();
+    let handedCount = 0;
+    // The media THIS frame holds, by digest: what it opened with, then whatever it was last sent. A
+    // frame keeps the media of a version it kept back, for the next version that leaves its media out;
+    // a frame opened again holds only what it opened with. So what a version's media are sent against
+    // is this frame's own, never what the page knows of an earlier frame.
+    let heldAssets = openAssets;
+    let heldMedia = opening ? opening.media : mountNative?.media;
+    let takesUpdates = false;
+    let frameShown = false;
+    const settleUpdate = (id: unknown, outcome: unknown) => {
+      const waiting = typeof id === "string" ? handing.get(id) : undefined;
+      if (!waiting) return;
+      handing.delete(id as string);
+      window.clearTimeout(waiting.timer);
+      if (!isCurrentMount()) return;
+      // `kept`: the version has a problem, the frame says so itself and goes on with the one before.
+      // It is not a version to open a later frame with, and not one a new frame could show either.
+      const took = outcome === "updated" || outcome === "restarted" || outcome === "unchanged";
+      if (took) taken.current = { base: mountBase, version: waiting.version, client: waiting.client, ...(waiting.assets ? { assets: waiting.assets } : {}), ...(waiting.media ? { media: waiting.media } : {}) };
+      onUpdateRef.current?.(waiting.version, took || outcome === "kept" ? "taken" : "reopen");
+    };
+    const hand = (next: FrameUpdate) => {
+      if (!isCurrentMount() || !channel || channelClosed || !takesUpdates || !frameShown) return false;
+      const id = `update-${++handedCount}`;
+      // Its media go with it unless this frame holds those very media already.
+      const send = !!next.assets && !(next.media !== undefined && next.media === heldMedia);
+      if (send) { heldAssets = next.assets; heldMedia = next.media; }
+      // A frame that never answers is one that cannot take it.
+      const timer = window.setTimeout(() => settleUpdate(id, "reopen"), 30_000);
+      // (what a later frame of this mount opens with, should this version be taken: its media as
+      // this frame has them now)
+      handing.set(id, { version: next.version, client: next.client, assets: heldAssets, media: heldMedia, timer });
+      try { channel.port1.postMessage({ type: "formlogic:update", id, client: next.client, ...(send ? { assets: next.assets } : {}) }); }
+      catch { settleUpdate(id, "reopen"); }
+      return true;
+    };
     const storage = mountNative ? nativeAppStorage(slug, mountNative.storageScope, { domain: domainRef.current }) : undefined;
     if (storage) recovery.current = {
       key: frameKey, storage, isCurrent: () => sameSession() && recoveryValid,
@@ -278,6 +361,10 @@ export function HostedAppFrame({
         channel.port1.close();
       }
       if (port.current === channel?.port1) port.current = null;
+      // No version is handed to a retired frame, and none it was handed is waited for.
+      if (handUpdate.current === hand) handUpdate.current = null;
+      for (const waiting of handing.values()) window.clearTimeout(waiting.timer);
+      handing.clear();
     }
     invalidateMount.current = invalidate;
     // Another tab saved this app's data, so this frame's snapshot is old. It is reopened when
@@ -375,7 +462,14 @@ export function HostedAppFrame({
           return;
         }
         if (event.data?.type === "shown") {
+          frameShown = true;
           setShownKey(frameKey);
+          return;
+        }
+        // The frame's one answer to a version it was handed: only its `id` (one this mount sent and
+        // still waits on) and its `outcome` are read.
+        if (event.data?.type === "updated") {
+          settleUpdate(event.data.id, event.data.outcome);
           return;
         }
         if (event.data?.type === "error") {
@@ -525,10 +619,10 @@ export function HostedAppFrame({
       frame.current?.contentWindow?.postMessage(
         {
           type: "formlogic:init",
-          client: mountClient,
+          client: openClient,
           appId: mountNative ? nativeFrameAppId(mountNative.storageScope?.appId ?? slug) : `hosted-${slug}-${mountVersion}`,
           native: !!mountNative,
-          assets: mountNative?.assets,
+          assets: openAssets,
           storage: savedStorage,
           ...(acknowledgedStorage ? { storageProtocol: 1 } : {}),
           // Saves are not counted against the four calls above, so the frame (SoftN v0.0.28 on)
@@ -558,6 +652,10 @@ export function HostedAppFrame({
         [channel.port2],
       );
       port.current = channel.port1;
+      // A frame from SoftN v0.0.39 on takes a newer version of the app's files while it runs
+      // (ready's `update: 1`), once it has said `shown`; an older one is opened again, as always.
+      takesUpdates = event.data.update === 1;
+      handUpdate.current = hand;
       clearTimeout(timeout);
       // A frame before SoftN v0.0.34 never says `shown`: it is uncovered at once, as before. One that
       // does is uncovered by it, or after 45 seconds whatever happened, so nothing is hidden for good.
@@ -579,7 +677,22 @@ export function HostedAppFrame({
       if (invalidateMount.current === invalidate) invalidateMount.current = null;
       if (recovery.current?.key === frameKey) recovery.current = null;
     };
-  }, [slug, mountClient, mountVersion, mountNative, storageEpoch, engineId, engineRevision, admission, blocked, decided, frameKey, hosted, workspaceOnly, actorRefused, hostedAdmissionId, plugin]);
+  }, [slug, mountClient, mountVersion, mountNative, storageEpoch, engineId, engineRevision, admission, blocked, decided, frameKey, mountBase, hosted, workspaceOnly, actorRefused, hostedAdmissionId, plugin]);
+  // A newer version to hand to the frame on screen, once: when it arrives, or when the app it is for
+  // has drawn. A frame that cannot be handed one answers `reopen` here, at once.
+  const onScreen = shownKey === frameKey;
+  useEffect(() => {
+    if (!update || !onScreen || blocked || actorRefused) return;
+    if (handed.current?.key === frameKey && handed.current.version === update.version) return;
+    handed.current = { key: frameKey, version: update.version };
+    // A version for another engine than this frame runs on is never handed to it. (This mount's
+    // engine: the props', or the one a refused action had the frame reopened on.)
+    if ((update.engine?.id ?? "") !== engineId || (update.engine?.revision ?? "") !== engineRevision) { onUpdateRef.current?.(update.version, "reopen"); return; }
+    // The frame opened with this very version: an earlier frame of this mount took it, or the
+    // server's new engine decision brought it (the override).
+    if ((taken.current?.base === mountBase && taken.current.version === update.version) || (!taken.current && mountVersion === update.version)) { onUpdateRef.current?.(update.version, "taken"); return; }
+    if (!handUpdate.current?.(update)) onUpdateRef.current?.(update.version, "reopen");
+  }, [update, onScreen, blocked, actorRefused, frameKey, mountBase, engineId, engineRevision, mountVersion]);
   // Every engine: the first load is the frame starting, a second is the document being replaced
   // under it. Counted per frame, so a remount (new source, reset data, a new engine) starts over.
   const countLoad = () => {

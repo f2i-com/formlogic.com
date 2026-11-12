@@ -62,7 +62,8 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   const [early, setEarly] = useState<{ slug: string; name?: string } | null>(null);
   // Bumped by Try again, and by the connection coming back after a failed opening: asks again.
   const [attempt, setAttempt] = useState(0);
-  const [result, setResult] = useState<{ slug: string; userId?: string; generation: number; name?: string; project?: NativeRuntimeProject; engine?: { id: string; revision: string }; error?: string; retry?: boolean; pass?: { verifyPath: string | null; action: string } } | null>(null);
+  // `updates`: the server shows this person a newer version as it is published (the app's owner).
+  const [result, setResult] = useState<{ slug: string; userId?: string; generation: number; name?: string; project?: NativeRuntimeProject; engine?: { id: string; revision: string }; updates?: boolean; updatesEvery?: number; error?: string; retry?: boolean; pass?: { verifyPath: string | null; action: string } } | null>(null);
   useEffect(() => {
     let cancelled = false;
     const stillCurrent = () => !cancelled && isSessionGenerationCurrent(generation);
@@ -93,7 +94,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       // What asking again may cure: no answer, the app updated while it opened, a busy server.
       const status = response.status ?? 0;
       const retry = !!response.error && (!!response.transportFailure || status === 408 || status === 409 || status === 429 || status >= 500);
-      setResult({ slug, userId, generation, name: response.data?.name, project: error ? undefined : project, engine: response.data?.engine, error, retry, pass });
+      setResult({ slug, userId, generation, name: response.data?.name, project: error ? undefined : project, engine: response.data?.engine, updates: response.data?.updates === 'live', updatesEvery: response.data?.updatesEvery, error, retry, pass });
     }).catch(() => {
       if (stillCurrent()) setResult({ slug, userId, generation, error: 'This app could not be opened. Check your connection and try again.', retry: true });
     });
@@ -111,12 +112,109 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   const answer = filesAppId ? (answered?.appId === filesAppId ? answered.answer : filesAnswer(filesAppId)) : null;
   const filesGranted = project?.files === 'allow' || (project?.files === 'ask' && answer === 'allow');
   // Storage identity comes only from the admitted runtime GET, never app files or iframe input.
-  const native = useMemo(() => project ? { assets: project.assets, origins: project.origins, access: project.access, storageScope: project.storageScope, files: filesGranted, look: plugin ? undefined : (look ?? null), visitor: !plugin && !!project.formlogic?.visitors, wallet: !plugin && !!project.formlogic?.payments } : undefined, [project, filesGranted, look, plugin]);
+  const native = useMemo(() => project ? { assets: project.assets, media: project.media?.sha256, origins: project.origins, access: project.access, storageScope: project.storageScope, files: filesGranted, look: plugin ? undefined : (look ?? null), visitor: !plugin && !!project.formlogic?.visitors, wallet: !plugin && !!project.formlogic?.payments } : undefined, [project, filesGranted, look, plugin]);
   const answerFiles = (choice: 'allow' | 'deny') => {
     if (!filesAppId) return;
     rememberFilesAnswer(filesAppId, choice);
     setAnswered({ appId: filesAppId, answer: choice });
   };
+  // A newer version of the app while it is open, for whoever the server shows one live (`updates`:
+  // everyone it admits to the app). The page asks for the version now and then while it is looked
+  // at, as far apart as the server says (`updatesEvery`: the owner's page sooner than everyone
+  // else's). A newer one is fetched as an opening is, held to the same admission, and handed to
+  // the running frame where nothing but its files differs (HostedAppFrame's `update`): the app
+  // goes on from where it stood. Anything else about it differing, or a frame that cannot take it,
+  // opens it the way a newer version always was opened, with new props in a new frame.
+  const live = !!project && !!current?.updates && !plugin;
+  // Never more often than every ten seconds nor less than every ten minutes, whatever is sent.
+  const sent = current?.updatesEvery;
+  const every = typeof sent === 'number' && Number.isFinite(sent) ? Math.min(600, Math.max(10, Math.round(sent))) : 20;
+  const [newer, setNewer] = useState<{ of: NativeRuntimeProject; version: number; client: Record<string, string>; assets: Record<string, string>; media?: string; engine?: { id: string; revision: string } } | null>(null);
+  // The newest version this page holds of the app it opened (`of`): the opening's, then each newer
+  // one as it is fetched, whole, with the media that are its own. (What a frame runs, and which
+  // media it holds, is the frame's to know: HostedAppFrame.)
+  const held = useRef<{ of: NativeRuntimeProject; version: number; project: NativeRuntimeProject; engine?: { id: string; revision: string } } | null>(null);
+  // A version the server named that could not be fetched, and when: it is not asked for every time.
+  const unfetched = useRef<{ version: number; at: number } | null>(null);
+  const reopenWith = useCallback((of: NativeRuntimeProject, next: NativeRuntimeProject, engine?: { id: string; revision: string }) => {
+    setNewer(null);
+    setResult(was => was && was.project === of ? { ...was, project: next, engine } : was);
+  }, []);
+  useEffect(() => {
+    if (!live || !project) return;
+    let cancelled = false;
+    let asking = false;
+    let asked = 0;
+    const stillCurrent = () => !cancelled && isSessionGenerationCurrent(generation);
+    if (held.current?.of !== project) {
+      held.current = { of: project, version: project.version, project };
+      unfetched.current = null;
+    }
+    const check = async () => {
+      const now = held.current;
+      if (asking || !now || document.visibilityState !== 'visible' || Date.now() - asked < 3000) return;
+      asking = true;
+      asked = Date.now();
+      try {
+        const probe = await api.getNativeVersion(slug);
+        const version = probe.data?.version;
+        if (!stillCurrent() || held.current !== now || typeof version !== 'number' || version === now.version) return;
+        // The server names a version by its number alone: one it then would not serve (its engine
+        // not installed here, say), or that did not arrive, is asked for again in two minutes, not
+        // every twenty seconds.
+        if (unfetched.current?.version === version && Date.now() - unfetched.current.at < 120_000) return;
+        const have = now.project.media?.sha256;
+        const response = await api.getNativeRuntime(slug, undefined, { media: have });
+        if (!stillCurrent() || held.current !== now) return;
+        const next = response.data?.project;
+        const scope = next?.storageScope;
+        // Held to what an opening is held to. One that is refused, or does not check, leaves the app
+        // on screen as it is.
+        if (response.error || !next || !isNativeStorageScope(scope) || scope.access !== next.access ||
+          (scope.access !== 'application' && (scope.userId !== userId || scope.userId !== currentSessionOwner()))) {
+          unfetched.current = { version, at: Date.now() };
+          return;
+        }
+        unfetched.current = null;
+        if (next.version === now.version) return;
+        // The media this page already holds were not downloaded again: they are this version's too.
+        const whole: NativeRuntimeProject = !!next.media && next.media.sha256 === have ? { ...next, assets: now.project.assets } : next;
+        const engine = response.data?.engine;
+        held.current = { of: project, version: whole.version, project: whole, engine };
+        // In place only where nothing but the files differs: its storage, access, the origins it may
+        // call and what it may ask of the device and of FormLogic are settled as a frame opens.
+        // (Its engine too: the frame, which knows the one it runs on, holds the version to that.)
+        const was = project.storageScope;
+        const inPlace = next.access === project.access && scope.appId === was.appId && scope.access === was.access &&
+          (scope.access !== 'members' || (was.access === 'members' && scope.userId === was.userId)) &&
+          next.files === project.files &&
+          JSON.stringify(next.origins ?? []) === JSON.stringify(project.origins ?? []) &&
+          JSON.stringify(next.formlogic ?? null) === JSON.stringify(project.formlogic ?? null);
+        if (!inPlace) { reopenWith(project, whole, engine); return; }
+        // It stays the frame's to take for as long as it is the newest: a frame opened again for
+        // these same props (the person's answer about files changed, another tab saved) is handed it too.
+        setNewer({ of: project, version: whole.version, client: whole.client, assets: whole.assets, media: whole.media?.sha256, engine });
+      } catch { /* Asked again later. */ } finally { asking = false; }
+    };
+    const again = () => { void check(); };
+    const timer = window.setInterval(again, every * 1000);
+    document.addEventListener('visibilitychange', again);
+    window.addEventListener('focus', again);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', again);
+      window.removeEventListener('focus', again);
+    };
+  }, [live, every, project, slug, generation, userId, reopenWith]);
+  // A frame that cannot take the newest version (an older runtime, another engine, its own answer)
+  // has it opened the way a newer version always was. One that took it needs nothing more.
+  const onUpdate = useCallback((version: number, outcome: 'taken' | 'reopen') => {
+    const newest = held.current;
+    if (outcome !== 'reopen' || !newest || newest.version !== version || newest.project === newest.of) return;
+    reopenWith(newest.of, newest.project, newest.engine);
+  }, [reopenWith]);
+  const update = useMemo(() => newer && newer.of === project ? { version: newer.version, client: newer.client, assets: newer.assets, media: newer.media, engine: newer.engine } : undefined, [newer, project]);
   useEffect(() => { onLook?.(look); }, [look, onLook]);
   // The tab's icon, the theme colour and description, and (off a domain, once published) the
   // manifest that installs it.
@@ -180,7 +278,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       </section>
     </div>;
   }
-  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} onWallet={native?.wallet ? onWallet : undefined} />
+  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} onWallet={native?.wallet ? onWallet : undefined} update={update} onUpdate={live ? onUpdate : undefined} />
     {walletOpen && <WalletSheet slug={slug} appName={name || 'this app'} visitor={!!native?.visitor} onClose={closeWallet} />}</div> : !error ? <AppSplash look={look} label={name ? `Opening ${name}` : 'Opening the app'} /> : <div className="p-6">
     {/* On a card of its own: the page around it may wear the app's loading colours, dark or light. */}
     <div className="mx-auto max-w-md rounded-2xl bg-white/95 p-5 shadow-sm dark:bg-slate-900/95">

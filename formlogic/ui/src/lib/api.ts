@@ -2296,17 +2296,25 @@ class ApiClient {
    * `onLook` is told, once the project has come and before its media have, the app's look and its
    * name, so the page shows them while the media download.
    */
-  async getNativeRuntime(slug: string, onLook?: (look: import('./appLook').NativeLook | null, early?: { name?: string }) => void): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown }>> {
+  /**
+   * `have.media`: the digest of the media pack the caller already holds (a page asking for a newer
+   * version of the app it has open). A project whose pack is that one comes back without its media
+   * (`assets` empty, `media.sha256` the same): they are not downloaded again.
+   * `updates: 'live'` in the answer: this person is shown a newer version as it is published
+   * (NativeAppView asks `getNativeVersion` while the app is open).
+   */
+  async getNativeRuntime(slug: string, onLook?: (look: import('./appLook').NativeLook | null, early?: { name?: string }) => void, have?: { media?: string }): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown; updates?: 'live'; updatesEvery?: number }>> {
     // The project without its media, and its media as one pack beside it (from FormLogic v0.1.24):
     // a game's pictures and sound came inside this JSON in base64, tens of megabytes on every
     // opening. The pack's address names its content, so the browser keeps it while the app is
     // unchanged. A server before the pack ignores the query and sends `assets` as it always did.
-    const result = await this.request<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown }>(`/app/${encodeURIComponent(slug)}/native?media=pack`);
+    const result = await this.request<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown; updates?: 'live'; updatesEvery?: number }>(`/app/${encodeURIComponent(slug)}/native?media=pack`);
     // The app's look (AppLookService) before its media: the page shows the app's own loading colours
     // while they download.
     if (onLook && result.data) onLook((await import('./appLook')).readLook(result.data.look), { name: typeof result.data.name === 'string' ? result.data.name : undefined });
     const media = result.data?.project?.media;
     if (!result.data || !media || typeof media.url !== 'string' || !media.url.startsWith('/app/')) return result;
+    if (have?.media && media.sha256 === have.media) return result;
     const generation = currentSessionGeneration();
     const routed = this.routeForAdminActing(media.url);
     if (routed.blocked) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
@@ -2323,6 +2331,13 @@ class ApiClient {
       // The browser's own words ("Failed to fetch", "Load failed") say nothing to a player.
       return { error: 'The app’s pictures and sounds could not be downloaded. Check your connection and try again.', transportFailure: true };
     }
+  }
+  /**
+   * The version of a native app as the server has it now, admitted as its opening is and nothing
+   * else of it: what a page that has the app open asks, to learn of a newer one.
+   */
+  async getNativeVersion(slug: string): Promise<ApiResponse<{ version: number }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/native?only=version`);
   }
   /**
    * One request to a native app's backend. `visitor`: the app asks for FormLogic's visitors, so the
