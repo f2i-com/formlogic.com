@@ -290,6 +290,13 @@ export interface App {
   canManage?: boolean;
   description?: string;
   logoUrl?: string;
+  /**
+   * A SoftN app's own icon, as the server names it wherever it lists the app: which kind it is and
+   * the version its address carries (lib/appLook.ts, `appIconUrl`). It is the icon the app's tab and
+   * home screen show: the one its owner chose, else the one its manifest names. Absent for any
+   * other app and where it has none. Read-only: the server ignores it on a save.
+   */
+  lookIcon?: { kind: 'raster' | 'svg'; version: string } | null;
   status: 'draft' | 'published' | 'archived';
   settings: AppSettings;
   theme: AppTheme;

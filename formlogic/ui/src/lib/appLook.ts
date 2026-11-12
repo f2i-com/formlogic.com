@@ -44,6 +44,18 @@ export function lookImageUrl(slug: string, name: string, version: string): strin
   return `${API_BASE_URL.replace(/\/$/, '')}/app/${encodeURIComponent(slug)}/look/${name}?v=${encodeURIComponent(version)}`;
 }
 
+/**
+ * Where a SoftN app's own icon is served for the workspace (its table, the sidebar, an app's own
+ * pages), or null where it has none: the server names it on each app it lists (`lookIcon`). The
+ * 192 px drawing serves every size a list shows, at a phone's density too; an SVG is sent as it is.
+ */
+export function appIconUrl(app: { slug?: string | null; lookIcon?: { kind?: unknown; version?: unknown } | null }): string | null {
+  const icon = app.lookIcon;
+  if (!app.slug || !icon || typeof icon.version !== 'string' || !/^[0-9a-f]{1,64}$/.test(icon.version)) return null;
+  if (icon.kind !== 'raster' && icon.kind !== 'svg') return null;
+  return lookImageUrl(app.slug, icon.kind === 'svg' ? 'icon.svg' : 'icon-192.png', icon.version);
+}
+
 const lookKey = (slug: string) => `formlogic:app-look:v1:${slug}`;
 /** The look this browser last saw for the app, so a return visit opens on its colours at once. */
 export function rememberedLook(slug: string): NativeLook | null {

@@ -25,12 +25,42 @@ class AppController
     private ?AuditService $auditService;
     private ?AppReportService $reportValidator;
 
-    public function __construct(AppService $appService, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?AppReportService $reportValidator = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\AppUserService $appUserService = null, private ?\FormLogic\Services\NativeAppService $native = null)
+    public function __construct(AppService $appService, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?AppReportService $reportValidator = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\AppUserService $appUserService = null, private ?\FormLogic\Services\NativeAppService $native = null, private ?\FormLogic\Services\AppLookService $look = null)
     {
         $this->appService = $appService;
         $this->logger = $logger ?? new NullLogger();
         $this->auditService = $auditService;
         $this->reportValidator = $reportValidator;
+    }
+
+    /**
+     * A SoftN app's own icon as a list or a page names it (`lookIcon`: its kind and the version its
+     * address carries, AppLookService::listIcon), so the workspace draws the icon the app's tab and
+     * home screen show. Null for any other app and where it has none. Asked of the app's whole row,
+     * before a member's view of it is narrowed, so owner and member are given the same address.
+     * Read-only: an update that sends it back has it ignored, as every field the row does not have.
+     *
+     * @return array{kind: string, version: string}|null
+     */
+    private function lookIconOf(array $app): ?array
+    {
+        if ($this->look === null || empty($app['settings']['softnApp'])) {
+            return null;
+        }
+        return $this->look->listIcon($app);
+    }
+
+    /**
+     * $app as its owner is answered after a change, with its icon named as the list names it: the
+     * page keeps the answer in place of what it had, and an app that came back without its icon
+     * would show its initial until the list was read again. A change to the look names the new one.
+     */
+    private function withLookIcon(mixed $app): mixed
+    {
+        if (is_array($app) && ($icon = $this->lookIconOf($app)) !== null) {
+            $app['lookIcon'] = $icon;
+        }
+        return $app;
     }
 
     private function authorizeAppOwnership(Request $request, string $appId): ?array
@@ -94,6 +124,7 @@ class AppController
                 continue;
             }
             $isOwner = ($a['ownerId'] ?? null) === $userId;
+            $lookIcon = $this->lookIconOf($a);
             if (!$isOwner) {
                 $a = AppMemberView::forMember($a, $userId, $this->appService, $this->appUserService);
                 if ($a === null) {
@@ -102,6 +133,9 @@ class AppController
             }
             $a['canManage'] = $isOwner;
             $a['canCreateCompanion'] = $isOwner;
+            if ($lookIcon !== null) {
+                $a['lookIcon'] = $lookIcon;
+            }
             $listed[] = $a;
         }
         return $this->jsonResponse($response, ['apps' => $listed, 'count' => count($listed)]);
@@ -247,11 +281,15 @@ class AppController
         // not the owner's platform UUID.
         $userId = (string) $request->getAttribute('userId');
         $isOwner = ($app['ownerId'] ?? null) === $userId;
+        $lookIcon = $this->lookIconOf($app);
         if (!$isOwner) {
             $app = AppMemberView::forMember($app, $userId, $this->appService, $this->appUserService);
             if ($app === null) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
             }
+        }
+        if ($lookIcon !== null) {
+            $app['lookIcon'] = $lookIcon;
         }
         // The same server-authoritative flags the list carries. A platform admin acting as the
         // owner (AdminActAsMiddleware) reads the owner's ownerId here, which is not their own id,
@@ -335,7 +373,7 @@ class AppController
         try {
             $updatedApp = $this->appService->updateApp($args['id'], $data);
             $this->audit($request, 'app.update', 'app', $args['id']);
-            return $this->jsonResponse($response, ['app' => $updatedApp]);
+            return $this->jsonResponse($response, ['app' => $this->withLookIcon($updatedApp)]);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Exception $e) {
@@ -364,7 +402,7 @@ class AppController
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
             }
             $this->audit($request, 'app.publish', 'app', $args['id']);
-            return $this->jsonResponse($response, ['app' => $result['app'], 'version' => $result['version']]);
+            return $this->jsonResponse($response, ['app' => $this->withLookIcon($result['app']), 'version' => $result['version']]);
         } catch (\Exception $e) {
             $this->logger->error('App publish error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'An unexpected error occurred'], 500);

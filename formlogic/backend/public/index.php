@@ -1039,7 +1039,8 @@ $container->set(AppController::class, function (Container $c) {
         $c->get(\FormLogic\Services\AppReportService::class),
         $c->get(\FormLogic\Services\TrashService::class),
         $c->get(AppUserService::class),
-        $c->get(\FormLogic\Services\NativeAppService::class)
+        $c->get(\FormLogic\Services\NativeAppService::class),
+        $c->get(\FormLogic\Services\AppLookService::class)
     );
 });
 

@@ -9,11 +9,13 @@ import { cn } from '../../lib/utils';
 
 interface HeaderProps {
   title?: string;
+  /** Drawn before the title: what the page is about, such as an app's own icon on that app's pages. */
+  mark?: React.ReactNode;
   actions?: React.ReactNode;
   back?: { onClick: () => void; label?: string };
 }
 
-export function Header({ title, actions, back }: HeaderProps) {
+export function Header({ title, mark, actions, back }: HeaderProps) {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const isOnline = useOnlineStatus();
 
@@ -47,6 +49,7 @@ export function Header({ title, actions, back }: HeaderProps) {
               <span className="hidden @xl/header:inline">Back</span>
             </button>
           )}
+          {mark}
           {title && (
             <h1
               className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white truncate tracking-tight"

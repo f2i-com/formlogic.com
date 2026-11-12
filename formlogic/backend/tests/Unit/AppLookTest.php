@@ -100,6 +100,94 @@ final class AppLookTest extends TestCase
         $this->assertNull($service->resolve(['id' => 'game', 'slug' => 'x', 'settings' => []]));
     }
 
+    public function testAListOfAppsIsToldTheIconTheAppsTabShows(): void
+    {
+        $native = $this->install(['icon' => 'assets/icon.svg'], ['assets/icon.svg' => self::SVG, 'assets/art/logo.png' => self::png()]);
+        $service = new AppLookService($native);
+        $cache = $this->storage . '/' . hash('sha256', 'game') . '/runtime-cache/look-*.bin';
+
+        // The app's own icon, at the address resolve() gives its images.
+        $own = $service->resolve(self::app());
+        $this->assertSame(['kind' => 'svg', 'version' => $own['version']], $service->listIcon(self::app()));
+        // Kept from then on: one small file, and the same answer from it.
+        $kept = glob($cache);
+        $this->assertCount(1, $kept);
+        $this->assertLessThan(300, filesize($kept[0]));
+        $this->assertSame(['kind' => 'svg', 'version' => $own['version']], $service->listIcon(self::app()));
+        $this->assertSame($kept, glob($cache), 'asked again, nothing more is written');
+
+        // The owner's choice is another look, with its own entry: the old one is not answered for it.
+        $chosen = self::app(['icon' => 'assets/art/logo.png']);
+        $this->assertSame(['kind' => 'raster', 'version' => $service->resolve($chosen)['version']], $service->listIcon($chosen));
+        $this->assertNotSame($own['version'], $service->listIcon($chosen)['version']);
+        // So is anything else of the app's row that its images' address is made from.
+        $described = self::app([], 'published', []);
+        $described['description'] = 'Another description';
+        $this->assertSame($service->resolve($described)['version'], $service->listIcon($described)['version']);
+
+        // Not a SoftN app, an app without an id, an app with nothing installed: no icon, and no error.
+        $this->assertNull($service->listIcon(['id' => 'game', 'slug' => 'x', 'settings' => []]));
+        $this->assertNull($service->listIcon(['slug' => 'x', 'settings' => ['softnApp' => true]]));
+        $this->assertNull($service->listIcon(['id' => 'never-installed', 'slug' => 'x', 'settings' => ['softnApp' => true]]));
+    }
+
+    public function testAnAppWithNoIconOfItsOwnIsListedWithoutOne(): void
+    {
+        $service = new AppLookService($this->install([], ['assets/art/logo.png' => self::png()]));
+        $this->assertNull($service->listIcon(self::app()));
+        $this->assertNull($service->listIcon(self::app()), 'and that is kept too');
+        // A manifest naming a file the app does not have is no icon either.
+        $missing = new AppLookService($this->install(['icon' => 'assets/gone.png'], ['assets/art/logo.png' => self::png()]));
+        $this->assertNull($missing->listIcon(self::app()));
+    }
+
+    public function testAListStopsNamingAnIconFoundToBeOneThatCannotBeDrawn(): void
+    {
+        $broken = substr(self::png(), 0, 33) . str_repeat("\0", 64);
+        $service = new AppLookService($this->install(['icon' => 'assets/icon.svg'], ['assets/icon.svg' => self::SVG, 'assets/broken.png' => $broken]));
+        $app = self::app(['icon' => 'assets/broken.png']);
+        // Until a page asks for the picture, nobody knows: the list names it, as the look does.
+        $before = $service->listIcon($app);
+        $this->assertSame('raster', $before['kind']);
+        // The first page that asks finds it cannot be drawn. The list follows the look to the app's own icon.
+        $this->assertNull($service->image($app, 'icon-192.png'));
+        $after = $service->listIcon($app);
+        $this->assertSame(['kind' => 'svg', 'version' => $service->resolve($app)['version']], $after);
+        $this->assertNotNull($service->image($app, 'icon.svg'), 'and the address it names answers');
+
+        // With no icon of its own to fall back to, it is listed without one.
+        $none = new AppLookService($this->install([], ['assets/broken.png' => $broken]));
+        $this->assertSame('raster', $none->listIcon($app)['kind']);
+        $this->assertNull($none->image($app, 'icon-192.png'));
+        $this->assertNull($none->listIcon($app));
+    }
+
+    public function testAnIconThatCouldNotBeDrawnIsOfferedToAListAgainWhenItIsTriedAgain(): void
+    {
+        // Known to be undrawable before any list asks: what the list keeps is that the app names an
+        // icon it cannot use just now, not that it has none.
+        $broken = substr(self::png(), 0, 33) . str_repeat("\0", 64);
+        $service = new AppLookService($this->install(['icon' => 'assets/broken.png'], ['assets/broken.png' => $broken]));
+        $app = self::app();
+        $this->assertNull($service->image($app, 'icon-192.png'));
+        $this->assertNull($service->listIcon($app));
+        $this->assertNull($service->listIcon($app));
+        // A day later the picture is tried again (the server may have changed): the look names it
+        // once more, and so does the list, which had kept no "none" for it.
+        foreach (glob($this->storage . '/' . hash('sha256', 'game') . '/runtime-cache/look-*.bin') as $file) {
+            if (file_get_contents($file) === "\0") touch($file, time() - 2 * 86400);
+        }
+        clearstatcache();
+        $this->assertSame('raster', $service->resolve($app)['iconKind']);
+        $this->assertSame(['kind' => 'raster', 'version' => $service->resolve($app)['version']], $service->listIcon($app));
+
+        // A description that is not valid UTF-8 is still an input of its own, never another app's answer.
+        $odd = self::app();
+        $odd['description'] = "caf\xE9";
+        $this->assertSame($service->listIcon($app)['kind'], $service->listIcon($odd)['kind']);
+        $this->assertCount(2, array_filter(glob($this->storage . '/' . hash('sha256', 'game') . '/runtime-cache/look-*.bin'), static fn (string $file): bool => str_contains((string) file_get_contents($file), '"kind"')));
+    }
+
     public function testIconsAndTheShareImageAreDrawnAtTheSizesAskedFor(): void
     {
         if (!function_exists('imagecreatetruecolor')) $this->markTestSkipped('GD is not installed');

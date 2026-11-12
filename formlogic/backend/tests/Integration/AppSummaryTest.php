@@ -271,6 +271,64 @@ class AppSummaryTest extends TestCase
         $this->assertSame([true, false], [$without[$busy]['softn'], $without[$busy]['installed']]);
     }
 
+    /**
+     * GET /api/apps and GET /api/apps/{id} name a SoftN app's own icon (`lookIcon`), for its owner and
+     * for a member alike, at the address the app's look gives its images; an app without one, a forms
+     * app, and a controller with no look service wired in carry no such field.
+     */
+    public function testTheListAndAnAppsOwnAnswerNameASoftnAppsIcon(): void
+    {
+        $owner = $this->makeUser();
+        $member = $this->makeUser();
+        $withIcon = $this->makeApp($owner, ['softnApp' => true]);
+        $root = $this->storage . '/' . hash('sha256', $withIcon);
+        mkdir($root . '/private', 0700, true);
+        file_put_contents($root . '/project.json', json_encode([
+            'home' => true, 'version' => 1, 'access' => 'members',
+            'files' => ['manifest.json' => json_encode(['id' => 'test.icon', 'main' => 'ui/main.ui', 'icon' => 'assets/icon.svg']), 'ui/main.ui' => '<Text>x</Text>'],
+            'assets' => ['assets/icon.svg' => base64_encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>')],
+        ]));
+        $noIcon = $this->makeApp($owner, ['softnApp' => true]);
+        $this->install($noIcon, null);
+        $forms = $this->makeApp($owner, []);
+        $this->addMember($withIcon, $member, 'active');
+
+        $look = new \FormLogic\Services\AppLookService($this->native);
+        $controller = new AppController(self::$apps, null, null, null, null, null, $this->native, $look);
+        $as = static fn (string $userId, string $path) => (new ServerRequestFactory())->createServerRequest('GET', $path)->withAttribute('userId', $userId);
+        $listed = static function (ResponseInterface $response): array {
+            $apps = [];
+            foreach (json_decode((string) $response->getBody(), true)['apps'] as $app) {
+                $apps[$app['id']] = $app;
+            }
+            return $apps;
+        };
+
+        $expected = ['kind' => 'svg', 'version' => $look->resolve(self::$apps->getApp($withIcon))['version']];
+        $mine = $listed($controller->index($as($owner, '/api/apps'), new SlimResponse()));
+        $this->assertSame($expected, $mine[$withIcon]['lookIcon']);
+        $this->assertArrayNotHasKey('lookIcon', $mine[$noIcon]);
+        $this->assertArrayNotHasKey('lookIcon', $mine[$forms]);
+
+        $one = json_decode((string) $controller->show($as($owner, "/api/apps/$withIcon"), new SlimResponse(), ['id' => $withIcon])->getBody(), true)['app'];
+        $this->assertSame($expected, $one['lookIcon']);
+
+        // A member is listed the app as the runtime gives it them, and the same icon at the same address.
+        $theirs = $listed($controller->index($as($member, '/api/apps'), new SlimResponse()));
+        $this->assertSame([$withIcon], array_keys($theirs));
+        $this->assertSame($expected, $theirs[$withIcon]['lookIcon']);
+        $this->assertArrayNotHasKey('ownerId', $theirs[$withIcon]);
+
+        // The owner's answer to a change carries it too: the page keeps that answer in place of the app it had.
+        $saved = json_decode((string) $controller->update($as($owner, "/api/apps/$withIcon")->withParsedBody(['description' => 'Another description']), new SlimResponse(), ['id' => $withIcon])->getBody(), true)['app'];
+        $this->assertSame('svg', $saved['lookIcon']['kind']);
+        $this->assertSame($look->resolve(self::$apps->getApp($withIcon))['version'], $saved['lookIcon']['version']);
+
+        // No look service wired in: the list is the list it always was.
+        $without = $listed((new AppController(self::$apps, null, null, null, null, null, $this->native))->index($as($owner, '/api/apps'), new SlimResponse()));
+        $this->assertArrayNotHasKey('lookIcon', $without[$withIcon]);
+    }
+
     /** `summary` is a path of its own: registered before `/{id}`, which would take it for an app's id, and beside the apps list in its group. */
     public function testTheRouteIsRegisteredBeforeTheOneThatWouldTakeItForAnAppId(): void
     {

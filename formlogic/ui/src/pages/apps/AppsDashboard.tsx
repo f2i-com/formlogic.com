@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload, FileText, LayoutGrid, List, Settings , RotateCcw } from 'lucide-react';
 import { AppTile } from '../../components/apps/AppTile';
 import { AppsTable } from '../../components/apps/AppsTable';
+import { holds, who } from '../../lib/appFacts';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
@@ -222,6 +223,7 @@ export function AppsDashboard() {
                   <AppCard
                     key={app.id}
                     app={app}
+                    summary={summaries[app.id]}
                     packName={appPackMap[app.id] ?? null}
                     canManage={canManageApp(app)}
                     // A member goes straight to the runtime; the studio would only
@@ -307,10 +309,12 @@ function Segmented<T extends string>({ label, options, value, onChange }: { labe
   );
 }
 
-function AppCard({ app, packName, canManage, onClick, onManage, onDelete }: { app: App; packName: string | null; canManage: boolean; onClick: () => void; onManage: () => void; onDelete: () => void }) {
+function AppCard({ app, summary, packName, canManage, onClick, onManage, onDelete }: { app: App; summary?: AppSummary; packName: string | null; canManage: boolean; onClick: () => void; onManage: () => void; onDelete: () => void }) {
   // Real count from the list endpoint; navConfig is only a stale-cache fallback (it can be empty
   // on pack-provisioned apps — the "0 forms" bug).
   const formCount = app.formCount ?? app.navConfig?.length ?? 0;
+  // What the table view says of a SoftN app, said here too: what it holds and who can use it.
+  const facts = isSoftnApp(app) && canManage ? [holds(app, summary), who(app, summary)].filter(Boolean) : [];
   // Optional portal type (T29): unknown/absent values render nothing (server data is untrusted).
   const kindLabel = isSoftnApp(app) ? 'SoftN app' : app.settings?.appKind ? KIND_LABELS[app.settings.appKind] : undefined;
   return (
@@ -371,6 +375,13 @@ function AppCard({ app, packName, canManage, onClick, onManage, onDelete }: { ap
 
       {app.description && (
         <p className="text-sm text-gray-600 dark:text-slate-400 mb-4 line-clamp-2">{app.description}</p>
+      )}
+
+      {/* Each fact stays whole: the line breaks between facts, never inside "8 tables · 1.5 MB". */}
+      {facts.length > 0 && (
+        <p className="mb-4 flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-gray-600 dark:text-slate-300">
+          {facts.map((fact) => <span key={fact} className="whitespace-nowrap">{fact}</span>)}
+        </p>
       )}
 
       {/* mt-auto pins the meta/actions row to the bottom so cards in a row stay footer-aligned. */}

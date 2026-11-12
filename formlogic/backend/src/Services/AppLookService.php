@@ -120,6 +120,74 @@ final class AppLookService
     }
 
     /**
+     * The app's own icon for wherever the workspace lists apps (its table, the sidebar, an app's own
+     * pages): which kind it is and the look's version its address carries, or null where the app has
+     * none of its own (a list then shows the app's initial). The same icon resolve() names, so a list
+     * shows what the app's tab and home screen show.
+     *
+     * Kept for the project as installed and the owner's choices as they are (NativeAppService::derived),
+     * because a list asks this of every app on every page: read from then on, it costs one small file
+     * an app, where resolve() reads the app's source and its media index each time.
+     *
+     * @return array{kind: 'raster'|'svg', version: string}|null
+     */
+    public function listIcon(array $app): ?array
+    {
+        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+        if (empty($settings['softnApp'])) return null;
+        $appId = (string) ($app['id'] ?? '');
+        if ($appId === '') return null;
+        // Everything of the app's row that resolve() reads: a change to any of it is another entry.
+        // (serialize, not JSON: a description that is not valid UTF-8 still makes a key of its own.)
+        $chosen = self::sanitize($settings['softnLook'] ?? null);
+        $inputs = serialize([$chosen, $settings['pwaThemeColor'] ?? null, $app['description'] ?? null]);
+        try {
+            $kept = $this->native->derived($appId, "list-icon\0" . $inputs, function () use ($app, $appId, $chosen): string {
+                $look = $this->resolve($app);
+                if ($look !== null && $look['iconKind'] !== null) {
+                    return json_encode(['kind' => $look['iconKind'], 'version' => $look['version'], 'path' => $look['icon']]) ?: '{"kind":null,"named":true}';
+                }
+                // No icon. For good where the app names none; where it names one that cannot be
+                // used just now, that is not kept as an answer (see below).
+                return json_encode(['kind' => null, 'named' => isset($chosen['icon']) || $this->manifestNamesAnIcon($appId)]) ?: '{"kind":null,"named":true}';
+            });
+            $icon = is_string($kept) ? json_decode($kept, true) : null;
+            if (!is_array($icon)) return null;
+            if (!in_array($icon['kind'] ?? null, ['raster', 'svg'], true) || !is_string($icon['version'] ?? null)) {
+                // An icon that is named and was not usable may be usable later: a picture that could
+                // not be drawn is tried again after a day (NativeAppService::derived). So the look is
+                // asked as it is, each time, for such an app; an app naming no icon is asked nothing.
+                return empty($icon['named']) ? null : $this->iconNow($app);
+            }
+            // A picture found since then to be one this server cannot draw (drawn()): the look has
+            // stopped naming it and its address answers 404, so the look is asked as it is now (the
+            // app's own icon where the owner's choice was the broken one, or none).
+            if ($icon['kind'] === 'raster' && is_string($icon['path'] ?? null) && $this->native->derivedState($appId, self::source($icon['path'])) === false) {
+                return $this->iconNow($app);
+            }
+            return ['kind' => $icon['kind'], 'version' => $icon['version']];
+        } catch (\Throwable) {
+            // Nothing installed, or an update under way: the list shows the initial for now.
+            return null;
+        }
+    }
+
+    /** The icon the look names now, read afresh (resolve()), as a list is told it; null where it names none. */
+    private function iconNow(array $app): ?array
+    {
+        $look = $this->resolve($app);
+        return $look !== null && $look['iconKind'] !== null ? ['kind' => $look['iconKind'], 'version' => $look['version']] : null;
+    }
+
+    /** Whether the installed app's own manifest names an icon at all, usable or not. */
+    private function manifestNamesAnIcon(string $appId): bool
+    {
+        $runtime = $this->native->runtimeProject($appId);
+        $manifest = $runtime === null ? null : json_decode((string) ($runtime['project']['files']['manifest.json'] ?? ''), true);
+        return is_array($manifest) && is_string($manifest['icon'] ?? null) && $manifest['icon'] !== '';
+    }
+
+    /**
      * One image of an app's look, by the name it is served at: `icon-<32|180|192|512>.png`,
      * `icon-512-maskable.png`, `share.png`, or `icon.svg` where the icon is SVG. Null where the app
      * has no such image. With the look's version as it is, which its address names (`?v=`).

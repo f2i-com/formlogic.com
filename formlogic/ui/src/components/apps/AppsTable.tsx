@@ -10,7 +10,8 @@ import { AppTile } from './AppTile';
 import { listedStatus } from '../../lib/appStatus';
 import { isDemoLocalId } from '../../lib/demoLocal';
 import { isSoftnApp, softnWorkspacePath } from '../../lib/softnApps';
-import { cn, formatBytes, formatRelativeTime, parseServerDate } from '../../lib/utils';
+import { cn, formatRelativeTime, parseServerDate } from '../../lib/utils';
+import { holds, who } from '../../lib/appFacts';
 import type { App, AppSummary } from '../../types/app';
 
 type SortKey = 'name' | 'status' | 'changed';
@@ -30,22 +31,6 @@ export interface AppsTableProps {
   /** What stands under the rows in place of the counts (Home's link to every app); null for nothing. */
   footer?: ReactNode;
 }
-
-const who = (app: App, summary: AppSummary | undefined): string => {
-  const members = typeof summary?.members === 'number' ? ` · ${summary.members.toLocaleString()}` : '';
-  if (summary?.access === 'application') return 'Anyone';
-  if (summary?.access === 'members' || !isSoftnApp(app)) return summary ? `Members${members}` : '';
-  return '';
-};
-
-const holds = (app: App, summary: AppSummary | undefined): string => {
-  if (!isSoftnApp(app)) { const forms = app.formCount ?? app.navConfig?.length ?? 0; return `${forms.toLocaleString()} form${forms === 1 ? '' : 's'}`; }
-  if (!summary) return '';
-  if (!summary.installed) return 'Nothing installed';
-  if (!summary.backend && summary.tables === null) return 'In each browser';
-  if (summary.tables === null) return 'No data yet';
-  return `${summary.tables.toLocaleString()} table${summary.tables === 1 ? '' : 's'}${typeof summary.bytes === 'number' ? ` · ${formatBytes(summary.bytes)}` : ''}`;
-};
 
 /** The first press of a heading: names and statuses from A, changes from the newest. */
 const firstDir = (key: SortKey): 'asc' | 'desc' => (key === 'changed' ? 'desc' : 'asc');
