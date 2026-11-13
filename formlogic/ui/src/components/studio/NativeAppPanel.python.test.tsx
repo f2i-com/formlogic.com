@@ -21,16 +21,21 @@ let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 afterEach(async () => { await act(async () => root?.unmount()); root = undefined; container?.remove(); });
 
-it('offers Python client logic in Screens and opens it in Python mode without listing private files', async () => {
+it('lists Python client logic under Logic and opens it in Python mode, with every private file under Backend', async () => {
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
   await act(async () => root!.render(<MemoryRouter><NativeEditor app={{ id: 'app1', slug: 'app', name: 'App' }} onClose={() => {}} /></MemoryRouter>));
-  const screens = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(node => node.textContent === 'screens')!;
-  await act(async () => screens.click());
-  const select = document.querySelector<HTMLSelectElement>('select[aria-label="Interface file"]')!;
-  expect([...select.options].map(option => option.value)).toEqual(['ui/main.ui', 'logic/main.py']);
-  await act(async () => { select.value = 'logic/main.py'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  const source = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(node => node.textContent === 'source')!;
+  await act(async () => source.click());
+  const listed = (group: string) => [...document.querySelectorAll(`nav[aria-label="Project files"] section[aria-label="${group}"] button`)].map(node => node.getAttribute('title'));
+  expect(listed('Pages')).toEqual(['ui/main.ui']);
+  expect(listed('Logic')).toEqual(['logic/main.py']);
+  // What the page is never handed is listed apart from what it is: the backend's own tree, and the other private ones.
+  expect(listed('Backend')).toEqual(['backend/helper.logic', 'Private/helper.py', 'server/main.logic']);
+  expect(listed('Project')).toEqual(['manifest.json']);
+  const python = document.querySelector<HTMLButtonElement>('nav[aria-label="Project files"] button[title="logic/main.py"]')!;
+  await act(async () => python.click());
   expect(document.querySelector<HTMLTextAreaElement>('textarea[aria-label="python"]')?.value).toBe('count = 7\n');
   expect(document.body.textContent).toContain('Python');
 });

@@ -1093,9 +1093,15 @@ named-action editor described above.
    operator configuration (docs/CUSTOM_APP_PLATFORM.md, "What the server's operator sets
    up"); local development does not provision a public domain.
 4. **Install app project** validates the backend in ZIPP and applies its declared migrations.
-   **Screens** edits the public interface/client source. **Backend** edits private `.logic`;
-   both source editors include syntax colours, line numbers, search, wrapping, and light/dark themes.
-   Existing migrations remain read-only. Import a new numbered migration to evolve the schema.
+   **Source** lists every file of the project in one list beside the editor, grouped by what it is
+   for: pages, logic, styles, the backend, database changes, and the project's own files (the
+   manifest among them, which is edited there too). The editor has syntax colours, line numbers,
+   search, wrapping, and light/dark themes; JSON and CSS are checked as they are typed.
+   **New file** adds a file by name, **Remove** takes the open one out, and both stay in the draft
+   until it is published. A migration that has run remains read-only. **New database change** adds
+   the next numbered migration and lists it in the manifest, to evolve the schema.
+   A SoftN app's own page opens the same editor by itself, as **Source code** (its Edit section),
+   since everything else this dialog holds is on that page.
 5. **Records** lets the owner browse, create, edit, and delete records in the app's SQLite tables.
    It is the data manager described above (the one the app's own page has, over the same API):
    the dialog widens for it, and holds the open table, its view and what is being looked at in

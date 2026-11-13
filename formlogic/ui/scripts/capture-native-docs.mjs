@@ -69,7 +69,8 @@ function saveItem() {
   };
   await expect(hosting.locator('.monaco-editor')).toBeVisible();
   await capture(hosting, 'native-backend.jpg');
-  await hosting.getByRole('tab', { name: 'screens', exact: true }).click();
+  // The source lists every file beside the editor: the first page is the first file under Pages.
+  await hosting.locator('nav[aria-label="Project files"] section[aria-label="Pages"] button').first().click();
   await expect(hosting.locator('.view-lines')).toContainText('Service desk');
   await capture(hosting, 'native-screens.jpg');
   await hosting.getByRole('tab', { name: 'records', exact: true }).click();

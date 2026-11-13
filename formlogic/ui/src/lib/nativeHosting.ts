@@ -8,7 +8,7 @@ export interface NativeProject { home?: boolean; version: number; updatedAt?: st
  * whole and unpacked into `assets` before the frame is given them (readMediaPack); a server before
  * it sends `assets` in the JSON itself.
  */
-export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: Record<string,string>; media?: { url: string; sha256: string; size: number; count: number }; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[]; files?: 'ask' | 'allow'; formlogic?: NativeFormlogic }
+export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: Record<string,string>; media?: { url: string; sha256: string; size: number; count: number }; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[]; files?: 'ask' | 'allow'; formlogic?: NativeFormlogic; site?: { url: string; entry: string; proof: string } }
 
 /**
  * What an app asks of FormLogic itself (its manifest's formlogicAi and formlogicPayments), as the
@@ -146,6 +146,12 @@ export interface NativeStructure { table: string; rows: number; columns: NativeS
  */
 const SOURCE_KINDS = /\.(html|ui|js|logic|py|css|json|sql|xdb)$/;
 const SOURCE_PATH = /^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|logic|py|css|json|sql|xdb)$/;
+/** Why a name cannot be a source file of a hosted project, or null when it can: the rule an upload is held to. */
+export function sourceNameProblem(path: string): string | null {
+  if (!SOURCE_KINDS.test(path)) return 'A source file ends in .html, .ui, .js, .logic, .py, .css, .json, .sql or .xdb.';
+  if (!SOURCE_PATH.test(path) || path.includes('..')) return 'A file name is letters, digits, - _ and . with folders before it (pages/about.html), and never two dots together.';
+  return null;
+}
 /** The private tree: backend code, which runs only under a server block. */
 const PRIVATE_TREE = /^(server|backend|private)\//i;
 /**

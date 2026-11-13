@@ -3,6 +3,8 @@ import Editor, { loader, type OnMount } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import editorWorker from 'monaco-editor/editor/editor.worker?worker';
 import tsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
+import jsonWorker from 'monaco-editor/language/json/json.worker?worker';
+import cssWorker from 'monaco-editor/language/css/css.worker?worker';
 import type { CodeEditorProps } from './CodeEditor';
 import { useUIStore } from '../../stores/uiStore';
 import { registerSoftnLanguage } from './softnLanguage';
@@ -11,8 +13,15 @@ registerSoftnLanguage(monaco);
 
 // Use the BUNDLED monaco (no CDN — works offline / self-hosted) and wire its web workers for Vite.
 (self as unknown as { MonacoEnvironment: unknown }).MonacoEnvironment = {
+  // Each language's own worker: handed the plain editor worker, a JSON or CSS file's checks, folding
+  // and colours each fail with "Missing requestHandler or method" for as long as the file is open
+  // (a hosted app's manifest.json and its stylesheets are edited here). A worker is its own chunk,
+  // fetched when a file of its language is first opened.
   getWorker(_workerId: string, label: string) {
-    return (label === 'typescript' || label === 'javascript') ? new tsWorker() : new editorWorker();
+    if (label === 'typescript' || label === 'javascript') return new tsWorker();
+    if (label === 'json') return new jsonWorker();
+    if (label === 'css' || label === 'scss' || label === 'less') return new cssWorker();
+    return new editorWorker();
   },
 };
 loader.config({ monaco });

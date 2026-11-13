@@ -38,6 +38,8 @@ export function SoftnOverview({ app, project, version, published, dirty, readOnl
   const [dataError, setDataError] = useState('');
   const [domains, setDomains] = useState<AppDomain[] | null>(null);
   const [people, setPeople] = useState<number | null>(null);
+  // How many flows the app has and how many of them are switched on; null until it is known.
+  const [flows, setFlows] = useState<{ all: number; running: number } | null>(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -55,8 +57,14 @@ export function SoftnOverview({ app, project, version, published, dirty, readOnl
     let cancelled = false;
     void api.getAppDomains(app.id).then(result => { if (!cancelled && !result.error) setDomains(result.data?.domains ?? []); });
     void api.getAppUsers(app.id).then(result => { if (!cancelled && !result.error) setPeople(result.data?.count ?? null); });
+    // Automations start from the app's own tables, so only an app with a backend has the section.
+    if (backend) void api.listFlows(app.id).then(result => {
+      if (cancelled || result.error) return;
+      const list = (result.data?.flows ?? []) as { enabled?: boolean }[];
+      setFlows({ all: list.length, running: list.filter(flow => flow.enabled).length });
+    });
     return () => { cancelled = true; };
-  }, [app.id, isOwner, readOnly]);
+  }, [app.id, isOwner, readOnly, backend]);
 
   const copyLink = async () => {
     if (await copyToClipboard(liveUrl)) { setCopied(true); setTimeout(() => setCopied(false), 2000); }
@@ -128,6 +136,16 @@ export function SoftnOverview({ app, project, version, published, dirty, readOnl
         <Link to={`${settings}#settings-access`} className={cn(link, 'mt-1 inline-block')}>Change who can use it</Link>
       </Card>
 
+      {/* The section is the owner's, of an app with a backend: the card stands for it here, as each other section's does. */}
+      {backend && isOwner && !readOnly && <Card title="Automations" action={<Link to={softnWorkspacePath(app.id, 'automations')} className={link}>Automations</Link>}>
+        <p className="font-semibold text-slate-900 dark:text-white">
+          {flows === null ? 'Things the app does by itself' : flows.all === 0 ? 'Nothing runs by itself yet' : `${count(flows.all, 'automation')} · ${flows.running} running`}
+        </p>
+        <p className="mt-0.5 text-slate-600 dark:text-slate-300">
+          {flows !== null && flows.all > 0 ? 'They run when a record in the app’s tables changes, or at a set time.' : 'Send an email or a notification when a record is added, changed or removed.'}
+        </p>
+      </Card>}
+
       <Card title="Settings" action={<Link to={settings} className={link}>All settings</Link>}>
         <ul>
           {isOwner && backend && declaresFormlogicAi(project) && <Jump to={`${settings}#app-ai-settings`} label="AI for this app" />}
@@ -142,7 +160,7 @@ export function SoftnOverview({ app, project, version, published, dirty, readOnl
 }
 
 const link = 'text-xs font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-300 max-sm:inline-flex max-sm:min-h-11 max-sm:items-center';
-const quiet = 'inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-white/5';
+const quiet = 'inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 max-sm:min-h-11 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-white/5';
 
 function Card({ title, action, className, children }: { title: string; action?: ReactNode; className?: string; children: ReactNode }) {
   return <section aria-label={title} className={cn('min-w-0 rounded-xl border border-slate-200 bg-white p-3 text-[13px] leading-5 shadow-sm dark:border-slate-700 dark:bg-slate-900', className)}>

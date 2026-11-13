@@ -44,7 +44,14 @@ async function mount() {
   await act(async () => root!.render(<MemoryRouter><NativeEditor app={app} initialTab="project" onClose={vi.fn()} /></MemoryRouter>));
 }
 const button = (label: string) => [...document.querySelectorAll('button')].find(node => node.textContent === label);
-const tab = (label: string) => act(async () => [...document.querySelectorAll<HTMLButtonElement>('button[role="tab"]')].find(node => node.textContent === label)!.click());
+// One Source tab lists every file: "backend" is the backend's code opened in it, and "screens" a page.
+const tab = async (label: string) => {
+  const opens = label === 'backend' ? (path: string) => /^server\/.*\.logic$/.test(path)
+    : label === 'screens' ? (path: string) => /\.(ui|html)$/.test(path) && !path.startsWith('server/') : null;
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('button[role="tab"]')].find(node => node.textContent === (opens ? 'source' : label))!.click());
+  const wanted = opens && [...document.querySelectorAll<HTMLButtonElement>('nav[aria-label="Project files"] button[title]')].find(node => opens(node.getAttribute('title') ?? ''));
+  if (wanted) await act(async () => wanted.click());
+};
 const warnings = () => document.querySelector('[role="note"][aria-label="Native runtime warnings"]');
 const failures = () => document.querySelector('[role="alert"]');
 async function edit() {

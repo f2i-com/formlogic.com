@@ -81,6 +81,21 @@ lists inside a panel, where there is no room for columns.
 A database is browsed with the data manager (`components/data`), on a SoftN app's page and in
 the "Native app hosting" dialog alike.
 
+A project's files are edited in the source pane (`components/studio/ProjectSourcePane.tsx`,
+rules in `lib/projectSource.ts`): every file in one list, grouped by what it is for, beside
+the editor. A SoftN app's page opens it alone, as "Source code"; the App Studio's "Native app
+hosting" dialog, which a forms app that carries a project still uses, has it under its Source
+tab beside Project and Records. A SoftN app's page never sends its owner to the App Studio: an
+address of the studio that names one lands on the matching section of the app's page
+(`softnPathForStudio`).
+
+## A row of sections on a phone
+
+`components/ui/SectionNav.tsx` is one line at every width. When it is longer than the screen it
+scrolls sideways, keeps the open section in view, and says there is more: the end it runs off
+fades out under an arrow that moves it along. The arrows are for a finger or a mouse (not in the
+tab order, hidden from a screen reader): the links are the navigation.
+
 `components/ui/DataTable.tsx` is the table a running forms app shows its members (a form's
 records) and the App Studio shows for an app's users. It fits as many columns as its width
 allows and becomes cards on a phone: each column's name over its value, two to a line, the

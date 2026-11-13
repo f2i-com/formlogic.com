@@ -30,7 +30,8 @@ test('Coffee.Dating native import, ZIPP backend and database administration', as
   const exported = unzipSync(await readFile(exportedPath));
   expect(Object.keys(exported).sort()).toEqual(Object.keys(original).sort());
   for (const path of Object.keys(original)) expect(Buffer.compare(Buffer.from(exported[path]), Buffer.from(original[path])), path).toBe(0);
-  await dialog.getByRole('tab', { name: 'backend', exact: true }).click();
+  await dialog.getByRole('tab', { name: 'source', exact: true }).click();
+  await dialog.locator('nav[aria-label="Project files"] section[aria-label="Backend"] button').first().click();
   await expect(dialog.getByRole('region', { name: 'Private backend source editor' }).locator('.monaco-editor')).toBeVisible();
   await dialog.getByRole('tab', { name: 'records', exact: true }).click();
   const tables = dialog.getByRole('combobox', { name: 'Database table', exact: true });
@@ -42,7 +43,7 @@ test('Coffee.Dating native import, ZIPP backend and database administration', as
   const database = page.getByRole('region', { name: 'App database tables', exact: true });
   await expect(database.getByRole('button', { name: /^Browse .* records$/ })).toHaveCount(28);
   await expect(page.getByRole('navigation', { name: 'App Studio sections', exact: true })).toContainText('28 database tables');
-  await expect(page.getByText('No data types yet', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('No forms yet', { exact: true })).toHaveCount(0);
   await database.getByRole('searchbox', { name: 'Search database tables', exact: true }).fill('users');
   await database.getByRole('button', { name: 'Browse users records', exact: true }).click();
   await expect(page.getByRole('dialog').getByLabel('Database table', { exact: true })).toHaveValue('users');

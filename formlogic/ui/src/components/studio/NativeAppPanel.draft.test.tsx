@@ -56,7 +56,14 @@ const button = (label: string) => [...document.querySelectorAll('button')].find(
 const link = (label: string) => [...document.querySelectorAll('a')].find(node => node.textContent?.replace(/\s+/g, ' ') === label)!;
 const region = () => document.querySelector('[role="region"][aria-label="Unpublished draft"]');
 const footer = () => document.querySelector('[role="dialog"]')!.lastElementChild!.textContent;
-const tab = (label: string) => act(async () => [...document.querySelectorAll<HTMLButtonElement>('button[role="tab"]')].find(node => node.textContent === label)!.click());
+// One Source tab lists every file: "backend" is the backend's code opened in it, and "screens" a page.
+const tab = async (label: string) => {
+  const opens = label === 'backend' ? (path: string) => /^server\/.*\.logic$/.test(path)
+    : label === 'screens' ? (path: string) => /\.(ui|html)$/.test(path) && !path.startsWith('server/') : null;
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('button[role="tab"]')].find(node => node.textContent === (opens ? 'source' : label))!.click());
+  const wanted = opens && [...document.querySelectorAll<HTMLButtonElement>('nav[aria-label="Project files"] button[title]')].find(node => opens(node.getAttribute('title') ?? ''));
+  if (wanted) await act(async () => wanted.click());
+};
 const escape = () => act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
 const settle = () => act(async () => { vi.advanceTimersByTime(1000); });
 async function type(value: string) {

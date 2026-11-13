@@ -39,7 +39,14 @@ async function mount(initialTab: 'project' | 'backend' | 'records' = 'project') 
   await act(async () => root!.render(<MemoryRouter><NativeEditor app={app} initialTab={initialTab} onClose={onClose} /></MemoryRouter>));
 }
 const button = (label: string) => [...document.querySelectorAll('button')].find(node => node.textContent === label);
-const tab = (label: string) => act(async () => [...document.querySelectorAll<HTMLButtonElement>('button[role="tab"]')].find(node => node.textContent === label)!.click());
+// One Source tab lists every file: "backend" is the backend's code opened in it, and "screens" a page.
+const tab = async (label: string) => {
+  const opens = label === 'backend' ? (path: string) => /^server\/.*\.logic$/.test(path)
+    : label === 'screens' ? (path: string) => /\.(ui|html)$/.test(path) && !path.startsWith('server/') : null;
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('button[role="tab"]')].find(node => node.textContent === (opens ? 'source' : label))!.click());
+  const wanted = opens && [...document.querySelectorAll<HTMLButtonElement>('nav[aria-label="Project files"] button[title]')].find(node => opens(node.getAttribute('title') ?? ''));
+  if (wanted) await act(async () => wanted.click());
+};
 const note = () => document.querySelector('[role="note"]')?.textContent ?? '';
 async function type(label: string, value: string) {
   await act(async () => {

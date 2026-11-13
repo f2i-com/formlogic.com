@@ -57,10 +57,16 @@ publish_native_app_project and update_native_app_files require the current
 expectedVersion. Keep the app's own authentication or choose FormLogic membership
 explicitly; owner administration is separate from visitors.
 
-In App Studio, open Screens > Hosting & app tools > Native app hosting. Open Visual
-Builder for layout or Open AI Studio for source/AI work. Review changes returns an
-unpublished draft; Publish changes preserves database records. Editor previews do not
-execute the hosted backend. Screens and Backend provide highlighted source editors.
+A SoftN app is managed on its own page (Apps > the app): Edit shows it running and opens
+AI Studio, the Visual Builder and its source code; Data, Members, Automations, Domains
+and Settings are the other sections. App Studio is for forms apps, and its addresses
+for a SoftN app lead to that page. Source code lists every file of the app in groups
+(pages, logic, styles, backend, database changes, the manifest) beside a highlighted
+editor; a file is added or removed there, and a new database change is numbered and
+listed in the manifest for you. Changes are a draft until published, and publishing
+preserves database records. Editor previews do not execute the hosted backend.
+A forms app can carry a project too: App Studio > Screens > Hosting & app tools >
+Native app hosting, with the same source editor under its Source tab.
 
 list_native_app_records inspects the app's tables and record previews. For owner CRUD
 through the UI, open Data & forms > Records > Database records: Add record creates,

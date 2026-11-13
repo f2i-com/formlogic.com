@@ -252,7 +252,9 @@ test.describe('embedded editors: round trip and live conflict', () => {
       expect(stored.version).toBe(2);
       expect(stored.files['ui/main.ui']).toContain('Saved by editor A');
       expect(stored.files['ui/main.ui']).not.toContain('Saved by editor B');
-      await dialogB.getByRole("tab", { name: /screens/i }).click();
+      // The source lists every file beside the editor: the page B edited is opened by its name there.
+      await dialogB.getByRole('tab', { name: 'source', exact: true }).click();
+      await dialogB.locator('nav[aria-label="Project files"] button[title="ui/main.ui"]').click();
       await expect(dialogB.getByRole('region', { name: 'Interface source editor' })).toContainText('Saved by editor B');
     } finally {
       if (a && headersA && app) await deleteApp(a, headersA, app.id);

@@ -120,7 +120,8 @@ function saveNote() {
   await page.screenshot({ path: '../../../ecosystem-audit/native-record-browser-mobile.png' });
   await rowSheet.getByRole('button', { name: 'Back', exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole('tab', { name: 'backend', exact: true }).click();
+  await page.getByRole('tab', { name: 'source', exact: true }).click();
+  await page.locator('nav[aria-label="Project files"] section[aria-label="Backend"] button').first().click();
   const source = page.getByLabel('Private backend source', { exact: true });
   await expect(page.getByRole('region', { name: 'Private backend source editor' })).toContainText('createNote');
   await page.getByRole('region', { name: 'Private backend source editor' }).locator('.view-lines').click();

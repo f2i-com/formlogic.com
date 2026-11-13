@@ -50,8 +50,9 @@ it('lists the people of an app only invited people can use, and how they join, w
   expect(mocks.people).toMatchObject({ app, roles: ROLES, returnLabel: 'Members' });
   // The sign-up panel speaks of the list as this page shows it, not by App Studio's tab.
   expect(mocks.signup).toMatchObject({ app, roles: ROLES, onReloadApp: reload, peopleName: 'the list above' });
-  // Who can use it is changed in the app's own settings; roles are still App Studio's.
-  expect(hrefs()).toEqual(['/apps/app-1/softn/settings#settings-access', '/apps/app-1/studio/access']);
+  // Who can use it is changed in the app's own settings, and its roles on the roles page: neither
+  // sends a SoftN app's owner to the App Studio, which is for forms apps.
+  expect(hrefs()).toEqual(['/apps/app-1/softn/settings#settings-access', '/apps/app-1/roles']);
 });
 
 it('says so of an app anyone with the link can use', async () => {

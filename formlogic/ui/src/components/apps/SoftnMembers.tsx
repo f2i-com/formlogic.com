@@ -8,6 +8,7 @@ import { PeopleView, SignupView } from '../studio/steps/AccessStep';
 import { LoadFailure } from '../ui/LoadFailure';
 import { api } from '../../lib/api';
 import { softnWorkspacePath } from '../../lib/softnApps';
+import { returnToState } from '../../hooks/useReturnTo';
 import type { NativeProject } from '../../lib/nativeHosting';
 import type { App, AppRole } from '../../types/app';
 
@@ -52,8 +53,10 @@ export function SoftnMembers({ app, project, onReloadApp }: { app: App; project:
       {roles !== null && !failed && <>
         <PeopleView app={app} roles={roles} returnLabel="Members" />
         <SignupView app={app} roles={roles} onReloadApp={onReloadApp} peopleName="the list above" />
+        {/* The roles page, opened from here, comes back here. */}
         <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-          Each member has a role. <Link to={`/apps/${app.id}/studio/access`} className={link}>Roles and what each may do</Link> are set in App Studio.
+          Each member has a role, and the app is told which when they use it.{' '}
+          <Link to={`/apps/${app.id}/roles`} state={returnToState(softnWorkspacePath(app.id, 'members'), 'Members')} className={link}>Add, rename or remove roles</Link>
         </p>
       </>}
     </div>

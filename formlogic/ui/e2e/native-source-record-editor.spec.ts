@@ -25,17 +25,21 @@ test('Native source highlighting and full-record CRUD work on desktop and mobile
   await page.getByRole('button', { name: 'Backend code', exact: true }).click();
   const hosting = page.getByRole('dialog', { name: 'Native app hosting', exact: true });
   const colours = (label: string) => page.getByRole('region', { name: label }).locator('.view-line span').evaluateAll(spans => [...new Set(spans.filter(span => span.textContent?.trim()).map(span => getComputedStyle(span).color))]);
+  // Every file is in one list beside the editor: a file is opened by its name there.
+  const openFile = (path: string) => hosting.locator(`nav[aria-label="Project files"] button[title="${path}"]`).click();
   const source = page.getByRole('textbox', { name: 'Private backend source', exact: true });
   await expect(source).toBeVisible();
   await expect.poll(async () => (await colours('Private backend source editor')).length).toBeGreaterThanOrEqual(3);
   await page.getByRole('region', { name: 'Private backend source editor' }).locator('.view-lines').click(); await source.press('Control+End'); await source.press('Enter');
   await page.keyboard.insertText('// Source editor browser review');
-  await hosting.getByRole('tab', { name: 'screens', exact: true }).click();
+  await openFile('ui/main.ui');
   await expect.poll(async () => (await colours('Interface source editor')).length).toBeGreaterThanOrEqual(4);
   await page.screenshot({ path: '../../../ecosystem-audit/native-source-editor-desktop.png' });
-  await hosting.getByRole('tab', { name: 'backend', exact: true }).click();
+  await openFile('server/main.logic');
   await expect(page.getByRole('region', { name: 'Private backend source editor' })).toContainText('Source editor browser review');
-  await hosting.getByLabel('Private backend file', { exact: true }).selectOption('server/migrations/001.sql');
+  // The file the draft changed is marked in the list, and the one that has run is not to be changed.
+  await expect(hosting.getByRole('button', { name: 'server/main.logic, changed', exact: true })).toBeVisible();
+  await openFile('server/migrations/001.sql');
   await expect(page.getByRole('region', { name: 'Private backend source editor' })).toContainText('SQL · Read-only');
   await source.press('Control+End'); await page.keyboard.insertText('should not be saved');
   await expect.poll(async () => (await colours('Private backend source editor')).length).toBeGreaterThanOrEqual(2);
@@ -44,7 +48,7 @@ test('Native source highlighting and full-record CRUD work on desktop and mobile
   const saved = await (await context.request.get(`/api/apps/${app.id}/native`)).json();
   expect(saved.project.files['server/main.logic']).toContain('Source editor browser review');
   expect(saved.project.files['server/migrations/001.sql']).toBe(project.files['server/migrations/001.sql']);
-  await hosting.getByRole('tab', { name: 'screens', exact: true }).click();
+  await openFile('ui/main.ui');
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await hosting.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   await page.screenshot({ path: '../../../ecosystem-audit/native-source-editor-mobile.png' });
