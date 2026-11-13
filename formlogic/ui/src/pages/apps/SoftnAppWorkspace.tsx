@@ -341,7 +341,13 @@ function Workspace({ app }: { app: App }) {
 
   const actions = project && !readOnly ? <div className="flex items-center gap-2">
     <a href={liveUrl} target="_blank" rel="noopener noreferrer" className="hidden min-h-10 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5 sm:inline-flex"><ExternalLink className="h-4 w-4" />Open</a>
-    {(!published || dirty) && <Button size="sm" onClick={() => void publish()} isLoading={publishing || busy} disabled={!ready} leftIcon={<Rocket className="h-4 w-4" />}>{published ? 'Publish changes' : 'Publish'}</Button>}
+    {/* Its words show where the header has room for them, as every page's header actions do
+        (Header's @container): on a phone they took the room the app's name needs, and the name
+        was cut to its first letter. The button says what it is to a screen reader either way. */}
+    {(!published || dirty) && <Button size="sm" onClick={() => void publish()} isLoading={publishing || busy} disabled={!ready}
+      aria-label={published ? 'Publish changes' : 'Publish'} title={published ? 'Publish changes' : 'Publish'}>
+      <Rocket className="h-4 w-4" aria-hidden="true" /><span className="ml-2 hidden @md/header:inline">{published ? 'Publish changes' : 'Publish'}</span>
+    </Button>}
   </div> : undefined;
 
   // The app's state in a line: live or a draft, its version, and its link to copy.
