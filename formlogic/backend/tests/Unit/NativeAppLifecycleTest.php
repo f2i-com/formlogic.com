@@ -393,6 +393,33 @@ final class NativeAppLifecycleTest extends TestCase
         $this->assertSame([false, false], [$described['recoveryRequired'], $described['updateUnfinished']]);
     }
 
+    public function testAJournalThatReadsAsLessThanItHoldsIsNotRecoveryEither(): void
+    {
+        // Found beside the version history's review, 2026-11-13: on Windows a file held under another handle's lock
+        // reads as an empty string, not as a failure. That was decoded, found to be no journal, and the app was
+        // closed until an operator came.
+        $this->service->install('notes', $this->project(), 0);
+        $this->createNote($this->service, 'Kept');
+        $this->terminateInstallAt('source-activated');
+        $root = $this->root();
+        $journal = file_get_contents($root . '/private/install.json');
+        foreach (['nothing at all' => '', 'its first few bytes' => substr($journal, 0, 12)] as $what => $read) {
+            $short = new ShortJournalReadNativeAppService($this->storage, $this->runtime, getenv('FORMLOGIC_NODE_BIN'), $read);
+            foreach (['request' => fn() => $this->createNote($short, 'x'), 'install' => fn() => $short->install('notes', $this->projectV2(), 1)] as $name => $operation) {
+                try { $operation(); $this->fail("{$name} ran past a journal that read as {$what}"); }
+                catch (\RuntimeException $error) { $this->assertSame(409, $error->getCode(), "{$name}, {$what}"); }
+                $this->assertFileDoesNotExist($root . '/private/recovery-required', "{$name}, {$what}");
+                $this->assertSame($journal, file_get_contents($root . '/private/install.json'), "{$name}, {$what}");
+            }
+        }
+        $this->assertSame(201, $this->createNote($this->service, 'After')['status'], 'once it reads whole, the journal is settled');
+        // A journal that is whole and is not one is still an operator's to look at.
+        file_put_contents($root . '/private/install.json', '{"phase": "migr');
+        try { $this->createNote($this->service, 'x'); $this->fail('A request ran over a journal that is not one'); }
+        catch (\RuntimeException $error) { $this->assertNotSame(409, $error->getCode()); }
+        $this->assertFileExists($root . '/private/recovery-required');
+    }
+
     // ── FL-S04: decided under the lock ───────────────────────────────────────
 
     public function testRecoveryRequiredWrittenBetweenTheCheckAndTheLockStopsEveryEntryPoint(): void
@@ -681,6 +708,21 @@ final class FailingJournalReadNativeAppService extends NativeAppService
         if (!str_ends_with(str_replace('\\', '/', $path), '/private/install.json')) return parent::readChecked($path);
         if ($this->vanish) unlink($path);
         return false;
+    }
+}
+
+/** Reading the install journal answers less than the file holds, as a file held under another handle's lock does on Windows. */
+final class ShortJournalReadNativeAppService extends NativeAppService
+{
+    public function __construct(?string $storage, ?string $runtime, ?string $node, private string $read)
+    {
+        parent::__construct($storage, $runtime, $node);
+    }
+
+    protected function readChecked(string $path): string|false
+    {
+        if (!str_ends_with(str_replace('\\', '/', $path), '/private/install.json')) return parent::readChecked($path);
+        return $this->read;
     }
 }
 

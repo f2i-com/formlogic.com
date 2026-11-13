@@ -995,6 +995,14 @@ class NativeAppService
         $path = $root . self::JOURNAL;
         if (!is_file($path)) return null;
         $raw = $this->readChecked($path);
+        // What was read is the journal only if it is all of it. On Windows a file another handle holds under a lock
+        // opens and reads as nothing, not as a failure: taken as read, that was "an unreadable journal", and the app
+        // was closed until an operator came, for a lock that passes. A read shorter than the file is a read that failed.
+        if ($raw !== false) {
+            clearstatcache(true, $path);
+            $size = @filesize($path);
+            if ($size !== false && strlen($raw) < $size) $raw = false;
+        }
         if ($raw === false) {
             // A read that failed says nothing about the journal's content. Gone since the check (an
             // update retired it while describe(), which holds no lock, was reading): no journal.
