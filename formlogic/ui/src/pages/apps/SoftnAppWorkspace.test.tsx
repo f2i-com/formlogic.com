@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   getAppAi: vi.fn(),
   getNativeDataSummary: vi.fn(),
   getAppUsers: vi.fn(),
+  listFlows: vi.fn(),
+  getAppForms: vi.fn(),
   dataManager: null as null | { table?: string; view?: string; query?: string; onNavigate(table: string | undefined, view: string, query?: string, options?: { replace?: boolean }): void },
   editor: null as null | { kind: string; brief?: unknown; applyLabel?: string; onApply(bytes: Uint8Array): Promise<void>; onClose(): void },
 }));
@@ -30,7 +32,7 @@ vi.mock('../../lib/api', () => ({ api: {
   getNativeProject: mocks.getNativeProject, saveNativeProject: mocks.saveNativeProject, installNativeStarter: mocks.installNativeStarter, publishApp: mocks.publishApp,
   getAppDomains: mocks.getAppDomains, createAppDomain: mocks.createAppDomain,
   getAppAi: mocks.getAppAi,
-  getNativeDataSummary: mocks.getNativeDataSummary, getAppUsers: mocks.getAppUsers,
+  getNativeDataSummary: mocks.getNativeDataSummary, getAppUsers: mocks.getAppUsers, listFlows: mocks.listFlows, getAppForms: mocks.getAppForms,
   getPassKinds: async () => ({ data: { passes: [] } }),
   isAdminActing: () => false, isDemoMode: () => false,
 } }));
@@ -54,7 +56,12 @@ vi.mock('../../components/apps/SoftnMembers', () => ({
   SoftnMembers: ({ app, project }: { app: { name: string }; project: { access?: string } }) => <p data-testid="softn-members">members of {app.name}, {project.access}</p>,
 }));
 vi.mock('../../components/studio/AppEngineSelect', () => ({ AppEngineSelect: () => null }));
-vi.mock('../../components/studio/NativeAppPanel', () => ({ NativeEditor: () => <p>source editor</p> }));
+vi.mock('../../components/studio/NativeAppPanel', () => ({
+  NativeEditor: ({ surface, saveLabel }: { surface?: string; saveLabel?: string }) => <p data-testid="source-editor">source editor: {surface}, {saveLabel}</p>,
+}));
+vi.mock('../../components/apps/SoftnAutomations', () => ({
+  SoftnAutomations: ({ app }: { app: { name: string } }) => <p data-testid="softn-automations">automations of {app.name}</p>,
+}));
 vi.mock('../../components/studio/NativeAppView', () => ({ NativeAppView: ({ slug }: { slug: string }) => <p>running {slug}</p> }));
 
 const { SoftnAppWorkspace } = await import('./SoftnAppWorkspace');
@@ -79,6 +86,8 @@ beforeEach(() => {
   mocks.createAppDomain.mockReset();
   mocks.getNativeDataSummary.mockReset().mockResolvedValue({ data: { installed: true, tables: [] } });
   mocks.getAppUsers.mockReset().mockResolvedValue({ data: { users: [], count: 0 } });
+  mocks.listFlows.mockReset().mockResolvedValue({ data: { flows: [] } });
+  mocks.getAppForms.mockReset().mockResolvedValue({ data: { forms: [] } });
   mocks.dataManager = null;
   useAuthStore.setState({ user: { id: 'u1', email: 'owner@example.test' } as never });
   useUIStore.getState().setSoftnOpen(null);
@@ -101,6 +110,85 @@ const section = () => container.querySelector('nav[aria-label="App sections"] a[
 const withBackend = (version: number): NativeProject => ({ ...installed(version), files: { 'manifest.json': '{"id":"a","server":{"entry":"server/main.logic"}}', 'ui/main.ui': '<Text>Hi</Text>' } });
 
 describe('SoftnAppWorkspace', () => {
+  describe('what the App Studio did for a SoftN app', () => {
+    it('has automations as a section of the page, for the owner of an app with a backend', async () => {
+      await render('published', withBackend(1), '/automations');
+      expect(section()).toBe('Automations');
+      expect(container.querySelector('[data-testid="softn-automations"]')!.textContent).toBe('automations of Recipes');
+    });
+
+    it('says on the overview what runs by itself, with the way into the section', async () => {
+      mocks.listFlows.mockResolvedValue({ data: { flows: [{ id: 'f1', enabled: true }, { id: 'f2', enabled: false }, { id: 'f3', enabled: true }] } });
+      await render('published', withBackend(1));
+      const card = container.querySelector('section[aria-label="Automations"]')!;
+      expect(card.textContent).toContain('3 automations · 2 running');
+      expect(card.querySelector('a')!.getAttribute('href')).toBe('/apps/app-1/softn/automations');
+      expect(mocks.listFlows).toHaveBeenCalledWith('app-1');
+      await act(async () => root.unmount());
+      // None yet: it says so, and what one would be for.
+      mocks.listFlows.mockResolvedValue({ data: { flows: [] } });
+      await render('published', withBackend(1));
+      expect(container.querySelector('section[aria-label="Automations"]')!.textContent).toContain('Nothing runs by itself yet');
+      await act(async () => root.unmount());
+      // A read that fails is not "nothing yet".
+      mocks.listFlows.mockResolvedValue({ error: 'Server error', status: 500 });
+      await render('published', withBackend(1));
+      expect(container.querySelector('section[aria-label="Automations"]')!.textContent).not.toContain('Nothing runs by itself yet');
+      await act(async () => root.unmount());
+      // An app with no backend has no such section, so no card and no request for it.
+      mocks.listFlows.mockClear();
+      await render('published', installed(1));
+      expect(container.querySelector('section[aria-label="Automations"]')).toBeNull();
+      expect(mocks.listFlows).not.toHaveBeenCalled();
+    });
+
+    it('leaves the section out for an app with no backend, and says why at its address', async () => {
+      await render('published', installed(1), '/automations');
+      expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent)).not.toContain('Automations');
+      expect(container.querySelector('[data-testid="softn-automations"]')).toBeNull();
+      expect(container.textContent).toContain('This app has no database on the server yet.');
+      expect(container.querySelector('a[href="/apps/app-1/softn/data"]:not(nav a)')!.textContent).toBe('Add a backend');
+    });
+
+    it('names the studio only for an app that also holds forms, as the way to those forms', async () => {
+      mocks.getAppForms.mockResolvedValue({ data: { forms: [{ id: 'af1', formId: 'f1' }, { id: 'af2', formId: 'f2' }] } });
+      await render('published', withBackend(1), '/settings');
+      expect(mocks.getAppForms).toHaveBeenCalledWith('app-1');
+      expect(button(/^This app’s forms \(App Studio\)$/)).toBeDefined();
+      await act(async () => root.unmount());
+      // A read of its forms that fails offers nothing rather than a way to somewhere that would send it back.
+      mocks.getAppForms.mockResolvedValue({ error: 'Server error', status: 500 });
+      await render('published', withBackend(1), '/settings');
+      expect(button(/App Studio/)).toBeUndefined();
+      await act(async () => root.unmount());
+      // Its forms are not asked for until Settings is open.
+      mocks.getAppForms.mockClear();
+      await render('published', withBackend(1), '/edit');
+      expect(mocks.getAppForms).not.toHaveBeenCalled();
+    });
+
+    it('has no link or button named for the studio anywhere on the page of an app with no forms', async () => {
+      for (const at of ['', '/edit', '/members', '/automations', '/domains', '/settings']) {
+        await render('published', withBackend(1), at);
+        expect([...container.querySelectorAll('a')].map(a => a.getAttribute('href')).filter(href => href?.includes('/studio'))).toEqual([]);
+        expect(button(/App Studio/)).toBeUndefined();
+        await act(async () => root.unmount());
+      }
+      await render('published', withBackend(1));
+    });
+
+    it('opens the files as source code and nothing else, saying what saving them does', async () => {
+      await render('published', withBackend(1), '/edit');
+      await act(async () => button(/^Edit the source code$/)!.click());
+      expect(document.querySelector('[data-testid="source-editor"]')!.textContent).toBe('source editor: source, Publish changes');
+      await act(async () => root.unmount());
+      // Not live yet: saving the files makes a version only its owner sees.
+      await render('draft', withBackend(1), '/edit');
+      await act(async () => button(/^Edit the source code$/)!.click());
+      expect(document.querySelector('[data-testid="source-editor"]')!.textContent).toBe('source editor: source, Save changes');
+    });
+  });
+
   describe('sections', () => {
     it('opens on the overview, which says what the app holds and starts nothing', async () => {
       mocks.getNativeDataSummary.mockResolvedValue({ data: { installed: true, tables: ['bookings', 'rooms'], summary: { tables: [{ name: 'bookings', rows: 8214, columns: 9 }, { name: 'rooms', rows: 12, columns: 3 }], bytes: 3145728, hiddenTables: 1 } } });
@@ -121,7 +209,7 @@ describe('SoftnAppWorkspace', () => {
       expect(section()).toBe('Data');
       expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:bookings:structure');
       expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.getAttribute('href'))).toEqual([
-        '/apps/app-1/softn', '/apps/app-1/softn/data', '/apps/app-1/softn/members', '/apps/app-1/softn/edit', '/apps/app-1/softn/domains', '/apps/app-1/softn/settings']);
+        '/apps/app-1/softn', '/apps/app-1/softn/data', '/apps/app-1/softn/members', '/apps/app-1/softn/edit', '/apps/app-1/softn/automations', '/apps/app-1/softn/domains', '/apps/app-1/softn/settings']);
       // The data manager asks for another table: the address follows, and the default view is left out of it.
       await act(async () => mocks.dataManager!.onNavigate('rooms', 'browse'));
       expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:rooms:browse');

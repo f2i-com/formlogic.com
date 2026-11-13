@@ -10,9 +10,10 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 type FrameProps = { client: Record<string, string>; version: number; native?: { assets: Record<string, string>; media?: string; files?: boolean }; engine?: { id: string; revision: string }; update?: { version: number; client: Record<string, string>; assets?: Record<string, string>; media?: string; engine?: { id: string; revision: string } }; onUpdate?: (version: number, outcome: 'taken' | 'reopen') => void };
-const mocks = vi.hoisted(() => ({ getNativeRuntime: vi.fn(), getNativeVersion: vi.fn(), frame: { props: null as unknown, mounts: 0 } }));
+const mocks = vi.hoisted(() => ({ getNativeRuntime: vi.fn(), getNativeVersion: vi.fn(), frame: { props: null as unknown, mounts: 0 }, site: { props: null as unknown } }));
 vi.mock('../../lib/api', () => ({ api: { getNativeRuntime: mocks.getNativeRuntime, getNativeVersion: mocks.getNativeVersion, getAppMembership: vi.fn() } }));
 vi.mock('./HostedAppFrame', () => ({ HostedAppFrame: (props: unknown) => { mocks.frame.props = props; return <div data-testid="frame">running</div>; } }));
+vi.mock('./SiteAppFrame', () => ({ SiteAppFrame: (props: unknown) => { mocks.site.props = props; return <div data-testid="site-frame">its own pages</div>; } }));
 
 import { NativeAppView } from './NativeAppView';
 
@@ -51,6 +52,7 @@ beforeEach(() => {
   mocks.getNativeRuntime.mockReset();
   mocks.getNativeVersion.mockReset();
   mocks.frame.props = null;
+  mocks.site.props = null;
   visibility = 'visible';
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
 });
@@ -226,6 +228,61 @@ it('is never talked into asking more often than every ten seconds', async () => 
   await act(async () => { vi.advanceTimersByTime(1_000); });
   await act(async () => {});
   expect(mocks.getNativeVersion).toHaveBeenCalledTimes(1);
+});
+
+// A JavaScript app is the server's own pages in a frame of their own (SiteAppFrame): it is handed
+// no files. Its newer version is at a new address, which the frame loads afresh.
+const sitePages = (ticket: string) => ({ url: `/api/app/notes/site/${ticket}/index.html`, entry: 'index.html', proof: `proof-${ticket}` });
+const siteFrame = () => mocks.site.props as { version: number; site: { url: string; entry: string; proof: string } } | null;
+
+it('opens a newer version of a JavaScript app afresh at its new address, and hands the frame nothing', async () => {
+  await open(answer({ project: project(1, one, { site: sitePages('t1') }) }));
+  expect(siteFrame()?.site).toEqual(sitePages('t1'));
+  expect(mocks.frame.props, 'the SoftN frame is not made for it').toBeNull();
+
+  // Still the version on screen: its address stays, and the frame with it.
+  mocks.getNativeVersion.mockResolvedValue({ data: { version: 1 } });
+  await comeBack();
+  expect(mocks.getNativeRuntime).toHaveBeenCalledTimes(1);
+  expect(siteFrame()?.site.url).toBe(sitePages('t1').url);
+
+  mocks.getNativeVersion.mockResolvedValue({ data: { version: 2 } });
+  mocks.getNativeRuntime.mockResolvedValueOnce(answer({ project: project(2, two, { assets: {}, site: sitePages('t2') }) }));
+  await comeBack();
+  expect(mocks.getNativeRuntime).toHaveBeenCalledTimes(2);
+  expect(siteFrame()?.version).toBe(2);
+  expect(siteFrame()?.site).toEqual(sitePages('t2'));
+  expect(mocks.frame.props).toBeNull();
+  expect(host?.querySelector('[data-testid="site-frame"]')).not.toBeNull();
+
+  // And the one after it, the same way: the page goes on asking.
+  mocks.getNativeVersion.mockResolvedValue({ data: { version: 3 } });
+  mocks.getNativeRuntime.mockResolvedValueOnce(answer({ project: project(3, one, { assets: {}, site: sitePages('t3') }) }));
+  await comeBack();
+  expect(siteFrame()?.site).toEqual(sitePages('t3'));
+});
+
+it('leaves a JavaScript app on screen when its newer version cannot be fetched', async () => {
+  await open(answer({ project: project(1, one, { site: sitePages('t1') }) }));
+  mocks.getNativeVersion.mockResolvedValue({ data: { version: 2 } });
+  mocks.getNativeRuntime.mockResolvedValueOnce({ error: 'The app was updated while it was opening.', status: 409 });
+  await comeBack();
+  expect(siteFrame()?.site).toEqual(sitePages('t1'));
+  expect(host?.querySelector('[data-testid="site-frame"]')).not.toBeNull();
+});
+
+it.each([
+  ['a SoftN app that became a JavaScript app', {}, { site: sitePages('t2') }, 'site-frame'],
+  ['a JavaScript app that became a SoftN app', { site: sitePages('t1') }, {}, 'frame'],
+])('opens %s in the frame its kind runs in, never in place', async (_what, before, after, shown) => {
+  await open(answer({ project: project(1, one, before) }));
+  mocks.getNativeVersion.mockResolvedValue({ data: { version: 2 } });
+  mocks.getNativeRuntime.mockResolvedValueOnce(answer({ project: project(2, two, { assets: {}, ...after }) }));
+  await comeBack();
+  expect(host?.querySelector(`[data-testid="${shown}"]`)).not.toBeNull();
+  expect(host?.querySelector(`[data-testid="${shown === 'frame' ? 'site-frame' : 'frame'}"]`)).toBeNull();
+  if (shown === 'frame') { expect(frame().version).toBe(2); expect(frame().update).toBeUndefined(); }
+  else expect(siteFrame()?.version).toBe(2);
 });
 
 it('asks nothing for someone the server does not show newer versions to', async () => {

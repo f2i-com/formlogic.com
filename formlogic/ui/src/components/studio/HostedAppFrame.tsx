@@ -61,7 +61,21 @@ export function HostedAppFrame({
   onWallet,
   update,
   onUpdate,
+  initialPlace,
+  onPlace,
 }: {
+  /**
+   * Where in the app to start, when the page that shows it knows (its address names a place in
+   * the app): `/about.html`, `/docs/guide.html#team`. Read once, as the app is handed to the
+   * frame, and only by a frame that follows the app's own page links (SoftN's `places: 1`); the
+   * frame takes it as untrusted and starts on the main page for anything that is no place of the app.
+   */
+  initialPlace?: string | null;
+  /**
+   * The frame says where the app now is (a page link followed, back to the main page, a named
+   * page inside it), for the page's address to follow. The same kind of string, to hand back as it came.
+   */
+  onPlace?: (place: string) => void;
   /**
    * A newer version of this same app's files, to hand to the frame it is running in (SoftN v0.0.39's
    * `formlogic:update`) rather than open a new frame, in which the app would start from nothing.
@@ -183,6 +197,9 @@ export function HostedAppFrame({
   const handed = useRef<{ key: string; version: number } | null>(null);
   const onUpdateRef = useRef(onUpdate);
   useLayoutEffect(() => { onUpdateRef.current = onUpdate; }, [onUpdate]);
+  // Read when the frame is handed the app and when it says where it is: not reasons to open it again.
+  const placeRef = useRef({ initialPlace, onPlace });
+  useLayoutEffect(() => { placeRef.current = { initialPlace, onPlace }; }, [initialPlace, onPlace]);
   // Source/engine props cannot revive rejected authority. Only a fresh server
   // admission object can release this quarantine, even for the same actor.
   const [quarantined, setQuarantined] = useState(-1);
@@ -472,6 +489,12 @@ export function HostedAppFrame({
           settleUpdate(event.data.id, event.data.outcome);
           return;
         }
+        // Where the app now is (SoftN's `places: 1`). Passed on only in the shape a place has.
+        if (event.data?.type === "place") {
+          const place: unknown = event.data.place;
+          if (typeof place === "string" && place.length <= 2000 && /^\/(?!\/)/.test(place)) placeRef.current.onPlace?.(place);
+          return;
+        }
         if (event.data?.type === "error") {
           // An app that failed after its first page was drawn is still on screen and shows what
           // went wrong inside it (SoftN v0.0.28 says `phase`); a frame before that sends none,
@@ -636,6 +659,8 @@ export function HostedAppFrame({
           // which this side still takes.
           ...(largeStorage && limits ? { storageLimits: { value: limits.value, entries: limits.entries, map: limits.map, input: limits.input, queued: limits.queued } } : {}),
           dark: document.documentElement.classList.contains("dark"),
+          // Where to start, for a frame that follows the app's page links and so knows its places.
+          ...(event.data.places === 1 && typeof placeRef.current.initialPlace === "string" && placeRef.current.initialPlace.length <= 2000 && /^\/(?!\/)/.test(placeRef.current.initialPlace) ? { place: placeRef.current.initialPlace } : {}),
           // The id alone: the shell serves engines by name and refuses one it does not, so an
           // object here would arrive as "[object Object]" and be refused. A shell from before the
           // handshake ignores the key and runs what it always ran.

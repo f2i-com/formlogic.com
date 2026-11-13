@@ -1,6 +1,7 @@
 // The create-app entry (/apps/new): choose what to make — forms & data, a website or web app
-// (a hosted SoftN app), or an app the person already has (a .softn file) — then name it and land
-// straight in its editor: creating and editing share ONE surface (owner direction).
+// (a hosted SoftN app), an app the person already has (a .softn file), or a JavaScript app they
+// have built (the .zip of its build) — then name it and land straight in its editor: creating and
+// editing share ONE surface (owner direction).
 //
 // AI readiness is checked in the background. Creation stays available while
 // optional connection controls expand in place, preserving the app draft.
@@ -8,7 +9,7 @@
 // step, companion apps are created from an app's Forms manager.
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { AppWindow, ArrowRight, Boxes, Check, ClipboardList, FileUp, HardDrive, Package, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AppWindow, ArrowRight, Boxes, Braces, Check, ClipboardList, FileUp, HardDrive, Package, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -24,14 +25,16 @@ import { useVaultStore } from '../../stores/vaultStore';
 import { cn } from '../../lib/utils';
 import type { AppFormPrivacyDefault, AppKind } from '../../types/app';
 import { SoftnCreateForm } from './SoftnCreateForm';
+import { SiteCreateForm } from '../../components/apps/SiteCreateForm';
 
-type Build = 'forms' | 'softn' | 'upload';
+type Build = 'forms' | 'softn' | 'upload' | 'site';
 
-/** The three things a person can make here, each with what it is in a sentence. */
+/** The four things a person can make here, each with what it is in a sentence. */
 const BUILDS: ReadonlyArray<readonly [Build, string, string, typeof ClipboardList]> = [
   ['forms', 'Forms & data', 'Collect records with forms, then add screens, automations and roles.', ClipboardList],
   ['softn', 'Website or web app', 'Your own pages and logic, with a backend and database if it needs one. Built with SoftN.', AppWindow],
   ['upload', 'Bring an app you have', 'Upload a SoftN app (.softn) and host it here, with or without its own backend.', FileUp],
+  ['site', 'JavaScript app', 'Upload a web app you have already built: the zip of its dist or build folder.', Braces],
 ];
 
 /** What each choice leads to, under the heading. */
@@ -39,6 +42,7 @@ const LEADS: Record<Build, string> = {
   forms: 'Name it and step into the App Studio — a guided, skippable builder for data, screens, automations and access. Everything is editable later.',
   softn: 'A website or web app with its own pages, hosted here. Build it with AI, or start from a working app and edit it visually.',
   upload: 'Drop in a .softn file: it is checked as you choose it, keeps its own name unless you give it another, and opens ready to preview and publish.',
+  site: 'Built with Vite, React, Vue, Svelte or another tool? Name the app and upload the zip of the folder your build made: it is hosted here as it is, and opens running.',
 };
 
 export function AppCreateStart() {
@@ -49,11 +53,12 @@ export function AppCreateStart() {
   const [aiChecked, setAiChecked] = useState(false);
   const [aiReason, setAiReason] = useState<string | null>(null);
   // What the person makes: a forms & data app (the App Studio), a website or web app (a hosted
-  // SoftN app, with or without a backend of its own), or an app they already have, uploaded.
-  // /apps/new?type=softn opens on the second, ?type=upload on the third.
+  // SoftN app, with or without a backend of its own), an app they already have, uploaded, or a
+  // JavaScript app they have built, uploaded as the zip of its build.
+  // /apps/new?type=softn opens on the second, ?type=upload on the third, ?type=site on the fourth.
   const [searchParams] = useSearchParams();
   const requested = searchParams.get('type');
-  const [build, setBuild] = useState<Build>(requested === 'softn' || requested === 'upload' ? requested : 'forms');
+  const [build, setBuild] = useState<Build>(requested === 'softn' || requested === 'upload' || requested === 'site' ? requested : 'forms');
   const [rechecking, setRechecking] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -174,9 +179,9 @@ export function AppCreateStart() {
             </h2>
             <fieldset className="mt-4">
               <legend className="sr-only">What kind of app</legend>
-              {/* A row each on a phone, so the form is in reach without a long scroll; cards side
-                  by side above that; rows again where they stand in a column beside the form. */}
-              <div className="grid gap-2 sm:grid-cols-3 sm:gap-3 xl:grid-cols-1 xl:gap-2">
+              {/* A row each on a phone, so the form is in reach without a long scroll; cards two
+                  by two above that; rows again where they stand in a column beside the form. */}
+              <div className="grid gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-1 xl:gap-2">
                 {BUILDS.map(([value, label, hint, Icon]) => (
                   <label key={value} className={cn('flex cursor-pointer items-start gap-3 rounded-2xl border p-3 transition has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary-500 sm:flex-col sm:gap-2 sm:p-4 xl:flex-row xl:gap-3 xl:p-3', build === value ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-500/15 dark:bg-primary-500/10' : 'border-gray-200 bg-white hover:border-gray-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600')}>
                     <input type="radio" name="app-build" value={value} checked={build === value} disabled={creating} onChange={() => setBuild(value)} className="sr-only" />
@@ -191,7 +196,7 @@ export function AppCreateStart() {
             </fieldset>
             <p className="mt-5 max-w-2xl text-sm leading-relaxed text-gray-500 dark:text-slate-400">{LEADS[build]}</p>
 
-            {!aiReady && build !== 'upload' && <details className="mt-4 rounded-xl border border-gray-200 dark:border-slate-700 p-4">
+            {!aiReady && build !== 'upload' && build !== 'site' && <details className="mt-4 rounded-xl border border-gray-200 dark:border-slate-700 p-4">
               <summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-slate-200">Optional: connect an AI copilot</summary>
               <div className="mt-4"><ConnectAiDoors onConnected={() => recheck(true)} /></div>
               <Button className="mt-3" variant="secondary" onClick={() => void recheck()} isLoading={rechecking} leftIcon={<RefreshCw className="h-4 w-4" />}>Check connection</Button>
@@ -206,7 +211,7 @@ export function AppCreateStart() {
                   </p>
                 </div>
               )}
-              {build !== 'forms' ? <SoftnCreateForm key={build} uploadOnly={build === 'upload'} aiReady={aiChecked ? aiReady : null} aiReason={aiReason} onAiRecheck={() => recheck(true)} disabled={isDemo} /> : <div className="space-y-4">
+              {build === 'site' ? <SiteCreateForm disabled={isDemo} /> : build !== 'forms' ? <SoftnCreateForm key={build} uploadOnly={build === 'upload'} aiReady={aiChecked ? aiReady : null} aiReason={aiReason} onAiRecheck={() => recheck(true)} disabled={isDemo} /> : <div className="space-y-4">
                 <fieldset>
                   <legend className="mb-2 text-sm font-semibold text-gray-700 dark:text-slate-200">What are you building?</legend>
                   <div className="grid grid-cols-2 gap-2">
@@ -315,14 +320,14 @@ export function AppCreateStart() {
                         <span className="mt-1 block text-xs leading-5 text-gray-500 dark:text-slate-400">
                           {isDemo
                             ? 'Available after sign-up. Demo data is already kept on this device.'
-                            : 'New Studio data types start as private forms. FormLogic stores ciphertext and cannot read client responses.'}
+                            : 'New forms in the studio start as private forms. FormLogic stores ciphertext and cannot read client responses.'}
                         </span>
                       </span>
                     </label>
                   </div>
                   {formPrivacy === 'private' && !isDemo && (
                     <p className="mt-2 text-[11px] leading-5 text-amber-700 dark:text-amber-300">
-                      This can&apos;t be undone: once a data type is private it stays private. File uploads,
+                      This can&apos;t be undone: once a form is private it stays private. File uploads,
                       camera and linked-record questions aren&apos;t available on private forms, and you&apos;ll
                       need your vault unlocked to read the answers. Existing forms you attach are unchanged.
                     </p>

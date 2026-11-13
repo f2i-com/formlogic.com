@@ -152,9 +152,9 @@ describe('AppCreateStart: what to make', () => {
   const cards = () => [...container.querySelectorAll<HTMLInputElement>('input[name="app-build"]')];
   const choose = (value: string) => act(async () => { container.querySelector<HTMLInputElement>(`input[name="app-build"][value="${value}"]`)!.click(); });
 
-  it('offers three starts and opens on forms & data', async () => {
+  it('offers four starts and opens on forms & data', async () => {
     await renderPage();
-    expect(cards().map(card => card.value)).toEqual(['forms', 'softn', 'upload']);
+    expect(cards().map(card => card.value)).toEqual(['forms', 'softn', 'upload', 'site']);
     expect(cards().find(card => card.checked)?.value).toBe('forms');
     expect(container.querySelector('#new-app-name')).not.toBeNull();
     // A website or web app: the SoftN form, with its three ways to start.
@@ -178,5 +178,18 @@ describe('AppCreateStart: what to make', () => {
   it('?type=softn opens on a website or web app', async () => {
     await renderPage('/apps/new?type=softn');
     expect(cards().find(card => card.checked)?.value).toBe('softn');
+  });
+
+  it('?type=site opens on a JavaScript app: its name and its build, and no AI to connect', async () => {
+    mocks.readiness.mockResolvedValueOnce({ ready: false });
+    await renderPage('/apps/new?type=site');
+    expect(cards().find(card => card.checked)?.value).toBe('site');
+    expect(container.querySelector('#site-app-name')).not.toBeNull();
+    expect(container.querySelector<HTMLInputElement>('#site-app-build')?.accept).toBe('.zip');
+    expect(container.querySelector('#softn-app-name')).toBeNull();
+    expect(container.textContent).not.toContain('connect an AI copilot');
+    // A website or web app, which AI can build, keeps the offer.
+    await choose('softn');
+    expect(container.textContent).toContain('connect an AI copilot');
   });
 });

@@ -12,6 +12,7 @@ import type { NativeRuntimeProject } from '../../lib/nativeHosting';
 import { isNativeStorageScope } from '../../lib/nativeAppStorage';
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from '../../lib/sessionGeneration';
 import { HostedAppFrame } from './HostedAppFrame';
+import { SiteAppFrame, type SiteProblem } from './SiteAppFrame';
 import { AppSplash } from './AppSplash';
 import { WalletSheet } from '../apps/WalletSheet';
 import { applyAppHead, rememberedLook, rememberLook, type NativeLook } from '../../lib/appLook';
@@ -41,9 +42,10 @@ function rememberFilesAnswer(appId: string, answer: 'allow' | 'deny'): void {
  * `onDomain`: that page is the app's own domain, whose manifest the domain's router already set.
  * `onLook`: told the app's look (its loading background) for the page around it. `signInTo`: where a
  * refused visitor goes. `plugin`: this is a plugin's own page, given its two bridge actions
- * (HostedAppFrame).
+ * (HostedAppFrame). `onSiteProblem`: told what the browser refused a JavaScript app, and errors in
+ * it, for its owner to be shown (SiteAppFrame).
  */
-export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLook, signInTo, plugin }: { slug: string; fullScreen?: boolean; onDomain?: boolean; onLook?: (look: NativeLook | null) => void; signInTo?: string; plugin?: { context: Record<string, unknown>; onDone: () => void; onCamera?: () => void } }) {
+export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLook, signInTo, plugin, onSiteProblem }: { slug: string; fullScreen?: boolean; onDomain?: boolean; onLook?: (look: NativeLook | null) => void; signInTo?: string; plugin?: { context: Record<string, unknown>; onDone: () => void; onCamera?: () => void }; onSiteProblem?: (problem: SiteProblem) => void }) {
   const userId = useAuthStore(state => state.user?.id);
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
   // `engine`: the server's engine decision for this mount (absent from a server before E0).
@@ -125,6 +127,8 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   // the running frame where nothing but its files differs (HostedAppFrame's `update`): the app
   // goes on from where it stood. Anything else about it differing, or a frame that cannot take it,
   // opens it the way a newer version always was opened, with new props in a new frame.
+  // A JavaScript app (`site`) is never handed files: its newer version is at a new address, which
+  // the answer fetched here names, and its frame loads that afresh (SiteAppFrame).
   const live = !!project && !!current?.updates && !plugin;
   // Never more often than every ten seconds nor less than every ten minutes, whatever is sent.
   const sent = current?.updatesEvery;
@@ -184,8 +188,9 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
         // In place only where nothing but the files differs: its storage, access, the origins it may
         // call and what it may ask of the device and of FormLogic are settled as a frame opens.
         // (Its engine too: the frame, which knows the one it runs on, holds the version to that.)
+        // Never a JavaScript app, before or after: the frame it runs in loads its own files.
         const was = project.storageScope;
-        const inPlace = next.access === project.access && scope.appId === was.appId && scope.access === was.access &&
+        const inPlace = !project.site && !next.site && next.access === project.access && scope.appId === was.appId && scope.access === was.access &&
           (scope.access !== 'members' || (was.access === 'members' && scope.userId === was.userId)) &&
           next.files === project.files &&
           JSON.stringify(next.origins ?? []) === JSON.stringify(project.origins ?? []) &&
@@ -240,6 +245,47 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   // Asks again, on the splash rather than under the old error. A failed opening that asking again
   // may cure is asked again by itself when the connection comes back.
   const askAgain = () => { setResult(null); setAttempt(value => value + 1); };
+  // A JavaScript app's frame lost the app and its address did not bring it back (SiteAppFrame):
+  // the address is asked for again, once. Asked again and again it would open and lose the app in
+  // a loop, so a second loss soon after is left as the frame shows it.
+  // Where the visitor is in a JavaScript app goes in this page's address, after the #, when the
+  // app has the page to itself (`fullScreen`: its own address, not a preview inside another
+  // page): /app/shop#/orders/12. Opened again, or sent to someone, that address starts the app
+  // there. Written in place of the address shown, never as a new step back: the app's own steps
+  // are already the browser's. Only a # that is a path is read or replaced, so one this page
+  // uses for something else is left alone.
+  const placeInAddress = (): string | null => {
+    const hash = window.location.hash;
+    return /^#\/(?!\/)/.test(hash) && hash.length <= 2000 ? hash.slice(1) : null;
+  };
+  const [startAt] = useState(() => fullScreen ? placeInAddress() : null);
+  // An app that changes its place many times a second (a slider that writes it) is followed a few
+  // times a second, to the last place it said: browsers refuse an address rewritten without end.
+  const routing = useRef<{ timer: number; path: string | null }>({ timer: 0, path: null });
+  useEffect(() => () => window.clearTimeout(routing.current.timer), []);
+  const followRoute = (path: string) => {
+    routing.current.path = path;
+    if (routing.current.timer) return;
+    writeRoute(path);
+    routing.current.timer = window.setTimeout(() => {
+      routing.current.timer = 0;
+      if (routing.current.path !== null && routing.current.path !== path) writeRoute(routing.current.path);
+    }, 200);
+  };
+  const writeRoute = (path: string) => {
+    const shown = window.location.hash;
+    if (shown !== '' && shown !== '#' && placeInAddress() === null) return;
+    const next = path === '/' ? '' : `#${path}`;
+    if (next === (shown === '#' ? '' : shown)) return;
+    try { window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}${next}`); } catch { /* The address stays as it was. */ }
+  };
+  const lostAt = useRef(0);
+  const siteLost = () => {
+    const now = Date.now();
+    if (now - lostAt.current < 120_000) return;
+    lostAt.current = now;
+    askAgain();
+  };
   const retryable = !!current?.error && !!current.retry;
   useEffect(() => {
     if (!retryable) return;
@@ -278,7 +324,12 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       </section>
     </div>;
   }
-  return project ? <div className="h-full"><HostedAppFrame slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} onWallet={native?.wallet ? onWallet : undefined} update={update} onUpdate={live ? onUpdate : undefined} />
+  return project ? <div className="h-full">{project.site
+    // A JavaScript app: the server's own pages in a frame, admitted by everything above as any app
+    // is. Who is using it is said only to an app its members open; anyone's app is told nobody, and
+    // what it keeps in the browser is kept for the app alone, as `storageScope` has it.
+    ? <SiteAppFrame slug={slug} appId={project.storageScope?.appId ?? slug} name={name ?? ''} version={project.version} site={project.site} backendOrigins={project.origins} userId={project.access === 'members' ? userId ?? null : null} look={look} onProblem={onSiteProblem} onLost={siteLost} initialRoute={startAt} onRoute={fullScreen ? followRoute : undefined} className={fullScreen ? undefined : 'min-h-[420px] rounded-2xl border border-slate-200 dark:border-slate-700'} />
+    : <HostedAppFrame initialPlace={startAt} onPlace={fullScreen && !plugin ? followRoute : undefined} slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} onWallet={native?.wallet ? onWallet : undefined} update={update} onUpdate={live ? onUpdate : undefined} />}
     {walletOpen && <WalletSheet slug={slug} appName={name || 'this app'} visitor={!!native?.visitor} onClose={closeWallet} />}</div> : !error ? <AppSplash look={look} label={name ? `Opening ${name}` : 'Opening the app'} /> : <div className="p-6">
     {/* On a card of its own: the page around it may wear the app's loading colours, dark or light. */}
     <div className="mx-auto max-w-md rounded-2xl bg-white/95 p-5 shadow-sm dark:bg-slate-900/95">
