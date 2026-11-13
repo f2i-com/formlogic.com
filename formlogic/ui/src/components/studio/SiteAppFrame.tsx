@@ -162,7 +162,7 @@ function blockedText(what: unknown, where: unknown): string {
   return here
     // The usual cause: a build that asks for /assets/… from its script or its styles.
     ? `The browser stopped the app from ${doing} ${asked} (a path that starts with / is this site's, not the app's: the app reaches its own files by relative paths).`
-    : `The browser stopped the app from ${doing} ${asked} (outside sites are not reachable from a hosted app).`;
+    : `The browser stopped the app from ${doing} ${asked}. A hosted app reaches another site only when its owner names it: Settings, Outside sites.`;
 }
 
 export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins, userId, onProblem, onLost, initialRoute, onRoute, look, className = '' }: SiteAppFrameProps) {

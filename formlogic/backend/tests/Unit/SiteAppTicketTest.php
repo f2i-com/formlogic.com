@@ -495,4 +495,53 @@ final class SiteAppTicketTest extends TestCase
     {
         $this->assertSame('INDEX.HTML', NativeAppService::validateProject(self::project(['site/INDEX.HTML' => 'x'], ['name' => 'Shop', 'site' => ['entry' => 'INDEX.HTML']]))[2]['site']['entry']);
     }
+
+    public function testOutsideSitesInTheManifestAreHeldToASitesAddressAndABadOneIsNamed(): void
+    {
+        $with = static fn (mixed $outside): array => self::project(['site/index.html' => '<p>Shop</p>'], ['name' => 'Shop', 'site' => ['entry' => 'index.html', 'outside' => $outside]]);
+        $this->assertSame(['https://api.example.com', 'wss://live.example.com'], NativeAppService::validateProject($with(['https://api.example.com', 'wss://live.example.com']))[2]['site']['outside']);
+        $this->assertSame([], NativeAppService::validateProject($with([]))[2]['site']['outside']);
+        $this->assertStringContainsString('"https://api.example.com/v1", which is not a site\'s address', self::refusal($with(['https://api.example.com/v1'])));
+        $this->assertStringContainsString('"http://plain.example.com", which is not a site\'s address', self::refusal($with(['https://ok.example.com', 'http://plain.example.com'])));
+        $this->assertStringContainsString('"(not text)"', self::refusal($with([7])));
+        $this->assertStringContainsString('must be a list of sites', self::refusal($with('https://api.example.com')));
+        $this->assertStringContainsString('must be a list of sites', self::refusal($with(['a' => 'https://api.example.com'])));
+        $this->assertStringContainsString('names more than 20 sites', self::refusal($with(array_map(static fn (int $n): string => "https://s{$n}.example.com", range(1, 21)))));
+        // What is shown of a bad one is cut and held to plain characters.
+        $long = self::refusal($with(["https://x.example.com/\u{202e}" . str_repeat('a', 500)]));
+        $this->assertLessThan(420, strlen($long));
+        $this->assertStringNotContainsString("\u{202e}", $long);
+        // A number is not a site's name: the visitor's own machine and network are not the internet.
+        foreach (['https://127.0.0.1', 'https://192.168.1.10:8443', 'wss://10.0.0.5'] as $number) {
+            $this->assertStringContainsString("\"{$number}\", which is not a site's address", self::refusal($with([$number])), $number);
+        }
+    }
+
+    public function testThisInstallationsOwnNameInTheManifestIsRefusedInWords(): void
+    {
+        // Found by review, 2026-11-13: the name was taken here and then left out of the policy, so
+        // it sat on the owner's list as though allowed while the browser refused it.
+        $with = static fn (array $outside): array => self::project(['site/index.html' => '<p>Shop</p>'], ['name' => 'Shop', 'site' => ['entry' => 'index.html', 'outside' => $outside]]);
+        $said = [];
+        foreach (['APP_URL', 'CORS_ORIGIN', 'CORS_ALLOWED_ORIGINS'] as $name) {
+            $said[$name] = [$_ENV[$name] ?? null, $_SERVER[$name] ?? null, getenv($name)];
+            unset($_ENV[$name], $_SERVER[$name]);
+            putenv($name);
+        }
+        try {
+            $_ENV['APP_URL'] = 'https://apps.example.test';
+            $_ENV['CORS_ALLOWED_ORIGINS'] = 'https://www.example.test';
+            foreach (['https://apps.example.test', 'wss://apps.example.test:8443', ' HTTPS://Apps.Example.Test ', 'https://www.example.test', 'https://*.example.test', 'https://*.apps.example.test'] as $own) {
+                $this->assertStringContainsString("which is this site's own address", self::refusal($with(['https://api.example.com', $own])), $own);
+            }
+            // Another site, though it ends the same, is taken.
+            $this->assertSame(['https://api.example.test'], NativeAppService::validateProject($with(['https://api.example.test']))[2]['site']['outside']);
+        } finally {
+            foreach ($said as $name => [$env, $server, $process]) {
+                if ($env === null) unset($_ENV[$name]); else $_ENV[$name] = $env;
+                if ($server === null) unset($_SERVER[$name]); else $_SERVER[$name] = $server;
+                putenv($process === false ? $name : $name . '=' . $process);
+            }
+        }
+    }
 }

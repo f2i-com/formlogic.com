@@ -39,7 +39,8 @@ import { AppTorchSwitch } from '../../components/studio/AppTorchSwitch';
 import { NativeEditor } from '../../components/studio/NativeAppPanel';
 import { NativeAppView } from '../../components/studio/NativeAppView';
 import type { SiteProblem } from '../../components/studio/SiteAppFrame';
-import { importSiteBuild, siteBuildWarnings, siteOf, withNewBuild } from '../../lib/siteApps';
+import { importSiteBuild, siteBuildWarnings, siteOf, siteOutsideOf, withNewBuild, withOutsideSites } from '../../lib/siteApps';
+import { SiteOutsidePanel } from '../../components/apps/SiteOutsidePanel';
 import { DataManager, type DataView } from '../../components/data';
 import { SoftnOverview } from '../../components/apps/SoftnOverview';
 import { DRAFT_KEEPING, useNativeProjectDraft } from '../../components/studio/useNativeProjectDraft';
@@ -466,7 +467,7 @@ function Workspace({ app }: { app: App }) {
                 <li>It runs in a sandbox of its own: it cannot read FormLogic, your account or another app.</li>
                 <li><code className="rounded bg-slate-100 px-1 dark:bg-white/10">fetch(&apos;/api/…&apos;)</code> reaches this app&rsquo;s own backend, as whoever is using the app.</li>
                 <li><code className="rounded bg-slate-100 px-1 dark:bg-white/10">localStorage</code> works and is kept for each visitor in their browser.</li>
-                <li>Other sites (an outside API, a font service, a script from a CDN) are not reachable from it: keep what it needs in the build.</li>
+                <li>Other sites (an outside API, a font service, a script from a CDN) are reachable only when you name them: <Link to={{ pathname: softnWorkspacePath(app.id, 'settings'), hash: '#settings-outside' }} className="font-medium text-primary-600 underline-offset-2 hover:underline dark:text-primary-300">Settings, Outside sites</Link>.</li>
               </ul>
             </Panel>
           </aside>}
@@ -553,7 +554,7 @@ function Workspace({ app }: { app: App }) {
         {section === 'settings' && <div className="mt-4">
           {/* The page is long: one line of links to its panels, each an address a link elsewhere can use. */}
           <nav aria-label="Settings on this page" className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-            {([['settings-access', 'Who can use it', true], ['settings-before', 'Before it opens', isOwner], ['settings-files', 'Files on this device', isOwner && !isSite],
+            {([['settings-access', 'Who can use it', true], ['settings-before', 'Before it opens', isOwner], ['settings-files', 'Files on this device', isOwner && !isSite], ['settings-outside', 'Outside sites', isOwner && isSite],
               ['settings-signin', 'Phone sign-in codes', isOwner && backend], ['app-ai-settings', 'AI', isOwner && backend && declaresFormlogicAi(project)],
               ['settings-payments', 'Payments', isOwner && backend && declaresFormlogicPayments(project)], ['settings-look', 'Look and sharing', isOwner],
               ['settings-engine', 'Engine', !isSite && !!(draft.engine && draft.enginePolicy)], ['settings-more', 'More tools', true]] as const)
@@ -579,6 +580,11 @@ function Workspace({ app }: { app: App }) {
           {app.ownerId === userId && <Panel id="settings-before" title="Before it opens" icon={<Lock className="h-4 w-4" />}>
             <RequirementsSetting value={app.settings?.requires} disabled={gateBusy || readOnly} anonymousAccess={project.access === 'application'}
               onChange={next => void changeRequirements(next)} />
+          </Panel>}
+          {/* The other sites a JavaScript app may reach: none until its owner names them (SiteOutsidePanel). */}
+          {isOwner && isSite && <Panel id="settings-outside" title="Outside sites" icon={<Globe className="h-4 w-4" />}>
+            <SiteOutsidePanel sites={siteOutsideOf(project)} disabled={busy || readOnly}
+              onChange={next => changeSetting(withOutsideSites(project, next), next.length ? 'Saved. The app may reach the sites on its list.' : 'Saved. The app reaches no outside site.')} />
           </Panel>}
           {/* Files on the device and the engine are a SoftN app's: a JavaScript app runs in the browser's own. */}
           {app.ownerId === userId && !isSite && <Panel id="settings-files" title="Files on this device" icon={<FolderOpen className="h-4 w-4" />}>

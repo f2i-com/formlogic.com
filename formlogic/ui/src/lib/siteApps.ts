@@ -258,6 +258,70 @@ export function withNewBuild(current: NativeProject, imported: NativeProject): N
   };
 }
 
+/**
+ * One outside site an app may be allowed to reach, as the server takes it
+ * (SecurityHeadersMiddleware::SITE_OUTSIDE): a name and not a number, so no IP address.
+ */
+export const SITE_OUTSIDE = /^(?:https|wss):\/\/(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,20}[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?(?::\d{1,5})?$/;
+/** How many an app may name (SecurityHeadersMiddleware::SITE_OUTSIDE_MOST). */
+export const SITE_OUTSIDE_MOST = 20;
+/** No address of a site is longer (SecurityHeadersMiddleware::SITE_OUTSIDE_LENGTH). */
+export const SITE_OUTSIDE_LENGTH = 300;
+
+/** One entry of a list as the server reads it: trimmed, in lower case, and a site's address or nothing. */
+function outsideSiteAsTaken(one: unknown): string | null {
+  if (typeof one !== 'string') return null;
+  const site = one.trim().toLowerCase();
+  return site.length <= SITE_OUTSIDE_LENGTH && SITE_OUTSIDE.test(site) ? site : null;
+}
+
+/**
+ * Whether an outside site is this site itself, which an app is never given
+ * (SecurityHeadersMiddleware::siteOutsideIsOwn): its own name on any port, with or without "*."
+ * before it, or "*." before a name above it, which a browser reads as covering it. `ownHost` is
+ * the name this page is on.
+ */
+export function outsideSiteIsOwn(site: string, ownHost: string): boolean {
+  const found = /^[a-z]+:\/\/(\*\.)?([^:/]+)/.exec(site.trim().toLowerCase());
+  const own = ownHost.trim().toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '');
+  if (!found || !own) return false;
+  const name = found[2].replace(/\.$/, '');
+  return name === own || (found[1] !== undefined && own.endsWith(`.${name}`));
+}
+
+/**
+ * What a person typed or pasted, as a site's address: an address copied whole from a browser
+ * (https://fonts.example.com/css2?family=Inter) is cut down to its site, and a bare name
+ * (api.example.com) is taken as https. Null when it is no site: plain http, a name with no dot,
+ * a number where a name should be (127.0.0.1), anything else.
+ */
+export function readOutsideSite(typed: string): string | null {
+  const text = typed.trim().toLowerCase();
+  if (!text) return null;
+  const whole = /^[a-z][a-z0-9+.-]*:\/\//.test(text) ? text : `https://${text}`;
+  const site = whole.replace(/^((?:https|wss):\/\/[^/?#\s]+).*$/, '$1');
+  return outsideSiteAsTaken(site);
+}
+
+/** The outside sites a project's manifest lets its app reach (site.outside), as the server would take them. */
+export function siteOutsideOf(project: Pick<NativeProject, 'files'>): string[] {
+  try {
+    const outside = record(record(JSON.parse(project.files['manifest.json'] ?? '{}'))?.site)?.outside;
+    // As the server reads each one (a manifest written by hand or by another program may say
+    // "HTTPS://API.Example.com"): what is shown as allowed is what the policy allows.
+    return Array.isArray(outside) ? [...new Set(outside.map(outsideSiteAsTaken).filter((one): one is string => one !== null))].slice(0, SITE_OUTSIDE_MOST) : [];
+  } catch { return []; }
+}
+
+/** A project whose app may reach these outside sites and no others. The rest of its manifest is as it was. */
+export function withOutsideSites(project: NativeProject, sites: string[]): NativeProject {
+  let manifest: Record<string, unknown> = {};
+  try { manifest = record(JSON.parse(project.files['manifest.json'] ?? '{}')) ?? {}; } catch { /* Written afresh below. */ }
+  const site = { ...(record(manifest.site) ?? {}) };
+  if (sites.length) site.outside = sites; else delete site.outside;
+  return { ...project, files: { ...project.files, 'manifest.json': `${JSON.stringify({ ...manifest, site }, null, 2)}\n` } };
+}
+
 /** No more of one file is read for the warnings. */
 const SCAN_BYTES = 2 * MB;
 const SCANNED = /\.(?:html?|js|mjs|css)$/;
@@ -331,7 +395,7 @@ export function siteBuildWarnings(project: Pick<NativeProject, 'files' | 'assets
     const text = page ? withoutComments(scanText(project.assets[path])) : scanText(project.assets[path]);
     if (path === entry) {
       const address = outsideLoad(text);
-      if (address) outside = `${shown} loads ${brief(address)} from another site, and outside sites are not reachable from a hosted app: put the file in your build.`;
+      if (address) outside = `${shown} loads ${brief(address)} from another site. A hosted app reaches another site only when you name it: put the file in your build, or allow the site in Settings, Outside sites.`;
     }
     if (!history && (page || script)) {
       const found = HISTORY.exec(text)?.[1];

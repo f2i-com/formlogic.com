@@ -302,7 +302,7 @@ describe('siteBuildWarnings', () => {
 
   it('warns of a script, a stylesheet or a font the first page loads from another site', () => {
     const script = siteBuildWarnings(built({ 'index.html': '<script src="https://cdn.example.com/lib.js"></script>' }));
-    expect(script).toEqual(['index.html loads https://cdn.example.com/lib.js from another site, and outside sites are not reachable from a hosted app: put the file in your build.']);
+    expect(script).toEqual(['index.html loads https://cdn.example.com/lib.js from another site. A hosted app reaches another site only when you name it: put the file in your build, or allow the site in Settings, Outside sites.']);
     expect(siteBuildWarnings(built({ 'index.html': '<link href=\'//fonts.example.com/css?family=Inter\' rel=\'stylesheet\'>' }))[0]).toContain('index.html loads //fonts.example.com/css?family=Inter from another site');
     expect(siteBuildWarnings(built({ 'index.html': '<link rel="preload" as="font" href="http://fonts.example.com/inter.woff2">' }))[0]).toContain('http://fonts.example.com/inter.woff2');
     // The page the manifest names is the one read for this, wherever it is.

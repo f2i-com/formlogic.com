@@ -119,7 +119,7 @@ final class SiteAppController
         if ($site['version'] !== $version) return $this->refuse($response, 410, 'This address of the app is no longer in use. Open the app again.');
         if (preg_match(SecurityHeadersMiddleware::SITE_FRAME_PATH, $request->getUri()->getPath(), $found) !== 1) return $this->refuse($response, 404, 'Not found.');
         $root = $found[1];
-        $policy = SecurityHeadersMiddleware::siteFramePolicy(McpOAuthService::publicOrigin($request), $root);
+        $policy = SecurityHeadersMiddleware::siteFramePolicy(McpOAuthService::publicOrigin($request), $root, $site['outside']);
         // How the browser means to use what it asks for (Sec-Fetch-Dest): "document" is a tab of
         // its own, "iframe" the app's frame, "empty" a script's fetch, and so on. One too old to
         // say sends nothing, and is served as before.

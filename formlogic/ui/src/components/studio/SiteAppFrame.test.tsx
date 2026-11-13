@@ -506,8 +506,8 @@ describe('what went wrong in the app', () => {
     app.tell('error', { message: 42 });
     await app.heard();
     expect(problems).toEqual([
-      { kind: 'blocked', text: 'The browser stopped the app from loading https://cdn.example.com (outside sites are not reachable from a hosted app).' },
-      { kind: 'blocked', text: 'The browser stopped the app from reaching https://api.other.example/v1/items (outside sites are not reachable from a hosted app).' },
+      { kind: 'blocked', text: 'The browser stopped the app from loading https://cdn.example.com. A hosted app reaches another site only when its owner names it: Settings, Outside sites.' },
+      { kind: 'blocked', text: 'The browser stopped the app from reaching https://api.other.example/v1/items. A hosted app reaches another site only when its owner names it: Settings, Outside sites.' },
       { kind: 'blocked', text: `The browser stopped the app from loading ${here}/assets/logo.png (a path that starts with / is this site's, not the app's: the app reaches its own files by relative paths).` },
       { kind: 'blocked', text: `The browser stopped the app from using ${here}/api/app/notes/site/t1-abc/send (form-action).` },
       { kind: 'blocked', text: 'The browser stopped the app from using about (frame-src).' },

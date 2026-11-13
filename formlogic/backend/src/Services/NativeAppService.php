@@ -1777,6 +1777,28 @@ class NativeAppService
             $entry = 'site/' . $site['entry'];
             if (!self::isSitePath($entry) || !preg_match('/\.html?$/Di', $entry)) throw new InvalidArgumentException('manifest.json\'s site.entry must be a page of the built site (a .html file, such as "index.html").');
             if (!isset($decoded[$entry])) throw new InvalidArgumentException('manifest.json\'s site.entry names ' . $site['entry'] . ', which is not among the site\'s files (they are kept under site/).');
+            // Other sites the app may reach (an API it calls, a font service): each one address
+            // of a site, as the policy its pages are sent under takes them. One that is not is
+            // named, so whoever wrote it can put it right, and is never quietly left out.
+            if (array_key_exists('outside', $site)) {
+                $outside = $site['outside'];
+                if (!is_array($outside) || !array_is_list($outside)) throw new InvalidArgumentException('manifest.json\'s site.outside must be a list of sites the app may reach, such as ["https://api.example.com"].');
+                if (count($outside) > \FormLogic\Middleware\SecurityHeadersMiddleware::SITE_OUTSIDE_MOST) throw new InvalidArgumentException('manifest.json\'s site.outside names more than ' . \FormLogic\Middleware\SecurityHeadersMiddleware::SITE_OUTSIDE_MOST . ' sites.');
+                foreach ($outside as $one) {
+                    if (!is_string($one) || \FormLogic\Middleware\SecurityHeadersMiddleware::siteOutside([$one]) === []) {
+                        $shown = is_string($one) ? substr((string) preg_replace('/[^\x20-\x7E]/', '?', $one), 0, 120) : '(not text)';
+                        throw new InvalidArgumentException("manifest.json's site.outside has \"{$shown}\", which is not a site's address. Write each as https://name (or wss://name for a live connection), with no path: https://api.example.com");
+                    }
+                    // One of this installation's own names, as far as it knows them here (the
+                    // one a visitor comes in on is known only then, and is left out of the
+                    // policy there): refused in words, where it would otherwise sit on the
+                    // list as though allowed.
+                    if (\FormLogic\Middleware\SecurityHeadersMiddleware::siteOutsideIsOwn(strtolower(trim($one)), \FormLogic\Middleware\SecurityHeadersMiddleware::ownNames())) {
+                        $shown = substr((string) preg_replace('/[^\x20-\x7E]/', '?', $one), 0, 120);
+                        throw new InvalidArgumentException("manifest.json's site.outside has \"{$shown}\", which is this site's own address. An app is never given it: it reaches its own backend at /api/… and nothing else here.");
+                    }
+                }
+            }
         } elseif ($siteFiles) {
             throw new InvalidArgumentException('The project has built site files (site/…) but manifest.json has no site block to name their first page. Add "site": {"entry": "index.html"}.');
         }
@@ -2738,7 +2760,7 @@ class NativeAppService
      * first page, and the key its addresses are signed with. Null when the app has no project, no
      * built site, or no key to sign with.
      *
-     * @return array{version: int, entry: string, key: string}|null
+     * @return array{version: int, entry: string, key: string, outside: list<string>}|null
      */
     public function site(string $appId): ?array
     {
@@ -2754,10 +2776,10 @@ class NativeAppService
         $note = $root . self::RUNTIME_CACHE . '/site.json';
         if ($settled && is_file($note)) {
             $kept = json_decode((string) @file_get_contents($note), true);
-            if (is_array($kept) && ($kept['size'] ?? null) === $stat['size'] && ($kept['mtime'] ?? null) === $stat['mtime'] && array_key_exists('entry', $kept)) {
+            if (is_array($kept) && ($kept['size'] ?? null) === $stat['size'] && ($kept['mtime'] ?? null) === $stat['mtime'] && array_key_exists('entry', $kept) && array_key_exists('outside', $kept)) {
                 if (!is_string($kept['entry']) || !self::isSitePath('site/' . $kept['entry'])) return null;
                 $key = $this->siteKey($appId);
-                return $key === null ? null : ['version' => (int) ($kept['version'] ?? 0), 'entry' => $kept['entry'], 'key' => $key];
+                return $key === null ? null : ['version' => (int) ($kept['version'] ?? 0), 'entry' => $kept['entry'], 'key' => $key, 'outside' => \FormLogic\Middleware\SecurityHeadersMiddleware::siteOutside(is_array($kept['outside']) ? $kept['outside'] : [])];
             }
         }
         try { [$root, $lock] = $this->openShared($appId, null, false); }
@@ -2770,16 +2792,18 @@ class NativeAppService
             $entry = is_array($manifest) && is_array($manifest['site'] ?? null) && is_string($manifest['site']['entry'] ?? null) ? $manifest['site']['entry'] : null;
             if ($entry !== null && (!self::isSitePath('site/' . $entry) || !is_file($root . '/app/site/' . $entry))) $entry = null;
             $version = (int) ($runtime['project']['version'] ?? 0);
+            // The other sites its owner lets it reach (manifest site.outside), as the policy takes them.
+            $outside = \FormLogic\Middleware\SecurityHeadersMiddleware::siteOutside(is_array($manifest) && is_array($manifest['site']['outside'] ?? null) ? $manifest['site']['outside'] : []);
             // Kept for the next file asked for, when the project file is still the one read above.
             clearstatcache(true, $root . '/project.json');
             $now = @stat($root . '/project.json');
             if ($settled && $now !== false && $now['size'] === $stat['size'] && $now['mtime'] === $stat['mtime'] && is_dir(dirname($note))) {
                 $writing = $note . '.' . bin2hex(random_bytes(6));
-                if (@file_put_contents($writing, json_encode(['size' => $stat['size'], 'mtime' => $stat['mtime'], 'version' => $version, 'entry' => $entry])) === false || !@rename($writing, $note)) @unlink($writing);
+                if (@file_put_contents($writing, json_encode(['size' => $stat['size'], 'mtime' => $stat['mtime'], 'version' => $version, 'entry' => $entry, 'outside' => $outside])) === false || !@rename($writing, $note)) @unlink($writing);
             }
             if ($entry === null) return null;
             $key = $this->siteKey($appId);
-            return $key === null ? null : ['version' => $version, 'entry' => $entry, 'key' => $key];
+            return $key === null ? null : ['version' => $version, 'entry' => $entry, 'key' => $key, 'outside' => $outside];
         } finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 

@@ -52,20 +52,37 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
      * proxy it often does not. Not without a scheme, which would say the same in fewer words:
      * Safari matches no address written that way for a page with no origin, and the app could
      * then not read its own first page.
+     *
+     * `$outside`: other sites the app's owner has said it may reach (its manifest's
+     * site.outside: an API it calls, a font service, a script it loads). Each is one address of
+     * a site and nothing more (SITE_OUTSIDE), and is added to what the page may load and call.
+     * They widen what the app can reach on the internet, never what it can reach here: the
+     * sandbox, and so the page having no origin, is the same with them. A wss:// address is for
+     * a connection only.
+     *
+     * @param list<string> $outside
      */
-    public static function siteFramePolicy(string $origin, string $prefix): string
+    public static function siteFramePolicy(string $origin, string $prefix, array $outside = []): string
     {
         $host = (string) preg_replace('~^[a-z][a-z0-9+.-]*://~i', '', $origin);
         $own = "http://{$host}{$prefix} https://{$host}{$prefix}";
+        // This site's own name is never an outside site: named there, it would open the whole of
+        // it to the app's requests, the API included, where the app is held to its own files. Its
+        // own name is the one this request came in on and every other this installation is known
+        // by; "*." before one of them, or before a name above one, says the same and is left out too.
+        $names = [$host, ...self::ownNames()];
+        $outside = array_values(array_filter(self::siteOutside($outside), static fn (string $site): bool => !self::siteOutsideIsOwn($site, $names)));
+        $loads = implode('', array_map(static fn (string $site): string => str_starts_with($site, 'https://') ? ' ' . $site : '', $outside));
+        $calls = implode('', array_map(static fn (string $site): string => ' ' . $site, $outside));
         return implode('; ', [
             'sandbox ' . self::SITE_FRAME_SANDBOX,
             "default-src 'none'",
-            "script-src {$own} 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:",
-            "style-src {$own} 'unsafe-inline'",
-            "img-src {$own} data: blob:",
-            "font-src {$own} data:",
-            "media-src {$own} data: blob:",
-            "connect-src {$own}",
+            "script-src {$own}{$loads} 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:",
+            "style-src {$own}{$loads} 'unsafe-inline'",
+            "img-src {$own}{$loads} data: blob:",
+            "font-src {$own}{$loads} data:",
+            "media-src {$own}{$loads} data: blob:",
+            "connect-src {$own}{$calls}",
             "worker-src {$own} blob:",
             "manifest-src {$own}",
             "frame-src 'none'",
@@ -95,11 +112,106 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
         return $framers === [] ? '' : ' ' . implode(' ', array_keys($framers));
     }
 
-    /** The policy a response under a built site's address must carry to be let through as it is, or null for any other address. */
-    private static function siteFramePolicyFor(Request $request): ?string
+    /**
+     * The names this installation is known by, beside the one a request came in on: where its
+     * pages are (APP_URL) and the addresses the API answers pages on (CORS_ORIGIN,
+     * CORS_ALLOWED_ORIGINS). Lower case, with no scheme, port or path; "*.name" where the
+     * environment says every name under one.
+     *
+     * @return list<string>
+     */
+    public static function ownNames(): array
+    {
+        $named = array_merge([(string) Environment::get('APP_URL', ''), (string) Environment::get('CORS_ORIGIN', '')], explode(',', (string) Environment::get('CORS_ALLOWED_ORIGINS', '')));
+        $names = [];
+        foreach ($named as $one) {
+            if (preg_match('~^(?:[a-z][a-z0-9+.-]*://)?((?:\*\.)?[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?)\.?(?::\d{1,5})?(?:/.*)?$~Di', trim($one), $found) === 1) $names[strtolower($found[1])] = true;
+        }
+        return array_keys($names);
+    }
+
+    /**
+     * Whether an outside site is this installation under one of its own names (`$own`: host
+     * names, a port on one is not looked at, "*.name" for every name under one):
+     *
+     *   - the name itself, on any port, by https or wss, with or without "*." before it;
+     *   - "*." before a name above it (*.example.com where this is apps.example.com, *.co.uk
+     *     where this is example.co.uk), which a browser reads as covering it;
+     *   - any name the installation says is its own by a "*.name" of its own.
+     *
+     * A name that merely shares an ending (api.example.com where this is apps.example.com) is
+     * another site.
+     *
+     * @param list<string> $own
+     */
+    public static function siteOutsideIsOwn(string $site, array $own): bool
+    {
+        if (preg_match('~^[a-z]+://(\*\.)?([^:/]+)~', strtolower($site), $found) !== 1) return false;
+        $wild = $found[1] !== '';
+        $name = rtrim($found[2], '.');
+        foreach ($own as $one) {
+            $one = rtrim((string) preg_replace('~:\d+$~', '', strtolower(trim($one))), '.');
+            if ($one === '' || $name === '') continue;
+            if (str_starts_with($one, '*.')) {
+                $under = substr($one, 2);
+                if ($name === $under || str_ends_with($name, '.' . $under)) return true;
+                if ($wild && str_ends_with($under, '.' . $name)) return true;
+                continue;
+            }
+            if ($name === $one) return true;
+            if ($wild && str_ends_with($one, '.' . $name)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * One outside site an app may be allowed to reach: https or wss, a host name (which may start
+     * "*."), a port if it has one. No path, nothing else. A name and not a number: its last part
+     * begins with a letter, so no IP address is one, and with them go the visitor's own machine
+     * and the network it is on.
+     */
+    public const SITE_OUTSIDE = '~^(?:https|wss)://(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,20}[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?(?::\d{1,5})?$~D';
+    /** No address of a site is longer. */
+    public const SITE_OUTSIDE_LENGTH = 300;
+    /** How many an app may name. */
+    public const SITE_OUTSIDE_MOST = 20;
+
+    /**
+     * A list of outside sites as the policy takes it: each held to SITE_OUTSIDE, in lower case,
+     * once, in the order given, and no more than SITE_OUTSIDE_MOST. Anything else is left out, so
+     * nothing given here can end a directive or begin another.
+     *
+     * @param array<mixed> $given
+     * @return list<string>
+     */
+    public static function siteOutside(array $given): array
+    {
+        $sites = [];
+        foreach ($given as $one) {
+            if (!is_string($one)) continue;
+            $one = strtolower(trim($one));
+            if (strlen($one) <= self::SITE_OUTSIDE_LENGTH && preg_match(self::SITE_OUTSIDE, $one) === 1) $sites[$one] = true;
+            if (count($sites) >= self::SITE_OUTSIDE_MOST) break;
+        }
+        return array_keys($sites);
+    }
+
+    /**
+     * The policy a response under a built site's address must carry to be let through as it is,
+     * or null for any other address. `$given` is the policy the response carries: the outside
+     * sites it names (read from its connect-src, which holds every one of them) are held to
+     * SITE_OUTSIDE and the policy is written again from them here, so what is let through is
+     * always a policy this class wrote, whatever the response said.
+     */
+    private static function siteFramePolicyFor(Request $request, string $given): ?string
     {
         if (preg_match(self::SITE_FRAME_PATH, $request->getUri()->getPath(), $found) !== 1) return null;
-        return self::siteFramePolicy(\FormLogic\Services\McpOAuthService::publicOrigin($request), $found[1]);
+        $outside = [];
+        if (preg_match('~(?:^|; )connect-src ([^;]*)~', $given, $calls) === 1) {
+            // After the site's own two addresses come the outside ones.
+            $outside = array_slice(explode(' ', $calls[1]), 2);
+        }
+        return self::siteFramePolicy(\FormLogic\Services\McpOAuthService::publicOrigin($request), $found[1], $outside);
     }
 
     private bool $isProduction;
@@ -174,7 +286,7 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
         // no other. It is shown in a frame of this site's own pages, which the policy names, so
         // the blanket refusal to be framed comes off this one response. Anything else at such an
         // address (an error, a refusal) keeps the API's policy and stays unframeable.
-        $siteFrame = self::siteFramePolicyFor($request);
+        $siteFrame = self::siteFramePolicyFor($request, $response->getHeaderLine('Content-Security-Policy'));
         if ($siteFrame !== null && $response->getHeaderLine('Content-Security-Policy') === $siteFrame) {
             $csp = $siteFrame;
             $response = $response->withoutHeader('X-Frame-Options')->withHeader('Referrer-Policy', 'no-referrer');

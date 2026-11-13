@@ -28,6 +28,8 @@ final class SiteFramePolicyTest extends TestCase
     private const API_POLICY = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
     /** Where the environment says this installation's pages are served from, when that is not the API's own address. */
     private const FRAMERS = ['CORS_ORIGIN', 'CORS_ALLOWED_ORIGINS'];
+    /** Every setting that names this installation: those, and where its pages are. */
+    private const NAMED = ['CORS_ORIGIN', 'CORS_ALLOWED_ORIGINS', 'APP_URL'];
 
     /** @var array<string, array{0: mixed, 1: mixed, 2: string|false}> what the environment said before a test, to put back after it */
     private array $said = [];
@@ -35,7 +37,7 @@ final class SiteFramePolicyTest extends TestCase
     protected function setUp(): void
     {
         // The usual installation, its pages and its API on one address: the environment names no other.
-        foreach (self::FRAMERS as $name) {
+        foreach (self::NAMED as $name) {
             $this->said[$name] = [$_ENV[$name] ?? null, $_SERVER[$name] ?? null, getenv($name)];
             unset($_ENV[$name], $_SERVER[$name]);
             putenv($name);
@@ -399,5 +401,148 @@ final class SiteFramePolicyTest extends TestCase
             ['sandbox', 'default-src', 'script-src', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'worker-src', 'manifest-src', 'frame-src', 'object-src', 'base-uri', 'form-action', 'frame-ancestors'],
             array_keys(self::directives(self::policy(self::ORIGIN, '/api/app/a.b~c_D-9/site/' . self::TICKET . '/')))
         );
+    }
+
+    // ── Other sites an app's owner lets it reach (manifest site.outside) ───────────────────────
+
+    public function testOutsideSitesWidenWhatTheAppLoadsAndCallsAndNothingThatHoldsIt(): void
+    {
+        $plain = self::directives(self::policy());
+        $with = self::directives(SecurityHeadersMiddleware::siteFramePolicy(self::ORIGIN, self::PREFIX, ['https://api.example.com', 'wss://live.example.com', 'https://*.cdn.example.net:8443']));
+        foreach (['script-src', 'style-src', 'img-src', 'font-src', 'media-src'] as $loads) {
+            $this->assertContains('https://api.example.com', $with[$loads], $loads);
+            $this->assertContains('https://*.cdn.example.net:8443', $with[$loads], $loads);
+            // A wss:// address is for a connection only.
+            $this->assertNotContains('wss://live.example.com', $with[$loads], $loads);
+        }
+        $this->assertSame([...self::own(), 'https://api.example.com', 'wss://live.example.com', 'https://*.cdn.example.net:8443'], $with['connect-src']);
+        // What holds the app is as it was: the sandbox, no frames, no forms, its own base, who may frame it.
+        foreach (['sandbox', 'default-src', 'worker-src', 'manifest-src', 'frame-src', 'object-src', 'base-uri', 'form-action', 'frame-ancestors'] as $same) {
+            $this->assertSame($plain[$same], $with[$same], $same);
+        }
+        $this->assertNotContains('allow-same-origin', $with['sandbox']);
+    }
+
+    public function testOnlyASitesAddressIsTakenAsAnOutsideSite(): void
+    {
+        $taken = SecurityHeadersMiddleware::siteOutside([
+            'https://api.example.com', 'HTTPS://Fonts.Example.com:8443', 'wss://live.example.com', 'https://*.cdn.example.net', 'https://api.example.com',
+            // Not a site's address: plain http, a path, a query, a bare star, no dot, a made-up scheme, no text at all.
+            'http://plain.example.com', 'https://api.example.com/v1', 'https://api.example.com?x=1', 'https://*', 'https://localhost', 'ftp://files.example.com', 'data:', '*', "'self'", 7, null, ['https://x.example.com'],
+            // A number and not a name: the visitor's own machine, the network it is on, any address at all, however it is written.
+            'https://127.0.0.1', 'https://192.168.1.10:8443', 'wss://10.0.0.5', 'https://203.0.113.5', 'https://*.0.0.1', 'https://2130706433', 'https://0x7f.0.0.1', 'https://127.1', 'https://example.123', 'https://[::1]',
+            // Every name under an ending (*.com) is not one site. Under a name is.
+            'https://*.com', 'https://*.test',
+            // Longer than any address of a site.
+            'https://' . str_repeat('a.', 140) . 'example.com',
+            // What would end a directive or begin another.
+            'https://x.example.com; script-src *', "https://x.example.com 'unsafe-hashes'", "https://x.example.com\nscript-src *", 'https://x.example.com,https://y.example.com',
+        ]);
+        $this->assertSame(['https://api.example.com', 'https://fonts.example.com:8443', 'wss://live.example.com', 'https://*.cdn.example.net'], $taken);
+        // And the policy written from such a list is the policy written from what was taken.
+        $this->assertSame(
+            SecurityHeadersMiddleware::siteFramePolicy(self::ORIGIN, self::PREFIX, ['https://ok.example.com']),
+            SecurityHeadersMiddleware::siteFramePolicy(self::ORIGIN, self::PREFIX, ['https://x.example.com; script-src *', 'https://ok.example.com', 'http://plain.example.com'])
+        );
+        // No more than the most an app may name.
+        $many = array_map(static fn (int $n): string => "https://s{$n}.example.com", range(1, SecurityHeadersMiddleware::SITE_OUTSIDE_MOST + 5));
+        $this->assertCount(SecurityHeadersMiddleware::SITE_OUTSIDE_MOST, SecurityHeadersMiddleware::siteOutside($many));
+    }
+
+    public function testThisSitesOwnNameIsNeverAnOutsideSite(): void
+    {
+        // Named there, it would open the whole of this site to the app's requests, the API included.
+        foreach (['https://' . self::HOST, 'wss://' . self::HOST, 'https://' . self::HOST . ':8443', 'https://*.' . self::HOST] as $own) {
+            $this->assertSame(self::policy(), SecurityHeadersMiddleware::siteFramePolicy(self::ORIGIN, self::PREFIX, [$own]), $own);
+        }
+        // On a port of its own, the same holds for the name with and without the port.
+        foreach (['https://' . self::HOST, 'https://' . self::HOST . ':8443'] as $own) {
+            $this->assertSame(self::policy(self::ORIGIN . ':8443'), SecurityHeadersMiddleware::siteFramePolicy(self::ORIGIN . ':8443', self::PREFIX, [$own]), $own);
+        }
+    }
+
+    public function testAStarredNameThatWouldCoverThisSiteIsNotAnOutsideSiteEither(): void
+    {
+        // Found by review, 2026-11-13: only the name itself was looked for, so "*." before the
+        // name above it, which a browser reads as covering this site, opened the whole of it.
+        foreach (['https://*.example.test', 'wss://*.example.test', 'https://*.example.test:8443'] as $above) {
+            $this->assertSame(self::policy(), SecurityHeadersMiddleware::siteFramePolicy(self::ORIGIN, self::PREFIX, [$above]), $above);
+        }
+        // Two names up, as *.co.uk is above example.co.uk.
+        $deep = 'https://forms.apps.example.test';
+        $this->assertSame(self::policy($deep), SecurityHeadersMiddleware::siteFramePolicy($deep, self::PREFIX, ['https://*.example.test', 'https://*.apps.example.test']));
+        // A name beside it, or one that only ends the same, is another site and is kept.
+        $beside = self::directives(SecurityHeadersMiddleware::siteFramePolicy(self::ORIGIN, self::PREFIX, ['https://api.example.test', 'https://*.cdn.example.test', 'https://notapps.example.test', 'https://xapps.example.test']));
+        $this->assertSame([...self::own(), 'https://api.example.test', 'https://*.cdn.example.test', 'https://notapps.example.test', 'https://xapps.example.test'], $beside['connect-src']);
+    }
+
+    public function testEveryNameTheInstallationIsKnownByIsItsOwn(): void
+    {
+        // Its pages on one name, the API on another, a second address it answers on: each is this
+        // site, whichever of them the request came in on.
+        $_ENV['APP_URL'] = 'https://www.example.test/';
+        $_ENV['CORS_ORIGIN'] = 'https://Admin.Example.Test:8443';
+        $_ENV['CORS_ALLOWED_ORIGINS'] = 'https://staging.example.test , https://*.tenants.example.test';
+        $this->assertSame(['www.example.test', 'admin.example.test', 'staging.example.test', '*.tenants.example.test'], SecurityHeadersMiddleware::ownNames());
+        foreach ([
+            'https://www.example.test', 'wss://www.example.test', 'https://admin.example.test', 'https://admin.example.test:9000', 'https://staging.example.test',
+            // Every name under one the installation says is all its own, and that name.
+            'https://shop.tenants.example.test', 'https://a.b.tenants.example.test', 'https://tenants.example.test', 'https://*.tenants.example.test', 'https://*.shop.tenants.example.test',
+            // And "*." before a name above any of them.
+            'https://*.example.test',
+        ] as $own) {
+            $this->assertSame(self::policy(), SecurityHeadersMiddleware::siteFramePolicy(self::ORIGIN, self::PREFIX, [$own]), $own);
+            $this->assertTrue(SecurityHeadersMiddleware::siteOutsideIsOwn($own, SecurityHeadersMiddleware::ownNames()), $own);
+        }
+        // Another site is still another site.
+        $kept = self::directives(SecurityHeadersMiddleware::siteFramePolicy(self::ORIGIN, self::PREFIX, ['https://api.example.com', 'https://cdn.example.test']));
+        $this->assertSame([...self::own(), 'https://api.example.com', 'https://cdn.example.test'], $kept['connect-src']);
+        // What the environment names that is no address names nothing.
+        $_ENV['APP_URL'] = "https://x.example.test; script-src *";
+        $_ENV['CORS_ORIGIN'] = '';
+        $_ENV['CORS_ALLOWED_ORIGINS'] = ' , *, https://, not an address';
+        $this->assertSame([], SecurityHeadersMiddleware::ownNames());
+        unset($_ENV['APP_URL'], $_ENV['CORS_ORIGIN'], $_ENV['CORS_ALLOWED_ORIGINS']);
+    }
+
+    public function testAPolicyNamingOutsideSitesIsTheSameWrittenAgainFromItself(): void
+    {
+        // The middleware writes the policy again from the sites a response's own policy names
+        // (siteFramePolicyFor): that must come out the same, own names left out and all.
+        $_ENV['CORS_ALLOWED_ORIGINS'] = 'https://www.example.test';
+        $given = ['https://api.example.com', 'https://www.example.test', 'https://*.example.test', 'wss://live.example.com', 'https://' . self::HOST, 'https://*.cdn.example.net:8443', 'https://127.0.0.1'];
+        $once = SecurityHeadersMiddleware::siteFramePolicy(self::ORIGIN, self::PREFIX, $given);
+        $named = array_slice(self::directives($once)['connect-src'], 2);
+        $this->assertSame(['https://api.example.com', 'wss://live.example.com', 'https://*.cdn.example.net:8443'], $named);
+        $this->assertSame($once, SecurityHeadersMiddleware::siteFramePolicy(self::ORIGIN, self::PREFIX, $named));
+        unset($_ENV['CORS_ALLOWED_ORIGINS']);
+    }
+
+    public function testAResponseNamingOutsideSitesIsLetThroughOnlyAsThisClassWouldWriteIt(): void
+    {
+        $send = function (string $policy): ResponseInterface {
+            $handler = new class($policy) implements RequestHandlerInterface {
+                public function __construct(private string $policy) {}
+                public function handle(ServerRequestInterface $request): ResponseInterface { return (new Response())->withHeader('Content-Security-Policy', $this->policy); }
+            };
+            return (new SecurityHeadersMiddleware())->process((new ServerRequestFactory())->createServerRequest('GET', self::ORIGIN . self::PREFIX . 'index.html'), $handler);
+        };
+        $good = SecurityHeadersMiddleware::siteFramePolicy(self::ORIGIN, self::PREFIX, ['https://api.example.com', 'wss://live.example.com']);
+        $kept = $send($good);
+        $this->assertSame($good, $kept->getHeaderLine('Content-Security-Policy'));
+        $this->assertSame('', $kept->getHeaderLine('X-Frame-Options'));
+        // The same policy with something slipped in among its sites is not one this class writes.
+        foreach ([
+            str_replace('wss://live.example.com', "wss://live.example.com 'unsafe-inline'", $good),
+            str_replace('wss://live.example.com', 'wss://live.example.com *', $good),
+            str_replace('wss://live.example.com', 'wss://live.example.com http://plain.example.com', $good),
+            str_replace('connect-src ', 'connect-src https://first.example.com ', $good),
+            str_replace("frame-src 'none'", 'frame-src https://api.example.com', $good),
+            str_replace('script-src ', 'script-src https://other.example.com ', $good),
+        ] as $other) {
+            $refused = $send($other);
+            $this->assertSame(self::API_POLICY, $refused->getHeaderLine('Content-Security-Policy'), $other);
+            $this->assertSame('DENY', $refused->getHeaderLine('X-Frame-Options'));
+        }
     }
 }
