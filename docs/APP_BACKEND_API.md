@@ -1,6 +1,7 @@
 # App backend API (proposal)
 
-**Status: a proposal, written 2026-11-13. Nothing in "The design" is built.** "What exists" is
+**Status: a proposal, written 2026-11-13. Step 1 of the order of work, version history and going
+back, is built (section 3 says what was); nothing else in "The design" is.** "What exists" is
 what the code does today and was read from it.
 
 The aim: every hosted app, SoftN or JavaScript, has one backend API that is described in JSON,
@@ -14,12 +15,12 @@ writes the app's SQLite database, and keeps every version so an edit can always 
 - **Data.** The app page's Data section browses and edits the tables. A change to a record can start a flow.
 - **Flows.** A flow is a graph with three runners (browser, desktop, cloud). The cloud runner is bounded (60 s, 50 nodes) and runs a subset: templates, form responses, the site's AI, an HTTP request to the site itself, a connector request. It runs no code nodes.
 - **MCP.** `softn_create_draft`, `softn_validate_draft`, `softn_preview_draft`, `softn_publish_draft`, `softn_publish_version`, `softn_get_app`, `softn_list_my_apps`. All of them carry the whole project. An AI's change is a draft its owner approves.
-- **Versions.** A number that counts up, checked on save. No history: a publish replaces what was there.
+- **Versions.** A number that counts up, checked on save. Each publish keeps the version it replaced, and the owner can go back to one (section 3, built).
 
 ## What is missing
 
 1. The API is only files in a code editor. Nothing shows it as an API.
-2. An edit republishes the whole project. An AI changing one route resends everything, and there is nothing to go back to.
+2. An edit republishes the whole project. An AI changing one route resends everything. (There was nothing to go back to; step 1 built that.)
 3. A route is always code. A route cannot run a flow, and code cannot start one.
 4. Nothing checks a request's shape, limits one route, or records what was called.
 5. The API is reachable only through the app's own frame. Nothing else can call it.
@@ -79,6 +80,14 @@ For the whole app, not only its API, and for both kinds of app.
 - **The database only moves forward.** Before a publish that changes tables, the database is copied (the copying exists). Going back to code from before a table change keeps the data as it is and says so; putting the data back too is a separate choice that names what will be lost.
 - **An AI's edit is a draft**, as it is today for whole projects: the live API does not change until its owner publishes.
 
+**Built (step 1).** `NativeAppVersions` keeps each replaced version in `history/` beside the project: its source gzipped, its media and built files once each by SHA-256, with who made it, how, a summary and what changed. The newest 30 and up to 20 pinned are kept within 256 MB per app (`NATIVE_HISTORY_MB`); the record is prepared before an install changes anything, and the install's own journal keeps it or drops it.
+The history never refuses a publish. Where it cannot be written (a full disk, a folder that cannot be written, an index another program is holding), the install goes ahead, the version it replaces is not kept, the log says so, and the list shows which versions are missing (`gap`). An index that cannot be read just now is never replaced and nothing is removed against it; one that reads and is not an index is set aside as `history/damaged-index-….json`, and the history starts again at the next publish.
+The owner's routes are under `/api/apps/{id}/native/versions` (list, one version against the app now, one source file, `restore`, pin, and `DELETE` to take an earlier version out for good), and the app page has a History section (`ui/src/components/apps/SoftnHistory.tsx`).
+Removing a version deletes its record and whatever of its content no other kept version names. It is refused for the current version, and for a pinned one until it is unpinned. A version one of whose kept files is gone is listed as `damaged`: it cannot be gone back to, and can be removed.
+Going back is a new version recorded as `rollback` and never touches the database: database changes applied since stay listed in the version that comes back, and the answer names them (`databaseAhead`).
+Going back brings the version's own manifest back, and with it what the app asks this server for and, for a JavaScript app, the outside sites its pages may reach (`site.outside`). Who can use the app and its address stay as they are. A version's record says when it changed either (`changes.outside`, `changes.asks`), one version against the app now lists the outside sites of each (`outside`), and the page's confirmation names them.
+Not built: putting the data back too, a route-by-route comparison, the MCP tools for versions, and versions in a backup (a backup carries the current version only).
+
 ### 4. Editing it
 
 **On the app's page: an API section**, for SoftN and JavaScript apps alike.
@@ -104,7 +113,7 @@ an API key (API keys exist). Other sites are admitted by the list the manifest a
 
 ## Order of work
 
-1. Version history and going back. Useful alone, and what makes every later kind of edit safe.
+1. Version history and going back. Useful alone, and what makes every later kind of edit safe. **Built** (section 3).
 2. The API section on what exists today: the table, Try it, recent calls.
 3. `access`, `input`, `limit` and query routes.
 4. Flow routes and step lists; a flow step that calls the app's API.

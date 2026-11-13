@@ -48,6 +48,24 @@ what the page says at the row's right, such as an app's state.
 There is no banner over a section: no eyebrow line, no title repeating the section's name, no
 "step 2 of 6". Where a sentence of help is needed it is one muted line.
 
+An app's own page (`pages/apps/SoftnAppWorkspace.tsx`, a SoftN or a JavaScript app) has these
+sections, named in `SOFTN_SECTIONS` (`lib/softnApps.ts`): Overview, Data, Members, Edit,
+Automations, History, Domains and Settings. Members and History are shown to the app's owner
+alone, and Automations to the owner of an app that has a backend.
+
+History (`components/apps/SoftnHistory.tsx`) lists every version a later one replaced, newest
+first, each with who made it, how and what it changed. A version opens at its own address
+(`…/history/7`), beside the list on a wide screen and in its place on a phone, and shows what
+differs from the app now file by file; a text file opens in place (`?file=…`) with its two
+versions side by side where its box has room and one above the other where it has not. Going
+back asks first and says what will happen, including that the settings kept in the app's files
+go back too (it names the outside sites of each when they differ); pins keep a version past the
+newest thirty. Each earlier version has "Remove from history", which asks first and says that
+the version's files are deleted from the history, that the app as it is now is not changed, and
+that it cannot be undone; a pinned version is unpinned first. The list also says where a version
+was not kept (it could not be saved in the history when it was replaced), where one is damaged (it
+cannot be gone back to, and can be removed), and where the history could not be read.
+
 A page that stays mounted across its sections must not be remounted by the route boundary:
 `lib/pagePlace.ts` gives every address of such a page one key (see `App.tsx`).
 

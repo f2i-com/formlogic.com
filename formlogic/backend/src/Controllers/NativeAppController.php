@@ -80,7 +80,7 @@ class NativeAppController
                 $path = $this->native->importDropPath($app['id']);
                 try {
                     $database->moveTo($path);
-                    $installed = $this->native->importData($app['id'], $path, $imported['key']);
+                    $installed = $this->native->importData($app['id'], $path, $imported['key'], (string) $app['ownerId']);
                 } finally {
                     // With what SQLite made beside a WAL-mode upload as it was read.
                     foreach (['', '-wal', '-shm', '-journal'] as $suffix) if (is_file($path . $suffix)) @unlink($path . $suffix);
@@ -97,7 +97,8 @@ class NativeAppController
             if (($args['operation'] ?? '') === 'starter') {
                 // A forms app hosts a project from App Studio; the starter would take over its address.
                 if (empty($app['settings']['softnApp'])) throw new \InvalidArgumentException('The starter is only for a SoftN app. Add a project to this app from its App Studio instead.');
-                $installed = $this->native->install($app['id'], NativeAppService::starterProject((string) $app['name'], (string) $app['id']), 0);
+                $installed = $this->native->install($app['id'], NativeAppService::starterProject((string) $app['name'], (string) $app['id']), 0, null,
+                    ['by' => (string) $app['ownerId'], 'how' => 'page', 'summary' => 'Started from the working starter']);
                 return ['project' => $installed] + $this->engineAfterInstall($app['id'], RuntimeEngineService::languagesOf(NativeAppService::clientFiles($installed)));
             }
             if (($args['operation'] ?? '') === 'records') {
@@ -170,7 +171,10 @@ class NativeAppController
             // A version that uses torch where it is off is refused before it is installed, and says why.
             $torch = $this->engines->torchRefusal($app, NativeAppService::clientFiles($body['project']));
             if ($torch !== null) throw new \InvalidArgumentException($torch);
-            $installed = $this->native->install($app['id'], $body['project'], $body['expectedVersion']);
+            // For the app's history of versions (NativeAppVersions): its owner made this one, on the
+            // app's page or (`how: "upload"`) from a file, and may say in a line what it is for.
+            $origin = ['by' => (string) $app['ownerId'], 'how' => ($body['how'] ?? null) === 'upload' ? 'upload' : 'page', 'summary' => $body['summary'] ?? null];
+            $installed = $this->native->install($app['id'], $body['project'], $body['expectedVersion'], null, $origin);
             return ['project' => $installed] + $this->engineAfterInstall($app['id'], RuntimeEngineService::languagesOf(NativeAppService::clientFiles($installed)));
         }, !$readOnly);
     }

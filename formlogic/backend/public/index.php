@@ -3561,6 +3561,29 @@ $app->put('/api/apps/{id}/native', function ($request, $response) use ($containe
 $app->post('/api/apps/{id}/native/{operation:starter}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+// The app's history of versions, for its owner (NativeAppVersionsController): every version a later
+// one replaced, what differs between one and the app as it is, one of its source files, going back
+// to it, pinning it and taking it out of the history. Read as the project is read; going back
+// installs a version, and a pin or a removal changes what is kept, so each is held to what a
+// publish is. None of them is mirrored for an administrator (AdminActingAsRoutes).
+$app->get('/api/apps/{id}/native/versions', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppVersionsController::class)->index($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
+$app->get('/api/apps/{id}/native/versions/{n:[0-9]{1,9}}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppVersionsController::class)->show($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
+$app->get('/api/apps/{id}/native/versions/{n:[0-9]{1,9}}/file', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppVersionsController::class)->file($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
+$app->post('/api/apps/{id}/native/versions/{n:[0-9]{1,9}}/restore', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppVersionsController::class)->restore($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->put('/api/apps/{id}/native/versions/{n:[0-9]{1,9}}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppVersionsController::class)->pin($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->delete('/api/apps/{id}/native/versions/{n:[0-9]{1,9}}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppVersionsController::class)->remove($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
 // Record maintenance has its own bounded budget; browsing must not consume deployment capacity.
 // 180 a minute for each owner (it was 30): the data manager asks again for every sort, search,
 // filter and page, and reads then saves a record for each cell edited in place.

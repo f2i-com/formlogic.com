@@ -36,7 +36,8 @@ describe('createSoftnApp', () => {
     mocks.saveNativeProject.mockResolvedValue({ data: { project } });
     const file = new File([new Uint8Array([1])], 'coffee.softn');
     await createSoftnApp({ name: 'Coffee', start: { kind: 'upload', file } });
-    expect(mocks.saveNativeProject).toHaveBeenCalledWith('app-1', { version: 0, files: { 'manifest.json': '{}' }, assets: {}, access: 'members', home: true }, 0);
+    // Said to be an upload, for the app's history of versions.
+    expect(mocks.saveNativeProject).toHaveBeenCalledWith('app-1', { version: 0, files: { 'manifest.json': '{}' }, assets: {}, access: 'members', home: true }, 0, { how: 'upload' });
   });
 
   it('creates nothing for a file this host cannot take', async () => {

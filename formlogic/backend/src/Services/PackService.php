@@ -392,7 +392,7 @@ class PackService
                 }
                 if (isset($packApp['nativeProject'])) {
                     $createdNativeIds[] = $appId;
-                    ($this->native ??= new NativeAppService())->install($appId, $packApp['nativeProject'], 0);
+                    ($this->native ??= new NativeAppService())->install($appId, $packApp['nativeProject'], 0, null, ['by' => $userId, 'how' => 'pack']);
                 }
                 $appSummary[] = ['id' => $appId, 'name' => $packApp['name']];
             }

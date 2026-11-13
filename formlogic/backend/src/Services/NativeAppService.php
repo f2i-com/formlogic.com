@@ -32,6 +32,8 @@ use PDO;
  *  - private/data/application.sqlite   records + migration state + record-event queue (restorable, account data)
  *  - private/config.json           host-generated key material + capabilities (restorable ONLY through a
  *                                  privileged recovery backup; otherwise reissued and reported as such)
+ *  - history/                      the versions a later one replaced (NativeAppVersions): host-local,
+ *                                  in no backup, kept while the folder is and removed with it
  *  - private/manage.lock, events.lock, staging-*, previous-*, pre-install-*.sqlite,
  *    config.previous-*.json, project.previous-*.json, recovery-required
  *                                  host-local; never archived
@@ -1103,6 +1105,9 @@ class NativeAppService
     /** The new generation is complete: retire what the rollback would have needed. Never throws. */
     private function rollForward(string $root, array $journal): void
     {
+        // ── History hook 2 of 3 (NativeAppVersions): the install succeeded, so the version it
+        // replaced is now kept. Never throws; a journal settled by a later process comes here too.
+        NativeAppVersions::commit($root, (string) ($journal['operation'] ?? ''));
         try {
             $this->retireBackups($root, $journal);
             // Keep one previous source version — this update's — and discard older ones and every staging directory.
@@ -1128,6 +1133,9 @@ class NativeAppService
      */
     private function rollBack(string $root, array &$journal, string $reason): void
     {
+        // ── History hook 3 of 3 (NativeAppVersions): the install did not happen, so neither did
+        // its record of the version it would have replaced. Never throws.
+        NativeAppVersions::discard($root, (string) ($journal['operation'] ?? ''));
         $problems = [];
         $phase = (string) $journal['phase'];
         $staging = $root . '/' . $journal['staging'];
@@ -1938,8 +1946,9 @@ class NativeAppService
      * start on what came, and the version number goes up, so a page open on the old data reloads.
      *
      * @param array{appId: ?string, keyHex: string, cryptoDomains: array{hmac: string, seal: string}}|null $key
+     * @param string|null $by who is bringing it, for the app's history of versions
      */
-    public function importData(string $appId, string $databasePath, ?array $key): array
+    public function importData(string $appId, string $databasePath, ?array $key, ?string $by = null): array
     {
         $project = $this->get($appId);
         if ($project === null) throw new RuntimeException('Install the app before bringing its data', 409);
@@ -1948,7 +1957,7 @@ class NativeAppService
         $identity = self::configuredIdentity($this->root($appId) . '/private/config.json') ?? self::identity($manifest, $appId, null);
         if ($key !== null && $key['appId'] !== null && $key['appId'] !== $identity) throw new InvalidArgumentException("That key belongs to {$key['appId']}, and this app runs as {$identity}.");
         self::assertImportableDatabase($databasePath, $manifest, is_array($project['files'] ?? null) ? $project['files'] : []);
-        return $this->install($appId, $project, (int) ($project['version'] ?? 0), ['database' => $databasePath, 'key' => $key]);
+        return $this->install($appId, $project, (int) ($project['version'] ?? 0), ['database' => $databasePath, 'key' => $key], ['by' => $by, 'how' => 'import', 'summary' => 'Data brought from another host']);
     }
 
     /**
@@ -2099,7 +2108,12 @@ class NativeAppService
         }
     }
 
-    public function install(string $appId, array $project, int $expectedVersion, ?array $import = null): array
+    /**
+     * $origin: who is installing this version, how, and a line saying what for
+     * (['by' => user id, 'how' => one of NativeAppVersions::HOW, 'summary' => text]), kept with
+     * the app's history of versions. Nothing else here reads it.
+     */
+    public function install(string $appId, array $project, int $expectedVersion, ?array $import = null, ?array $origin = null): array
     {
         [$files, $decoded, $manifest, $capabilities] = self::validateProject($project);
         // An app with no backend runs nothing on this server, so a server that cannot start the
@@ -2167,6 +2181,11 @@ class NativeAppService
                 unset($installed);
             }
             $this->afterStep($root, 'backups-written');
+            // ── History hook 1 of 3 (NativeAppVersions): the version this install replaces is laid
+            // by and its record written as pending. rollForward() keeps it and rollBack() removes
+            // it, both by the journal. Never throws: a history that cannot be written does not
+            // stop the install (that one version is then not kept, and the log says so).
+            NativeAppVersions::prepare($root, $operation, $old, $project, $files, $decoded, $expectedVersion + 1, $origin);
             $this->advance($root, $journal, 'config-changed');
             $config = json_decode($originalConfig, true, 64, JSON_THROW_ON_ERROR);
             // Owner-authorized updates use the same validated capabilities as a new install.
@@ -2336,6 +2355,26 @@ class NativeAppService
             $db->exec('PRAGMA busy_timeout=5000');
             try { return $use($db); } finally { $db = null; }
         } finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /**
+     * ── History (NativeAppVersions) ── Run $use on the installation's folder for the app's
+     * history of versions, as every other read of an installation runs: under the shared
+     * management lock, after an update a terminated process left unfinished is settled. An
+     * install holds that lock exclusively from before it prepares its record to after it commits
+     * it, so nothing run here falls between the two. $use is given the folder and the installed
+     * project without its media.
+     *
+     * @template T
+     * @param callable(string, array<string, mixed>): T $use
+     * @return T
+     */
+    public function withHistory(string $appId, callable $use): mixed
+    {
+        [$root, $lock] = $this->openShared($appId, null, false);
+        if ($lock === null) throw new RuntimeException('Native app not found', 404);
+        try { return $use($root, $this->runtimeCache($root)['project']); }
+        finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
     /** The installed app's manifest, as its source holds it now. */

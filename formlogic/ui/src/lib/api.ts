@@ -161,6 +161,76 @@ export interface NativeDataImport {
   /** Its Twilio details were found but not used, and why: the data came all the same. */
   verificationProblem?: string | null;
 }
+
+// ── An app's history of versions (NativeAppVersions, NativeAppVersionsController) ──
+
+/** How a version came to be; null where it was not recorded (an app from before its history was kept). */
+export type NativeVersionHow = 'page' | 'upload' | 'mcp' | 'chat' | 'rollback' | 'import' | 'pack' | 'plugin';
+/** What a version changed from the one before it. `paths` comes with one version, not with the list. */
+export interface NativeVersionChanges {
+  added: number; removed: number; changed: number;
+  /** The backend's routes moved; a database change was added; who may enter changed; where the app opens changed. */
+  routes: boolean; database: boolean; access: boolean; home: boolean;
+  /**
+   * What the app's manifest lets it do changed: the other sites its pages may reach (`outside`),
+   * and what it asks this server for (`asks`: what its backend may use, FormLogic's AI and
+   * payments, sign-in codes by phone).
+   */
+  outside: boolean; asks: boolean;
+  /** It replaced nothing: the app's first version. */
+  first: boolean;
+  /** The paths themselves, the first few hundred of each; the counts above are exact. */
+  paths?: { added: string[]; removed: string[]; changed: string[] };
+}
+export interface NativeVersion {
+  version: number;
+  /** The app as it is now. */
+  current: boolean;
+  madeAt: string | null;
+  /** Who made it: their id, whether that is the person asking, and their name where the site knows one. */
+  by: string | null; byYou: boolean; byName: string | null;
+  how: NativeVersionHow | null;
+  /** For a going back: the version gone back to. */
+  restored: number | null;
+  summary: string | null;
+  pinned: boolean;
+  /** Unpinned and past the newest kept: it goes at the next publish. */
+  expires: boolean;
+  /** One of its files is missing from the history, so it cannot be gone back to. Its owner can remove it. */
+  damaged: boolean;
+  /** The versions just before this one that were replaced without being kept: the history could not be written then. */
+  gap: { from: number; to: number } | null;
+  /** The history starts again at this version: what was kept before it could not be read. */
+  startedAgain: boolean;
+  changes: NativeVersionChanges | null;
+  files: number; assets: number | null; bytes: number | null;
+  access: 'members' | 'application' | null; home: boolean | null;
+}
+export interface NativeVersionList {
+  current: number;
+  /** Newest first: the current version, then every earlier one that is kept. */
+  versions: NativeVersion[];
+  /** What the kept versions take on disk, and what is kept: how many, within how much, how many pinned. */
+  bytes: number;
+  limits: { versions: number; bytes: number; pinned: number };
+  /** The history is there and could not be read, so only the current version is listed. The next publish starts it again. */
+  unreadable: boolean;
+}
+/** One path that differs, and whether it is a text file that can be shown. */
+export interface NativeVersionPath { path: string; text: boolean }
+export interface NativeVersionDetail {
+  current: number;
+  version: NativeVersion;
+  /** Between this version and the app now, oldest to newest: `added` is in the app now and not in this version. */
+  differs: { added: NativeVersionPath[]; removed: NativeVersionPath[]; changed: NativeVersionPath[]; routes: boolean; database: boolean; outside: boolean; asks: boolean; access: boolean; home: boolean };
+  /** Database changes the app has applied that this version does not list: they stay applied when it comes back. */
+  databaseAhead: string[];
+  /** The other sites this version's pages may reach, and the ones the app's may now. Going back brings the version's own back. */
+  outside: { version: string[]; now: string[] };
+}
+export interface NativeVersionFile { current: number; version: number; path: string; text: string }
+export interface NativeVersionRestore { version: number; restored: number; databaseAhead: string[] }
+
 export interface DeepHealthCheck {
   ok: boolean;
   critical: boolean;
@@ -2202,8 +2272,36 @@ class ApiClient {
   async getNativeProject(id: string): Promise<ApiResponse<{ available: boolean; ready?: boolean; preflight?: NativeRuntimePreflight | null; project: import('./nativeHosting').NativeProject | null; readOnly?: boolean; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native`);
   }
-  async saveNativeProject(id: string, project: import('./nativeHosting').NativeProject, expectedVersion: number): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
-    return this.request(`/apps/${encodeURIComponent(id)}/native`, { method: 'PUT', body: JSON.stringify({ project, expectedVersion }) });
+  /**
+   * `made`: what the app's history says of this version. `how: 'upload'` for a version that came
+   * from a file (the server takes a publish from the page otherwise), and a line saying what it is for.
+   */
+  async saveNativeProject(id: string, project: import('./nativeHosting').NativeProject, expectedVersion: number, made?: { how?: 'upload'; summary?: string }): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native`, { method: 'PUT', body: JSON.stringify({ project, expectedVersion, ...made }) });
+  }
+  /** The app's versions, newest first: the current one, then every earlier one that is kept. Owner only. */
+  async getNativeVersions(id: string): Promise<ApiResponse<NativeVersionList>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/versions`);
+  }
+  /** One version, what differs between it and the app now, and the database changes made since it. */
+  async getNativeVersionDetail(id: string, version: number): Promise<ApiResponse<NativeVersionDetail>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/versions/${seg(version)}`);
+  }
+  /** One source file of a version, as text. A media or built file is refused (422). */
+  async getNativeVersionFile(id: string, version: number, path: string): Promise<ApiResponse<NativeVersionFile>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/versions/${seg(version)}/file?path=${encodeURIComponent(path)}`);
+  }
+  /** Go back to a version: a new version with that one's content. `expectedVersion` is the version the page is looking at. */
+  async restoreNativeVersion(id: string, version: number, expectedVersion: number): Promise<ApiResponse<NativeVersionRestore>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/versions/${seg(version)}/restore`, { method: 'POST', body: JSON.stringify({ expectedVersion }) });
+  }
+  /** Pin a version, so it is kept past the newest thirty, or unpin it. */
+  async pinNativeVersion(id: string, version: number, pinned: boolean): Promise<ApiResponse<{ version: number; pinned: boolean }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/versions/${seg(version)}`, { method: 'PUT', body: JSON.stringify({ pinned }) });
+  }
+  /** Take an earlier version out of the history, for good. Refused for the current version, and for a pinned one until it is unpinned. */
+  async removeNativeVersion(id: string, version: number): Promise<ApiResponse<{ version: number; removed: boolean }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/versions/${seg(version)}`, { method: 'DELETE' });
   }
   /** A new SoftN app's first version: the server's working starter, named after the app. Refused once anything is installed. */
   async installNativeStarter(id: string): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {

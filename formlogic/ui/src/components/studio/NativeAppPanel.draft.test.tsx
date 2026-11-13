@@ -236,7 +236,8 @@ it('an earlier draft awaiting Recover or Discard is not overwritten by edits, im
   // Publishing the open draft is not a decision about the earlier one: it stays, now behind version 3.
   saveProject.mockResolvedValueOnce({ data: { project: project(3, 'built()') } });
   await act(async () => button('Publish changes')!.click());
-  expect(saveProject).toHaveBeenCalledWith('app1', expect.anything(), 2);
+  // The draft holds a file that was imported, whatever was changed in it after: the app's history is told so.
+  expect(saveProject).toHaveBeenCalledWith('app1', expect.anything(), 2, { how: 'upload' });
   expect(stored().project.files['server/main.logic']).toBe('yesterday()');
   expect(region()!.textContent).toContain('based on version 2; version 3 has been published since');
 });

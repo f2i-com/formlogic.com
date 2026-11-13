@@ -50,8 +50,12 @@ export interface NativeProjectDraft {
   notice: string;
   setError(message: string): void;
   setNotice(message: string): void;
-  /** Every change to the open draft; the first on a clean draft bases it on the installed version. */
-  edit(next: NativeProject): void;
+  /**
+   * Every change to the open draft; the first on a clean draft bases it on the installed version.
+   * `from: 'upload'` for a file the owner brought (a new build, a .softn): the version the draft
+   * becomes is then said to be an upload in the app's history, whatever is changed in it after.
+   */
+  edit(next: NativeProject, from?: 'upload'): void;
   /** Take the earlier draft; returns it, or null when there is none or the owner declined. */
   recoverDraft(): NativeProject | null;
   discardDraft(): void;
@@ -170,12 +174,17 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
   const current = useRef<NativeProject | null>(null);
   useLayoutEffect(() => { current.current = project; }, [project]);
   const installed = useRef<NativeProject | null>(null);
-  const edit = useCallback((next: NativeProject) => {
+  // Whether the open draft holds a file the owner brought: what its version is called in the
+  // app's history (lib/api saveNativeProject). A draft taken back from this browser is not one.
+  const uploaded = useRef(false);
+  const edit = useCallback((next: NativeProject, from?: 'upload') => {
     if (readOnly) return;
+    if (from === 'upload') uploaded.current = true;
     current.current = next;
     setProject(next); setBase(previous => previous ?? version); setDirty(true);
   }, [readOnly, version]);
   const revert = () => {
+    uploaded.current = false;
     clearTimeout(timer.current); pending.current = null; lastWrite.current = null;
     if (!recoverable) drafts.clear();
     setProject(installed.current); current.current = installed.current;
@@ -202,6 +211,7 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
     if (!recoverable) return null;
     if (dirty && !window.confirm('Recover the earlier draft? It replaces your current changes, which are not kept in this browser.')) return null;
     const recovered = { ...recoverable.project, version };
+    uploaded.current = false;
     setProject(recovered);
     setBase(recoverable.baseVersion); setDirty(true); setRecoverable(null); setError('');
     setNotice('Recovered your unpublished draft. Review it, then publish when ready.');
@@ -220,7 +230,7 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
       if (!alive.current) return null;
       // An import into a dirty draft keeps that draft's base: it may be the draft's own download, edited and brought back.
       const next = { ...imported, home: project?.home ?? false, access: project?.access ?? imported.access };
-      edit(next);
+      edit(next, 'upload');
       setNotice(message);
       return next;
     } catch (reason) {
@@ -237,7 +247,8 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
     if (confirmConflict && conflict && !window.confirm(`Publish this draft? It is based on version ${base}, so publishing replaces version ${version}, which was published after it.`)) return null;
     lock.current = true; setBusy(true); setError(''); setNotice('');
     try {
-      const result = await api.saveNativeProject(app.id, project, version);
+      // Said only of an upload: a publish from the page is what the server takes it for otherwise.
+      const result = uploaded.current ? await api.saveNativeProject(app.id, project, version, { how: 'upload' }) : await api.saveNativeProject(app.id, project, version);
       if (!alive.current) return null;
       if (result.error || !result.data) {
         const reason = result.error || 'Installation failed. Your draft is still here.';
@@ -246,6 +257,7 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
       }
       // The published draft's checkpoint is spent; an earlier one still awaiting Recover or Discard is not it, and stays.
       clearTimeout(timer.current); pending.current = null; lastWrite.current = null;
+      uploaded.current = false;
       if (!recoverable) drafts.clear();
       setProject(result.data.project); setVersion(result.data.project.version); setDirty(false); setBase(null); setKept(null);
       installed.current = result.data.project; current.current = result.data.project; setInstalledFiles(result.data.project.files);

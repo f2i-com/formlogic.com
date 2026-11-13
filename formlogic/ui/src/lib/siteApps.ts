@@ -438,7 +438,7 @@ export async function createSiteApp(name: string, file: File): Promise<{ app: Ap
   if (!app) throw new Error(useAppStore.getState().error || 'Could not create the app. Please try again.');
   let failure: string | null = null;
   try {
-    const result = await api.saveNativeProject(app.id, project, 0);
+    const result = await api.saveNativeProject(app.id, project, 0, { how: 'upload' });
     if (result.error || !result.data) failure = result.error || 'The app\'s files could not be saved. Please try again.';
   } catch (reason) {
     failure = reason instanceof Error && reason.message ? reason.message : 'The app\'s files could not be saved. Please try again.';

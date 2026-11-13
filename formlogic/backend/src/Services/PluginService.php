@@ -466,7 +466,7 @@ final class PluginService
         ], self::SYSTEM_USER_ID);
         $appId = (string) $app['id'];
         try {
-            $this->native->install($appId, $project, 0);
+            $this->native->install($appId, $project, 0, null, ['by' => $adminUserId, 'how' => 'plugin']);
             $this->apps->publishApp($appId, 'Installed', self::SYSTEM_USER_ID);
             $now = gmdate('Y-m-d H:i:s');
             $this->pdo->prepare(
@@ -499,7 +499,7 @@ final class PluginService
         if ($read['id'] !== $plugin['manifestId']) {
             throw new \InvalidArgumentException('That is another plugin.');
         }
-        $this->native->install($plugin['appId'], $project, $version);
+        $this->native->install($plugin['appId'], $project, $version, null, ['how' => 'plugin', 'summary' => 'Updated to ' . $read['version']]);
         $this->apps->publishApp($plugin['appId'], 'Updated to ' . $read['version'], self::SYSTEM_USER_ID);
         $this->pdo->prepare('UPDATE plugins SET name = ?, version = ?, grants = ?, uses = ?, settings_schema = ?, settings = ?, updated_at = ? WHERE id = ?')
             ->execute([$read['name'], $read['version'], json_encode($read['passes'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),

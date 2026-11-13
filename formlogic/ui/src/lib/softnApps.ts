@@ -13,7 +13,7 @@ export function isSoftnApp(app: Pick<App, 'settings'> | null | undefined): boole
 }
 
 /** The sections of a SoftN app's page, each at its own address under /apps/<id>/softn/. */
-export const SOFTN_SECTIONS = ['overview', 'data', 'members', 'edit', 'automations', 'domains', 'settings'] as const;
+export const SOFTN_SECTIONS = ['overview', 'data', 'members', 'edit', 'automations', 'history', 'domains', 'settings'] as const;
 export type SoftnSection = (typeof SOFTN_SECTIONS)[number];
 
 /**
@@ -98,7 +98,7 @@ export async function createSoftnApp(input: { name: string; description?: string
     settings: { softnApp: true },
   });
   if (!app) throw new Error(useAppStore.getState().error || 'Could not create the app. Please try again.');
-  const result = uploaded ? await api.saveNativeProject(app.id, uploaded, 0) : await api.installNativeStarter(app.id);
+  const result = uploaded ? await api.saveNativeProject(app.id, uploaded, 0, { how: 'upload' }) : await api.installNativeStarter(app.id);
   if (result.error || !result.data) return { app, project: null, error: result.error || 'The app was created, but its first version could not be installed.' };
   return { app, project: result.data.project };
 }

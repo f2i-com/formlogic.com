@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * The SoftN app's page: its sections are addresses (the overview at the page itself, then data,
- * members, edit, domains and settings); an app with nothing installed starts from its setup choices; one
+ * members, edit, automations, history, domains and settings); an app with nothing installed starts from its setup choices; one
  * arriving from "Create app" or the chat opens straight into the editor it asked for, once;
  * editor changes are installed at once while the app is not published and kept as a draft to
  * publish once it is; Publish makes a draft app live.
@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   getAppForms: vi.fn(),
   dataManager: null as null | { table?: string; view?: string; query?: string; onNavigate(table: string | undefined, view: string, query?: string, options?: { replace?: boolean }): void },
   editor: null as null | { kind: string; brief?: unknown; applyLabel?: string; onApply(bytes: Uint8Array): Promise<void>; onClose(): void },
+  history: null as null | { app: { name: string }; version: number; open?: number; file?: string; backend: boolean; readOnly: boolean; waiting: string | null; onRestored(result: { version: number; restored: number; databaseAhead: string[] }): void },
 }));
 vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({ api: {
@@ -62,6 +63,9 @@ vi.mock('../../components/studio/NativeAppPanel', () => ({
 vi.mock('../../components/apps/SoftnAutomations', () => ({
   SoftnAutomations: ({ app }: { app: { name: string } }) => <p data-testid="softn-automations">automations of {app.name}</p>,
 }));
+vi.mock('../../components/apps/SoftnHistory', () => ({
+  SoftnHistory: (props: NonNullable<typeof mocks.history>) => { mocks.history = props; return <p data-testid="softn-history">history of {props.app.name}, version {props.version}, open {String(props.open)}, file {String(props.file)}</p>; },
+}));
 vi.mock('../../components/studio/NativeAppView', () => ({ NativeAppView: ({ slug }: { slug: string }) => <p>running {slug}</p> }));
 
 const { SoftnAppWorkspace } = await import('./SoftnAppWorkspace');
@@ -89,6 +93,7 @@ beforeEach(() => {
   mocks.listFlows.mockReset().mockResolvedValue({ data: { flows: [] } });
   mocks.getAppForms.mockReset().mockResolvedValue({ data: { forms: [] } });
   mocks.dataManager = null;
+  mocks.history = null;
   useAuthStore.setState({ user: { id: 'u1', email: 'owner@example.test' } as never });
   useUIStore.getState().setSoftnOpen(null);
   container = document.createElement('div');
@@ -168,7 +173,7 @@ describe('SoftnAppWorkspace', () => {
     });
 
     it('has no link or button named for the studio anywhere on the page of an app with no forms', async () => {
-      for (const at of ['', '/edit', '/members', '/automations', '/domains', '/settings']) {
+      for (const at of ['', '/edit', '/members', '/automations', '/history', '/domains', '/settings']) {
         await render('published', withBackend(1), at);
         expect([...container.querySelectorAll('a')].map(a => a.getAttribute('href')).filter(href => href?.includes('/studio'))).toEqual([]);
         expect(button(/App Studio/)).toBeUndefined();
@@ -209,7 +214,7 @@ describe('SoftnAppWorkspace', () => {
       expect(section()).toBe('Data');
       expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:bookings:structure');
       expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.getAttribute('href'))).toEqual([
-        '/apps/app-1/softn', '/apps/app-1/softn/data', '/apps/app-1/softn/members', '/apps/app-1/softn/edit', '/apps/app-1/softn/automations', '/apps/app-1/softn/domains', '/apps/app-1/softn/settings']);
+        '/apps/app-1/softn', '/apps/app-1/softn/data', '/apps/app-1/softn/members', '/apps/app-1/softn/edit', '/apps/app-1/softn/automations', '/apps/app-1/softn/history', '/apps/app-1/softn/domains', '/apps/app-1/softn/settings']);
       // The data manager asks for another table: the address follows, and the default view is left out of it.
       await act(async () => mocks.dataManager!.onNavigate('rooms', 'browse'));
       expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:rooms:browse');
@@ -239,6 +244,52 @@ describe('SoftnAppWorkspace', () => {
       expect(container.querySelector('[data-testid="data-manager"]')).toBeNull();
       expect(container.textContent).toContain('This app has no database on the server.');
       expect(mocks.getNativeDataSummary).not.toHaveBeenCalled();
+    });
+  });
+
+  // Every version a later one replaced, and going back to one: a section after Automations.
+  describe('history', () => {
+    it('is a section of the page after Automations, for an app with a backend and one without', async () => {
+      await render('published', withBackend(3), '/history');
+      expect(section()).toBe('History');
+      expect(container.querySelector('[data-testid="softn-history"]')!.textContent).toBe('history of Recipes, version 3, open undefined, file undefined');
+      const names = [...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent);
+      expect(names.slice(names.indexOf('Automations'), names.indexOf('Automations') + 2)).toEqual(['Automations', 'History']);
+      expect(mocks.history).toMatchObject({ backend: true, readOnly: false, waiting: null });
+      await act(async () => root.unmount());
+      // A JavaScript app or a SoftN app with no backend has versions too.
+      await render('draft', installed(2), '/history');
+      expect(section()).toBe('History');
+      expect(mocks.history).toMatchObject({ version: 2, backend: false });
+    });
+
+    it('takes the version that is open, and the file open in it, from the address', async () => {
+      await render('published', withBackend(9), '/history/7?file=server%2Fmain.logic');
+      expect(section()).toBe('History');
+      expect(mocks.history).toMatchObject({ open: 7, file: 'server/main.logic' });
+      await act(async () => root.unmount());
+      // Anything but a version's number there is no version.
+      await render('published', withBackend(9), '/history/seven');
+      expect(mocks.history!.open).toBeUndefined();
+    });
+
+    it('reads the project again and reloads the preview once a version is gone back to', async () => {
+      await render('published', withBackend(3), '/history');
+      expect(mocks.getNativeProject).toHaveBeenCalledTimes(1);
+      mocks.getNativeProject.mockResolvedValue({ data: { available: true, ready: true, preflight: { ok: true, checks: [] }, project: withBackend(4) } });
+      await act(async () => mocks.history!.onRestored({ version: 4, restored: 2, databaseAhead: [] }));
+      await act(async () => {});
+      expect(mocks.getNativeProject).toHaveBeenCalledTimes(2);
+      expect(mocks.history!.version).toBe(4);
+      expect(container.textContent).toContain('Version 4');
+    });
+
+    it('is the owner\'s alone: nobody else is offered it, or shown it at its address', async () => {
+      useAuthStore.setState({ user: { id: 'manager', email: 'manager@example.test' } as never });
+      await render('published', withBackend(3), '/history/2');
+      expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent)).not.toContain('History');
+      expect(container.querySelector('[data-testid="softn-history"]')).toBeNull();
+      expect(container.textContent).toContain('Only the app’s owner sees its earlier versions and goes back to one.');
     });
   });
 

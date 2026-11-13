@@ -371,7 +371,8 @@ describe('createSiteApp', () => {
       assets: { 'site/index.html': b64('<script src="/assets/app.js"></script>'), 'site/assets/app.js': b64('1') },
       access: 'members',
       home: true,
-    }, 0);
+      // Said to be an upload, for the app's history of versions.
+    }, 0, { how: 'upload' });
     expect(created.app).toBe(app);
     // What the importer left out comes first, then what in the build will not work everywhere (none here).
     expect(created.warnings).toEqual([expect.stringContaining('1 file was left out of the app: dist/LICENSE.')]);
