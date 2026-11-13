@@ -140,7 +140,22 @@ class NativeAppService
     public const MAX_SOURCE_FILE_BYTES = 1500000;
     public const MAX_MIGRATION_BYTES = 1000000;
     public const MAX_MEDIA_FILES = 1000;
-    public const MAX_MEDIA_FILE_BYTES = 8 * 1024 * 1024;
+    /**
+     * One media file, or one file of a built site. A scene made in Blender is one `.glb` of tens
+     * of megabytes (SoftN v0.0.40 plays one directly), so a file may be half of what an app holds.
+     * Little goes by the file: an install's memory is asked for by the whole upload
+     * (raiseMemoryFor), the page fetches the media as one pack, and a site's file asked for
+     * whole is sent as a stream. What is held in memory by the file keeps to
+     * MAX_MEDIA_READ_BYTES.
+     */
+    public const MAX_MEDIA_FILE_BYTES = 32 * 1024 * 1024;
+    /**
+     * The most of one file this server holds in memory at once: the picture an icon is drawn
+     * from (mediaFile), a built site's stylesheet whose addresses are rewritten, and one ranged
+     * answer (SiteAppController). A larger picture is no icon, a larger stylesheet is sent as it
+     * is, and a longer part is answered a stretch at a time.
+     */
+    public const MAX_MEDIA_READ_BYTES = 8 * 1024 * 1024;
     public const MAX_PROJECT_BYTES = 64 * 1024 * 1024;
     /**
      * An app's media as one file its page fetches whole (runtimeProject, NativeAppController's
@@ -1606,7 +1621,7 @@ class NativeAppService
         try {
             $index = self::packIndex($stream);
             [$offset, $size] = $index['files'][$path] ?? [-1, -1];
-            if ($offset < 0 || $size < 0 || $size > self::MAX_MEDIA_FILE_BYTES) return null;
+            if ($offset < 0 || $size < 0 || $size > self::MAX_MEDIA_READ_BYTES) return null;
             if ($size === 0) return '';
             if (fseek($stream, $index['base'] + $offset) !== 0) return null;
             $bytes = stream_get_contents($stream, $size);
@@ -1773,7 +1788,13 @@ class NativeAppService
                 throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./@+\~-]{1,240}$~', $path) ? "Invalid media file: {$path}" : 'Invalid media file');
             }
             $value = base64_decode($encoded, true);
-            if ($value === false || strlen($value) > self::MAX_MEDIA_FILE_BYTES) throw new InvalidArgumentException('Invalid media data');
+            // Each says which file it is about, in the words the app page's import uses first
+            // (nativeHosting.ts, siteApps.ts): a name is shown only when it is plain to show.
+            // A built site's file is a file, not media.
+            $plain = preg_match('~^[\w./@+\~-]{1,240}$~', $path) === 1;
+            $kind = $media ? 'media file' : 'file';
+            if ($value === false) throw new InvalidArgumentException('Invalid media data: the content of ' . ($plain ? $path : "a {$kind}") . ' is not base64.');
+            if (strlen($value) > self::MAX_MEDIA_FILE_BYTES) throw new InvalidArgumentException(($plain ? $path : "A {$kind}") . ' is larger than this host keeps (' . intdiv(self::MAX_MEDIA_FILE_BYTES, 1024 * 1024) . " MB per {$kind}).");
             $bytes += strlen($value);
             $decoded[$path] = $value;
         }

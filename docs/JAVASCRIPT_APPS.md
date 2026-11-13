@@ -14,7 +14,7 @@ work yet. It is for whoever reviews or extends the code.
 A native project (`NativeAppService`) whose pages are a built site:
 
 - `files["manifest.json"]` has a `site` block naming the first page: `{"name": "Shop", "version": "1.0.0", "site": {"entry": "index.html"}}`. A `server` block, `.logic` files and migrations are as for a SoftN app. `main` is not needed.
-- `assets["site/…"]` holds every file of the build, base64, under the same limits as media (1,000 files, 8 MB each, 64 MB in all).
+- `assets["site/…"]` holds every file of the build, base64, under the same limits as media (1,000 files, 32 MB each, 64 MB in all).
 - Names are held to `NativeAppService::SITE_PATH` (kinds a build is made of, including a game's data and files packed as `.br`/`.gz`), with no dot-files, no `..`, and no ending a web server runs anywhere in a name (`SITE_RUNS`). The UI's importer (`ui/src/lib/siteApps.ts`) holds the same rules, leaves out what does not fit, and tells the owner what it left out.
 
 ## How it is served, and why

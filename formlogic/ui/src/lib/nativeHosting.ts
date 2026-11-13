@@ -65,7 +65,8 @@ export const NATIVE_LIMITS = Object.freeze({
   // The runner reads no more of one migration.
   migrationBytes: 1_000_000,
   mediaFiles: 1000,
-  mediaFileBytes: 8 * 1024 * 1024,
+  // A scene made in Blender is one .glb of tens of megabytes.
+  mediaFileBytes: 32 * 1024 * 1024,
   projectBytes: 64 * 1024 * 1024,
 });
 
@@ -160,6 +161,9 @@ const PRIVATE_TREE = /^(server|backend|private)\//i;
  */
 export const HOSTED_MEDIA = /^assets\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx|bin|wgsl|txt|md)$/i;
 
+/** The endings that are media and nothing else: pictures, sound, video, fonts and 3D models (not text, Markdown, shader or .bin files). */
+const MEDIA_BY_KIND = /\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx)$/i;
+
 const NATIVE_CAPABILITIES = ['sql', 'crypto', 'time', 'trusted-client-ip', 'transaction-scope', 'photos'];
 const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
@@ -214,12 +218,19 @@ export async function importNativeProject(file: File): Promise<NativeProject> {
     } else if (path.startsWith('assets/')) {
       if (path.includes('..')) throw new Error(`${path}: this host keeps file names without two dots together. Rename it and try again.`);
       if (!HOSTED_MEDIA.test(path)) throw new Error(`${path} cannot be hosted with this app: its media can be pictures (PNG, JPEG, GIF, WebP, AVIF, ICO, BMP, SVG, HDR, EXR), sound (MP3, WAV, Ogg, Opus, AAC, FLAC, M4A), video (MP4, WebM), fonts (WOFF, WOFF2, TTF, OTF), 3D models (glTF, GLB, BIN, OBJ, STL, FBX), and WGSL, text and Markdown files.`);
-      if (bytes.length > NATIVE_LIMITS.mediaFileBytes) throw new Error(`${path} is larger than this host keeps (8 MB per media file).`);
+      if (bytes.length > NATIVE_LIMITS.mediaFileBytes) throw new Error(`${path} is larger than this host keeps (${NATIVE_LIMITS.mediaFileBytes / 1024 / 1024} MB per media file).`);
       let binary = '';
       for (let offset=0;offset<bytes.length;offset+=8192) binary += String.fromCharCode(...bytes.subarray(offset,offset+8192));
       assets[path] = btoa(binary);
-    } else if (!/^(README|LICENSE|NOTICE)(\.|$)/.test(path)) throw new Error(`${path} is a kind of file this host cannot keep with an app. Remove it from the .softn file and try again.`);
-    else continue;
+    } else if (!/^(README|LICENSE|NOTICE)(\.|$)/.test(path)) {
+      // A picture, sound, video, font or model outside assets/ (an icon beside the manifest is the
+      // usual one): said as that, with where it goes, since removing it would leave the app
+      // without it. Only for what can be nothing but media: a .txt, .md or .bin may be notes or
+      // a backend's data, and nothing under the private tree is ever advised into assets/, which
+      // every visitor is sent.
+      if (MEDIA_BY_KIND.test(path) && !PRIVATE_TREE.test(path) && !path.startsWith('site/') && !path.includes('..') && HOSTED_MEDIA.test(`assets/${path}`)) throw new Error(`${path} is a kind of file this host cannot keep with an app where it is: an app's pictures, sound, video, fonts and models go under assets/. Move it to assets/${path}, change what names it (manifest.json's "icon", or the page that uses it), and try again.`);
+      throw new Error(`${path} is a kind of file this host cannot keep with an app. Remove it from the .softn file and try again.`);
+    } else continue;
     total += bytes.length;
   }
   const sources = Object.keys(source).length, media = Object.keys(assets).length;

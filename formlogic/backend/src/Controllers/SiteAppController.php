@@ -174,10 +174,12 @@ final class SiteAppController
                 ->withHeader('Content-Security-Policy', $policy)
                 ->withHeader('Cache-Control', 'no-store, no-transform');
         }
-        if ($kind === 'css' && $packed === null) {
+        if ($kind === 'css' && $packed === null && $file['size'] <= NativeAppService::MAX_MEDIA_READ_BYTES) {
             // A stylesheet names its pictures and fonts from the root when the build was made for
             // the root of a site (url(/assets/font.woff2)). Here that is the platform's root, so
             // such an address is pointed at the site's own files, as the page's are by its script.
+            // It is read whole for that, so only a sheet of a size this server reads whole: a
+            // larger one (a file may be 32 MB) is sent as the build wrote it, like any other file.
             $sheet = (string) stream_get_contents($file['stream']);
             fclose($file['stream']);
             $sheet = (string) preg_replace(['~(url\(\s*["\']?)/(?!/)~i', '~(@import\s+["\'])/(?!/)~i'], '${1}' . $root, $sheet);
@@ -190,6 +192,10 @@ final class SiteAppController
                 return $this->refuse($response, 416, 'The file is not that long.')->withHeader('Content-Range', 'bytes */' . $file['size']);
             }
             [$first, $last] = $part;
+            // A part is held in memory to be sent, so one answer carries as much as this server
+            // reads whole and no more: a player asking for "the rest" of a long video is given the
+            // next stretch of it, says so in Content-Range, and asks again from where that ended.
+            $last = min($last, $first + NativeAppService::MAX_MEDIA_READ_BYTES - 1);
             fseek($file['stream'], $first);
             $response->getBody()->write((string) stream_get_contents($file['stream'], $last - $first + 1));
             fclose($file['stream']);

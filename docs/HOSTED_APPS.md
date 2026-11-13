@@ -1172,7 +1172,7 @@ The last accepts `{method,path,query,headers,body}` and returns `{result:{status
 The service limits decoded project content to 64 MB; source files to 1,500,000 bytes each and 200 of
 them (a migration to 1,000,000, which is what SoftN's runner applies; a larger one is refused when
 the app is installed, with "Split it into two migrations");
-media files to 8 MB each and 1,000 of them. A larger server file costs every request: the runner
+media files to 32 MB each and 1,000 of them (one file may be half an app: a scene made in Blender is one `.glb` of tens of megabytes). A larger server file costs every request: the runner
 compiles it for each one (about 260 ms of set-up at 1.5 MB against 160 ms at 0.8 MB on softn-runner,
 measured), so keep what only the page uses out of it. A page asks for the project without its media
 (`?media=pack`), then fetches the media as one pack (`GET /api/app/{slug}/native/media?h=<sha256>`),

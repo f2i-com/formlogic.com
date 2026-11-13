@@ -262,9 +262,9 @@ describe('importSiteBuild: the limits', () => {
     await expect(importSiteBuild(zip(many, 'many.zip'), 'Shop')).rejects.toThrow('many.zip has more than 1,500 entries, the most a build\'s zip can hold. Zip only the folder your build made (dist or build).');
   });
 
-  it('refuses a file past 8 MB, naming it, and takes one at the limit', async () => {
+  it('refuses a file past 32 MB, naming it, and takes one at the limit', async () => {
     await expect(importSiteBuild(zip({ dist: { 'index.html': PAGE, media: { 'intro.mp4': NATIVE_LIMITS.mediaFileBytes + 1 } } }), 'Shop'))
-      .rejects.toThrow('dist/media/intro.mp4 is larger than a hosted app keeps (8 MB per file).');
+      .rejects.toThrow('dist/media/intro.mp4 is larger than a hosted app keeps (32 MB per file).');
     const project = await importSiteBuild(zip({ 'index.html': PAGE, 'intro.mp4': NATIVE_LIMITS.mediaFileBytes }), 'Shop');
     expect(atob(project.assets['site/intro.mp4'])).toHaveLength(NATIVE_LIMITS.mediaFileBytes);
     // A source map of any size is left out before it is measured.

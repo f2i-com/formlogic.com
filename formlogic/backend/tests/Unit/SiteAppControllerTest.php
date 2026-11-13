@@ -896,6 +896,53 @@ final class SiteAppControllerTest extends TestCase
         foreach (['shop-own-markup', self::SCRIPT, 'data-proof'] as $ofTheApp) $this->assertStringNotContainsString($ofTheApp, $body, $what);
     }
 
+    /**
+     * A file of a built site may be 32 MB. Two answers hold what they send in memory, a part of
+     * a file and a stylesheet whose addresses are rewritten, and neither holds more than this
+     * server reads whole: a long video's "the rest" is the next stretch of it, and a stylesheet
+     * larger than that is sent as the build wrote it.
+     */
+    public function testALargeFileIsSentInStretchesAndALargeStylesheetAsItIs(): void
+    {
+        $most = NativeAppService::MAX_MEDIA_READ_BYTES;
+        // A film a megabyte longer than one answer carries, each megabyte its own letter.
+        $film = '';
+        for ($at = 0; $at <= intdiv($most, 1048576); $at++) $film .= str_repeat(chr(65 + $at), 1048576);
+        $size = strlen($film);
+        $sheet = '.a { background: url(/assets/logo.png); }' . "\n/*" . str_repeat('x', $most) . '*/';
+        $this->native->install(self::APP_ID, self::project(['site/index.html' => self::PAGE, 'site/media/film.mp4' => $film, 'site/assets/big.css' => $sheet, 'site/assets/app.css' => '.a { background: url(/assets/logo.png); }']), 1);
+        $root = self::prefix($this->ticket());
+
+        // "From the start to the end": the first stretch, which says where it ends and how long the film is.
+        [$first, $body] = $this->ask('media/film.mp4', ['Range' => 'bytes=0-']);
+        $this->assertSame(206, $first->getStatusCode());
+        $this->assertSame('bytes 0-' . ($most - 1) . '/' . $size, $first->getHeaderLine('Content-Range'));
+        $this->assertSame($most, strlen($body));
+        $this->assertSame(substr($film, 0, $most), $body);
+        // And on from there, as a player asks next: the rest, which is short of a stretch.
+        [$next, $rest] = $this->ask('media/film.mp4', ['Range' => 'bytes=' . $most . '-']);
+        $this->assertSame(206, $next->getStatusCode());
+        $this->assertSame('bytes ' . $most . '-' . ($size - 1) . '/' . $size, $next->getHeaderLine('Content-Range'));
+        $this->assertSame(substr($film, $most), $rest);
+        // A part that fits is the part asked for, wherever it is, and the last bytes are the last bytes.
+        [, $middle] = $this->ask('media/film.mp4', ['Range' => 'bytes=' . ($most - 2) . '-' . ($most + 1)]);
+        $this->assertSame(substr($film, $most - 2, 4), $middle);
+        [$tail, $end] = $this->ask('media/film.mp4', ['Range' => 'bytes=-3']);
+        $this->assertSame('bytes ' . ($size - 3) . '-' . ($size - 1) . '/' . $size, $tail->getHeaderLine('Content-Range'));
+        $this->assertSame(substr($film, -3), $end);
+        // Asked for whole, it is sent whole, as a stream.
+        [$whole, $all] = $this->ask('media/film.mp4', []);
+        $this->assertSame([200, (string) $size], [$whole->getStatusCode(), $whole->getHeaderLine('Content-Length')]);
+        $this->assertSame(hash('sha256', $film), hash('sha256', $all));
+
+        // The stylesheet past that size is the build's own bytes; one within it still has its addresses pointed at the site.
+        [$large, $sent] = $this->ask('assets/big.css', []);
+        $this->assertSame([200, 'text/css; charset=utf-8'], [$large->getStatusCode(), $large->getHeaderLine('Content-Type')]);
+        $this->assertSame(hash('sha256', $sheet), hash('sha256', $sent));
+        [, $small] = $this->ask('assets/app.css', []);
+        $this->assertSame('.a { background: url(' . $root . 'assets/logo.png); }', $small);
+    }
+
     public function testAPartOfAFileIsSentAsAPlayerAsksForIt(): void
     {
         [$whole] = $this->ask('assets/logo.png', []);

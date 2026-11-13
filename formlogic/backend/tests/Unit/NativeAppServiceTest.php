@@ -97,6 +97,28 @@ final class NativeAppServiceTest extends TestCase
         try { NativeAppService::validateProject($over); $this->fail('A source file over the limit was accepted'); }
         catch (\InvalidArgumentException $e) { $this->assertSame('logic/big.logic is larger than this host keeps (1.5 MB per source file).', $e->getMessage()); }
 
+        // A media file may be 32 MB: a scene made in Blender is one .glb of tens of megabytes.
+        // To the byte, and one over, which is named; and one that is not base64 is named too.
+        $this->assertSame(32 * 1024 * 1024, NativeAppService::MAX_MEDIA_FILE_BYTES);
+        $scene = $this->project();
+        $scene['assets']['assets/scene.glb'] = base64_encode(str_repeat("\0", NativeAppService::MAX_MEDIA_FILE_BYTES));
+        $this->assertSame(NativeAppService::MAX_MEDIA_FILE_BYTES, strlen(NativeAppService::validateProject($scene)[1]['assets/scene.glb']));
+        $scene['assets']['assets/scene.glb'] = base64_encode(str_repeat("\0", NativeAppService::MAX_MEDIA_FILE_BYTES + 1));
+        try { NativeAppService::validateProject($scene); $this->fail('A media file over the limit was accepted'); }
+        catch (\InvalidArgumentException $e) { $this->assertSame('assets/scene.glb is larger than this host keeps (32 MB per media file).', $e->getMessage()); }
+        $scene['assets']['assets/scene.glb'] = 'not base64!';
+        try { NativeAppService::validateProject($scene); $this->fail('Media that is not base64 was accepted'); }
+        catch (\InvalidArgumentException $e) { $this->assertSame('Invalid media data: the content of assets/scene.glb is not base64.', $e->getMessage()); }
+        unset($scene);
+        // A built site's file is called a file, and a name too long to show is not shown.
+        $built = ['access' => 'application', 'files' => ['manifest.json' => '{"name":"Shop","version":"1.0.0","site":{"entry":"index.html"}}'], 'assets' => ['site/index.html' => base64_encode('<p>Shop</p>'), 'site/film.mp4' => 'not base64!']];
+        try { NativeAppService::validateProject($built); $this->fail('A site file that is not base64 was accepted'); }
+        catch (\InvalidArgumentException $e) { $this->assertSame('Invalid media data: the content of site/film.mp4 is not base64.', $e->getMessage()); }
+        $built['assets']['site/film.mp4'] = base64_encode(str_repeat("\0", NativeAppService::MAX_MEDIA_FILE_BYTES + 1));
+        try { NativeAppService::validateProject($built); $this->fail('A site file over the limit was accepted'); }
+        catch (\InvalidArgumentException $e) { $this->assertSame('site/film.mp4 is larger than this host keeps (32 MB per file).', $e->getMessage()); }
+        unset($built);
+
         // A migration is named when it is too large for the runner, where it was accepted and then failed to run.
         $migration = $this->project();
         $migration['files']['server/migrations/001.sql'] = 'CREATE TABLE notes(id INTEGER PRIMARY KEY, title TEXT, session_token TEXT);' . str_repeat(' ', NativeAppService::MAX_MIGRATION_BYTES);

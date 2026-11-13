@@ -51,7 +51,25 @@ describe('importNativeProject', () => {
     await expect(importNativeProject(softn({ ...client, 'assets/page.htm': '<script>1</script>' }))).rejects.toThrow('assets/page.htm cannot be hosted with this app');
     await expect(importNativeProject(softn({ ...client, 'assets/app.mjs': 'alert(1)' }))).rejects.toThrow('assets/app.mjs cannot be hosted with this app');
     await expect(importNativeProject(softn({ ...client, 'assets/tool.exe': 'MZ' }))).rejects.toThrow('assets/tool.exe cannot be hosted with this app');
-    await expect(importNativeProject(softn({ ...client, 'styles/site.scss': 'body {}' }))).rejects.toThrow('styles/site.scss is a kind of file this host cannot keep with an app');
+    await expect(importNativeProject(softn({ ...client, 'styles/site.scss': 'body {}' }))).rejects.toThrow('styles/site.scss is a kind of file this host cannot keep with an app. Remove it');
+  });
+
+  it('says where media goes when it is outside assets/, as an icon beside the manifest is', async () => {
+    // A .softn packed with its icon at the top (manifest.json's "icon": "icon.png"): the picture is
+    // one this host keeps, only not there.
+    await expect(importNativeProject(softn({ ...client, 'icon.png': 'PNG' }))).rejects.toThrow('icon.png is a kind of file this host cannot keep with an app where it is: an app\'s pictures, sound, video, fonts and models go under assets/. Move it to assets/icon.png');
+    await expect(importNativeProject(softn({ ...client, 'models/scene.glb': 'glTF' }))).rejects.toThrow('Move it to assets/models/scene.glb');
+    // Under assets/ it is taken.
+    expect(Object.keys((await importNativeProject(softn({ ...client, 'assets/icon.png': 'PNG' }))).assets ?? {})).toEqual(['assets/icon.png']);
+  });
+
+  it('never advises a file into assets/ that may not be media, or that is the backend\'s', async () => {
+    // assets/ is sent to every visitor. Text, Markdown and .bin files may be notes or a backend's
+    // data; whatever is under the private tree stays out of it; a built site's files are not a SoftN app's.
+    for (const path of ['private/keys.txt', 'server/data.bin', 'backend/seed.bin', 'server/logo.png', 'Private/photo.jpg', 'docs/guide.md', 'requirements.txt', 'logic/code.bin', 'shaders/blur.wgsl', 'site/logo.png']) {
+      const refusal = await importNativeProject(softn({ ...client, [path]: 'x' })).then(() => 'taken', (error: Error) => error.message);
+      expect(refusal, path).toBe(`${path} is a kind of file this host cannot keep with an app. Remove it from the .softn file and try again.`);
+    }
   });
 
   it('keeps a SoftN app’s pages, scripts and stylesheets as source, wherever the app put them, never as media', async () => {
