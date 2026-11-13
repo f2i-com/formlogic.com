@@ -183,8 +183,12 @@ final class SoftnAppToolsTest extends TestCase
         $this->assertArrayNotHasKey('warnings', $saved);
     }
 
-    /** A link to another page file of the app is not followed by this site's app frame yet: the install says so. */
-    public function testAnInstallWarnsOfALinkToAnotherPageOfTheApp(): void
+    /**
+     * A link to another page file of the app opens it in place (SoftN v0.0.40's frame), so an
+     * install says nothing of one. A link to a page file the app does not have still stops the
+     * app when it is followed: the install says so, naming each.
+     */
+    public function testAnInstallWarnsOfALinkToAPageTheAppDoesNotHave(): void
     {
         $files = [
             'manifest.json' => '{"main":"index.html"}',
@@ -196,15 +200,111 @@ final class SoftnAppToolsTest extends TestCase
             'server/main.logic' => 'var x = "<a href=\'about.html\'>"',
         ];
         $warnings = SoftnAppTools::warnings($files);
-        $this->assertCount(1, $warnings);
-        // Each link that names a page the app has, from the page it is on; not a link elsewhere, to itself, to a part of the page, or to a file that is not there.
-        $this->assertStringContainsString('(index.html → about.html; about.html → index.html; pages/more.ui → about.html)', $warnings[0]);
-        $this->assertStringContainsString('<import About from="./about.html" />', $warnings[0]);
-        $this->assertSame([], SoftnAppTools::warnings(['manifest.json' => '{}', 'index.html' => '<import About from="./about.html" /><App>#if (page === "about")<About />#end</App>', 'about.html' => '<Text>About</Text>']));
+        $this->assertCount(2, $warnings);
+        // The link to a page that is not there, from the page it is on; not a link to a page the app has (by a link or by its code), to itself, or to a part of the page.
+        $this->assertStringContainsString('(index.html → missing.html)', $warnings[0]);
+        $this->assertStringContainsString('opens it in place', $warnings[0]);
+        $this->assertStringNotContainsString('about.html', $warnings[0]);
+        // And the link to another site, which stops the app as surely.
+        $this->assertStringContainsString('another site', $warnings[1]);
+        $this->assertStringContainsString('(index.html: https://example.com/x.html)', $warnings[1]);
+        // A link from a folder is read from that folder, and one from the app's root from there.
+        $this->assertStringContainsString('(pages/more.ui → pages/gone.html; pages/more.ui → gone.ui)', SoftnAppTools::warnings(['manifest.json' => '{}', 'pages/more.ui' => '<App><a href="gone.html">One</a><a href="/gone.ui">Two</a><a href="../pages/more.ui">Here</a></App>'])[0]);
+        $this->assertSame([], SoftnAppTools::warnings(['manifest.json' => '{}', 'index.html' => '<import About from="./about.html" /><App>#if (page === "about")<About />#end <a href="about.html">About</a></App>', 'about.html' => '<Text>About</Text>']));
 
         [$tools] = $this->tools();
-        $saved = $tools->call('update_native_app_files', ['appId' => 'app-1', 'expectedVersion' => 3, 'files' => ['ui/main.ui' => '<App><a href="about.ui">About</a></App>', 'ui/about.ui' => '<App/>']], self::mcp());
-        $this->assertStringContainsString('ui/main.ui → ui/about.ui', $saved['warnings'][0]);
+        $saved = $tools->call('update_native_app_files', ['appId' => 'app-1', 'expectedVersion' => 3, 'files' => ['ui/main.ui' => '<App><a href="about.ui">About</a> <a href="gone.ui">Gone</a></App>', 'ui/about.ui' => '<App/>']], self::mcp());
+        $this->assertCount(1, $saved['warnings']);
+        $this->assertStringContainsString('(ui/main.ui → ui/gone.ui)', $saved['warnings'][0]);
+    }
+
+    /**
+     * A link is read from the page that shows it, as SoftN reads one: a part brought in with
+     * `<import>` is shown by the pages that import it, and its links are theirs, not its own
+     * folder's. (Followed in a browser: a link `about.html` written in parts/nav.html and shown
+     * by index.html opens about.html.)
+     */
+    public function testALinkInAnImportedPartIsReadFromThePagesThatShowIt(): void
+    {
+        $page = static fn (string $body): string => "<import Nav from=\"./parts/nav.html\" />\n<App><Nav />{$body}</App>";
+        $files = ['manifest.json' => '{"main":"index.html"}', 'index.html' => $page(''), 'about.html' => '<App>About</App>', 'parts/nav.html' => '<a href="about.html">About</a> <a href="index.html">Home</a>'];
+        $this->assertSame([], SoftnAppTools::warnings($files));
+        // Through a part of a part, and with the earlier spelling's folders.
+        $this->assertSame([], SoftnAppTools::warnings(['manifest.json' => '{}', 'ui/main.ui' => '<import Shell from="./components/Shell.ui" /><Shell />', 'ui/components/Shell.ui' => '<import Nav from="./Nav.ui" /><Nav />', 'ui/components/Nav.ui' => '<a href="about.ui">About</a>', 'ui/about.ui' => '<App/>']));
+        // It opens from one of the pages that show it: left alone, though from the other it would not.
+        $this->assertSame([], SoftnAppTools::warnings($files + ['docs/guide.html' => "<import Nav from=\"../parts/nav.html\" />\n<App><Nav /></App>"]));
+        // From no page that shows it: named with the file it is written in, as the first of those pages reads it.
+        $broken = SoftnAppTools::warnings(['parts/nav.html' => '<a href="team.html">Team</a>'] + $files);
+        $this->assertCount(1, $broken);
+        $this->assertStringContainsString('(parts/nav.html → team.html)', $broken[0]);
+        // Two parts that only bring each other in are read from themselves, and nothing loops.
+        $this->assertSame([], SoftnAppTools::warnings(['manifest.json' => '{}', 'a.html' => '<import B from="./b.html" /><a href="b.html">B</a>', 'b.html' => '<import A from="./a.html" /><a href="a.html">A</a>']));
+    }
+
+    /**
+     * What stops a hosted app when it is followed, beyond a page that is not there: each of these
+     * was clicked in a browser on an installed app. And what does not stop it, which is left alone.
+     */
+    public function testAnInstallWarnsOfLinksThatAreNotToAPageOfTheApp(): void
+    {
+        $with = static fn (string $links, array $more = []): array => SoftnAppTools::warnings(['manifest.json' => '{"main":"index.html"}', 'index.html' => "<App>{$links}</App>", 'about.html' => '<App/>', 'docs/guide.html' => '<App/>', 'styles.css' => 'body{}', 'server/admin.html' => '<App/>'] + $more);
+
+        // No page file named: no ending, the root, a folder, a query alone, a stylesheet, one of the app's pictures.
+        $none = $with('<a href="about">1</a><a href="/">2</a><a href="./">3</a><a href="docs/">4</a><a href="?tab=2">5</a><a href="styles.css">6</a><a href="assets/dot.png" download="dot.png">7</a>');
+        $this->assertCount(1, $none);
+        $this->assertStringContainsString('names no page file', $none[0]);
+        $this->assertStringContainsString('(index.html: "about"; index.html: "/"; index.html: "./"; index.html: "docs/"; index.html: "?tab=2"; index.html: "styles.css"; index.html: "assets/dot.png")', $none[0]);
+        $this->assertStringContainsString('named in full with its ending', $none[0]);
+
+        // A page file that is not there: above the app's own folder, the wrong case, one only the backend has, an ending this host keeps no page under.
+        $gone = $with('<a href="../about.html">1</a><a href="about.HTML">2</a><a href="server/admin.html">3</a><a href="old.htm">4</a>');
+        $this->assertCount(1, $gone);
+        $this->assertStringContainsString('(index.html → ../about.html; index.html → about.HTML; index.html → server/admin.html; index.html → old.htm)', $gone[0]);
+
+        // Another site and a mail address.
+        $out = $with('<a href="https://example.com/">1</a><a href="//cdn.example.com/x">2</a><a href="mailto:someone@example.com">3</a>');
+        $this->assertCount(1, $out);
+        $this->assertStringContainsString('(index.html: https://example.com/; index.html: //cdn.example.com/x; index.html: mailto:someone@example.com)', $out[0]);
+        $this->assertStringContainsString('text the person can copy', $out[0]);
+
+        // The page's own code going to a page that is not there does nothing: said apart, as that.
+        $code = $with('<Button @click={() => go()}>Go</Button>', ['main2.ui' => "<logic>function go() { location.href = 'gone.html'; window.location.assign(\"about.html\"); if (location.href == 'x.html') {} }</logic>"]);
+        $this->assertCount(1, $code);
+        $this->assertStringContainsString('does nothing (main2.ui → gone.html)', $code[0]);
+
+        // Left alone: a page of the app however it is written, a place on the page, a link with a target
+        // (it opens nothing and the app stays), an address made in code, and what is not a link at all.
+        $this->assertSame([], $with(
+            '<a href=" about.html">1</a><a href="docs\\guide.html">2</a><a href="about.html?from=home#team">3</a><a href="#top">4</a><a href="">5</a>'
+            . '<a href="https://example.com/" target="_blank" rel="noopener">6</a><a target=_blank href="missing.html">7</a><a href={next}>8</a><a href="{page}.html">9</a>'
+            . '<a data-href="missing.html">10</a><link href="missing.html"><use xlink:href="missing.html" /><a-card href="missing.html"></a-card>'
+            . '<!-- <a href="missing.html">old</a> --><pre><a href="missing.html">an example</a></pre><code>&lt;a href="x"&gt; <a href="missing.html">x</a></code>'
+            . '<a href="javascript:void(0)">11</a><a href="tel:+15550100">12</a><a title="a > b" href="about.html">13</a>'
+        ));
+        // A target that is this frame is no target.
+        $this->assertCount(1, $with('<a href="missing.html" target="_self">1</a>'));
+    }
+
+    /**
+     * A page is read once from start to end, whatever it holds: a page made of openings that are
+     * never closed (each of which a pattern would read on from to the page's end) costs no more
+     * than any other page of its size. A source file may be 1.5 MB.
+     */
+    public function testAPageOfUnclosedOpeningsIsReadAsQuicklyAsAnyOther(): void
+    {
+        $size = 1400000;
+        foreach (['<a ', '<a href="', '<!-- ', '<pre ', '<code>', '<import from="', 'location = "', "<a href='x.html' "] as $opening) {
+            $page = str_repeat($opening, intdiv($size, strlen($opening)));
+            $started = hrtime(true);
+            $warnings = SoftnAppTools::warnings(['manifest.json' => '{"main":"index.html"}', 'index.html' => $page, 'about.html' => $page]);
+            $took = (hrtime(true) - $started) / 1e9;
+            $this->assertLessThan(5.0, $took, 'a page of "' . trim($opening) . '" took ' . round($took, 2) . ' s');
+            $this->assertIsArray($warnings);
+        }
+        // And one of ordinary links, every one of them to a page that is not there, is named once.
+        $many = SoftnAppTools::warnings(['manifest.json' => '{}', 'index.html' => str_repeat('<a href="gone.html">x</a>', 40000)]);
+        $this->assertCount(1, $many);
+        $this->assertStringContainsString('(index.html → gone.html)', $many[0]);
     }
 
     public function testWhatAnUpdateIsGivenIsHeldToItsShape(): void

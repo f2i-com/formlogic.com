@@ -1215,6 +1215,41 @@ access or storage, the engine the server runs it on, the origins it may call, th
 permission, what it asks of FormLogic), a runtime from before v0.0.39, or a frame that answers
 `reopen`, is opened in a new frame, as every newer version was before.
 
+**An app of more than one page file.** A link from one page file of a SoftN app to another
+(`<a href="about.html">`, or `location.href = "about.html"` in its code) opens that page in place,
+from SoftN v0.0.40's frame on (it says `places: 1` when it is ready); before it, the frame was taken
+to an address of this site, and the app was stopped. Another page file is a fresh run of the app on
+the same stored data. The frame says where the app is, one string a host keeps as it came
+(`/about.html`, `/docs/guide.html`, `/#settings` for a named page inside the main page), and
+`NativeAppView` puts it after the `#` of the page's address when the app has the page to itself
+(`/app/notes#/about.html`), written in place of the address shown and never as a step back. Opened
+with such an address, the app starts there (`init.place`, held to the shape of a place first, and
+by the frame to the app's own pages: anything else is its main page). A preview inside the
+workspace follows the links too and keeps the workspace's own address.
+`ui/e2e/softn-app-page-links.spec.ts` runs all of it in a browser.
+
+A link is read from the page that shows it (one written in an imported part, from the page that
+imports it), and it opens a page file of the app or a place on the same page (`#top`). Any other
+link without a `target` is still the browser's to follow, takes the frame off the app, and the app
+is stopped ("This app tried to navigate away and was stopped"): a page file that is not there, an
+address that names no page file (`about`, `/`, a folder, a stylesheet, one of the app's pictures),
+another site, a mail address. The frame's sandbox is `allow-scripts` alone, so a link with a
+`target` opens nothing, and the app stays; the page's own code going to a page that is not there
+does nothing. Each was followed in a browser. An install through the AI tools warns of the ones
+it can read (`SoftnAppTools::warnings`), and the guide served to AIs says how a link is written.
+
+**3D scenes.** `Scene3D` runs in the frame with what SoftN v0.0.40 added: a scene made in Blender
+played from one `.glb` through the file's own cameras, light from a panorama (an `.hdr` one was
+run; an `.exr` is kept as media too and read by a piece of its own), depth of field and occlusion,
+each from a piece of the runtime the frame fetches only when a scene asks for it. A media file
+may be 32 MB for that (one `.glb` of a one-minute film was 23.7 MB).
+Two things the frame does not do yet, both in SoftN's frame and so for a later SoftN release: the
+pictures inside a `.glb` are refused by the frame's own content policy (three.js reads them from
+`blob:` addresses, and the policy's `connect-src` names the runtime, the site's ZIPP and `data:`
+only), so a model is drawn in its materials' plain colours; and a page's `fetch()` of a `.json`
+among its files answers 404 (a `.txt` or `.md` under `assets/` is read). Both were measured on a
+real browser with the release installed.
+
 **A throttled call, as the app's page sees it.** FormLogic refuses a call before the app's backend
 runs in three cases, and the page's `softn.net.fetch` is answered the same way for each:
 

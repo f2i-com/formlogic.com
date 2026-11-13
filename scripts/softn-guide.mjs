@@ -49,6 +49,16 @@ const FOR_FORMLOGIC = [
     'lookup_components lists each component\'s events.',
     'lookup_softn_components lists each component\'s events.',
   ],
+  // Games and 3D scenes (from SoftN v0.0.40): the guide with the complete examples is one of the
+  // published guides, read here by its name, and the component reference is FormLogic's tool.
+  [
+    '`read_docs("threejs-games")` has complete examples',
+    '`get_softn_guide` with topic "threejs-games" has complete examples',
+  ],
+  [
+    '`lookup_components` on Scene3D lists every field',
+    '`lookup_softn_components` on Scene3D lists every field',
+  ],
   [
     'there are no props, no events and no `$emit`. check_app warns at each such use.',
     'there are no props, no events and no `$emit`.',

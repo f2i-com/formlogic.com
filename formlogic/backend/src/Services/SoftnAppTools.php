@@ -257,36 +257,148 @@ class SoftnAppTools
     }
 
     /**
-     * What an install went through with that will not work as written, in words to act on. One
-     * thing today: a link from a page to another page file of the app. SoftN shows such a page in
-     * place where its host follows links; this site's app frame does not yet, and the link would
-     * take the frame itself away, leaving the app blank until it is opened again.
+     * What an install went through with that will not work as written, in words to act on:
+     * links that stop the app. The app's frame shows a link to one of the app's own page files
+     * in place (from SoftN v0.0.40; before it, every such link took the frame away, and this
+     * warned of each), and a link to a place on the same page (`#top`) is harmless. Any other
+     * link without a `target` is the browser's to follow: it takes the frame off the app, and
+     * this site stops the app there ("This app tried to navigate away and was stopped"). Each
+     * kind named here was followed in a browser: a page file the app does not have, an address
+     * that names no page file (`about`, `/`, `docs/`, a stylesheet, one of the app's pictures),
+     * and another site or a mail address. With a `target` a link opens nothing (the frame may
+     * open no window) and the app stays, and the page's own code going to a page that is not
+     * there does nothing: neither stops the app.
+     *
+     * A link is read from the page that shows it, as SoftN reads one (core's bundlePageAt): a
+     * part brought in with `<import>` is shown by the pages that import it, and its links are
+     * theirs, not its own folder's. One that opens from any page showing it is left alone.
+     * Only an address written as plain text is read: one made in code is not known here.
      *
      * @param array<string, string> $files
      * @return list<string>
      */
     public static function warnings(array $files): array
     {
-        $linked = [];
-        foreach (NativeAppService::clientFiles(['files' => $files]) as $page => $source) {
-            if (!is_string($source) || !preg_match('/\.(?:html|ui)$/D', (string) $page)) continue;
-            // An href, or an address assigned to location, written as plain text.
-            if (!preg_match_all('~(?:\bhref\s*=\s*|\blocation(?:\.href)?\s*=\s*)(["\'])([^"\'#?{}]{1,200}\.(?:html|ui))(?:[#?][^"\']*)?\1~', $source, $found)) continue;
-            foreach ($found[2] as $href) {
-                if (preg_match('~^(?:[a-z][a-z0-9+.-]*:|//)~i', $href)) continue;
-                // From the app's root when it begins with a slash, else from the page's own folder.
-                $parts = str_starts_with($href, '/') ? [] : array_slice(explode('/', (string) $page), 0, -1);
-                foreach (explode('/', ltrim($href, '/')) as $part) {
-                    if ($part === '' || $part === '.') continue;
-                    if ($part === '..') { array_pop($parts); continue; }
-                    $parts[] = $part;
-                }
-                $target = implode('/', $parts);
-                if ($target !== $page && isset($files[$target])) $linked[$page . ' → ' . $target] = true;
+        // What the frame is sent: a link is held to these, never to the backend's files.
+        $client = array_filter(NativeAppService::clientFiles(['files' => $files]), 'is_string');
+        $isPage = static fn (string $path): bool => preg_match('/\.(?:html?|ui)$/Di', $path) === 1;
+        $folder = static fn (string $path): array => array_slice(explode('/', $path), 0, -1);
+        // A path as SoftN resolves one: from the root when it begins with a slash, else from
+        // `$from`; null when it climbs above the root, which SoftN refuses.
+        $resolve = static function (array $from, string $written): ?string {
+            $parts = str_starts_with($written, '/') ? [] : $from;
+            foreach (explode('/', $written) as $part) {
+                if ($part === '' || $part === '.') continue;
+                if ($part === '..') { if ($parts === []) return null; array_pop($parts); continue; }
+                $parts[] = $part;
+            }
+            return implode('/', $parts);
+        };
+        // Which files bring each file in, so that a part's links are read from the pages showing it.
+        $importedBy = [];
+        foreach ($client as $file => $source) {
+            if (!$isPage((string) $file) || !preg_match_all('~<import\b[^>]{0,1000}?\bfrom\s*=\s*(["\'])([^"\'{}]{1,300})\1~i', $source, $imports)) continue;
+            foreach ($imports[2] as $from) {
+                $part = $resolve($folder((string) $file), strtr(trim($from), '\\', '/'));
+                if ($part !== null && $part !== (string) $file && isset($client[$part])) $importedBy[$part][(string) $file] = true;
             }
         }
-        if ($linked === []) return [];
-        return ['A link to another page file of the app does not open it here yet, and following it leaves the app blank until it is reopened (' . implode('; ', array_slice(array_keys($linked), 0, 8)) . '). Keep the app to one page: show the other page\'s content in place, with a state variable and #if, and bring its markup in from its own file with <import About from="./about.html" /> (see the language guide, "Reuse: an imported page"). Change that before telling the person it is done.'];
+        $shownBy = static function (string $file) use ($importedBy): array {
+            $pages = [];
+            $seen = [$file => true];
+            $queue = [$file];
+            while ($queue !== []) {
+                $at = array_shift($queue);
+                $by = array_keys($importedBy[$at] ?? []);
+                if ($by === []) { $pages[] = $at; continue; }
+                foreach ($by as $importer) {
+                    $importer = (string) $importer;
+                    if (!isset($seen[$importer])) { $seen[$importer] = true; $queue[] = $importer; }
+                }
+            }
+            // Files that only import one another are shown by nothing else: read from the file itself.
+            return $pages === [] ? [$file] : $pages;
+        };
+        $shown = static fn (string $address): string => substr((string) preg_replace('/[^\x20-\x7E]/', '?', $address), 0, 80);
+        // A page without what is commented out and without markup shown as an example (<pre>,
+        // <code>). Read once from start to end, whatever the page holds: a pattern that looks for
+        // each closing would read to the end of a 1.5 MB page again for every opening left open.
+        $strip = static function (string $text): string {
+            foreach ([['<!--', '-->'], ['<pre', '</pre'], ['<code', '</code']] as [$open, $close]) {
+                $kept = '';
+                $at = 0;
+                while (($from = stripos($text, $open, $at)) !== false) {
+                    $after = $from + strlen($open);
+                    // <preview> is not <pre>.
+                    if ($open !== '<!--' && !in_array($text[$after] ?? '', [' ', "\t", "\n", "\r", '>', '/'], true)) { $kept .= substr($text, $at, $after - $at); $at = $after; continue; }
+                    $to = stripos($text, $close, $after);
+                    // A comment left open runs to the end of the page; an example left open is not one.
+                    if ($to === false) { if ($open === '<!--') { $kept .= substr($text, $at, $from - $at); $at = strlen($text); } break; }
+                    $kept .= substr($text, $at, $from - $at);
+                    $at = $to + strlen($close);
+                }
+                $text = $kept . substr($text, $at);
+            }
+            return $text;
+        };
+
+        $missing = $notPages = $outside = $byCode = [];
+        foreach ($client as $file => $source) {
+            $file = (string) $file;
+            if (!$isPage($file)) continue;
+            $pages = $shownBy($file);
+            // Whether `$written` names a page of the app from any page that shows this file.
+            $opens = static function (string $written) use ($pages, $folder, $resolve, $client, $isPage): bool {
+                foreach ($pages as $page) {
+                    $target = $resolve($folder($page), $written);
+                    if ($target !== null && $isPage($target) && isset($client[$target])) return true;
+                }
+                return false;
+            };
+            $named = static fn (string $written): string => $resolve($folder($pages[0]), $written) ?? $written;
+            $text = $strip($source);
+            // Each <a> and what is written in it, up to its first ">" (a thousand characters of
+            // it). Found by reading on from the last, so a page of "<a" with no ">" costs one pass.
+            $anchors = [];
+            $close = -1;
+            for ($at = 0; ($from = stripos($text, '<a', $at)) !== false; $at = $from + 2) {
+                if (!in_array($text[$from + 2] ?? '', [' ', "\t", "\n", "\r", '/', '>'], true)) continue;
+                if ($close < $from) $close = strpos($text, '>', $from);
+                if ($close === false) break;
+                if ($close - $from <= 1002) $anchors[] = substr($text, $from + 2, $close - $from - 2);
+            }
+            foreach ($anchors as $attributes) {
+                // With a target the link opens nothing here and the app stays: not this warning's.
+                if (preg_match('~(?<![\w:.-])target\s*=\s*(["\']?)(?!_self\b)[^\s"\'>]~i', $attributes)) continue;
+                if (!preg_match('~(?<![\w:.-])href\s*=\s*(["\'])(.*?)\1~is', $attributes, $href)) continue;
+                $address = trim($href[2]);
+                if ($address === '' || $address[0] === '#' || strlen($address) > 300 || preg_match('/[{}]/', $address)) continue;
+                if (preg_match('~^(?:https?:|mailto:|//)~i', $address)) { $outside[$file . ': ' . $shown($address)] = true; continue; }
+                // Any other scheme (tel:, javascript:, data:, blob:) was not followed in a browser: left alone.
+                if (preg_match('~^[a-z][a-z0-9+.-]*:~i', $address)) continue;
+                $written = strtr((string) (preg_split('/[?#]/', $address, 2) ?: [''])[0], '\\', '/');
+                if ($written !== '' && $opens($written)) continue;
+                if ($isPage($written)) $missing[$file . ' → ' . $named($written)] = true;
+                else $notPages[$file . ': "' . $shown($address) . '"'] = true;
+            }
+            // The page's own code going to a page, written as plain text.
+            if (preg_match_all('~\blocation(?:\.href)?\s*=\s*(["\'])([^"\'{}]{1,300})\1|\blocation\.(?:assign|replace)\(\s*(["\'])([^"\'{}]{1,300})\3~', $text, $goes, PREG_SET_ORDER)) {
+                foreach ($goes as $go) {
+                    $address = trim(($go[2] ?? '') !== '' ? $go[2] : ($go[4] ?? ''));
+                    if ($address === '' || $address[0] === '#' || preg_match('~^(?:[a-z][a-z0-9+.-]*:|//)~i', $address)) continue;
+                    $written = strtr((string) (preg_split('/[?#]/', $address, 2) ?: [''])[0], '\\', '/');
+                    if ($written === '' || !$isPage($written) || $opens($written)) continue;
+                    $byCode[$file . ' → ' . $named($written)] = true;
+                }
+            }
+        }
+        $list = static fn (array $found): string => implode('; ', array_slice(array_keys($found), 0, 8)) . (count($found) > 8 ? '; and ' . (count($found) - 8) . ' more' : '');
+        $warnings = [];
+        if ($missing !== []) $warnings[] = 'A link names a page file this app does not have, and following it stops the app until it is reopened (' . $list($missing) . '). Add that page to the app, or correct the link to a page it has: a link to one of the app\'s own page files opens it in place, read from the page that shows the link. Change that before telling the person it is done.';
+        if ($notPages !== []) $warnings[] = 'A link that names no page file stops the app when it is followed (' . $list($notPages) . '). A link here opens a page file of the app, named in full with its ending and read from the page that shows the link ("about.html", "docs/guide.html": not "about", "/" or a folder, and never above the app\'s own folder), or a place on the same page ("#top"). It opens no stylesheet, picture or other file. Change that before telling the person it is done.';
+        if ($outside !== []) $warnings[] = 'A link to another site or to a mail address does not open from an app hosted here: followed, it stops the app until it is reopened (' . $list($outside) . '). Show the address as text the person can copy, not as a link. Change that before telling the person it is done.';
+        if ($byCode !== []) $warnings[] = 'The page\'s code goes to a page file this app does not have, which does nothing (' . $list($byCode) . '). Add that page, or correct the name.';
+        return $warnings;
     }
 
     /** What an install answers: the new version, what the project now holds, and where to see it. */
