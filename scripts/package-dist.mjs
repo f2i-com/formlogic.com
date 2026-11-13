@@ -653,6 +653,8 @@ const mustExist = [
   'api/resources/softn-native/record-events.mjs',
   'api/resources/softn-native/wasm/zipp_wasm_bg.wasm',
   'api/resources/formlogic-prelude.js',
+  // The script every page of a hosted JavaScript app starts with (SiteAppController): without it no such app opens.
+  'api/resources/site-boot.js',
   // What the MCP and chat tools tell an AI about SoftN apps (SoftnKnowledge): FormLogic's own page, SoftN's
   // guide, and the installed Softn release's reference (written by fetch-softn-release.mjs).
   'api/resources/softn-on-formlogic.md',

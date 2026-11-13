@@ -71,6 +71,52 @@ class NativeAppService
      */
     public const MEDIA_PATH = '~^assets/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx|bin|wgsl|txt|md)$~Di';
     /**
+     * A JavaScript app's built files, by path: someone's compiled front end (the dist or build
+     * folder of their project), kept whole under site/ whatever its layout. Unlike everything
+     * else a project holds, these are documents and scripts a browser runs as they are, so they
+     * are never handed to the SoftN frame and never served from this site's own origin as a
+     * page: SiteAppController sends each one under a sandbox (no origin, no cookies, no network
+     * but the app's own files). The UI's SITE_PATH (lib/siteApps.ts) is the same rule.
+     *
+     * The kinds are what a build is made of: pages, scripts, styles, data, pictures, fonts,
+     * sound, video, 3D models and what a game's build carries (.data, .pck, .unityweb). A file
+     * packed for the browser (.br, .gz) is kept as it is and sent as what it holds. The rule reads
+     * a name's endings in lower case (isSitePath), so IMG_0001.JPG is a .jpg. Nothing a server
+     * runs is among them, and no name holds such an ending in its middle either (SITE_RUNS):
+     * a web server that reads every ending of a name would run shell.php.js as PHP, were this
+     * folder ever served by one.
+     */
+    public const SITE_PATH = '~^site/(?:[a-zA-Z0-9_.@+\~-]+/)*[a-zA-Z0-9_.@+\~-]+\.(?:html?|js|mjs|cjs|css|json|map|svg|png|jpe?g|gif|webp|avif|ico|cur|bmp|tiff?|jxl|woff2?|ttf|ttc|otf|eot|mp3|wav|ogg|opus|aac|flac|m4a|midi?|mp4|m4v|mov|webm|ogv|vtt|srt|wasm|txt|xml|webmanifest|md|csv|tsv|ya?ml|toml|geojson|ndjson|rss|atom|ics|pdf|zip|glb|gltf|bin|data|dat|mem|pck|pak|unityweb|atlas|fnt|ktx2?|basis|hdr|obj|mtl|dds|tga|ply|stl|usdz|riv|lottie|glsl|vert|frag|wgsl)(?:\.(?:br|gz))?$~D';
+    /** Endings a web server may run, wherever in a name they stand: no site file has one. The UI's SITE_RUNS is the same list. */
+    public const SITE_RUNS = '~\.(?:php\d?|phtml|phar|phps|cgi|pl|asp|aspx|ashx|jsp|jspx|shtml)(?:\.|$)~Di';
+    /** A site file's name is at most this long, folders included. */
+    public const MAX_SITE_PATH_LENGTH = 240;
+
+    /** Whether a path is one a built site may keep: the rule, no `..`, and no folder or file that starts with a dot. */
+    public static function isSitePath(mixed $path): bool
+    {
+        if (!is_string($path) || strlen($path) > self::MAX_SITE_PATH_LENGTH || str_contains($path, '..') || preg_match('~(?:^|/)\.~', $path) === 1) return false;
+        if (preg_match(self::SITE_RUNS, $path) === 1) return false;
+        // The name's endings are read in lower case: what a camera or an old tool wrote in capitals
+        // (.JPG, .PNG) is the same kind of file.
+        $name = strrpos($path, '/');
+        $dot = strpos($path, '.', $name === false ? 0 : $name + 1);
+        return preg_match(self::SITE_PATH, $dot === false ? $path : substr($path, 0, $dot) . strtolower(substr($path, $dot))) === 1;
+    }
+
+    /**
+     * The first page of a project's built site (`site/…`), or null for a project that has none:
+     * a SoftN app. Read from the manifest's `site` block, which an install has already checked.
+     *
+     * @param array<string, mixed> $project
+     */
+    public static function siteEntry(array $project): ?string
+    {
+        $manifest = is_string($project['files']['manifest.json'] ?? null) ? json_decode($project['files']['manifest.json'], true) : null;
+        $entry = is_array($manifest) && is_array($manifest['site'] ?? null) ? ($manifest['site']['entry'] ?? null) : null;
+        return is_string($entry) && self::isSitePath('site/' . $entry) && isset($project['assets']['site/' . $entry]) ? $entry : null;
+    }
+    /**
      * What a project may hold, which the app page's import (nativeHosting.ts) reads first and a
      * test holds equal: a game's art and sound run to hundreds of files and tens of megabytes.
      * A source file may be 1,500,000 bytes: an app's server logic is one file (the runner reads
@@ -1441,6 +1487,10 @@ class NativeAppService
         $offset = 0;
         foreach ($assets as $path => $encoded) {
             if (!is_string($path) || !is_string($encoded)) continue;
+            // A built site's files are served one by one from their own address (siteFile): they
+            // are not media the frame is handed, and a page would otherwise download the whole
+            // site a second time as a pack it never opens.
+            if (str_starts_with($path, 'site/')) continue;
             $size = self::decodedLength($encoded);
             if ($size === null) throw new RuntimeException('The app\'s media could not be read: ' . $path);
             $index[] = ['path' => $path, 'offset' => $offset, 'size' => $size];
@@ -1691,7 +1741,21 @@ class NativeAppService
         foreach ($assets as $path => $encoded) {
             // The media the SoftN frame serves an app's page (from Softn v0.0.28): pictures, sound,
             // video, fonts, 3D models, and WGSL, text and Markdown files. Nothing that runs.
-            if (!is_string($path) || !preg_match(self::MEDIA_PATH, $path) || str_contains($path, '..') || !is_string($encoded)) throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./-]{1,200}$~', $path) ? "Invalid media file: {$path}" : 'Invalid media file');
+            // A built site's files (SITE_PATH) are kept beside the media and are never the frame's:
+            // SiteAppController serves them, each under a sandbox.
+            $media = is_string($path) && preg_match(self::MEDIA_PATH, $path) && !str_contains($path, '..');
+            // A site file whose name is right and whose content is not text: said as that, not as a bad name.
+            if (!$media && is_string($path) && self::isSitePath($path) && !is_string($encoded)) throw new InvalidArgumentException("The content of {$path} is not base64 text.");
+            if ((!$media && !self::isSitePath($path)) || !is_string($encoded)) {
+                // A built site's file is named in the refusal whatever its name holds (a space, a
+                // bracket): that is the file its owner has to rename. What is shown of it is cut
+                // and held to plain printable characters.
+                if (is_string($path) && str_starts_with($path, 'site/')) {
+                    $shown = substr((string) preg_replace('/[^\x20-\x7E]/', '?', $path), 0, 160);
+                    throw new InvalidArgumentException("Invalid site file: {$shown}. A built site keeps web files (pages, scripts, styles, pictures, fonts, sound, video, data) named with letters, digits and - _ . @ + ~, in folders, with no name that starts with a dot.");
+                }
+                throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./@+\~-]{1,240}$~', $path) ? "Invalid media file: {$path}" : 'Invalid media file');
+            }
             $value = base64_decode($encoded, true);
             if ($value === false || strlen($value) > self::MAX_MEDIA_FILE_BYTES) throw new InvalidArgumentException('Invalid media data');
             $bytes += strlen($value);
@@ -1703,10 +1767,26 @@ class NativeAppService
         catch (\JsonException $unreadable) { throw new InvalidArgumentException('manifest.json is not valid JSON (' . $unreadable->getMessage() . ').'); }
         if (!is_array($manifest) || array_is_list($manifest)) throw new InvalidArgumentException('manifest.json must be a JSON object.');
         if (isset($manifest['id']) && (!is_string($manifest['id']) || !preg_match('/^[a-zA-Z0-9._-]{1,120}$/D', $manifest['id']))) throw new InvalidArgumentException('manifest.json\'s id can only be letters, digits, \'.\', \'_\' and \'-\' (up to 120 of them).');
+        // A JavaScript app: its pages are a built site under site/, named by the manifest's `site`
+        // block, and it has no SoftN page for "main" to name. The two are told apart here, once:
+        // site files with no block to name their first page are files nothing would ever show.
+        $siteFiles = array_filter(array_keys($decoded), static fn ($path): bool => str_starts_with((string) $path, 'site/'));
+        $site = $manifest['site'] ?? null;
+        if ($site !== null) {
+            if (!is_array($site) || array_is_list($site) || !is_string($site['entry'] ?? null)) throw new InvalidArgumentException('manifest.json\'s site must be an object that names the first page: {"entry": "index.html"}.');
+            $entry = 'site/' . $site['entry'];
+            if (!self::isSitePath($entry) || !preg_match('/\.html?$/Di', $entry)) throw new InvalidArgumentException('manifest.json\'s site.entry must be a page of the built site (a .html file, such as "index.html").');
+            if (!isset($decoded[$entry])) throw new InvalidArgumentException('manifest.json\'s site.entry names ' . $site['entry'] . ', which is not among the site\'s files (they are kept under site/).');
+        } elseif ($siteFiles) {
+            throw new InvalidArgumentException('The project has built site files (site/…) but manifest.json has no site block to name their first page. Add "site": {"entry": "index.html"}.');
+        }
         $main = $manifest['main'] ?? null;
+        // A site needs no SoftN page; one that names a page all the same is held to the usual rules.
+        if ($site === null || $main !== null) {
         if (!is_string($main) || $main === '') throw new InvalidArgumentException('manifest.json names no first page: give it "main", the path of a page in the app (such as "index.html" or "ui/main.ui").');
         if (!preg_match('/\.(?:ui|html)$/D', $main)) throw new InvalidArgumentException('manifest.json\'s main must be a page (a .html or .ui file): it names ' . (preg_match('~^[\w./-]{1,200}$~', $main) ? $main : 'something else') . '.');
         if (!isset($files[$main])) throw new InvalidArgumentException('manifest.json\'s main names ' . (preg_match('~^[\w./-]{1,200}$~', $main) ? $main : 'a page') . ', which is not among the app\'s files.');
+        }
         // What the app asks of FormLogic itself (App AI, payments): FormLogic's sections, held to
         // their rules here so a malformed one is refused at install with the reason.
         AppFormlogicManifest::validate($manifest);
@@ -2612,6 +2692,171 @@ class NativeAppService
         $config = json_decode((string) @file_get_contents($configPath), true);
         $key = is_array($config) && is_string($config['keyHex'] ?? null) && preg_match('/^[a-f0-9]{64}$/Di', $config['keyHex']) ? hex2bin($config['keyHex']) : false;
         return $key === false ? null : hash_hmac('sha256', 'formlogic:record-revision:v1', $key, true);
+    }
+
+    // ── A JavaScript app's built site ─────────────────────────────────────────────────────────
+
+    /** The key one app's built site has its addresses signed with: made from this installation's own secret and the app's identity. */
+    public function siteKey(string $appId): ?string
+    {
+        $secret = $this->siteSecret();
+        return $secret === null ? null : hash_hmac('sha256', 'formlogic:site-address:v1|' . $appId, $secret, true);
+    }
+
+    /**
+     * This installation's own secret for signing built sites' addresses: made once, on first
+     * need, and kept beside the apps' folders, in none of them. An app's own key will not do:
+     * its owner can bring one in with an import, and could then write addresses for the app
+     * that never run out, and the proof that goes with them. Null where the apps' folder is not
+     * there yet (no app has been installed) or the secret cannot be read.
+     */
+    private function siteSecret(): ?string
+    {
+        $file = ($this->storagePath ?? dirname(__DIR__, 2) . '/storage/native-apps') . '/site-addresses.key';
+        $read = static function () use ($file): ?string {
+            $hex = trim((string) @file_get_contents($file));
+            return preg_match('/^[a-f0-9]{64}$/D', $hex) === 1 ? (string) hex2bin($hex) : null;
+        };
+        $there = is_file($file);
+        if ($there && ($kept = $read()) !== null) return $kept;
+        if (!is_dir(dirname($file))) return null;
+        // Written whole under another name first, so nobody ever reads half of it and a write
+        // that fails (a full disk) leaves nothing behind. Then given its name: by a link when
+        // there is none yet, which only the first of two requests gets, so both end up reading
+        // the same one; in place of a file that is there and is no secret (cut short, damaged).
+        $writing = $file . '.' . bin2hex(random_bytes(6));
+        if (@file_put_contents($writing, bin2hex(random_bytes(32))) !== 64) { @unlink($writing); return null; }
+        @chmod($writing, 0600);
+        if ($there || (!@link($writing, $file) && !is_file($file))) @rename($writing, $file);
+        if (is_file($writing)) @unlink($writing);
+        return $read();
+    }
+
+    /**
+     * What is needed to answer for an installed project's built site, read from the small runtime
+     * summary and never from the whole project (which holds every file): the version, the site's
+     * first page, and the key its addresses are signed with. Null when the app has no project, no
+     * built site, or no key to sign with.
+     *
+     * @return array{version: int, entry: string, key: string}|null
+     */
+    public function site(string $appId): ?array
+    {
+        $root = $this->root($appId);
+        // This is asked with every file of a page, hundreds of times for one opening, and working
+        // it out names the runtime cache by a hash of the whole project. So the answer is kept
+        // beside that cache under the project file's size and time, and read from there. Only
+        // once the project file is a few seconds old: before that a second install in the same
+        // second could leave the same size and time, and the kept answer would be the old one's.
+        clearstatcache(true, $root . '/project.json');
+        $stat = @stat($root . '/project.json');
+        $settled = $stat !== false && time() - (int) $stat['mtime'] > 2;
+        $note = $root . self::RUNTIME_CACHE . '/site.json';
+        if ($settled && is_file($note)) {
+            $kept = json_decode((string) @file_get_contents($note), true);
+            if (is_array($kept) && ($kept['size'] ?? null) === $stat['size'] && ($kept['mtime'] ?? null) === $stat['mtime'] && array_key_exists('entry', $kept)) {
+                if (!is_string($kept['entry']) || !self::isSitePath('site/' . $kept['entry'])) return null;
+                $key = $this->siteKey($appId);
+                return $key === null ? null : ['version' => (int) ($kept['version'] ?? 0), 'entry' => $kept['entry'], 'key' => $key];
+            }
+        }
+        try { [$root, $lock] = $this->openShared($appId, null, false); }
+        catch (RuntimeException $missing) { if ($missing->getCode() === 404) return null; throw $missing; }
+        if ($lock === null) return null;
+        try {
+            try { $runtime = $this->runtimeCache($root); }
+            catch (RuntimeException $missing) { if ($missing->getCode() === 404) return null; throw $missing; }
+            $manifest = json_decode((string) ($runtime['project']['files']['manifest.json'] ?? ''), true);
+            $entry = is_array($manifest) && is_array($manifest['site'] ?? null) && is_string($manifest['site']['entry'] ?? null) ? $manifest['site']['entry'] : null;
+            if ($entry !== null && (!self::isSitePath('site/' . $entry) || !is_file($root . '/app/site/' . $entry))) $entry = null;
+            $version = (int) ($runtime['project']['version'] ?? 0);
+            // Kept for the next file asked for, when the project file is still the one read above.
+            clearstatcache(true, $root . '/project.json');
+            $now = @stat($root . '/project.json');
+            if ($settled && $now !== false && $now['size'] === $stat['size'] && $now['mtime'] === $stat['mtime'] && is_dir(dirname($note))) {
+                $writing = $note . '.' . bin2hex(random_bytes(6));
+                if (@file_put_contents($writing, json_encode(['size' => $stat['size'], 'mtime' => $stat['mtime'], 'version' => $version, 'entry' => $entry])) === false || !@rename($writing, $note)) @unlink($writing);
+            }
+            if ($entry === null) return null;
+            $key = $this->siteKey($appId);
+            return $key === null ? null : ['version' => $version, 'entry' => $entry, 'key' => $key];
+        } finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /**
+     * One file of the installed project's built site, opened for reading while the project cannot
+     * be replaced under it (the caller sends it and closes it). `$path` is inside the site: it is
+     * held to the rule every site file's name was held to when it was installed, so nothing
+     * outside the site's own folder can be named. Null when there is no such file.
+     *
+     * @return array{stream: resource, size: int}|null
+     */
+    public function siteFile(string $appId, string $path): ?array
+    {
+        if (!self::isSitePath('site/' . $path)) return null;
+        try { [$root, $lock] = $this->openShared($appId, null, false); }
+        catch (RuntimeException $missing) { if ($missing->getCode() === 404) return null; throw $missing; }
+        if ($lock === null) return null;
+        try {
+            $file = $root . '/app/site/' . $path;
+            if (!is_file($file) || is_link($file)) return null;
+            $stream = @fopen($file, 'rb');
+            if ($stream === false) return null;
+            return ['stream' => $stream, 'size' => (int) filesize($file)];
+        } finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /**
+     * The part of a built site's address that admits a request for it. The site's page runs with
+     * no origin, so its requests carry no session: the address itself says they may be answered.
+     * It names the version it is for and the last UTC day it works (tomorrow, so an address is
+     * good for one to two days), under a signature only this installation can make. It is given
+     * out with the runtime descriptor, to whoever may open the app.
+     *
+     * Its last part is the frame it was made for (`$frame`): a value the browser that opens the
+     * app chose and keeps for that app, or one made here when it sent none. Every address under
+     * the ticket carries it, so two people who open the same app have different addresses, and
+     * what one of them can read from their own (the proof below) is of no use against the other.
+     * A browser that keeps its value keeps its address for the day, and the files it has fetched.
+     */
+    public static function siteTicket(string $key, string $appId, int $version, ?int $now = null, ?string $frame = null): string
+    {
+        $until = intdiv($now ?? time(), 86400) + 1;
+        if ($frame === null || preg_match(self::SITE_FRAME_VALUE, $frame) !== 1) $frame = bin2hex(random_bytes(16));
+        return 'v' . $version . '-' . $until . '-' . substr(hash_hmac('sha256', "site|{$appId}|{$version}|{$until}|{$frame}", $key), 0, 40) . '-' . $frame;
+    }
+
+    /** What a frame's value is made of: 32 characters, as the page that opens an app makes one. */
+    public const SITE_FRAME_VALUE = '/^[a-f0-9]{32}$/D';
+
+    /**
+     * The version a ticket is for, when the ticket is this app's, signed here, and in its days:
+     * today or tomorrow, never further off (nobody is handed one that is). Null for any other.
+     * Read from the ticket alone, before anything of the app is opened.
+     */
+    public static function siteTicketVersion(string $ticket, string $key, string $appId, ?int $now = null): ?int
+    {
+        if (preg_match('/^v(\d{1,9})-(\d{1,7})-([a-f0-9]{40})-([a-f0-9]{32})$/D', $ticket, $part) !== 1) return null;
+        $today = intdiv($now ?? time(), 86400);
+        if ((int) $part[2] < $today || (int) $part[2] > $today + 1) return null;
+        return hash_equals(substr(hash_hmac('sha256', "site|{$appId}|{$part[1]}|{$part[2]}|{$part[4]}", $key), 0, 40), $part[3]) ? (int) $part[1] : null;
+    }
+
+    /** Whether a ticket is this app's, for this version, signed here and in its days. */
+    public static function siteTicketAnswers(string $ticket, string $key, string $appId, int $version, ?int $now = null): bool
+    {
+        return self::siteTicketVersion($ticket, $key, $appId, $now) === $version;
+    }
+
+    /**
+     * What a page served under a ticket shows the page that frames it, to be given the app's line
+     * to its backend. A page the visitor navigated to inside the frame was not served from here
+     * and cannot know it, and neither can anyone who opens the app in a browser of their own:
+     * their ticket is another (see `$frame` above), and so is their proof.
+     */
+    public static function siteProof(string $key, string $ticket): string
+    {
+        return substr(hash_hmac('sha256', 'site-proof|' . $ticket, $key), 0, 32);
     }
 
     public function manageRecord(string $appId, array $input, array $subscriptions = [], ?int $generation = null): array

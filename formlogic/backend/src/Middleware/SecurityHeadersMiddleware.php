@@ -21,6 +21,87 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
      */
     public const SITE_PAGE = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'";
 
+    /** The addresses a JavaScript app's built site is served under (SiteAppController): /api/app/<slug>/site/<ticket>/… */
+    public const SITE_FRAME_PATH = '~^(/api/app/[A-Za-z0-9_.\~-]+/site/[a-z0-9-]+/)~D';
+
+    /**
+     * What a built site's page may do in its sandbox: run scripts, show its own dialogs, open a
+     * link in a new tab (which is then an ordinary tab), hand the person a file, take the pointer
+     * for a game. Not here, and so refused: an origin of its own (allow-same-origin) and moving
+     * the window that frames it (allow-top-navigation). The frame that shows the site names the
+     * same list (ui: SiteAppFrame).
+     */
+    public const SITE_FRAME_SANDBOX = 'allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock';
+
+    /**
+     * The policy every file of a JavaScript app's built site is sent under. The site is someone's
+     * compiled front end, run as it is, so the policy is what holds it:
+     *  - `sandbox` with no allow-same-origin: the page has no origin. It cannot read this site's
+     *    cookies or storage, its requests carry no session, and it may not move the window that
+     *    frames it. That holds when the address is opened directly too, not only in the frame.
+     *  - every kind of load is held to the site's own files (`$own`, an address prefix): no other
+     *    site, and nothing else of this one, the API included. Its backend is reached through the
+     *    page that frames it.
+     *  - only this site's own pages may frame it: the address it is served from, and where this
+     *    installation's pages are served from when that is another address (siteFramers).
+     * `$origin` is this site as the browser reached it (scheme, host, port). `$prefix` is the
+     * site's address as SITE_FRAME_PATH reads it, whose characters cannot end a directive.
+     *
+     * The site's own files are named under both schemes (http://host/path/ https://host/path/),
+     * so the policy holds whether or not this server knows it is behind HTTPS, which behind a
+     * proxy it often does not. Not without a scheme, which would say the same in fewer words:
+     * Safari matches no address written that way for a page with no origin, and the app could
+     * then not read its own first page.
+     */
+    public static function siteFramePolicy(string $origin, string $prefix): string
+    {
+        $host = (string) preg_replace('~^[a-z][a-z0-9+.-]*://~i', '', $origin);
+        $own = "http://{$host}{$prefix} https://{$host}{$prefix}";
+        return implode('; ', [
+            'sandbox ' . self::SITE_FRAME_SANDBOX,
+            "default-src 'none'",
+            "script-src {$own} 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:",
+            "style-src {$own} 'unsafe-inline'",
+            "img-src {$own} data: blob:",
+            "font-src {$own} data:",
+            "media-src {$own} data: blob:",
+            "connect-src {$own}",
+            "worker-src {$own} blob:",
+            "manifest-src {$own}",
+            "frame-src 'none'",
+            "object-src 'none'",
+            // The page is given a <base> among its own files (resources/site-boot.js), and no other.
+            "base-uri {$own}",
+            "form-action 'none'",
+            "frame-ancestors 'self'" . self::siteFramers(),
+        ]);
+    }
+
+    /**
+     * Where this installation's pages are served from when it is not the API's own address (the
+     * page on one name, the API on another): the addresses the API already answers pages on
+     * (CORS_ORIGIN, CORS_ALLOWED_ORIGINS), as a built site's frame may be on any of them. Each
+     * is held to the shape of an address, so nothing read from the environment can add a
+     * directive. Empty for the usual installation, where 'self' says it all.
+     */
+    private static function siteFramers(): string
+    {
+        $named = array_merge([(string) Environment::get('CORS_ORIGIN', '')], explode(',', (string) Environment::get('CORS_ALLOWED_ORIGINS', '')));
+        $framers = [];
+        foreach ($named as $one) {
+            $one = rtrim(trim($one), '/');
+            if (preg_match('~^https?://(?:\*\.)?[A-Za-z0-9.-]{1,253}(?::\d{1,5})?$~D', $one) === 1) $framers[$one] = true;
+        }
+        return $framers === [] ? '' : ' ' . implode(' ', array_keys($framers));
+    }
+
+    /** The policy a response under a built site's address must carry to be let through as it is, or null for any other address. */
+    private static function siteFramePolicyFor(Request $request): ?string
+    {
+        if (preg_match(self::SITE_FRAME_PATH, $request->getUri()->getPath(), $found) !== 1) return null;
+        return self::siteFramePolicy(\FormLogic\Services\McpOAuthService::publicOrigin($request), $found[1]);
+    }
+
     private bool $isProduction;
 
     public function __construct(bool $isProduction = false)
@@ -88,6 +169,15 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
         // The site's own page, exactly: under this API's policy it could run nothing at all.
         if ($response->getHeaderLine('Content-Security-Policy') === self::SITE_PAGE) {
             $csp = self::SITE_PAGE;
+        }
+        // A file of a JavaScript app's built site, exactly: the sandbox policy for that address and
+        // no other. It is shown in a frame of this site's own pages, which the policy names, so
+        // the blanket refusal to be framed comes off this one response. Anything else at such an
+        // address (an error, a refusal) keeps the API's policy and stays unframeable.
+        $siteFrame = self::siteFramePolicyFor($request);
+        if ($siteFrame !== null && $response->getHeaderLine('Content-Security-Policy') === $siteFrame) {
+            $csp = $siteFrame;
+            $response = $response->withoutHeader('X-Frame-Options')->withHeader('Referrer-Policy', 'no-referrer');
         }
         $response = $response->withHeader('Content-Security-Policy', $csp);
 

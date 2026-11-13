@@ -386,7 +386,21 @@ class NativeAppController
                 // apart it asks while the page is looked at: the owner, who is the one publishing, sooner
                 // than everyone else, who are many. A plugin's pages change with the plugin, not here.
                 $updates = $plugin === null ? ['updates' => 'live', 'updatesEvery' => $owner ? self::UPDATES_EVERY_OWNER : self::UPDATES_EVERY] : [];
-                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client] + $served + ['access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope] + $files + $formlogic]
+                // A JavaScript app: its pages are a built site, which the page shows in a frame of
+                // its own from this address (SiteAppController). The ticket in it is what admits
+                // the frame's requests, which carry no session, so it is made here: after
+                // visibility, membership and the gate have admitted whoever is asking. `proof` is
+                // what the site's page shows the framing page to be given its line to the backend.
+                $site = [];
+                $built = $plugin === null && isset($manifest['site']) ? $this->native->site((string) $app['id']) : null;
+                if ($built !== null) {
+                    // `frame`: the value this browser keeps for this app (SiteAppFrame), so its address
+                    // is its own and stays the same for the day. One that sends none is given one.
+                    $frame = $request->getQueryParams()['frame'] ?? null;
+                    $ticket = NativeAppService::siteTicket($built['key'], (string) $app['id'], $built['version'], null, is_string($frame) ? $frame : null);
+                    $site = ['site' => ['url' => SiteAppController::address((string) $app['slug'], $ticket, $built['entry']), 'entry' => $built['entry'], 'proof' => NativeAppService::siteProof($built['key'], $ticket)]];
+                }
+                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client] + $served + ['access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope] + $files + $formlogic + $site]
                     + $updates + $this->lookForRuntime($app, $plugin) + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();

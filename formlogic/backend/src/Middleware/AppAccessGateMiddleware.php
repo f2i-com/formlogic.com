@@ -36,7 +36,10 @@ final class AppAccessGateMiddleware implements MiddlewareInterface
 {
     /** Route patterns, by their ending, that stay open on a gated app. */
     // /look/{name}: an app's icon and share image, the branding its manifest and welcome name (AppLookController).
-    public const OPEN = ['/manifest.json', '/client-manifest', '/welcome', '/membership', '/join', '/entry', '/aokie-discovery', '/look/{name}'];
+    // /site/{ticket}/…: a JavaScript app's built files (SiteAppController). The page they make runs
+    // with no origin and sends no session, so no caller can be read here; the ticket in the address
+    // is signed and is handed out only by the runtime descriptor, which rides this gate.
+    public const OPEN = ['/manifest.json', '/client-manifest', '/welcome', '/membership', '/join', '/entry', '/aokie-discovery', '/look/{name}', '/site/{ticket}/[{path:.*}]'];
 
     public function __construct(
         private AppService $apps,

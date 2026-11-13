@@ -3638,6 +3638,15 @@ $app->get('/api/app/{slug}/native/media', function ($request, $response) use ($c
 $app->post('/api/app/{slug}/native/request', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->runtime($request, $response, $getArgs($request));
 })->add($appAccessGate)->add($nativeLimiter)->add($authOptional);
+// A JavaScript app's built site, file by file (SiteAppController). Its page runs with no origin and
+// sends no session, so the address admits the request: a ticket signed for this app and version,
+// handed out only by the runtime descriptor above, which rides the gate and the membership checks.
+// The gate itself leaves this address open for that reason (AppAccessGateMiddleware::OPEN). One
+// page load asks for every chunk, style, picture and font of the build, so it has a budget of its own.
+$siteLimiter = new RateLimitMiddleware($rateLimiter, 1200, 60, 'site_files', true, true, null, true, false, true);
+$app->get('/api/app/{slug}/site/{ticket}/[{path:.*}]', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\SiteAppController::class)->serve($request, $response, $getArgs($request));
+})->add($appAccessGate)->add($siteLimiter);
 // FormLogic's wallet for an app that takes payments (NativeAppController::wallet), from the site's own
 // sheet, admitted as the app's requests are; its own budget, besides the top-up and code limits it keeps.
 $walletLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'app_wallet', true, true, null, true);
