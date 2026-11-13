@@ -28,7 +28,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { usePublicConfig } from '../hooks/usePublicConfig';
 import { handleRovingKeys } from '../lib/a11y';
 import { isUnsafePattern } from '../lib/patternGuard';
-import { DEFAULT_FORM_SETTINGS, DEFAULT_FORM_THEME, normalizeFieldType } from '../types/form';
+import { DEFAULT_FORM_SETTINGS, DEFAULT_FORM_THEME, checkboxOptions, normalizeFieldType, tickedValues } from '../types/form';
 
 // Field Response Component
 export function FieldResponse({
@@ -247,8 +247,8 @@ export function FieldResponse({
 
       case 'checkboxes': {
 
-        const selectedValues = (value as string[]) || [];
-        const cbOpts = field.properties.options ?? [];
+        const selectedValues = tickedValues(value);
+        const cbOpts = checkboxOptions(field);
         return (
           <div className="space-y-3" role="group" aria-label={field.label} aria-required={required || undefined}>
             {cbOpts.length === 0 ? (

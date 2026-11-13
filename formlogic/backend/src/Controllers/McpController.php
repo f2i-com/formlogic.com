@@ -615,7 +615,7 @@ The other kind of app has no forms: it is a SoftN project, with its own pages an
 
 ## Fields
 A field: { "id": "email", "type": "email", "label": "Email", "required": true, "properties": {} }
-Types: short_text, long_text, email, number, phone, url, date, time, datetime, dropdown, multiple_choice, checkboxes (tick any of its options; one option makes a single tick box), rating, scale, file_upload, signature, location, statement (display-only), hidden (computed/script-set), calculated, linked_record. A type outside the list is refused: no form screen can draw it.
+Types: short_text, long_text, email, number, phone, url, date, time, datetime, dropdown, multiple_choice, checkboxes (tick any of its options; one option makes a single tick box), rating, scale, file_upload, signature, location, statement (display-only), hidden (computed/script-set), calculated, linked_record. A type outside the list is refused: no form screen can draw it. "checkbox" is taken as checkboxes with one box ("Yes" when it names no option): its answer is a list, ["yes"] when ticked and [] when not.
 - dropdown / multiple_choice / checkboxes: properties.options = [{ "id":"a", "label":"A", "value":"a" }].
 - linked_record: properties.targetFormId = the id of another form to relate to. (Over MCP the other form must exist; use its real id.)
 

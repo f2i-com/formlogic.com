@@ -158,12 +158,35 @@ class FormService
         // writing a form over MCP reaches for. Unmapped, the field was kept as "select", a type
         // nothing here draws.
         'select' => 'dropdown',
+        // One tick box ("Done", "Follow-up required"). The diagram tool, three bundled packs and
+        // a sample app write it, and no form screen drew it. It is the list of tick boxes with
+        // one box in it: see checkboxProperties for the box it is given when it names none.
+        'checkbox' => 'checkboxes',
     ];
 
     /** Map a stored/inbound field type onto its canonical name (identity for current types). */
     public static function normalizeFieldType(string $type): string
     {
         return self::FIELD_TYPE_ALIASES[$type] ?? $type;
+    }
+
+    /** The one box a `checkbox` field has when it names none: ticked, the answer holds "yes". */
+    public const CHECKBOX_YES = ['id' => 'yes', 'label' => 'Yes', 'value' => 'yes'];
+
+    /**
+     * A field's properties as its type is read: a `checkbox` (one tick box, see the aliases)
+     * that names no option is given one, "Yes", or as a list of tick boxes it would have nothing
+     * to tick. Every other type's properties are handed back as they came.
+     *
+     * @return array<string, mixed>|list<mixed>
+     */
+    public static function checkboxProperties(string $type, mixed $properties): array
+    {
+        $properties = is_array($properties) ? $properties : [];
+        if ($type !== 'checkbox') return $properties;
+        $options = is_array($properties['options'] ?? null) ? array_values(array_filter($properties['options'], 'is_array')) : [];
+        if ($options !== []) return $properties;
+        return ['options' => [self::CHECKBOX_YES]] + $properties;
     }
 
     /** The field types a form screen draws: the same list as `FieldType` in ui/src/types/form.ts. */
@@ -179,9 +202,8 @@ class FormService
      * supported", and whoever made the form (an AI over MCP, most often) was never told.
      *
      * `$held` is the types the stored form already has, when it is a form being changed: a form
-     * made before may hold a type outside the list (`checkbox`, from the diagram tool and from
-     * bundled packs, is one), and a tool is not stopped from changing its other fields for it.
-     * A NEW form is held to the list.
+     * made before may hold a type outside the list, and a tool is not stopped from changing its
+     * other fields for it. A NEW form is held to the list.
      *
      * @param list<string> $held
      */
@@ -193,9 +215,7 @@ class FormService
         if (in_array($type, self::FIELD_TYPES, true) || isset(self::FIELD_TYPE_ALIASES[$type]) || in_array($type, $held, true)) {
             return null;
         }
-        // The one an AI most often means: said by name, with what to write instead.
-        $instead = $type === 'checkbox' ? ' For tick boxes use checkboxes with properties.options: one option makes a single tick box.' : '';
-        return 'has the type "' . mb_substr($type, 0, 40) . '", which is not a field type here.' . $instead . ' Use one of: ' . implode(', ', self::FIELD_TYPES);
+        return 'has the type "' . mb_substr($type, 0, 40) . '", which is not a field type here. Use one of: ' . implode(', ', self::FIELD_TYPES);
     }
 
     /**
@@ -1141,7 +1161,7 @@ class FormService
                 'placeholder' => $row['placeholder'],
                 'required' => (bool)$row['required'],
                 'order' => (int)$row['field_order'],
-                'properties' => json_decode($row['properties'] ?? '{}', true),
+                'properties' => self::checkboxProperties((string) $row['type'], json_decode($row['properties'] ?? '{}', true)),
                 'validation' => json_decode($row['validation'] ?? '[]', true),
                 'conditionalLogic' => json_decode($row['conditional_logic'] ?? 'null', true),
             ];
@@ -1211,7 +1231,7 @@ class FormService
                     'placeholder' => $field['placeholder'] ?? null,
                     'required' => (int)($field['required'] ?? false),
                     'field_order' => $field['order'] ?? $index,
-                    'properties' => json_encode($field['properties'] ?? []),
+                    'properties' => json_encode(self::checkboxProperties((string) $field['type'], $field['properties'] ?? [])),
                     'validation' => json_encode($field['validation'] ?? []),
                     'conditional_logic' => json_encode($field['conditionalLogic'] ?? null),
                 ]);

@@ -59,22 +59,18 @@ class FieldTypeAliasTest extends TestCase
             $this->assertNull(FormService::fieldTypeProblem($type), $type);
         }
         // The other names for a type that the form is stored under its own name for.
-        foreach (['text', 'textarea', 'select'] as $alias) {
+        foreach (['text', 'textarea', 'select', 'checkbox'] as $alias) {
             $this->assertNull(FormService::fieldTypeProblem($alias), $alias);
             $this->assertContains(FormService::normalizeFieldType($alias), FormService::FIELD_TYPES);
         }
-        // A form made before may hold a type outside the list (the diagram tool and bundled packs
-        // made `checkbox` fields): what the stored form already has is not refused when the form
-        // is changed, so a tool can still change its other fields. A new form is held to the list.
-        $this->assertNull(FormService::fieldTypeProblem('checkbox', ['short_text', 'checkbox']));
-        $this->assertNull(FormService::fieldTypeProblem('radio', ['radio']));
-        $this->assertNotNull(FormService::fieldTypeProblem('checkbox', ['short_text']));
-        $this->assertNotNull(FormService::fieldTypeProblem('hologram', ['checkbox']));
-        // The one an AI most often means is answered by name, with what to write instead.
-        $this->assertStringContainsString('use checkboxes with properties.options', (string) FormService::fieldTypeProblem('checkbox'));
-        $this->assertStringNotContainsString('tick boxes', (string) FormService::fieldTypeProblem('hologram'));
+        // A form made before may hold a type outside the list: what the stored form already has is
+        // not refused when the form is changed, so a tool can still change its other fields. A new
+        // form is held to the list.
+        $this->assertNull(FormService::fieldTypeProblem('radio', ['short_text', 'radio']));
+        $this->assertNotNull(FormService::fieldTypeProblem('radio', ['short_text']));
+        $this->assertNotNull(FormService::fieldTypeProblem('hologram', ['radio']));
 
-        foreach (['hologram', 'toggle', 'boolean', 'radio', 'string', 'Short_Text', 'short text', 'checkbox'] as $unknown) {
+        foreach (['hologram', 'toggle', 'boolean', 'radio', 'string', 'Short_Text', 'short text', 'Checkbox'] as $unknown) {
             $problem = FormService::fieldTypeProblem($unknown);
             $this->assertNotNull($problem, $unknown);
             $this->assertStringContainsString('"' . $unknown . '"', $problem);
@@ -86,6 +82,32 @@ class FieldTypeAliasTest extends TestCase
         }
         // A very long made-up type is not echoed back whole.
         $this->assertLessThan(700, strlen((string) FormService::fieldTypeProblem(str_repeat('x', 5000))));
+    }
+
+    /**
+     * One tick box. The diagram tool, three bundled packs and a sample app write fields of type
+     * `checkbox`, and no form screen drew it: the person met "Field type not supported". It is
+     * read as the list of tick boxes, with one box when the field names none.
+     */
+    public function testACheckboxIsAListOfTickBoxesWithOneBoxInIt(): void
+    {
+        $this->assertSame('checkboxes', FormService::normalizeFieldType('checkbox'));
+        // A pack's "Done": no option of its own, so it is given the one box, "Yes".
+        foreach ([null, [], ['options' => []], ['options' => 'none'], ['options' => ['x']], 'not properties'] as $none) {
+            $this->assertSame([FormService::CHECKBOX_YES], FormService::checkboxProperties('checkbox', $none)['options'], (string) json_encode($none));
+        }
+        // What else the field holds is kept beside it.
+        $this->assertSame(['options' => [FormService::CHECKBOX_YES], 'help' => 'Tick when finished'], FormService::checkboxProperties('checkbox', ['help' => 'Tick when finished']));
+        // A pack's "Follow-up required": its own box is the box.
+        $own = ['options' => [['id' => 'yes', 'label' => 'Follow-up required', 'value' => 'yes']]];
+        $this->assertSame($own, FormService::checkboxProperties('checkbox', $own));
+        // Every other type's properties are as they came, a list of tick boxes with none included:
+        // that one is its owner's to fill.
+        foreach (['checkboxes', 'dropdown', 'short_text'] as $other) {
+            $this->assertSame([], FormService::checkboxProperties($other, []));
+            $this->assertSame(['options' => []], FormService::checkboxProperties($other, ['options' => []]));
+            $this->assertSame([], FormService::checkboxProperties($other, null));
+        }
     }
 
     /** The list is the one the page's own type holds: a type drawn there is a type allowed here. */

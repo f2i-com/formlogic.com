@@ -330,7 +330,28 @@ export const FIELD_TYPE_ALIASES: Record<string, FieldType> = {
   textarea: 'long_text',
   // HTML's own word for a list to pick one from (FormService::FIELD_TYPE_ALIASES has the same).
   select: 'dropdown',
+  // One tick box, which bundled packs and the diagram tool write: the list of tick boxes with
+  // one box in it (checkboxOptions gives it that box when it names none).
+  checkbox: 'checkboxes',
 };
+
+/** The one box a `checkbox` field has when it names none (FormService::CHECKBOX_YES). */
+export const CHECKBOX_YES: FieldOption = { id: 'yes', label: 'Yes', value: 'yes' };
+
+/**
+ * The boxes a tick-box field shows. The server gives a `checkbox` field its one box as it reads
+ * the form; a form kept in this browser from before (a cached or offline copy) may still carry
+ * the old type with none, and is given it here.
+ */
+export function checkboxOptions(field: { type: string; properties?: { options?: FieldOption[] } | null }): FieldOption[] {
+  const options = Array.isArray(field.properties?.options) ? field.properties.options : [];
+  return options.length === 0 && field.type === 'checkbox' ? [CHECKBOX_YES] : options;
+}
+
+/** A tick-box field's answer as the list it is: anything else kept there (a lone true from an older screen) is no box ticked. */
+export function tickedValues(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((one): one is string => typeof one === 'string') : [];
+}
 
 export function normalizeFieldType(type: string): FieldType {
   return FIELD_TYPE_ALIASES[type] ?? (type as FieldType);

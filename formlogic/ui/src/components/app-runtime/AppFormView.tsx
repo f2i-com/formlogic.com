@@ -386,7 +386,8 @@ function FieldInput({
 
   if (field.type === 'checkboxes') {
     const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
-    const current = (value as string[]) ?? [];
+    // A lone true or "yes" kept there by an older screen is no list: read as nothing ticked, not as a crash.
+    const current = Array.isArray(value) ? (value as string[]) : [];
     if (options.length === 0) return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No options configured</p>;
     return (
       <div className="space-y-3" role="group" aria-label={field.label} aria-required={required || undefined}>
