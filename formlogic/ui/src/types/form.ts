@@ -328,6 +328,8 @@ export const FIELD_TYPE_INFO: Record<FieldType, { label: string; icon: string; c
 export const FIELD_TYPE_ALIASES: Record<string, FieldType> = {
   text: 'short_text',
   textarea: 'long_text',
+  // HTML's own word for a list to pick one from (FormService::FIELD_TYPE_ALIASES has the same).
+  select: 'dropdown',
 };
 
 export function normalizeFieldType(type: string): FieldType {

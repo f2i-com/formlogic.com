@@ -365,7 +365,12 @@ class ChatToolsService
             case 'update_form':
                 $this->assertFormInScope($ctx, (string) ($args['formId'] ?? ''));
                 $current = $this->ownForm((string) ($args['formId'] ?? ''), $userId);
-                $this->validateFormInput($args);
+                // A form made before may hold a field type outside today's list: what it already
+                // has is not refused, so its other fields can still be changed.
+                $this->validateFormInput($args, array_values(array_unique(array_map(
+                    static fn ($field): string => is_array($field) && is_string($field['type'] ?? null) ? $field['type'] : '',
+                    is_array($current['fields'] ?? null) ? $current['fields'] : []
+                ))));
                 $this->requireScopeToWidenPublicRecords($ctx, $args['customScreen'] ?? null, $current['customScreen'] ?? null);
                 if (self::publishesPublicRecords($args, $current)) {
                     $ctx->requireScope('responses:read');
@@ -1534,7 +1539,11 @@ class ChatToolsService
 
     /** Size caps for MCP-created/updated forms (MCP bypasses FormController, so enforce here). */
     /** Mirror FormController's shape/type/size rules (MCP bypasses that controller, calling services directly). */
-    private function validateFormInput(array $args): void
+    /**
+     * @param list<string> $heldTypes the field types the stored form already has, when a form is
+     *                                being changed rather than made (FormService::fieldTypeProblem)
+     */
+    private function validateFormInput(array $args, array $heldTypes = []): void
     {
         if (array_key_exists('title', $args) && (!is_string($args['title']) || mb_strlen($args['title']) > 255)) {
             throw new \Exception('title must be a string up to 255 characters');
@@ -1561,6 +1570,11 @@ class ChatToolsService
             foreach ($args['fields'] as $i => $f) {
                 if (!is_array($f) || !isset($f['type'])) {
                     throw new \Exception("field at index {$i} is malformed (must be an object with a type)");
+                }
+                // A type no form screen draws is refused, with the list of those that are drawn.
+                $problem = FormService::fieldTypeProblem($f['type'], $heldTypes);
+                if ($problem !== null) {
+                    throw new \Exception("field at index {$i} {$problem}");
                 }
             }
             if (strlen((string) json_encode($args['fields'])) > 512000) {

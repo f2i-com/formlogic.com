@@ -8,6 +8,8 @@ describe('normalizeFieldType', () => {
   it('maps legacy aliases to canonical types', () => {
     expect(normalizeFieldType('text')).toBe('short_text');
     expect(normalizeFieldType('textarea')).toBe('long_text');
+    // HTML's own word for a list to pick one from, which an AI writing a form reaches for.
+    expect(normalizeFieldType('select')).toBe('dropdown');
   });
 
   it('passes canonical types through unchanged', () => {

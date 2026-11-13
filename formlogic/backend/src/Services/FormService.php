@@ -154,12 +154,48 @@ class FormService
     private const FIELD_TYPE_ALIASES = [
         'text' => 'short_text',
         'textarea' => 'long_text',
+        // The word HTML and most other form tools use for a list to pick one from: what an AI
+        // writing a form over MCP reaches for. Unmapped, the field was kept as "select", a type
+        // nothing here draws.
+        'select' => 'dropdown',
     ];
 
     /** Map a stored/inbound field type onto its canonical name (identity for current types). */
     public static function normalizeFieldType(string $type): string
     {
         return self::FIELD_TYPE_ALIASES[$type] ?? $type;
+    }
+
+    /** The field types a form screen draws: the same list as `FieldType` in ui/src/types/form.ts. */
+    public const FIELD_TYPES = [
+        'short_text', 'long_text', 'email', 'phone', 'number', 'url', 'date', 'time', 'datetime', 'dropdown', 'multiple_choice',
+        'checkboxes', 'rating', 'scale', 'file_upload', 'signature', 'statement', 'welcome_screen', 'thank_you', 'calculated',
+        'linked_record', 'location', 'hidden',
+    ];
+
+    /**
+     * Why a tool may not write a field of this type, or null when it may. A type no form screen
+     * draws used to be stored as it came: the person filling in the form then met "Field type not
+     * supported", and whoever made the form (an AI over MCP, most often) was never told.
+     *
+     * `$held` is the types the stored form already has, when it is a form being changed: a form
+     * made before may hold a type outside the list (`checkbox`, from the diagram tool and from
+     * bundled packs, is one), and a tool is not stopped from changing its other fields for it.
+     * A NEW form is held to the list.
+     *
+     * @param list<string> $held
+     */
+    public static function fieldTypeProblem(mixed $type, array $held = []): ?string
+    {
+        if (!is_string($type) || trim($type) === '') {
+            return 'has no type';
+        }
+        if (in_array($type, self::FIELD_TYPES, true) || isset(self::FIELD_TYPE_ALIASES[$type]) || in_array($type, $held, true)) {
+            return null;
+        }
+        // The one an AI most often means: said by name, with what to write instead.
+        $instead = $type === 'checkbox' ? ' For tick boxes use checkboxes with properties.options: one option makes a single tick box.' : '';
+        return 'has the type "' . mb_substr($type, 0, 40) . '", which is not a field type here.' . $instead . ' Use one of: ' . implode(', ', self::FIELD_TYPES);
     }
 
     /**

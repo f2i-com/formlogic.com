@@ -576,7 +576,7 @@ A SoftN app (when the person wants something built for them rather than forms, o
 
 Build an app from scratch:
 1. create_app { name, description?, appKind? } — a container for forms. appKind tags the audience: admin|client|staff|public|internal|custom. (Skip if your token is already scoped to one app; then create_app is hidden.)
-2. create_app_form { title, fields } — create a form AND attach it to the app in one call. Repeat per form. Fields: [{ id, type, label, required, properties? }]. Common types: short_text, long_text, email, number, dropdown / multiple_choice (properties.options: [{id,label,value}]), checkbox, date, rating, scale, file_upload, hidden, statement, linked_record (properties.targetFormId = another form's id, to relate records).
+2. create_app_form { title, fields } — create a form AND attach it to the app in one call. Repeat per form. Fields: [{ id, type, label, required, properties? }]. Common types: short_text, long_text, email, number, dropdown / multiple_choice / checkboxes (properties.options: [{id,label,value}]; checkboxes with one option is a single tick box), date, rating, scale, file_upload, hidden, statement, linked_record (properties.targetFormId = another form's id, to relate records).
 (A SoftN app is the other kind, above: create_softn_app, not create_app. Its record changes can start a flow with create_flow_binding and app.record.created.TABLE events.)
 For a portable connected dashboard: get_workspace_template, get_app_project, then publish_app_project. Use compose_apps to add existing app forms or move Aokie automation into a destination app. Read both apps first; preserve existing member permissions.
 3. (optional) update_form { formId, logicScript } — a sandboxed JavaScript (ZIPP) "function onSubmit(ctx) {…}" server-side script. It writes through ctx.db.setField / setStatus / addTag and refuses by returning { reject: true, message }; anything it throws refuses every submission, so read get_started § onSubmit script first.
@@ -615,8 +615,8 @@ The other kind of app has no forms: it is a SoftN project, with its own pages an
 
 ## Fields
 A field: { "id": "email", "type": "email", "label": "Email", "required": true, "properties": {} }
-Types: short_text, long_text, email, number, phone, url, date, time, dropdown, multiple_choice, checkbox, rating, scale, file_upload, statement (display-only), hidden (computed/script-set), linked_record.
-- dropdown / multiple_choice / checkbox: properties.options = [{ "id":"a", "label":"A", "value":"a" }].
+Types: short_text, long_text, email, number, phone, url, date, time, datetime, dropdown, multiple_choice, checkboxes (tick any of its options; one option makes a single tick box), rating, scale, file_upload, signature, location, statement (display-only), hidden (computed/script-set), calculated, linked_record. A type outside the list is refused: no form screen can draw it.
+- dropdown / multiple_choice / checkboxes: properties.options = [{ "id":"a", "label":"A", "value":"a" }].
 - linked_record: properties.targetFormId = the id of another form to relate to. (Over MCP the other form must exist; use its real id.)
 
 ## onSubmit script (optional)

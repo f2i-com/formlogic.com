@@ -20,6 +20,7 @@ class FieldTypeAliasTest extends TestCase
         return [
             'text → short_text' => ['text', 'short_text'],
             'textarea → long_text' => ['textarea', 'long_text'],
+            'select → dropdown' => ['select', 'dropdown'],
         ];
     }
 
@@ -45,5 +46,54 @@ class FieldTypeAliasTest extends TestCase
     public function testCanonicalAndUnknownTypesPassThrough(string $type): void
     {
         $this->assertSame($type, FormService::normalizeFieldType($type));
+    }
+
+    /**
+     * A tool that writes a form is told when a field's type is one no form screen draws, with the
+     * types that are. Before, the field was stored as it came and the person filling in the form
+     * met "Field type not supported".
+     */
+    public function testAToolIsToldWhenAFieldTypeIsNotOneAFormDraws(): void
+    {
+        foreach (FormService::FIELD_TYPES as $type) {
+            $this->assertNull(FormService::fieldTypeProblem($type), $type);
+        }
+        // The other names for a type that the form is stored under its own name for.
+        foreach (['text', 'textarea', 'select'] as $alias) {
+            $this->assertNull(FormService::fieldTypeProblem($alias), $alias);
+            $this->assertContains(FormService::normalizeFieldType($alias), FormService::FIELD_TYPES);
+        }
+        // A form made before may hold a type outside the list (the diagram tool and bundled packs
+        // made `checkbox` fields): what the stored form already has is not refused when the form
+        // is changed, so a tool can still change its other fields. A new form is held to the list.
+        $this->assertNull(FormService::fieldTypeProblem('checkbox', ['short_text', 'checkbox']));
+        $this->assertNull(FormService::fieldTypeProblem('radio', ['radio']));
+        $this->assertNotNull(FormService::fieldTypeProblem('checkbox', ['short_text']));
+        $this->assertNotNull(FormService::fieldTypeProblem('hologram', ['checkbox']));
+        // The one an AI most often means is answered by name, with what to write instead.
+        $this->assertStringContainsString('use checkboxes with properties.options', (string) FormService::fieldTypeProblem('checkbox'));
+        $this->assertStringNotContainsString('tick boxes', (string) FormService::fieldTypeProblem('hologram'));
+
+        foreach (['hologram', 'toggle', 'boolean', 'radio', 'string', 'Short_Text', 'short text', 'checkbox'] as $unknown) {
+            $problem = FormService::fieldTypeProblem($unknown);
+            $this->assertNotNull($problem, $unknown);
+            $this->assertStringContainsString('"' . $unknown . '"', $problem);
+            $this->assertStringContainsString('Use one of: short_text, long_text, email', $problem);
+            $this->assertStringContainsString('checkboxes', $problem);
+        }
+        foreach ([null, '', '   ', 7, ['short_text'], true] as $notAType) {
+            $this->assertSame('has no type', FormService::fieldTypeProblem($notAType));
+        }
+        // A very long made-up type is not echoed back whole.
+        $this->assertLessThan(700, strlen((string) FormService::fieldTypeProblem(str_repeat('x', 5000))));
+    }
+
+    /** The list is the one the page's own type holds: a type drawn there is a type allowed here. */
+    public function testTheListIsThePagesOwn(): void
+    {
+        $source = (string) file_get_contents(__DIR__ . '/../../../ui/src/types/form.ts');
+        $this->assertSame(1, preg_match('/export type FieldType =(.*?);/s', $source, $found));
+        preg_match_all("/'([a-z_]+)'/", $found[1], $names);
+        $this->assertSame($names[1], FormService::FIELD_TYPES);
     }
 }
