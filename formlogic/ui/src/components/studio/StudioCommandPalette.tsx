@@ -29,7 +29,7 @@ import type { FlowDefinition } from '../../types/flows';
 
 interface CommandItem {
   id: string;
-  group: 'Actions' | 'Sections' | 'Data types' | 'Automations' | 'Roles';
+  group: 'Actions' | 'Sections' | 'Forms' | 'Automations' | 'Roles';
   label: string;
   detail: string;
   keywords: string;
@@ -49,7 +49,7 @@ const STEP_ICONS: Record<StudioStepId, LucideIcon> = {
   publish: Rocket,
 };
 
-const GROUP_ORDER: CommandItem['group'][] = ['Actions', 'Sections', 'Data types', 'Automations', 'Roles'];
+const GROUP_ORDER: CommandItem['group'][] = ['Actions', 'Sections', 'Forms', 'Automations', 'Roles'];
 
 /**
  * Current-app command palette. It keeps fast navigation local to the Studio:
@@ -145,10 +145,11 @@ export function StudioCommandPalette({
       const label = attachment.displayName || form?.title || 'Untitled';
       return {
         id: `form-${attachment.formId}`,
-        group: 'Data types',
+        group: 'Forms',
         label,
         detail: `${form?.fields.length ?? 0} fields · open in the form builder`,
-        keywords: `${label} form fields data builder`,
+        // "types": the group was headed "Data types", and a search for that still finds these.
+        keywords: `${label} form fields data types builder`,
         icon: FileText,
         action: () => navigate(paths.builder(attachment.formId, app.id), { state: studioReturn }),
       };

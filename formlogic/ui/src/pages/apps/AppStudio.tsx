@@ -33,12 +33,12 @@ import { useKeyboardShortcuts, type KeyboardShortcut } from '../../hooks/useKeyb
 import { cn } from '../../lib/utils';
 import { useNativeTables } from '../../components/studio/useNativeTables';
 import { useAdminActing } from '../../components/admin/AdminActingContext';
-import { isSoftnApp, softnWorkspacePath } from '../../lib/softnApps';
+import { isSoftnApp, softnPathForStudio, softnWorkspacePath } from '../../lib/softnApps';
 
 /** One suggestion per section, offered only when a default AI can actually run. */
 const STEP_PROMPTS: Record<StudioStepId, string> = {
   plan: 'Plan this app for me',
-  data: 'Add the data types this app needs',
+  data: 'Add the forms this app needs',
   screens: 'Design a dashboard home screen',
   automations: 'Notify me when a record is submitted',
   access: 'What roles should this app have?',
@@ -253,6 +253,17 @@ export function AppStudio() {
     return <Navigate to={`/app/${data.app.slug}`} replace />;
   }
 
+  // The studio is for forms apps. A SoftN app is managed on its own page, which has what each
+  // part of the studio did for it (its data, members, automations and settings): an address of
+  // the studio that names one goes there. Unless the app also holds forms, as some made before
+  // the two were told apart do: their forms, relations and screens have no other home, so such
+  // an app keeps its studio, under a line that says where the rest of it is. Decided once its
+  // forms are known, and never on a read of them that failed.
+  const softn = isSoftnApp(data.app);
+  if (softn && !data.formsFailed && data.appForms.length === 0) {
+    return <Navigate to={softnPathForStudio(appId, stepParam)} replace />;
+  }
+
   // Resolve the entry URL before mounting a section: the previous effect briefly
   // mounted Data & forms while deciding that an empty app should open Overview.
   if (!isStudioStep(stepParam)) {
@@ -355,16 +366,12 @@ export function AppStudio() {
           )}
         </div>
 
-        {/* A SoftN app's interface and data are its SoftN project: its own workspace is where
-            the owner sees it running, edits it and manages its database. */}
-        {isSoftnApp(data.app) && (
-          <section className="mb-4 flex flex-col gap-3 rounded-xl border border-primary-200/80 bg-primary-50/70 p-3 dark:border-primary-500/20 dark:bg-primary-500/[0.07] @xl/studio:flex-row @xl/studio:items-center">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-gray-900 dark:text-white">This is a SoftN app</p>
-              <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-300">Preview it, change it with AI Studio or the Visual Builder, manage its data and publish it in its workspace. The studio here adds forms, automations and access.</p>
-            </div>
-            <Link to={softnWorkspacePath(data.app.id)} className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg bg-primary-600 px-4 text-sm font-semibold text-primary-foreground hover:bg-primary-700">Open the app workspace</Link>
-          </section>
+        {/* A SoftN app that also holds forms: the studio is for those forms, and the rest of the app is on its own page. */}
+        {softn && (
+          <p className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-primary-200/80 bg-primary-50/70 px-3 py-2 text-sm text-gray-700 dark:border-primary-500/20 dark:bg-primary-500/[0.07] dark:text-slate-200">
+            <span className="min-w-0 flex-1">This is a SoftN app that also holds forms. Its pages, data, members and settings are on its own page; the studio here is for its forms.</span>
+            <Link to={softnWorkspacePath(data.app.id)} className="inline-flex min-h-9 items-center font-semibold text-primary-700 underline-offset-2 hover:underline max-sm:min-h-11 dark:text-primary-300">Open the app’s page</Link>
+          </p>
         )}
 
         {activeStep === 'plan' && (

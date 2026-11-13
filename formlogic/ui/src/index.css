@@ -91,6 +91,29 @@
     }
   }
 
+  /* A native select's list of choices is drawn by the browser, not by the page. In the dark
+     theme it kept the browser's light list while the choices kept the select's light text, and
+     a select with a see-through background (dark:bg-white/[0.04]) gave the list no colour of
+     its own at all: light words on a light list. The select is told it is dark, so the browser
+     draws a dark list, and each choice is given a solid dark ground for a browser that goes by
+     the choice's own colours. Kept to the select: setting the whole page's scheme would paint
+     a white ground behind every embedded app frame that says nothing of its own. */
+  :root.dark select {
+    color-scheme: dark;
+  }
+  :root.dark select option,
+  :root.dark select optgroup {
+    background-color: #0f172a;
+    color: #e2e8f0;
+  }
+  /* The same for the browser's own date and time pickers and their icons. */
+  :root.dark input[type='date'],
+  :root.dark input[type='time'],
+  :root.dark input[type='datetime-local'],
+  :root.dark input[type='month'] {
+    color-scheme: dark;
+  }
+
   /* Heading font */
   h1, h2, h3, h4, h5, h6 {
     font-family: 'Plus Jakarta Sans', 'DM Sans', system-ui, sans-serif;

@@ -11,7 +11,7 @@ vi.mock('./api', () => ({ api: { installNativeStarter: mocks.installNativeStarte
 vi.mock('./nativeHosting', () => ({ importNativeProject: mocks.importNativeProject }));
 vi.mock('../stores/appStore', () => ({ useAppStore: { getState: () => ({ createApp: mocks.createApp, error: null }) } }));
 
-const { createSoftnApp, isSoftnApp, projectHasBackend, softnWorkspacePath } = await import('./softnApps');
+const { createSoftnApp, isSoftnApp, projectHasBackend, softnPathForStudio, softnWorkspacePath } = await import('./softnApps');
 
 const app = { id: 'app-1', name: 'Recipes', slug: 'recipes', settings: { softnApp: true } };
 const project = { version: 1, files: { 'manifest.json': '{}' }, assets: {}, access: 'members', home: true };
@@ -72,6 +72,20 @@ describe('isSoftnApp and its workspace', () => {
     expect(isSoftnApp({ settings: { appKind: 'custom' } as never })).toBe(false);
     expect(isSoftnApp(null)).toBe(false);
     expect(softnWorkspacePath('a-1')).toBe('/apps/a-1/softn');
+    expect(softnWorkspacePath('a-1', 'automations')).toBe('/apps/a-1/softn/automations');
+  });
+
+  it('has a section of the app\'s page for each part of the App Studio, and the settings for the studio itself', () => {
+    expect(softnPathForStudio('a-1')).toBe('/apps/a-1/softn/settings');
+    expect(softnPathForStudio('a-1', 'data')).toBe('/apps/a-1/softn/data');
+    expect(softnPathForStudio('a-1', 'screens')).toBe('/apps/a-1/softn/edit');
+    expect(softnPathForStudio('a-1', 'automations')).toBe('/apps/a-1/softn/automations');
+    expect(softnPathForStudio('a-1', 'access')).toBe('/apps/a-1/softn/members');
+    expect(softnPathForStudio('a-1', 'publish')).toBe('/apps/a-1/softn');
+    expect(softnPathForStudio('a-1', 'plan')).toBe('/apps/a-1/softn');
+    // A part the studio never had, and a name every object has, are the settings too.
+    expect(softnPathForStudio('a-1', 'elsewhere')).toBe('/apps/a-1/softn/settings');
+    expect(softnPathForStudio('a-1', 'constructor')).toBe('/apps/a-1/softn/settings');
   });
 
   it('reads a backend from the manifest\'s server block, and nothing else', () => {

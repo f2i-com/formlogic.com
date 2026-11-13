@@ -4,7 +4,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Database, Globe } from 'lucide-react';
 import { SectionNav, type SectionNavItem } from './SectionNav';
 
@@ -56,5 +56,74 @@ describe('a page’s sections', () => {
     const state = container.querySelector('[data-testid="state"]')!;
     expect(state.textContent).toBe('Live, version 3');
     expect(state.closest('nav')).toBeNull();
+  });
+});
+
+// A phone shows three of six sections and half a word. The row says there is more, at the end
+// it runs off, and an arrow there moves it along.
+describe('a row longer than the screen', () => {
+  let measure: () => void = () => {};
+  const watched: Element[] = [];
+  beforeEach(() => {
+    watched.length = 0;
+    vi.stubGlobal('ResizeObserver', class { constructor(callback: () => void) { measure = callback; } observe(node: Element) { watched.push(node); } disconnect() {} });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+  /** The row as a screen would lay it out: `width` showing of `whole`, scrolled to `at`. */
+  const laidOut = async (width: number, whole: number, at: number) => {
+    const nav = container.querySelector('nav')!;
+    Object.defineProperty(nav, 'clientWidth', { configurable: true, value: width });
+    Object.defineProperty(nav, 'scrollWidth', { configurable: true, value: whole });
+    nav.scrollLeft = at;
+    Object.defineProperty(nav, 'scrollLeft', { configurable: true, writable: true, value: at });
+    await act(async () => { measure(); });
+    return nav;
+  };
+  const arrows = () => Array.from(container.querySelectorAll('[data-more]')).map((node) => node.getAttribute('data-more'));
+
+  it('says nothing when every section is in view', async () => {
+    await show('overview');
+    const nav = await laidOut(700, 700, 0);
+    expect(arrows()).toEqual([]);
+    expect(nav.style.maskImage).toBe('');
+  });
+
+  it('fades the end it runs off and puts an arrow there, at either end or both', async () => {
+    await show('overview');
+    let nav = await laidOut(358, 700, 0);
+    expect(arrows()).toEqual(['after']);
+    expect(nav.style.maskImage).toContain('rgb(0, 0, 0) 0px, rgb(0, 0, 0) calc(100% - 1.75rem)');
+    nav = await laidOut(358, 700, 160);
+    expect(arrows()).toEqual(['before', 'after']);
+    expect(nav.style.maskImage).toContain('rgb(0, 0, 0) 1.75rem, rgb(0, 0, 0) calc(100% - 1.75rem)');
+    nav = await laidOut(358, 700, 342);
+    expect(arrows()).toEqual(['before']);
+    expect(nav.style.maskImage).toContain('rgb(0, 0, 0) 1.75rem, rgb(0, 0, 0) 100%');
+  });
+
+  it('moves the row along when an arrow is pressed, and measures again as it scrolls', async () => {
+    await show('overview');
+    const nav = await laidOut(358, 700, 0);
+    const scrollBy = vi.fn();
+    (nav as unknown as { scrollBy: typeof scrollBy }).scrollBy = scrollBy;
+    await act(async () => (container.querySelector('[data-more="after"]') as HTMLButtonElement).click());
+    expect(scrollBy).toHaveBeenCalledWith({ left: 358 * 0.7, behavior: 'smooth' });
+    // The row arrives at its end: the arrow there goes, and one appears at the start.
+    Object.defineProperty(nav, 'scrollLeft', { configurable: true, writable: true, value: 342 });
+    await act(async () => { nav.dispatchEvent(new Event('scroll')); });
+    expect(arrows()).toEqual(['before']);
+  });
+
+  it('keeps the arrows out of the keyboard’s way and a screen reader’s: the links are the navigation', async () => {
+    await show('overview');
+    await laidOut(358, 700, 160);
+    for (const arrow of container.querySelectorAll('[data-more]')) {
+      expect(arrow.getAttribute('tabindex')).toBe('-1');
+      expect(arrow.getAttribute('aria-hidden')).toBe('true');
+      expect(arrow.closest('nav')).toBeNull();
+    }
+    // The row is watched for its own width and for what is in it.
+    expect(watched).toContain(container.querySelector('nav'));
+    expect(watched.filter((node) => node.tagName === 'A')).toHaveLength(items.length);
   });
 });

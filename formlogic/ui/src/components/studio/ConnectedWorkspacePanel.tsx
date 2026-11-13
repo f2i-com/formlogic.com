@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Download, LayoutDashboard } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
+import { ToolRow } from './ToolRow';
 import { downloadHostedClient, type HostedPackage } from '../../lib/hosting';
 import aokieTemplate from '../../data/aokie-workspace.json';
 import workspaceTemplate from '../../data/connected-workspace.json';
@@ -45,18 +46,19 @@ export function ConnectedWorkspacePanel({ app }: { app: { id: string; name: stri
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not create the dashboard.'); }
     finally { setBusy(false); }
   }
-  return <section className="min-w-0 rounded-xl border border-primary-200 bg-primary-50/60 p-5 dark:border-primary-500/25 dark:bg-primary-500/5">
-    <LayoutDashboard className="mb-3 h-5 w-5 text-primary-600 dark:text-primary-300" />
-    <h3 className="font-semibold text-gray-900 dark:text-white">A connected app dashboard</h3>
-    <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-slate-300">Package your dashboard as an editable app. Its forms, records and Aokie tools stay connected to this workspace.</p>
-    <label className="mt-4 flex min-h-11 items-center gap-3 text-sm"><input type="checkbox" checked={aokie} onChange={event => setAokie(event.target.checked)} />Use the Aokie front desk interface</label>
-    <Button className="mt-4 min-h-11 w-full" onClick={() => void create()} isLoading={busy} disabled={busy || ready}>Create connected dashboard</Button>
-    <div className="mt-3 flex flex-wrap gap-3 text-sm">
-      <Link className="inline-flex min-h-11 items-center font-medium text-primary-700 dark:text-primary-300" to={`/app/${encodeURIComponent(app.slug)}/project`}>Open dashboard</Link>
-      <button className="inline-flex min-h-11 items-center gap-2 text-gray-600 dark:text-slate-300" onClick={() => void downloadHostedClient(template.client, app.name).catch(() => setMessage('Download failed. Please try again.'))}><Download size={15} />Download starter</button>
+  // Under the sentence, one compact line each: the choice of interface, then what can be done with
+  // a dashboard once there is one, all as links. A finger gets the full height; a pointer less.
+  const link = 'inline-flex min-h-11 cursor-pointer items-center gap-1.5 hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-50 @2xl/tool:min-h-8';
+  return <ToolRow icon={LayoutDashboard} title="Connected dashboard"
+    description="Add a ready-made dashboard that lists this app’s forms and latest records, and make it the app’s home if you like."
+    actions={<Button variant="secondary" onClick={() => void create()} isLoading={busy} disabled={busy || ready}>Create connected dashboard</Button>}>
+    <label className="mt-1 flex min-h-11 w-fit cursor-pointer items-center gap-2 text-xs text-gray-700 @2xl/tool:min-h-8 dark:text-slate-300"><input type="checkbox" className="h-4 w-4 shrink-0 accent-primary-600" checked={aokie} onChange={event => setAokie(event.target.checked)} />Use the Aokie front desk interface</label>
+    <div className="flex flex-wrap items-center gap-x-4 text-xs font-medium text-primary-700 dark:text-primary-300">
+      <Link className={link} to={`/app/${encodeURIComponent(app.slug)}/project`}>Open dashboard</Link>
+      <button type="button" className={link} title="The download contains no account credentials." onClick={() => void downloadHostedClient(template.client, app.name).catch(() => setMessage('Download failed. Please try again.'))}><Download size={14} aria-hidden="true" />Download starter</button>
+      <button type="button" className={link} disabled={busy} onClick={() => void setHome(true)}>Use as app home</button>
+      <button type="button" className={link} disabled={busy} onClick={() => void setHome(false)}>Restore original home</button>
     </div>
-    <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-slate-400">The project uses your FormLogic session when hosted here. Downloads contain no account credentials.</p>
-    <div className="mt-3 flex flex-wrap gap-3"><Button size="sm" variant="outline" disabled={busy} onClick={() => void setHome(true)}>Use as app home</Button><Button size="sm" variant="ghost" disabled={busy} onClick={() => void setHome(false)}>Restore original home</Button></div>
-    {message && <p role="status" className="mt-3 text-sm leading-6 text-gray-700 dark:text-slate-200">{message}</p>}
-  </section>;
+    {message && <p role="status" className="mt-1 text-xs leading-relaxed text-gray-700 dark:text-slate-200">{message}</p>}
+  </ToolRow>;
 }

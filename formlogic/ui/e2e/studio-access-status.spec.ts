@@ -26,9 +26,12 @@ for (const width of [1440, 390]) test(`Users and roles with no vault or desktop 
   });
   await page.goto('/apps/access-review/studio/access');
   await expect(page.getByRole('heading', { name: 'Users & roles', level: 2, exact: true })).toBeVisible();
+  const sections = page.getByRole('tablist', { name: 'Access sections' });
+  // The section opens on its people; the roles are one tab along.
+  await expect(sections.getByRole('tab', { name: 'People & invites', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await sections.getByRole('tab', { name: 'Roles', exact: true }).click();
   await expect(page.getByRole('status', { name: 'Loading permissions' })).toHaveCount(0);
   await expect(page.getByText('Everything in this app', { exact: true })).toBeVisible();
-  const sections = page.getByRole('tablist', { name: 'Access sections' });
   for (const name of ['People & invites', 'Sign-up', 'Roles']) {
     await sections.getByRole('tab', { name, exact: true }).click();
     await expect(sections.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true');

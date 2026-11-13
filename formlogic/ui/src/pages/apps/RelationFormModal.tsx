@@ -128,7 +128,7 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms, defaultSo
           <span className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-slate-300">Source Form</span>
           {defaultSourceFormId ? (
             <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 dark:border-slate-700 dark:bg-slate-800/60 dark:text-white">
-              {appForms.find((f) => f.formId === defaultSourceFormId)?.displayName ?? 'This data type'}
+              {appForms.find((f) => f.formId === defaultSourceFormId)?.displayName ?? 'This form'}
               <span className="ml-1.5 text-xs text-gray-500 dark:text-slate-400">— the link is added here</span>
             </p>
           ) : (

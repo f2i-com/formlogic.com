@@ -30,6 +30,7 @@ import { AppTorchSwitch } from "./AppTorchSwitch";
 import { cn } from "../../lib/utils";
 import { zipSync, strToU8, strFromU8 } from "fflate";
 import { AppEditorDialog, type AppEditorKind } from "./AppEditorDialog";
+import { ToolRow } from "./ToolRow";
 import { useAiReady } from "../../hooks/useAiReady";
 import { AiConnectNotice } from "../ai/AiConnectNotice";
 
@@ -41,35 +42,17 @@ export function HostedAppPanel({
   const [open, setOpen] = useState(false);
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
   return (
-    <section className="overflow-hidden rounded-2xl border border-primary-200 bg-gradient-to-br from-primary-50 via-white to-sky-50 p-5 dark:border-primary-900 dark:from-primary-950/50 dark:via-slate-900 dark:to-slate-900">
-      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-primary-600 text-primary-foreground">
-        <CloudUpload size={20} />
-      </div>
-      <h3 className="font-semibold text-slate-900 dark:text-white">
-        A home for your app
-      </h3>
-      <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-400">
-        Bring your interface, write the backend, and keep your data together.
-      </p>
-      <div className="my-4 flex flex-wrap gap-2 text-xs font-medium text-primary-700 dark:text-primary-300">
-        <span className="rounded-full bg-primary-100 px-2.5 py-1 dark:bg-primary-900/40">
-          Editable code
-        </span>
-        <span className="rounded-full bg-primary-100 px-2.5 py-1 dark:bg-primary-900/40">
-          SQLite database
-        </span>
-      </div>
-      <Button
-        variant="secondary"
-        onClick={() => setOpen(true)}
-        className="min-h-11 w-full justify-between"
-      >
-        App hosting <ArrowUpRight size={16} />
-      </Button>
+    <>
+      <ToolRow
+        icon={CloudUpload}
+        title="Build your own screens"
+        description="Start from a working example and edit it here, with a small private backend for its data; people sign in as members of this app."
+        actions={<Button variant="secondary" onClick={() => setOpen(true)}>App hosting</Button>}
+      />
       {open && (
         <HostingEditor key={`${app.id}:${generation}`} app={app} onClose={() => setOpen(false)} />
       )}
-    </section>
+    </>
   );
 }
 

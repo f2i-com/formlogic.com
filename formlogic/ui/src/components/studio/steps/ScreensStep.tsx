@@ -140,10 +140,12 @@ export function ScreensStep({
   const studioReturn = returnToState(`/apps/${app.id}/studio/screens`, 'App Studio');
   const updateApp = useAppStore((s) => s.updateApp);
   const [nativeHome, setNativeHome] = useState(false);
+  // Whether the app carries a project of its own: until the answer is in, nothing is assumed.
+  const [nativeInstalled, setNativeInstalled] = useState<boolean | undefined>(undefined);
   const [nativeRevision, setNativeRevision] = useState(0);
   useEffect(() => {
     let cancelled = false;
-    void api.getNativeEntry(app.slug).then(result => { if (!cancelled && result.data) setNativeHome(!!result.data.home); });
+    void api.getNativeEntry(app.slug).then(result => { if (!cancelled && result.data) { setNativeHome(!!result.data.home); setNativeInstalled(!!result.data.native); } });
     return () => { cancelled = true; };
   }, [app.slug]);
   const [requestedSelection, setSelection] = useState<ScreenSelection>({ kind: 'home' });
@@ -476,7 +478,7 @@ export function ScreensStep({
             })}
             {appForms.length === 0 && (
               <p className="px-3 py-4 text-xs text-gray-500 dark:text-slate-400">
-                {nativeHome ? 'Edit the website’s files and browse its database in Native app hosting below. Add data types for any extra FormLogic forms.' : 'Screens are generated from your data types — add one in Data & forms first.'}
+                {nativeHome ? 'Edit the website’s files and browse its database in Native app hosting below. Add a form for anything else people should fill in.' : 'Screens are made from your forms: add one in Data & forms first.'}
               </p>
             )}
             <button
@@ -484,7 +486,7 @@ export function ScreensStep({
               onClick={() => navigate(`/apps/${app.id}/studio/data`)}
               className="flex min-h-11 w-auto shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-dashed border-gray-300 px-3 text-xs font-semibold text-gray-600 hover:border-primary-400 hover:text-primary-700 @xl/studio:w-full @xl/studio:px-0 dark:border-white/15 dark:text-slate-300 dark:hover:border-primary-500/40 dark:hover:text-primary-300"
             >
-              <Plus className="h-3.5 w-3.5" /> Add a data type
+              <Plus className="h-3.5 w-3.5" /> Add a form
             </button>
           </div>
         </section>
@@ -776,16 +778,20 @@ export function ScreensStep({
             <Code2 className="h-5 w-5 shrink-0 text-primary-500" aria-hidden="true" />
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-semibold text-gray-900 dark:text-white">Hosting &amp; app tools</span>
-              <span className="mt-1 block text-xs leading-relaxed text-gray-500 dark:text-slate-400">Connect a workspace, merge apps or download your app.</span>
+              <span className="mt-1 block text-xs leading-relaxed text-gray-500 dark:text-slate-400">Extras most apps never need, such as your own screens or a copy to download.</span>
             </span>
             <ChevronRight className="h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-90" aria-hidden="true" />
           </summary>
-          <div className="space-y-3 border-t border-gray-100 p-3 dark:border-white/[0.06]">
-            <NativeAppPanel app={app} onInstalled={home => { setNativeHome(home); setNativeRevision(revision => revision + 1); }} />
+          {/* One list, one row a tool (ToolRow), every row alike. `data-tool-list` tells a row it
+              is in a list: the list draws the one border and the hairlines, the rows draw none. */}
+          <div className="border-t border-gray-100 p-3 dark:border-white/[0.06]">
+            <div data-tool-list className="divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-200/80 dark:divide-white/[0.06] dark:border-white/[0.06]">
+              <SoftnExportPanel key={app.id} app={app} appForms={appForms.map(form => ({ ...form, displayName: form.displayName || formsById[form.formId]?.title }))} />
+              <AppCompositionPanel app={app} onComplete={() => { void onReloadForms(); void onReloadApp(); }} />
+              <ConnectedWorkspacePanel app={app} />
               <HostedAppPanel app={app} />
-            <ConnectedWorkspacePanel app={app} />
-            <AppCompositionPanel app={app} onComplete={() => { void onReloadForms(); void onReloadApp(); }} />
-            <SoftnExportPanel key={app.id} app={app} appForms={appForms.map(form => ({ ...form, displayName: form.displayName || formsById[form.formId]?.title }))} />
+              <NativeAppPanel app={app} installed={nativeInstalled} onInstalled={home => { setNativeHome(home); setNativeInstalled(true); setNativeRevision(revision => revision + 1); }} />
+            </div>
           </div>
         </details>
       </div>
@@ -1104,7 +1110,7 @@ function AppPreview({
             <>
               <div className={cn('mt-4 grid gap-2', device === 'desktop' ? 'grid-cols-3' : 'grid-cols-2')}>
                 <PreviewMetric label={previewData === 'real' ? 'Records' : 'Sample records'} value={String(previewData === 'real' ? totalRecords : 12)} />
-                <PreviewMetric label="Data types" value={String(nav.formsOnly.length)} />
+                <PreviewMetric label="Forms" value={String(nav.formsOnly.length)} />
                 {device === 'desktop' && <PreviewMetric label="Screens" value={String(nav.formsOnly.length + 1)} />}
               </div>
               <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.08] dark:bg-slate-950/70">

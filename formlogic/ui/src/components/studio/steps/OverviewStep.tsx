@@ -9,8 +9,8 @@ import {
   LayoutPanelTop,
   Map,
   PencilRuler,
+  Rocket,
   Settings,
-  ShieldCheck,
   Sparkles,
   Users,
 } from 'lucide-react';
@@ -175,7 +175,7 @@ export function OverviewStep({
   const askAi = () => {
     setChatSeed(
       prompt.trim() ||
-        `Help me plan the "${app.name}" app: suggest the data types, relationships, screens and automations it needs.`
+        `Help me plan the "${app.name}" app: suggest the forms, relationships, screens and automations it needs.`
     );
     setChatMinimized(false);
     setChatOpen(true);
@@ -257,46 +257,75 @@ export function OverviewStep({
         </div>
       </section>
 
-      {/* ── What is in the app: every tile is a way into the section that owns it ── */}
-      <section>
-        <h3 className="px-1 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">In this app</h3>
-        <div className="mt-2 grid grid-cols-2 gap-2 @xl/studio:grid-cols-3 @3xl/studio:grid-cols-5 @2xl/studio:gap-3">
-          <StatTile
-            icon={Database}
-            value={String(appForms.length + nativeTableCount)}
-            label={nativeTableCount ? 'tables & forms' : appForms.length === 1 ? 'data type' : 'data types'}
-            detail={nativeTableCount ? `${nativeTableCount} database tables · ${appForms.length} forms` : relationCount > 0 ? `${relationCount} ${relationCount === 1 ? 'relationship' : 'relationships'}` : 'The forms behind the app'}
-            onClick={() => onStepChange('data')}
-          />
-          <StatTile
-            icon={LayoutPanelTop}
-            value={String(appForms.length + 1)}
-            label="screens"
-            detail="Home and one per data type"
-            onClick={() => onStepChange('screens')}
-          />
-          <StatTile
-            icon={GitBranch}
-            value={String(flows.length)}
-            label={flows.length === 1 ? 'automation' : 'automations'}
-            detail={flows.length === 0 ? 'Nothing runs automatically yet' : `${activeFlows} running`}
-            onClick={() => onStepChange('automations')}
-          />
-          <StatTile
-            icon={ShieldCheck}
-            value={String(roles.length)}
-            label={roles.length === 1 ? 'role' : 'roles'}
-            detail={roles.map((r) => r.name).slice(0, 2).join(', ') || 'Who can do what'}
-            onClick={() => onStepChange('access')}
-          />
-          <StatTile
-            icon={Users}
-            value={memberCountKnown ? String(memberCount) : '—'}
-            label={memberCount === 1 && memberCountKnown ? 'member' : 'members'}
-            detail={memberCountKnown ? (memberCount <= 1 ? 'Only you so far' : 'People with access') : 'Not loaded'}
-            onClick={() => onStepChange('access')}
-          />
+      {/* ── How an app is built, and how far this one is ──
+          The five sections after this one, in the order they are used, each said in a sentence
+          with what the app has of it and the way in. It stands where a row of bare counts stood:
+          "2 data types, 3 screens" told an owner what there was, never what to do next or what
+          any of it was for. */}
+      <section aria-labelledby="studio-build-steps" className="overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50">
+        <div className="border-b border-gray-200/80 px-4 py-3 dark:border-white/[0.06] sm:px-5">
+          <h3 id="studio-build-steps" className="text-sm font-semibold text-gray-900 dark:text-white">Build your app in five steps</h3>
+          <p className="mt-0.5 text-xs leading-5 text-gray-500 dark:text-slate-400">
+            Each step is one of the sections above. Take them in any order and come back whenever you like: everything saves as you go.
+          </p>
         </div>
+        <ol className="divide-y divide-gray-100 dark:divide-white/[0.05]">
+          <BuildStep
+            number={1}
+            icon={Database}
+            done={appForms.length + nativeTableCount > 0}
+            title="Add your forms"
+            text="A form is what people fill in: a repair request, a booking, an order. Each form keeps its answers as records."
+            state={nativeTableCount
+              ? `${nativeTableCount} database ${nativeTableCount === 1 ? 'table' : 'tables'} · ${appForms.length} ${appForms.length === 1 ? 'form' : 'forms'}`
+              : appForms.length === 0 ? 'None yet'
+                : `${appForms.length} ${appForms.length === 1 ? 'form' : 'forms'}${relationCount > 0 ? ` · ${relationCount} ${relationCount === 1 ? 'relationship' : 'relationships'}` : ''}`}
+            section="Data & forms"
+            action={appForms.length + nativeTableCount === 0 ? 'Add a form' : undefined}
+            onOpen={() => onStepChange('data')}
+          />
+          <BuildStep
+            number={2}
+            icon={LayoutPanelTop}
+            done={appForms.length > 0}
+            title="Check the screens"
+            text="People get a home screen and a screen for each form, made for you. Change the layout, the colours and the logo."
+            state={`${appForms.length + 1} ${appForms.length === 0 ? 'screen' : 'screens'}`}
+            section="Screens"
+            onOpen={() => onStepChange('screens')}
+          />
+          <BuildStep
+            number={3}
+            icon={GitBranch}
+            done={flows.length > 0}
+            optional
+            title="Automate the routine"
+            text="Have things happen by themselves: an email when a form comes in, a reminder each morning."
+            state={flows.length === 0 ? 'None yet' : `${flows.length} ${flows.length === 1 ? 'automation' : 'automations'} · ${activeFlows} running`}
+            section="Automations"
+            onOpen={() => onStepChange('automations')}
+          />
+          <BuildStep
+            number={4}
+            icon={Users}
+            done={memberCountKnown && memberCount > 1}
+            title="Invite people"
+            text="Bring in the people who will use the app, and choose what each role may see and change."
+            state={`${memberCountKnown ? (memberCount <= 1 ? 'Only you so far' : `${memberCount} members`) : 'Members not loaded'} · ${roles.length} ${roles.length === 1 ? 'role' : 'roles'}`}
+            section="Users & roles"
+            onOpen={() => onStepChange('access')}
+          />
+          <BuildStep
+            number={5}
+            icon={Rocket}
+            done={published}
+            title="Publish"
+            text="Nobody else sees the app until you publish it. After a change, publish again to make the change live."
+            state={published ? (app.publishedVersion ? `Live, version ${app.publishedVersion}` : 'Live') : 'Draft: only you can see it'}
+            section="Review & publish"
+            onOpen={() => onStepChange('publish')}
+          />
+        </ol>
       </section>
 
       {/* ── Planning tools: still here, no longer occupying the first nav slot ── */}
@@ -313,7 +342,7 @@ export function OverviewStep({
               <p className="mt-2 min-w-0 flex-1 text-xs leading-5 text-gray-500 dark:text-slate-400">
                 <span className="font-semibold text-gray-700 dark:text-slate-200">{blueprint.name}</span> is linked to this
                 app — revision {blueprint.semanticRevision}, updated {formatRelativeTime(blueprint.updatedAt)}. Use{' '}
-                <span className="font-semibold">Apply changes</span> on the canvas to bring new data types,
+                <span className="font-semibold">Apply changes</span> on the canvas to bring new forms,
                 relationships, flows and roles into the app.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
@@ -347,7 +376,7 @@ export function OverviewStep({
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Plan with AI</h3>
             </div>
             <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-slate-400">
-              Describe the outcome and the copilot proposes data types, screens and flows. Every change is
+              Describe the outcome and the copilot proposes forms, screens and flows. Every change is
               previewed before it is applied, and can be undone.
             </p>
             <textarea
@@ -374,7 +403,7 @@ export function OverviewStep({
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Plan with AI</h3>
             </div>
             <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-slate-400">
-              Connect an AI provider and the copilot can propose this app's data types, screens and flows
+              Connect an AI provider and the copilot can propose this app's forms, screens and flows
               from a plain description.
             </p>
             <div className="mt-3">
@@ -411,33 +440,68 @@ function StatusPill({ published, live, browserOnly }: { published: boolean; live
   );
 }
 
-/** One fact about the app that doubles as the way into the section that owns it. */
-function StatTile({
+/**
+ * One step of building an app: what it is for, how far this app is with it, and the way into the
+ * section that does it. A step that is done shows a tick in place of its number; the number is
+ * the order the steps are usually taken in, not a gate.
+ */
+function BuildStep({
+  number,
   icon: Icon,
-  value,
-  label,
-  detail,
-  onClick,
+  done,
+  optional = false,
+  title,
+  text,
+  state,
+  section,
+  action,
+  onOpen,
 }: {
+  number: number;
   icon: typeof Database;
-  value: string;
-  label: string;
-  detail: string;
-  onClick: () => void;
+  done: boolean;
+  /** An app is complete without it. */
+  optional?: boolean;
+  title: string;
+  text: string;
+  /** What the app has of it, in a few words. */
+  state: string;
+  /** The section that does this step, as the row above names it. */
+  section: string;
+  /** What the button says, when "Open" is not it (nothing made yet: "Add a form"). */
+  action?: string;
+  onOpen: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group flex min-h-20 cursor-pointer flex-col justify-between rounded-xl border border-gray-200/80 bg-white p-3 text-left shadow-sm transition hover:border-primary-300 hover:shadow-md dark:border-white/[0.06] dark:bg-slate-900/50 dark:hover:border-primary-500/30"
-    >
-      <Icon className="h-4 w-4 text-gray-400 transition group-hover:text-primary-500 dark:text-slate-500" aria-hidden="true" />
-      <span className="mt-2 block min-w-0">
-        <span className="block text-lg font-semibold leading-tight text-gray-900 dark:text-white">
-          {value} <span className="text-xs font-medium text-gray-500 dark:text-slate-400">{label}</span>
+    <li className="flex flex-col gap-3 px-4 py-3.5 sm:px-5 @2xl/studio:flex-row @2xl/studio:items-center @2xl/studio:gap-5">
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <span
+          aria-hidden="true"
+          className={cn(
+            'mt-0.5 flex h-7 w-7 flex-none items-center justify-center rounded-full text-xs font-bold',
+            done ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-slate-300'
+          )}
+        >
+          {done ? <Check className="h-4 w-4" /> : number}
         </span>
-        <span className="mt-0.5 block truncate text-[11px] text-gray-500 dark:text-slate-400" title={detail}>{detail}</span>
-      </span>
-    </button>
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-semibold text-gray-900 dark:text-white">
+            <Icon className="h-4 w-4 flex-none text-gray-400 dark:text-slate-500" aria-hidden="true" />
+            <span><span className="sr-only">Step {number}: </span>{title}</span>
+            {optional && <span className="text-xs font-normal text-gray-500 dark:text-slate-400">Optional</span>}
+          </p>
+          <p className="mt-0.5 text-xs leading-5 text-gray-500 dark:text-slate-400">{text}</p>
+        </div>
+      </div>
+      {/* On a phone the state and the button sit under the words, in line with them. */}
+      <div className="flex flex-none items-center justify-between gap-3 pl-10 @2xl/studio:w-80 @2xl/studio:pl-0">
+        <p className="min-w-0 text-xs font-medium text-gray-700 dark:text-slate-300">
+          {done && <span className="sr-only">Done. </span>}{state}
+        </p>
+        <Button variant="secondary" size="sm" className="flex-none max-sm:min-h-11" onClick={onOpen} aria-label={action ? undefined : `Open ${section}`}>
+          {action ?? 'Open'}
+        </Button>
+      </div>
+    </li>
   );
 }

@@ -134,6 +134,7 @@ async function renderStudio(path: string) {
           <Route path="/apps/:appId/studio" element={<AppStudio />} />
           <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
           <Route path="/apps/:appId/settings" element={<div />} />
+          <Route path="/apps/:appId/softn/*" element={<div data-testid="softn-page" />} />
           <Route path="/apps" element={<div />} />
         </Routes>
       </MemoryRouter>
@@ -144,6 +145,64 @@ async function renderStudio(path: string) {
 }
 
 describe('AppStudio', () => {
+  // The studio is for forms apps: a SoftN app is managed on its own page, which has what each part
+  // of the studio did for it. Every address of the studio that names one lands on the matching part.
+  it('sends an address that names a SoftN app to that app\'s own page, section for section', async () => {
+    const settings = h.app.settings;
+    const forms = vi.mocked(api.getAppForms).getMockImplementation();
+    h.app.settings = { softnApp: true } as never;
+    // A SoftN app as almost all are: it holds no forms.
+    vi.mocked(api.getAppForms).mockImplementation(async () => ({ data: { forms: [] } }) as never);
+    try {
+      for (const [from, to] of [
+        ['', '/apps/a1/softn/settings'], ['/data', '/apps/a1/softn/data'], ['/screens', '/apps/a1/softn/edit'], ['/automations', '/apps/a1/softn/automations'],
+        ['/access', '/apps/a1/softn/members'], ['/publish', '/apps/a1/softn'], ['/plan', '/apps/a1/softn'], ['/nonsense', '/apps/a1/softn/settings'],
+      ]) {
+        await renderStudio(`/apps/a1/studio${from}`);
+        expect(pathRef.current, `studio${from}`).toBe(to);
+        expect(container.querySelector('[data-testid="softn-page"]')).not.toBeNull();
+        // Nothing of the studio is drawn for it: no section row, no banner about it.
+        expect(container.textContent).not.toContain('Data & forms');
+        await act(async () => root.unmount());
+        root = createRoot(container);
+      }
+    } finally {
+      h.app.settings = settings;
+      vi.mocked(api.getAppForms).mockImplementation(forms!);
+    }
+  });
+
+  // Some SoftN apps made before the two kinds were told apart also hold forms. Their forms, the
+  // relations between them and their screens have no other home, so such an app keeps its studio.
+  it('keeps the studio for a SoftN app that also holds forms, and says where the rest of the app is', async () => {
+    const settings = h.app.settings;
+    h.app.settings = { softnApp: true } as never;
+    try {
+      await renderStudio('/apps/a1/studio/data');
+      expect(pathRef.current).toBe('/apps/a1/studio/data');
+      expect(container.querySelector('[data-testid="softn-page"]')).toBeNull();
+      expect(container.textContent).toContain('This is a SoftN app that also holds forms.');
+      expect(container.querySelector('a[href="/apps/a1/softn"]')!.textContent).toBe('Open the app’s page');
+      // Its forms are there to be worked on.
+      expect(container.textContent).toContain('Repair request');
+    } finally {
+      h.app.settings = settings;
+    }
+  });
+
+  it('does not send a SoftN app away on a read of its forms that failed: it may hold some', async () => {
+    const settings = h.app.settings;
+    h.app.settings = { softnApp: true } as never;
+    vi.mocked(api.getAppForms).mockResolvedValueOnce({ error: 'Server error (500)', status: 500 } as never);
+    try {
+      await renderStudio('/apps/a1/studio/data');
+      expect(pathRef.current).toBe('/apps/a1/studio/data');
+      expect(container.querySelector('[data-testid="softn-page"]')).toBeNull();
+    } finally {
+      h.app.settings = settings;
+    }
+  });
+
   it.each(['/apps/a1/studio/plan', '/apps/a1/studio'])('waits for initial data and opens Overview without mounting Data: %s', async path => {
     let finishForms!: (value: Awaited<ReturnType<typeof api.getAppForms>>) => void;
     vi.mocked(api.getAppForms).mockReturnValueOnce(new Promise(resolve => { finishForms = resolve; }));
@@ -235,12 +294,12 @@ describe('AppStudio', () => {
   it('renders the Publish step with preflight and version history', async () => {
     await renderStudio('/apps/a1/studio/publish');
     expect(container.textContent).toContain('Review & publish');
-    expect(container.textContent).not.toContain('1 data type configured');
+    expect(container.textContent).not.toContain('1 form configured');
     const passedChecks = Array.from(container.querySelectorAll('button')).find(button => /Show \d+ passed checks/.test(button.textContent ?? ''))!;
     expect(passedChecks.getAttribute('aria-expanded')).toBe('false');
     await act(async () => { passedChecks.click(); });
     expect(passedChecks.getAttribute('aria-expanded')).toBe('true');
-    expect(container.textContent).toContain('1 data type configured');
+    expect(container.textContent).toContain('1 form configured');
     expect(container.textContent).toContain('Release log');
     expect(container.textContent).toContain('First release');
     expect(container.textContent).toContain('Publish version 3');
@@ -330,12 +389,12 @@ describe('AppStudio', () => {
     expect(links.map((a) => a.getAttribute('href'))).toEqual(
       ['plan', 'data', 'screens', 'automations', 'access', 'publish'].map((step) => `/apps/a1/studio/${step}`),
     );
-    // Counts, not completion ticks: 1 data type, 2 screens (form + home), 1 automation.
+    // Counts, not completion ticks: 1 form, 2 screens (form + home), 1 automation.
     const dataLink = links.find((a) => a.textContent?.startsWith('Data'))!;
     // The mark is a bare number with an sr-only expansion, so its meaning is not
     // trapped in a hover title on a touch screen; the number itself is not read twice.
     expect(dataLink.textContent).toContain('Data & forms');
-    expect(dataLink.querySelector('.sr-only')!.textContent).toBe('1 data type');
+    expect(dataLink.querySelector('.sr-only')!.textContent).toBe('1 form');
     expect(dataLink.querySelector('span[aria-hidden="true"]')!.textContent).toBe('1');
     expect(dataLink.getAttribute('aria-current')).toBe('page');
     // The app has a release with a change since: the publish section says how many wait.
@@ -400,9 +459,14 @@ describe('AppStudio', () => {
     expect(container.textContent).toContain('Data & forms');
   });
 
-  it('renders the Access step with the app roles', async () => {
+  it('renders the Access step on its people, with the app roles one tab along', async () => {
     await renderStudio('/apps/a1/studio/access');
     expect(container.textContent).toContain('Users & roles');
+    // Inviting someone is what an owner comes here for, so the section opens on its people.
+    expect(container.querySelector('#access-tab-people')!.getAttribute('aria-selected')).toBe('true');
+    expect([...container.querySelectorAll('[role="tablist"][aria-label="Access sections"] [role="tab"]')].map((tab) => tab.getAttribute('aria-label')))
+      .toEqual(['People & invites', 'Roles', 'Sign-up']);
+    await act(async () => { container.querySelector<HTMLButtonElement>('#access-tab-roles')!.click(); });
     expect(container.textContent).toContain('App roles');
     expect(container.textContent).toContain('Owner');
   });

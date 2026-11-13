@@ -72,7 +72,7 @@ export function deriveSectionBadges(s: StudioSnapshot): Record<StudioStepId, Sec
     data: {
       text: String(s.formCount + (s.nativeTableCount ?? 0)),
       tone: s.formCount + (s.nativeTableCount ?? 0) === 0 ? 'attention' : 'muted',
-      title: s.nativeTableCount ? `${plural(s.nativeTableCount, 'database table')} · ${plural(s.formCount, 'form')}` : s.formCount === 0 ? 'No data types yet' : plural(s.formCount, 'data type'),
+      title: s.nativeTableCount ? `${plural(s.nativeTableCount, 'database table')} · ${plural(s.formCount, 'form')}` : s.formCount === 0 ? 'No forms yet' : plural(s.formCount, 'form'),
     },
     // Every form contributes its generated screens; the home screen is always there.
     screens: {
@@ -192,13 +192,13 @@ export function buildPreflightChecks(input: {
   const facts: PreflightCheck[] = [];
 
   if (input.formCountKnown === false) {
-    // A failed read is not "no data types": blocking publish on it would stop an
+    // A failed read is not "no forms": blocking publish on it would stop an
     // owner releasing a twelve-form app because one request dropped.
     checks.push({
       id: 'forms',
       state: 'warning',
       severity: 'recommended',
-      title: 'Data types not loaded',
+      title: 'Forms not loaded',
       detail: 'The form list could not be read — reload to check it before publishing',
       step: 'data',
     });
@@ -217,7 +217,7 @@ export function buildPreflightChecks(input: {
           id: 'forms',
           state: input.formsWithoutFields.length === 0 ? 'complete' : 'warning',
           ...(input.formsWithoutFields.length === 0 ? {} : { severity: 'recommended' as const }),
-          title: `${input.formCount} data ${input.formCount === 1 ? 'type' : 'types'} configured`,
+          title: `${input.formCount} ${input.formCount === 1 ? 'form' : 'forms'} configured`,
           detail:
             input.formsWithoutFields.length === 0
               ? 'Every form has at least one field'
@@ -228,7 +228,7 @@ export function buildPreflightChecks(input: {
           id: 'forms',
           state: 'warning',
           severity: 'blocking',
-          title: 'No data types yet',
+          title: 'No forms yet',
           detail: 'Add at least one form so the published app has something to collect',
           step: 'data',
         }
@@ -399,7 +399,7 @@ export function deriveNextAction(s: {
   if (s.formCount === 0 && !s.nativeTableCount) {
     return {
       step: 'data',
-      title: 'Add your first data type',
+      title: 'Add your first form',
       detail: 'Every app is built on forms — create one so the app has something to collect.',
       cta: 'Go to Data & forms',
     };
@@ -408,7 +408,7 @@ export function deriveNextAction(s: {
     return {
       step: 'data',
       title: `Finish ${s.fieldlessFormNames[0]}`,
-      detail: `${s.fieldlessFormNames.length === 1 ? 'It has' : `${s.fieldlessFormNames.length} data types have`} no fields yet — add the fields people will fill in.`,
+      detail: `${s.fieldlessFormNames.length === 1 ? 'It has' : `${s.fieldlessFormNames.length} forms have`} no fields yet — add the fields people will fill in.`,
       cta: 'Add fields',
     };
   }

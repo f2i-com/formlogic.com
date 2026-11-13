@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Code2, Download, ExternalLink } from 'lucide-react';
+import { Download, ExternalLink } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { ToolRow } from './ToolRow';
 import { api } from '../../lib/api';
 import { mapConcurrent } from '../../lib/mapConcurrent';
 import { createFormlogicProject, type FormlogicProject, type FormlogicSchema } from '../../lib/softn/project';
@@ -65,11 +66,9 @@ export function SoftnExportPanel({ app, appForms = [], forms: suppliedForms, sou
   };
   const reset = () => { setProject(null); setError(''); };
   return <>
-    {isOpen === undefined && <section className="min-w-0 rounded-xl border border-primary-200 dark:border-primary-500/25 bg-primary-50/60 dark:bg-primary-500/5 p-4">
-      <div className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white"><Code2 className="h-4 w-4 shrink-0" />App project</div>
-      <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-slate-300">Bring your forms together in a portable app you can download and customise.</p>
-      <Button className="mt-3 w-full min-h-11" variant="outline" size="sm" onClick={() => { reset(); setOpen(true); }}>Create app project</Button>
-    </section>}
+    {isOpen === undefined && <ToolRow icon={Download} title="Download an editable copy"
+      description="Save this app’s forms as a project file to customise outside FormLogic; records are not included and nothing syncs back."
+      actions={<Button variant="secondary" onClick={() => { reset(); setOpen(true); }}>Create app project</Button>} />}
     <Modal isOpen={isOpen ?? open} onClose={close} title="Create app project" description="An editable copy of your forms, ready to customise." size="lg" footer={
       <div className="grid grid-cols-2 gap-3 sm:flex sm:justify-end [&>button]:min-h-11 [&>button]:min-w-0">
         {project ? <Button variant="outline" onClick={reset} disabled={downloading}>Change selection</Button> : <Button variant="outline" onClick={close}>Cancel</Button>}

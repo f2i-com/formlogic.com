@@ -54,9 +54,12 @@ type RolePermissionsState = {
 const NO_USERS: never[] = [];
 const NO_INVITATIONS: never[] = [];
 
+// People first: inviting someone is what an owner comes here for, and what the section's own
+// line says first ("Invite people and choose what each role can…"). What each role may do is
+// the part most apps never change.
 const TABS = [
-  { id: 'roles', label: 'Roles', mobileLabel: 'Roles', icon: Shield },
   { id: 'people', label: 'People & invites', mobileLabel: 'People', icon: Users },
+  { id: 'roles', label: 'Roles', mobileLabel: 'Roles', icon: Shield },
   { id: 'signup', label: 'Sign-up', mobileLabel: 'Sign-up', icon: UserPlus },
 ] as const;
 
@@ -79,7 +82,7 @@ export function AccessStep({
   onReloadRoles: () => Promise<void>;
   onReloadApp: () => Promise<void>;
 }) {
-  const [tab, setTab] = useState<AccessTab>('roles');
+  const [tab, setTab] = useState<AccessTab>('people');
 
   return (
     <div className="space-y-4">
@@ -377,7 +380,7 @@ function RolesView({
                   {selected.isSystem && <Badge variant="primary" size="sm">System</Badge>}
                 </div>
                 <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
-                  {selected.description || 'What this role can do, per data type.'}
+                  {selected.description || 'What this role can do, per form.'}
                 </p>
               </div>
             </div>

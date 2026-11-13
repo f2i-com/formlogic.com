@@ -52,7 +52,7 @@ for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
     await expect(page.locator('header').getByRole('button', { name: 'Back to apps', exact: true })).toBeVisible();
     await expect(page.getByText(/Section \d of \d/)).toHaveCount(0);
     // The sections are links in one row, each at its own address. A link's name is the section's
-    // followed by what it holds ("Data & forms 2 data types"), so it is matched by how it starts.
+    // followed by what it holds ("Data & forms 2 forms"), so it is matched by how it starts.
     const nav = page.getByRole('navigation', { name: 'App Studio sections', exact: true });
     const section = (label: string) => nav.getByRole('link', { name: new RegExp(`^${label}`) });
     for (const [id, label] of sections) {

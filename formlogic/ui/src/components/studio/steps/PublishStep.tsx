@@ -167,7 +167,7 @@ export function PublishStep({
         ? [{
             id: 'first-forms',
             kind: 'form' as const,
-            text: `Included ${appForms.length} data ${appForms.length === 1 ? 'type' : 'types'}${dataTypeNames.length <= 3 ? `: ${dataTypeNames.join(', ')}` : ''}`,
+            text: `Included ${appForms.length} ${appForms.length === 1 ? 'form' : 'forms'}${dataTypeNames.length <= 3 ? `: ${dataTypeNames.join(', ')}` : ''}`,
           }]
         : []),
       ...(flows.length > 0
@@ -365,7 +365,7 @@ export function PublishStep({
                       type="button"
                       onClick={() => navigate(`/apps/${app.id}/deploy`, { state: studioReturn })}
                       aria-label="Set up: custom domain"
-                      className="cursor-pointer text-xs font-bold text-amber-600 hover:underline dark:text-amber-300"
+                      className="inline-flex cursor-pointer items-center rounded-md text-xs font-bold text-amber-600 hover:underline max-sm:-mx-2 max-sm:min-h-11 max-sm:px-2 dark:text-amber-300"
                     >
                       Set up
                     </button>
@@ -375,7 +375,7 @@ export function PublishStep({
                       type="button"
                       onClick={() => navigate(`/apps/${app.id}/settings`, { state: studioReturn })}
                       aria-label="Set up: app icon"
-                      className="cursor-pointer text-xs font-bold text-amber-600 hover:underline dark:text-amber-300"
+                      className="inline-flex cursor-pointer items-center rounded-md text-xs font-bold text-amber-600 hover:underline max-sm:-mx-2 max-sm:min-h-11 max-sm:px-2 dark:text-amber-300"
                     >
                       Set up
                     </button>

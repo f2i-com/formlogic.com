@@ -48,6 +48,7 @@ export function AutomationsStep({
   appForms,
   formsById,
   onReloadFlows,
+  returnTo,
 }: {
   app: App;
   flows: FlowDefinition[];
@@ -55,10 +56,16 @@ export function AutomationsStep({
   appForms: AppForm[];
   formsById: Record<string, Form>;
   onReloadFlows: () => Promise<void>;
+  /**
+   * Where the flow editor's back link returns, when this is shown somewhere other than the App
+   * Studio (a SoftN app's own page). Such an app's automations start from its own tables, not
+   * from forms, and the words here say so.
+   */
+  returnTo?: { path: string; label: string };
 }) {
   const navigate = useNavigate();
   // The flow editor's back link returns here when opened from this step.
-  const studioReturn = returnToState(`/apps/${app.id}/studio/automations`, 'App Studio');
+  const studioReturn = returnToState(returnTo?.path ?? `/apps/${app.id}/studio/automations`, returnTo?.label ?? 'App Studio');
   const [selectedFlowId, setSelectedFlowId] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -157,8 +164,9 @@ export function AutomationsStep({
           <GitBranch className="h-7 w-7 text-gray-300 dark:text-slate-600" />
           <p className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">No automations yet</p>
           <p className="mt-1 max-w-2xl text-sm text-gray-500 dark:text-slate-400">
-            Automate what happens when a form is submitted, a status changes, or on a schedule —
-            notifications, record updates, AI steps and more.
+            {returnTo
+              ? 'Automate what happens when a record is added, changed or removed in this app’s database, or on a schedule: notifications, emails, AI steps and more.'
+              : 'Automate what happens when a form is submitted, a status changes, or on a schedule — notifications, record updates, AI steps and more.'}
           </p>
           <Button className="mt-4" onClick={() => setShowNew(true)} isLoading={creating} leftIcon={<Plus className="h-4 w-4" />}>
             Create your first automation

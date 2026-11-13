@@ -586,7 +586,7 @@ const TOOL_LABELS: Record<string, string> = {
   list_forms: 'Look at your forms',
   get_form: 'Read a form',
   create_form: 'Create a form',
-  create_app_form: 'Add a data type to the app',
+  create_app_form: 'Add a form to the app',
   add_form_to_app: 'Attach a form to the app',
   update_form: 'Update a form',
   set_app_home: "Design the app's home screen",

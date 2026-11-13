@@ -5,16 +5,17 @@ import { Boxes } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { ToolRow } from './ToolRow';
 import type { App, AppForm } from '../../types/app';
 
 export function AppCompositionPanel({ app, onComplete }: { app: App; onComplete?: () => void }) {
   const [open, setOpen] = useState(false);
-  return <section className="rounded-xl border border-slate-200 p-5 dark:border-slate-700">
-    <Boxes className="mb-3 h-5 w-5 text-sky-600" /><h3 className="font-semibold">Bring another app into this one</h3>
-    <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-slate-300">Share Aokie's forms to add calls, transcripts and appointments alongside your existing dashboard. Both apps use the same saved records.</p>
-    <Button variant="outline" className="mt-4 min-h-11 w-full" onClick={() => setOpen(true)}>Add from another app</Button>
+  return <>
+    <ToolRow icon={Boxes} title="Bring another app into this one"
+      description="Share forms from another of your apps here, so both apps work on the same records."
+      actions={<Button variant="secondary" onClick={() => setOpen(true)}>Add from another app</Button>} />
     {open && <CompositionDialog app={app} onClose={() => setOpen(false)} onComplete={onComplete} />}
-  </section>;
+  </>;
 }
 function CompositionDialog({ app, onClose, onComplete }: { app: App; onClose: () => void; onComplete?: () => void }) {
   const [choices, setChoices] = useState<Array<{ id: string; name: string }>>([]);

@@ -169,7 +169,7 @@ export function DataStep({
 
   /**
    * Private forms need an unlocked vault. The vault dialogs are themselves modal, so
-   * the "Add a data type" dialog is closed first — two stacked aria-modal dialogs
+   * the "Add a form" dialog is closed first — two stacked aria-modal dialogs
    * meant one Escape dismissed both and the half-typed data type vanished.
    */
   const ensurePrivateReady = async (action: 'create-type' | 'add-field'): Promise<boolean> => {
@@ -200,7 +200,7 @@ export function DataStep({
       // demo-local path; addFormToApp then syncs + attaches it to this app.
       const form = await trackStudioSave(`${name} created`, useFormStore.getState().createForm(name), (f) => !!f);
       if (!form) {
-        toast.error('Could not create the data type');
+        toast.error('Could not create the form');
         return;
       }
       if (isPrivateDefault) {
@@ -218,7 +218,7 @@ export function DataStep({
           }
           const message = e instanceof Error ? e.message : 'Encryption setup failed.';
           toast.error(
-            removed ? 'Private data type was not created' : 'Encryption failed — delete this form',
+            removed ? 'Private form was not created' : 'Encryption failed — delete this form',
             removed
               ? `${message} The draft was removed rather than left unencrypted.`
               : `${message} The draft could not be removed automatically and is NOT encrypted.`
@@ -229,7 +229,7 @@ export function DataStep({
       const attached = await trackStudioSave(`${name} attached`, addFormToApp(app.id, form.id, name), (ok) => !!ok);
       if (!attached) return;
       toast.success(
-        isPrivateDefault ? 'Private data type created' : 'Data type created',
+        isPrivateDefault ? 'Private form created' : 'Form created',
         isPrivateDefault
           ? `"${name}" was added with end-to-end encryption enabled.`
           : `"${name}" was added to ${app.name}.`
@@ -294,7 +294,7 @@ export function DataStep({
     const trimmed = nextName.trim();
     if (!trimmed || trimmed === (attachment.displayName || form.title)) return;
     const ok = await trackStudioSave(
-      'Data type name',
+      'Form name',
       async () => {
         const res = await api.updateAppForm(app.id, form.id, { displayName: trimmed });
         if (res.error) return res;
@@ -489,7 +489,7 @@ export function DataStep({
               onClick={() => setShowAddType(true)}
               className="mt-1 flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 text-xs font-semibold text-gray-600 transition hover:border-primary-400 hover:bg-primary-50 hover:text-primary-700 dark:border-white/15 dark:text-slate-300 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/[0.06] dark:hover:text-primary-300"
             >
-              <Plus className="h-4 w-4" /> Add data type
+              <Plus className="h-4 w-4" /> Add a form
             </button>
           )}
         </div>
@@ -499,9 +499,9 @@ export function DataStep({
       {formsFailed && appForms.length === 0 ? (
         <section className="flex h-fit flex-col items-start rounded-2xl border border-dashed border-amber-300 p-6 dark:border-amber-400/30">
           <AlertTriangle className="h-8 w-8 text-amber-500" />
-          <p className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">Couldn't load this app's data types</p>
+          <p className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">Couldn't load this app's forms</p>
           <p className="mt-1 max-w-sm text-sm text-gray-500 dark:text-slate-400">
-            The request for the app's forms failed. This does not mean the app has none.
+            The request failed. This does not mean the app has none.
           </p>
           <Button className="mt-4" onClick={() => void onReloadForms()} leftIcon={<RotateCcw className="h-4 w-4" />}>
             Try again
@@ -510,12 +510,12 @@ export function DataStep({
       ) : appForms.length === 0 ? (
         <section className="flex h-fit flex-col items-start rounded-2xl border border-dashed border-gray-300 p-6 dark:border-white/15">
           <Database className="h-8 w-8 text-gray-400 dark:text-slate-500" />
-          <p className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">{nativeDatabase?.installed ? 'Add a FormLogic form when you need one' : 'No data types yet'}</p>
+          <p className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">{nativeDatabase?.installed ? 'Add a FormLogic form when you need one' : 'No forms yet'}</p>
           <p className="mt-1 max-w-sm text-sm text-gray-500 dark:text-slate-400">
-            {nativeDatabase?.installed ? 'Your app already stores data in the tables above. Forms are optional and use separate response storage.' : 'Create your first form data type, import an app with its own database, or describe your app in Overview.'}
+            {nativeDatabase?.installed ? 'Your app already stores data in the tables above. Forms are optional and use separate response storage.' : 'Create your first form, import an app with its own database, or describe your app in Overview.'}
           </p>
           <Button className="mt-4" onClick={() => setShowAddType(true)} leftIcon={<Plus className="h-4 w-4" />}>
-            Add data type
+            Add a form
           </Button>
         </section>
       ) : selected?.form ? (
@@ -531,7 +531,7 @@ export function DataStep({
                       renaming its form in the builder appeared to do nothing (the app
                       shows `displayName`). Editing the title here writes the name the
                       app actually renders. */}
-                  <label htmlFor="studio-type-name" className="sr-only">Data type name</label>
+                  <label htmlFor="studio-type-name" className="sr-only">Form name</label>
                   <input
                     id="studio-type-name"
                     value={typeNameDraft ?? (selected.attachment?.displayName || selected.form.title)}
@@ -580,7 +580,7 @@ export function DataStep({
           </div>
 
           <div className="border-b border-gray-200/70 px-4 dark:border-white/[0.06]">
-            <div className="flex gap-5" role="tablist" aria-label="Data type sections">
+            <div className="flex gap-5" role="tablist" aria-label="Form sections">
               {([
                 { id: 'fields', label: 'Fields' },
                 { id: 'relationships', label: 'Relationships' },
@@ -766,7 +766,7 @@ export function DataStep({
             <div id="data-panel-relationships" role="tabpanel" aria-labelledby="data-tab-relationships" className="p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <p className="text-xs text-gray-500 dark:text-slate-400">
-                  Linked-record fields connect this data type to others in the app.
+                  Linked-record fields connect this form to others in the app.
                 </p>
                 <div className="flex shrink-0 items-center gap-2">
                   <Button variant="secondary" size="sm" onClick={() => setShowRelation(true)} leftIcon={<Plus className="h-4 w-4" />}>
@@ -785,7 +785,7 @@ export function DataStep({
               {selected.form.fields.filter((f) => f.type === 'linked_record').length === 0 ? (
                 <div className="rounded-xl border border-dashed border-gray-300 px-4 py-8 text-center dark:border-white/15">
                   <p className="text-sm text-gray-500 dark:text-slate-400">
-                    No relationships yet. Link this data type to another so records can reference each other.
+                    No relationships yet. Link this form to another so records can reference each other.
                   </p>
                   <Button className="mt-3" size="sm" onClick={() => setShowRelation(true)} leftIcon={<Plus className="h-4 w-4" />}>
                     Add relationship
@@ -821,7 +821,7 @@ export function DataStep({
         <section className="flex h-fit flex-col items-start rounded-2xl border border-dashed border-amber-300 p-6 dark:border-amber-400/30">
           <AlertTriangle className="h-8 w-8 text-amber-500" />
           <p className="mt-3 text-sm font-semibold text-gray-900 dark:text-white">
-            Couldn't load {formNameById[selected.id] ?? 'this data type'}
+            Couldn't load {formNameById[selected.id] ?? 'this form'}
           </p>
           <p className="mt-1 max-w-sm text-sm text-gray-500 dark:text-slate-400">
             It is still attached to the app — the request for its fields failed.
@@ -832,32 +832,32 @@ export function DataStep({
         </section>
       ) : (
         /* Attachments are known but their records are still in flight — a skeleton,
-           never the "no data types yet" empty state the rail plainly contradicts. */
+           never the "No forms yet" empty state the rail plainly contradicts. */
         <section
           className="rounded-xl border border-gray-200/80 bg-white p-5 shadow-sm dark:border-white/[0.06] dark:bg-slate-900/50"
           role="status"
-          aria-label="Loading data type"
+          aria-label="Loading form"
         >
           <div className="animate-pulse space-y-3">
             <div className="h-11 w-1/3 rounded-xl bg-gray-100 dark:bg-white/[0.06]" />
             <div className="h-3 w-2/3 rounded bg-gray-100 dark:bg-white/[0.06]" />
             <div className="h-40 rounded-xl bg-gray-100 dark:bg-white/[0.06]" />
           </div>
-          <span className="sr-only">{formsResolving ? 'Loading this data type' : 'Preparing this data type'}</span>
+          <span className="sr-only">{formsResolving ? 'Loading this form' : 'Preparing this form'}</span>
         </section>
       )}
 
-      <Modal isOpen={showAddType} onClose={() => setShowAddType(false)} title="Add a data type" size="sm">
+      <Modal isOpen={showAddType} onClose={() => setShowAddType(false)} title="Add a form" size="sm">
         <div className="space-y-4 p-4 sm:p-5">
           <p className="text-sm text-gray-500 dark:text-slate-400">
-            A data type is a form: it defines the fields, powers the generated screens, and stores the records.
+            A form defines the fields, powers the generated screens, and stores the records.
           </p>
           {isPrivateDefault && (
             <div className="flex gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-xs leading-5 text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/[0.08] dark:text-emerald-200">
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
               <p>
                 <span className="font-semibold">End-to-end encrypted by default.</span>{' '}
-                This data type will be made private before it is attached to the app.
+                This form will be made private before it is attached to the app.
               </p>
             </div>
           )}
@@ -866,7 +866,7 @@ export function DataStep({
             onChange={(e) => setNewTypeName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void createDataType(); }}
             placeholder="e.g. Customer, Job, Invoice"
-            aria-label="Data type name"
+            aria-label="Form name"
             autoFocus
           />
           <div className="flex items-center justify-between gap-2">

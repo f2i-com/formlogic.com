@@ -168,7 +168,7 @@ export function StudioAppMenu({
 
           <Group title="Manage">
             <Row icon={Table} label="Records" detail="Browse and export collected data" onClick={() => go(`/apps/${app.id}/records`)} />
-            <Row icon={Link2} label="Relations" detail="How records link across data types" onClick={() => go(`/apps/${app.id}/relations`)} />
+            <Row icon={Link2} label="Relations" detail="How records link across forms" onClick={() => go(`/apps/${app.id}/relations`)} />
             <Row icon={Users} label="Members" detail="Invitations and existing access" onClick={() => go(`/apps/${app.id}/users`)} />
             <Row icon={Shield} label="Roles &amp; permissions" detail="What each role may do" onClick={() => go(`/apps/${app.id}/roles`)} />
             <Row icon={Globe2} label="Deploy &amp; share" detail="QR code, install as an app, custom domains" onClick={() => go(`/apps/${app.id}/deploy`)} />

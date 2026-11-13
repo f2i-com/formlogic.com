@@ -58,8 +58,11 @@ afterEach(async () => {
   useAuthStore.setState({ user: null });
 });
 
-function renderStep(stepRoles: AppRole[], strict = false) {
-  return act(async () => {
+/** The section opens on its people: the roles, which most of these tests are of, are one tab along. */
+const openRoles = () => act(async () => { container.querySelector<HTMLButtonElement>('#access-tab-roles')?.click(); });
+
+async function renderStep(stepRoles: AppRole[], strict = false) {
+  await act(async () => {
     const element = (
       <MemoryRouter>
         <AccessStep
@@ -74,6 +77,7 @@ function renderStep(stepRoles: AppRole[], strict = false) {
     );
     root.render(strict ? <React.StrictMode>{element}</React.StrictMode> : element);
   });
+  await openRoles();
 }
 
 describe('AccessStep', () => {
@@ -251,6 +255,7 @@ describe('AccessStep people, for a manager who is not the Owner', () => {
           </MemoryRouter>,
         );
       });
+      await openRoles();
       const member = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Member'))!;
       await act(async () => { member.click(); });
       await act(async () => { await Promise.resolve(); });

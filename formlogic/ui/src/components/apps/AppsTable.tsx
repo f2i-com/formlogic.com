@@ -80,13 +80,25 @@ export function AppsTable({ apps, summaries, packNames, canManage, managePath, o
       settings: softn ? softnWorkspacePath(app.id, 'settings') : `/apps/${app.id}/settings`,
     };
   };
-  /** The four things to do with an app; `button` is the look for where they are drawn. */
-  const actions = (app: App, f: ReturnType<typeof facts>, button: string): ReactNode => <>
-    {f.isLive && <a href={f.openAt} target="_blank" rel="noopener noreferrer" aria-label={`Open ${app.name}`} title="Open the app" className={button}><ExternalLink className="h-4 w-4" aria-hidden="true" /></a>}
-    {f.hasData && <Link to={softnWorkspacePath(app.id, 'data')} aria-label={`Data of ${app.name}`} title="Data" className={button}><Database className="h-4 w-4" aria-hidden="true" /></Link>}
-    {f.manage && <Link to={f.settings} aria-label={`Settings of ${app.name}`} title="Settings" className={button}><Settings className="h-4 w-4" aria-hidden="true" /></Link>}
-    {f.manage && onDelete && <button type="button" onClick={() => onDelete(app)} aria-label={`Remove ${app.name}`} title="Remove the app" className={cn(button, 'hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400')}><Trash2 className="h-4 w-4" aria-hidden="true" /></button>}
-  </>;
+  /**
+   * The four things to do with an app, always in the same order; `button` is the look for where
+   * they are drawn. In the table each has a place of its own (`places`): a row without one of them
+   * leaves that place empty, so the same icon stands under the same icon all the way down the list.
+   */
+  const actions = (app: App, f: ReturnType<typeof facts>, button: string, places?: readonly boolean[]): ReactNode => {
+    const empty = (place: number) => places?.[place] ? <span aria-hidden="true" data-empty-action className="inline-block h-8 w-8 flex-none" /> : null;
+    return <>
+    {f.isLive ? <a href={f.openAt} target="_blank" rel="noopener noreferrer" aria-label={`Open ${app.name}`} title="Open the app" className={button}><ExternalLink className="h-4 w-4" aria-hidden="true" /></a> : empty(0)}
+    {f.hasData ? <Link to={softnWorkspacePath(app.id, 'data')} aria-label={`Data of ${app.name}`} title="Data" className={button}><Database className="h-4 w-4" aria-hidden="true" /></Link> : empty(1)}
+    {f.manage ? <Link to={f.settings} aria-label={`Settings of ${app.name}`} title="Settings" className={button}><Settings className="h-4 w-4" aria-hidden="true" /></Link> : empty(2)}
+    {f.manage && onDelete ? <button type="button" onClick={() => onDelete(app)} aria-label={`Remove ${app.name}`} title="Remove the app" className={cn(button, 'hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400')}><Trash2 className="h-4 w-4" aria-hidden="true" /></button> : empty(3)}
+    </>;
+  };
+  // Each app with what is shown of it, worked out once for the cards and the table.
+  const listed = rows.map(app => [app, facts(app)] as const);
+  // The places the table keeps: one for each action that any app in the list has.
+  const places = [listed.some(([, f]) => f.isLive), listed.some(([, f]) => f.hasData), listed.some(([, f]) => f.manage), !!onDelete && listed.some(([, f]) => f.manage)];
+  const kept = places.filter(Boolean).length;
   const totals = `${apps.length.toLocaleString()} app${apps.length === 1 ? '' : 's'} · ${live.toLocaleString()} live · ${(apps.length - live).toLocaleString()} not live`;
   // Under the rows: the counts, what the page gave in their place, or (null) nothing at all.
   const foot = footer === undefined ? totals : footer;
@@ -102,8 +114,7 @@ export function AppsTable({ apps, summaries, packNames, canManage, managePath, o
         </select>
       </label>}
       <ul className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900/60">
-        {rows.map(app => {
-          const f = facts(app);
+        {listed.map(([app, f]) => {
           return <li key={app.id} className="border-b border-slate-100 px-3 py-2 last:border-b-0 dark:border-slate-800">
             <div className="flex min-w-0 items-center gap-2">
               <AppTile app={app} size="sm" className="h-7 w-7 flex-none rounded-md" />
@@ -136,12 +147,12 @@ export function AppsTable({ apps, summaries, packNames, canManage, managePath, o
             <th scope="col" className="hidden w-32 px-2 font-semibold uppercase tracking-wider @5xl/list:table-cell">Who can use it</th>
             <th scope="col" className="hidden w-[148px] px-2 font-semibold uppercase tracking-wider @3xl/list:table-cell">Data</th>
             {heading('changed', 'Changed', 'w-20')}
-            <th scope="col" className={cn('px-2 pr-3 text-right font-semibold uppercase tracking-wider', onDelete ? 'w-[136px]' : 'w-[104px]')}><span className="sr-only">Actions</span></th>
+            {/* As wide as its places: each is 32px, 2px apart, in a cell with 8px either side. */}
+            <th scope="col" style={{ width: Math.max(1, kept) * 34 + 14 }} className="px-2 pr-3 text-right font-semibold uppercase tracking-wider"><span className="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
-          {rows.map(app => {
-            const f = facts(app);
+          {listed.map(([app, f]) => {
             return <tr key={app.id} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-white/[0.03]">
               <th scope="row" className="py-1 pl-3 pr-2 font-normal">
                 <div className="flex min-w-0 items-center gap-2">
@@ -156,7 +167,7 @@ export function AppsTable({ apps, summaries, packNames, canManage, managePath, o
               <td className="hidden truncate px-2 text-slate-700 dark:text-slate-300 @5xl/list:table-cell">{f.who}</td>
               <td className="hidden truncate px-2 text-slate-700 dark:text-slate-300 @3xl/list:table-cell">{f.holds}</td>
               <td className="truncate px-2 text-slate-500 dark:text-slate-400">{formatRelativeTime(app.updatedAt)}</td>
-              <td className="py-0.5 pl-2 pr-2 text-right"><span className="inline-flex items-center justify-end gap-0.5">{actions(app, f, small)}</span></td>
+              <td className="py-0.5 pl-2 pr-2 text-right"><span className="inline-flex items-center justify-end gap-0.5">{actions(app, f, small, places)}</span></td>
             </tr>;
           })}
         </tbody>

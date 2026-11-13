@@ -169,7 +169,7 @@ describe('a link to the builder', () => {
   });
 });
 
-describe('renaming a data type', () => {
+describe('renaming a form', () => {
   const nameBox = () => document.body.querySelector<HTMLInputElement>('#studio-type-name')!;
 
   async function rename(to: string) {

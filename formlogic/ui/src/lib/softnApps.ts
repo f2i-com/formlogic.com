@@ -13,7 +13,7 @@ export function isSoftnApp(app: Pick<App, 'settings'> | null | undefined): boole
 }
 
 /** The sections of a SoftN app's page, each at its own address under /apps/<id>/softn/. */
-export const SOFTN_SECTIONS = ['overview', 'data', 'members', 'edit', 'domains', 'settings'] as const;
+export const SOFTN_SECTIONS = ['overview', 'data', 'members', 'edit', 'automations', 'domains', 'settings'] as const;
 export type SoftnSection = (typeof SOFTN_SECTIONS)[number];
 
 /**
@@ -22,6 +22,18 @@ export type SoftnSection = (typeof SOFTN_SECTIONS)[number];
  */
 export const softnWorkspacePath = (appId: string, section: SoftnSection = 'overview', ...rest: string[]) =>
   section === 'overview' ? `/apps/${appId}/softn` : `/apps/${appId}/softn/${[section, ...rest.filter(Boolean).map(encodeURIComponent)].join('/')}`;
+
+/**
+ * The App Studio is for forms apps. An address of it that names a SoftN app (an old link, a
+ * bookmark, a button that knows only the app's id) lands on the section of the app's own page that
+ * does what that part of the studio did. The studio's own address, with no part named, is the app's
+ * settings.
+ */
+const STUDIO_STEP_SECTIONS: Readonly<Record<string, SoftnSection>> = {
+  plan: 'overview', data: 'data', screens: 'edit', automations: 'automations', access: 'members', publish: 'overview',
+};
+export const softnPathForStudio = (appId: string, step?: string) =>
+  softnWorkspacePath(appId, (step !== undefined && Object.hasOwn(STUDIO_STEP_SECTIONS, step) ? STUDIO_STEP_SECTIONS[step] : undefined) ?? 'settings');
 
 /** How a new SoftN app's first version is made. */
 /** `backendFile`: for a file with no backend of its own, the app's full file, whose backend is added to it (lib/softnBackend). */

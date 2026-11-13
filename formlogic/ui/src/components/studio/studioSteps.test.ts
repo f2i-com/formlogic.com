@@ -158,7 +158,7 @@ describe('studioSteps', () => {
       expect(checks.find(c => c.id === 'forms')).toMatchObject({ state: 'complete', title: 'Its own database: 2 tables' });
       expect(summarizePreflight(checks).blocking).toEqual([]);
       // Forms still count as they did when the app has both.
-      expect(buildPreflightChecks({ ...base, nativeTableCount: 3 }).find(c => c.id === 'forms')?.title).toMatch(/data type/);
+      expect(buildPreflightChecks({ ...base, nativeTableCount: 3 }).find(c => c.id === 'forms')?.title).toMatch(/forms configured/);
       // No tables and no forms is still nothing to collect.
       expect(buildPreflightChecks({ ...base, formCount: 0, nativeTableCount: 0 }).find(c => c.id === 'forms')).toMatchObject({ severity: 'blocking' });
     });
@@ -197,12 +197,12 @@ describe('studioSteps', () => {
     });
 
     it('never blocks publish on a form list that failed to load', () => {
-      // Reading a dropped request as "no data types" disabled Publish on an app that
+      // Reading a dropped request as "no forms" disabled Publish on an app that
       // has plenty, with no way forward but a page reload.
       const checks = buildPreflightChecks({ ...base, formCount: 0, formCountKnown: false });
       const forms = checks.find((c) => c.id === 'forms')!;
       expect(forms.severity).toBe('recommended');
-      expect(forms.title).toBe('Data types not loaded');
+      expect(forms.title).toBe('Forms not loaded');
       expect(summarizePreflight(checks).blocking).toEqual([]);
     });
 
