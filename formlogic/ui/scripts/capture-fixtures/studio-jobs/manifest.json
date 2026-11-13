@@ -1,0 +1,19 @@
+{
+  "id": "formlogic.starter.notes",
+  "name": "Studio jobs",
+  "version": "1.0.0",
+  "main": "index.html",
+  "files": { "ui": ["index.html"], "logic": ["main.js"] },
+  "config": { "server": { "allowedOrigins": ["https://app.example"] } },
+  "server": {
+    "entry": "server/main.logic",
+    "requires": { "apiVersion": 1, "capabilities": ["sql", "time"] },
+    "database": { "kind": "private-sqlite", "migrations": ["server/migrations/001.sql", "server/migrations/002.sql"] },
+    "routes": [
+      { "path": "/api/items", "method": "GET", "handler": "listItems", "transaction": "read", "authorization": "anonymous" },
+      { "path": "/api/items", "method": "POST", "handler": "createItem", "transaction": "write", "authorization": "anonymous" },
+      { "path": "/api/items/done", "method": "POST", "handler": "setDone", "transaction": "write", "authorization": "anonymous" },
+      { "path": "/api/items/remove", "method": "POST", "handler": "removeItem", "transaction": "write", "authorization": "anonymous" }
+    ]
+  }
+}

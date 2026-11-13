@@ -22,7 +22,7 @@ const CARDS: Array<{
     icon: Boxes,
     eyebrow: 'Apps',
     title: 'Real software, built around your work',
-    body: 'Turn connected forms into branded staff apps, client portals and admin consoles — with roles, linked records and custom screens.',
+    body: 'Turn connected forms into branded staff apps, client portals and admin consoles — with roles, linked records and custom screens. Or host a web app you have already built, with a backend and database of its own.',
     wide: true,
     to: '/docs',
   },

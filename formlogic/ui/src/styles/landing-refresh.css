@@ -41,6 +41,9 @@
 .lv2 .fl-workspace__foot { border-top: 1px solid var(--lv2-line); color: var(--lv2-body); font-size: 12px; }
 .lv2 .fl-workspace__foot a { color: var(--lv2-label); display: inline-flex; align-items: center; gap: 8px; min-height: 44px; font-size: 13px; font-weight: 650; }
 .lv2 .fl-workspace__foot a:focus-visible { outline: 2px solid var(--lv2-label); outline-offset: 4px; border-radius: 3px; }
+/* The same frame around an app's own page: its captures leave the sidebar out, so they are another shape. */
+.lv2 .fl-hosted-app { margin-top: clamp(32px, 5vw, 56px); }
+.lv2 .fl-workspace__capture--app img { aspect-ratio: 1184 / 900; }
 @media (max-width: 640px) {
   .lv2 .lv2-nav__star { display: none; }
   .lv2 .lv2-nav__actions { gap: 6px; }
@@ -49,6 +52,7 @@
   .lv2 .lv2-hero__copy > p { font-size: 16px; }
   .lv2 .fl-workspace__bar, .lv2 .fl-workspace__foot { padding: 14px 18px; }
   .lv2 .fl-workspace__capture img { aspect-ratio: 390 / 1000; }
+  .lv2 .fl-workspace__capture--app img { aspect-ratio: 390 / 900; }
 }
 @media (max-width: 360px) { .lv2 .lv2-nav__cta { display: none; } }
 

@@ -1,0 +1,25 @@
+function listItems(req) {
+  return { status: 200, body: { items: softn.sql.query("SELECT id, title, done FROM items ORDER BY done, id LIMIT 200", []) } };
+}
+
+function createItem(req) {
+  let title = req.body.title;
+  if (typeof title != "string" || title.trim().length == 0 || title.length > 200) return { status: 422, body: { error: "Give a title of 1 to 200 characters" } };
+  let made = softn.sql.execute("INSERT INTO items(title, done, created_at) VALUES(?, 0, ?)", [title.trim(), softn.time.now()]);
+  return { status: 201, body: softn.sql.first("SELECT id, title, done FROM items WHERE id = ?", [made.lastInsertRowid]) };
+}
+
+function setDone(req) {
+  let id = req.body.id;
+  if (typeof id != "number") return { status: 422, body: { error: "Name the job by its id" } };
+  let changed = softn.sql.execute("UPDATE items SET done = ? WHERE id = ?", [req.body.done == 1 ? 1 : 0, id]);
+  if (changed.changes == 0) return { status: 404, body: { error: "No such job" } };
+  return { status: 200, body: { id: id } };
+}
+
+function removeItem(req) {
+  let id = req.body.id;
+  if (typeof id != "number") return { status: 422, body: { error: "Name the job by its id" } };
+  softn.sql.execute("DELETE FROM items WHERE id = ?", [id]);
+  return { status: 200, body: { id: id } };
+}

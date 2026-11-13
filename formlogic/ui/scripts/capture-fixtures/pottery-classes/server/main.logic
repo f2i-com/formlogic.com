@@ -1,0 +1,15 @@
+function listClasses(req) {
+  return { status: 200, body: { classes: softn.sql.query("SELECT c.id, c.title, c.starts, c.note, c.price, c.places - COALESCE((SELECT SUM(b.places) FROM bookings b WHERE b.class_id = c.id), 0) AS places_left FROM classes c ORDER BY c.id", []) } };
+}
+
+function bookPlace(req) {
+  let name = req.body.name;
+  let classId = req.body.classId;
+  if (typeof name != "string" || name.trim().length == 0 || name.length > 80) return { status: 422, body: { error: "Tell us your name (up to 80 characters)" } };
+  if (typeof classId != "number") return { status: 422, body: { error: "Choose a class" } };
+  let found = softn.sql.first("SELECT c.places - COALESCE((SELECT SUM(b.places) FROM bookings b WHERE b.class_id = c.id), 0) AS places_left FROM classes c WHERE c.id = ?", [classId]);
+  if (found == null) return { status: 404, body: { error: "That class is not on the timetable" } };
+  if (found.places_left < 1) return { status: 409, body: { error: "That class is full" } };
+  softn.sql.execute("INSERT INTO bookings(class_id, name) VALUES(?, ?)", [classId, name.trim()]);
+  return { status: 201, body: { booked: true } };
+}

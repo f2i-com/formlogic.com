@@ -1,7 +1,7 @@
 import { ArrowRight } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
 
-/** Real dashboard captures, generated with isolated sample data. See scripts/capture-dashboard-preview.mjs. */
+/** Real captures of Home, generated with isolated sample data. See scripts/capture-dashboard-preview.mjs. */
 export function WorkspacePreview() {
   const theme = useUIStore((state) => state.theme);
   const base = `${import.meta.env.BASE_URL}images/dashboard-demo`;
@@ -20,11 +20,11 @@ export function WorkspacePreview() {
           height={2000}
           loading="lazy"
           decoding="async"
-          alt="FormLogic dashboard with workspace navigation, a Client portal and Studio bookings app, form creation tools, response counts and recent activity. All data is fictional."
+          alt="FormLogic Home with workspace navigation and a list of three apps (a Client portal, Studio bookings and a hosted Pottery classes app) showing each one's address, status, who can use it and what it holds, above form creation tools, response counts and recent activity. All data is fictional."
         />
       </picture>
       <figcaption className="fl-workspace__foot">
-        <span>Actual dashboard screenshot with sample data.</span>
+        <span>Actual screenshot of Home, with sample data.</span>
         <a href="#live-demo">Try a working app <ArrowRight size={14} aria-hidden="true" /></a>
       </figcaption>
     </figure>

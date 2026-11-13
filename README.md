@@ -26,7 +26,7 @@
 <p align="center">
   <img src="docs/images/dashboard-desktop.jpg" alt="Actual FormLogic dashboard with fictional studio apps, form activity and recent responses" width="100%" />
 </p>
-<p align="center"><sub>Actual running interface, captured September 2026 with fictional studio data. See <a href="docs/images/README.md">screenshot details</a>.</sub></p>
+<p align="center"><sub>Actual running interface, captured November 2026 with fictional studio data. See <a href="docs/images/README.md">screenshot details</a>.</sub></p>
 
 ---
 
@@ -77,7 +77,7 @@ Bring an existing Softn project or start in FormLogic. Keep its interface, backe
 <table>
   <tr>
     <td width="68%" valign="top">
-      <img src="docs/images/native-records.jpg" alt="SQLite records in FormLogic with Add record, filtering, pagination and View controls" width="100%" />
+      <img src="docs/images/native-records.jpg" alt="SQLite records in FormLogic: the app's tables beside the rows of one, with search, filters, Add row and pagination" width="100%" />
       <p><strong>Manage the data where you build the app.</strong> List previews stay compact; editing loads full text. Database defaults, NULL values and constraints are respected, and stale changes are rejected.</p>
     </td>
     <td width="32%" valign="top">
@@ -175,6 +175,7 @@ Compose KPI, bar, line, area, pie, donut, table, record-list and activity widget
 
 - **Softn clients** combine `.ui` interfaces and `.logic` behavior in an editable app project.
 - **Native app hosting** runs private `.logic` route handlers in ZIPP with declared SQLite migrations.
+- **JavaScript apps** host a web app you have already built: upload the zip of a React, Vue, Svelte, Angular or plain HTML and JavaScript build, and it runs as an app of its own with the same private backend and SQLite database. [How they are hosted, and their limits](docs/JAVASCRIPT_APPS.md).
 - **Hosted backend actions** provide an alternative named-action format with permission-checked, transactional SQLite record operations.
 - **Sandboxed app logic** runs lifecycle hooks and returns permission-checked effects.
 - **Custom screens** run as sandboxed HTML/CSS/JavaScript behind an iframe and postMessage SDK.

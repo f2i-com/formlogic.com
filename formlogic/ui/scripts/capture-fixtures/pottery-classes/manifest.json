@@ -1,0 +1,14 @@
+{
+  "name": "Pottery classes",
+  "version": "1.0.0",
+  "site": { "entry": "index.html" },
+  "server": {
+    "entry": "server/main.logic",
+    "requires": { "apiVersion": 1, "capabilities": ["sql"] },
+    "database": { "kind": "private-sqlite", "migrations": ["server/migrations/001.sql"] },
+    "routes": [
+      { "path": "/api/classes", "method": "GET", "handler": "listClasses", "transaction": "read", "authorization": "anonymous" },
+      { "path": "/api/bookings", "method": "POST", "handler": "bookPlace", "transaction": "write", "authorization": "anonymous" }
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+:root { color-scheme: light; --clay: #b4532a; --ink: #2b2420; --muted: #75685f; --line: #eadfd4; --paper: #fbf7f2; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.top, main, footer { max-width: 760px; margin: 0 auto; padding: 0 20px; }
+.top { display: flex; align-items: center; gap: 14px; padding-top: 28px; padding-bottom: 20px; }
+.top img { flex: none; border-radius: 12px; }
+h1 { margin: 0; font-size: 1.6rem; line-height: 1.2; letter-spacing: -0.01em; }
+.top p { margin: 2px 0 0; color: var(--muted); }
+#status { color: var(--muted); }
+.classes { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.class { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 16px 18px; background: #fff; border: 1px solid var(--line); border-radius: 14px; }
+.about { flex: 1 1 280px; min-width: 0; }
+.about h2 { margin: 0; font-size: 1.08rem; }
+.when { margin: 2px 0 0; font-weight: 600; color: var(--clay); }
+.note { margin: 2px 0 0; color: var(--muted); font-size: 0.94rem; }
+.side { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px 14px; margin-left: auto; }
+.price { font-size: 1.1rem; }
+.left { font-size: 0.88rem; color: #3f6b3a; background: #edf5ea; border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
+.left.few { color: #8a5a10; background: #fbf0d9; }
+.left.full { color: #7a6f68; background: #efe9e3; }
+button { font: inherit; font-weight: 600; white-space: nowrap; min-height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--clay); background: var(--clay); color: #fff; cursor: pointer; }
+button:hover { background: #9c4622; }
+button:disabled { background: #efe9e3; border-color: #e2d8ce; color: #8d8179; cursor: default; }
+button:focus-visible, input:focus-visible { outline: 3px solid #f0b99f; outline-offset: 2px; }
+.book { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.book label { font-weight: 600; }
+.book input { flex: 1 1 180px; min-width: 0; min-height: 44px; padding: 0 12px; font: inherit; border: 1px solid #d8cabd; border-radius: 10px; background: #fff; color: var(--ink); }
+.done { flex: 1 1 100%; margin: 0; padding-top: 12px; border-top: 1px dashed var(--line); color: #3f6b3a; font-weight: 600; }
+.error { flex: 1 1 100%; margin: 0; color: #a32a1c; }
+footer { padding-top: 18px; padding-bottom: 32px; color: var(--muted); font-size: 0.9rem; }

@@ -112,12 +112,18 @@ function CodeBlock({ title, children }: { title?: string; children: React.ReactN
 
 // Bump when the /screenshots images are replaced: Apache serves them without Cache-Control,
 // so browsers heuristically cache by Last-Modified and would keep showing the old captures.
-const SCREENSHOT_VERSION = '2026-09-13';
+const SCREENSHOT_VERSION = '2026-11-13';
 const SCREENSHOT_SIZES: Record<string, [number, number]> = {
   '/images/dashboard-demo/desktop-dark.jpg': [2880, 2000],
+  '/images/hosted-app/desktop-dark.jpg': [1776, 1350],
   '/images/docs/connect-ai.jpg': [2880, 2000],
   '/images/docs/aokie-front-desk.png': [1440, 1000],
   '/images/docs/starter-apps.jpg': [2160, 1560],
+  '/images/docs/app-studio-steps.jpg': [1136, 423],
+  '/images/docs/softn-app-page.jpg': [1184, 900],
+  '/images/docs/softn-source-editor.jpg': [1376, 756],
+  '/images/docs/javascript-app-create.jpg': [1184, 900],
+  '/images/docs/javascript-app-visitor.jpg': [780, 1440],
   '/images/docs/native-backend.jpg': [896, 990],
   '/images/docs/native-screens.jpg': [896, 990],
   '/images/docs/native-records.jpg': [1024, 970],
@@ -206,6 +212,15 @@ export function Docs() {
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [mobileNav]);
+
+  // A link from another page that names a section (/docs#javascript-apps) arrives before this
+  // page has drawn it, so the browser's own jump to it finds nothing. Made here, once it is drawn,
+  // and at once: the page's smooth scrolling is for moving within it, not for arriving.
+  useEffect(() => {
+    let id = '';
+    try { id = decodeURIComponent(window.location.hash.slice(1)); } catch { /* Not an address this page gave out. */ }
+    if (id) document.getElementById(id)?.scrollIntoView({ behavior: 'instant' });
+  }, []);
 
   // Keep the preceding section active through long content and gaps between headings.
   useEffect(() => {
@@ -309,13 +324,13 @@ export function Docs() {
               <H2 id="quick-start" icon={Rocket}>Quick start</H2>
               <P>Start with one form and a test response. No AI connection is needed for the visual builder.</P>
               <Steps items={[
-                <><strong className="text-gray-900 dark:text-white">Create an account</strong> on the <Link to="/signup" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">sign-up page</Link>, then sign in. You land on your dashboard.</>,
-                <><strong className="text-gray-900 dark:text-white">Choose “New form”</strong> and start blank or from a template. To generate one with AI, <a href="#connect-ai" className="underline">connect your AI</a> first; available generation tools depend on that connection.</>,
+                <><strong className="text-gray-900 dark:text-white">Create an account</strong> on the <Link to="/signup" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">sign-up page</Link>, then sign in. You land on Home.</>,
+                <><strong className="text-gray-900 dark:text-white">Choose “Create a form”</strong> and start blank or from a template. To generate one with AI, <a href="#connect-ai" className="underline">connect your AI</a> first; available generation tools depend on that connection.</>,
                 <><strong className="text-gray-900 dark:text-white">Add fields</strong> from the palette and arrange them in the builder.</>,
                 <><strong className="text-gray-900 dark:text-white">Save the form to your account and Publish</strong>, then share its public link or embed it. Browser-local forms stay on this device.</>,
                 <><strong className="text-gray-900 dark:text-white">Submit a test response</strong>, check it under <C>Responses</C>, then add the form to an app when you want a dashboard or member access.</>,
               ]} />
-              <Figure src="/images/dashboard-demo/desktop-dark.jpg" alt="Current FormLogic dashboard showing fictional studio apps and activity" caption="The current dashboard, shown with fictional studio data." />
+              <Figure src="/images/dashboard-demo/desktop-dark.jpg" alt="FormLogic Home showing three fictional studio apps in a list, the forms and their recent activity" caption="Home, shown with fictional studio data." />
             </section>
 
             <section className="mb-14">
@@ -548,6 +563,7 @@ export function Docs() {
                 <>Invite <strong className="text-gray-900 dark:text-white">members</strong> by email and assign roles. They sign in to the app's runtime — a clean data-table interface scoped to what they're allowed to see.</>,
                 <>Use <strong className="text-gray-900 dark:text-white">linked records</strong> to relate responses across forms (e.g. an interview linked to a candidate).</>,
               ]} />
+              <Figure src="/images/docs/app-studio-steps.jpg" alt="App Studio’s Overview: Build your app in five steps, from Add your forms to Publish, each with what the app has so far and a way in" caption="App Studio’s Overview lists the five steps, each with what the app already has. Fictional Service desk app." />
 
               <h3 className="scroll-mt-24 text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-8 mb-3">No-code dashboards</h3>
               <P>Use a widget dashboard as an app home or form section. Add KPIs, charts, tables and recent-record lists backed by your forms. Click <C>Edit dashboard</C> to rearrange, resize or configure widgets. For an editable app interface that opens the same tools, use <a href="#hosted-apps" className="underline">Create connected dashboard</a>.</P>
@@ -564,14 +580,28 @@ export function Docs() {
               <H2 id="hosted-apps" icon={Code2}>Host an editable app</H2>
               <P>Softn powers portable interfaces made from <C>.ui</C> screens and <C>.logic</C> code. FormLogic can host the interface alongside private backend actions and a separate SQLite database. The interface stays editable and downloadable.</P>
               <h3 className="text-lg font-semibold mt-6 mb-3">Host a SoftN app</h3>
-              <P>A SoftN app is a website or web app of its own: its pages, a private backend and its own database, hosted by FormLogic with no forms needed. Its owner sees it running, changes it and manages its data in one place: the app&apos;s workspace.</P>
+              <P>A SoftN app is a website or web app of its own: its pages, a private backend and its own database, hosted by FormLogic with no forms needed. Its owner sees it running, changes it and manages its data in one place: the app&apos;s own page, with the sections <C>Overview</C>, <C>Data</C>, <C>Members</C>, <C>Edit</C>, <C>Automations</C>, <C>Domains</C> and <C>Settings</C>.</P>
               <Steps items={[
-                <>Choose <C>Create app → SoftN app</C>. Describe it and AI Studio builds it while you watch, start from a working app in the Visual Builder (no AI needed), or upload a <C>.softn</C> file you already have. Dropping a <C>.softn</C> file on <C>Apps → Import</C> works too.</>,
-                <>In the workspace, <C>App</C> shows it running at desktop or phone width. Describe a change for AI Studio, edit it visually, upload a new version or download it. Until you publish, only you can open it, and each change you keep is installed at once.</>,
+                <>Choose <C>Create app → Website or web app</C>. Describe it and AI Studio builds it while you watch, or start from a working app and edit it visually (no AI needed). For a <C>.softn</C> file you already have, choose <C>Bring an app you have</C>; dropping the file on <C>Apps → Import</C> works too.</>,
+                <><C>Edit</C> shows the app running at desktop or phone width. Describe a change for AI Studio, edit it visually, edit the source code, upload a new version or download it. Until you publish, only you can open it, and each change you keep is installed at once.</>,
                 <><C>Data</C> lists every table the app keeps: add, edit and delete records, and the app sees the changes at once. To add a table or a column, ask AI Studio.</>,
                 <><C>Settings</C> chooses who can use it (only people you invite, or anyone with the link) and whether it opens at the app&apos;s address. Then <C>Publish</C>. Once it is live, changes wait as a draft until you choose <C>Publish changes</C>.</>,
               ]} />
+              <Figure src="/images/docs/softn-app-page.jpg" alt="A SoftN app’s own page on its Edit section: a list of studio jobs running in the preview, beside Describe a change for AI Studio, Edit visually, Edit the source code and the app’s files" caption="A SoftN app’s own page, on Edit: the app running beside the ways to change it. Fictional Studio jobs app." />
+              <P><C>Edit the source code</C> opens every file of the app in one editor: its pages, logic, styles, backend and database changes in a list, grouped by what they are for, beside the file that is open. Changes are kept as a draft until you choose <C>Save changes</C>.</P>
+              <Figure src="/images/docs/softn-source-editor.jpg" alt="Source code: the app’s files listed under Pages, Logic, Styles, Backend, Database changes and Project, with index.html open in the editor" caption="Source code: every file of the app beside the editor." />
               <Tip>Ask the chat to build one: &ldquo;Make me a recipe box with favourites and a shopping list.&rdquo; It creates the app and takes you to AI Studio, which builds it from your words.</Tip>
+              <h3 id="javascript-apps" tabIndex={-1} className="scroll-mt-24 text-lg font-semibold mt-6 mb-3 outline-none">Host a web app you have already built</h3>
+              <P>A JavaScript app is a web app built elsewhere: the <C>dist</C> or <C>build</C> folder of a React, Vue, Svelte or Angular project, or plain HTML and JavaScript. Upload it as a zip and it is hosted as an app of its own, as it was built. It is listed, published, shared and given members like a SoftN app, and it can have the same private backend and SQLite database.</P>
+              <Steps items={[
+                <>Choose <C>Create app → JavaScript app</C>. Name the app and choose the zip of the folder your build made, the one with <C>index.html</C> in it.</>,
+                <>The app opens on its own page, running. <C>Upload a new build (.zip)</C> replaces its files and keeps its backend and records; <C>Edit the backend code</C> opens its API routes, server code and database changes in the editor.</>,
+                <>In <C>Settings</C>, choose who can use it, then <C>Publish</C>. Visitors open it at <C>/app/&lt;its address&gt;</C>, or at a domain you connect.</>,
+              ]} />
+              <Figure src="/images/docs/javascript-app-create.jpg" alt="Create app with JavaScript app chosen, the app named Pottery classes and the zip of its build chosen" caption="Create app with JavaScript app chosen. The zip is read before anything is created." />
+              <Figure src="/images/hosted-app/desktop-dark.jpg" alt="The app’s own page: a pottery studio’s class timetable running in the preview, beside Upload a new build, Edit the backend code and how the app is hosted" caption="The uploaded app running on its page. The places left come from the app’s own database; the classes are fictional." />
+              <div className="mx-auto max-w-sm"><Figure src="/images/docs/javascript-app-visitor.jpg" alt="The same class timetable on a phone, as a visitor who is not signed in sees it at the app’s address" caption="Published, the app as a visitor’s phone shows it." /></div>
+              <P>In the app, <C>fetch(&apos;/api/…&apos;)</C> reaches its own backend, files named from the root (<C>/assets/app.js</C>) are its own, and <C>localStorage</C> is kept for each visitor. It runs in a sandbox with no access to FormLogic or to other sites, so an outside API, font service or CDN script is not reachable: keep what the app needs in the build. A router that goes by the path works in Chrome, Edge and Firefox; Safari keeps such an app on its first screen, where hash routing works. Service workers and IndexedDB are not available. <GuideLink file="docs/JAVASCRIPT_APPS.md">How a JavaScript app is hosted, and its limits</GuideLink>.</P>
               <h3 className="text-lg font-semibold mt-6 mb-3">Use your existing forms and records</h3>
               <Steps items={[
                 <>Open your app&apos;s <C>App Studio → Screens</C> and choose <C>Create connected dashboard</C>.</>,
@@ -622,12 +652,12 @@ function _init() {
               <H2 id="native-records" icon={Inbox}>Manage app database records</H2>
               <P>In <C>App Studio → Data &amp; forms</C>, open a native table, or choose <C>Records → Database records</C>. The owner can manage the same SQLite database used by the hosted app. This is separate from FormLogic form responses.</P>
               <Steps items={[
-                <>Choose a table. Browse 50 records per page, filter the current page, and open <C>View</C> (or <C>View details</C> on mobile).</>,
-                <>Select <C>Add record</C> to create an entry. Enter required fields and leave automatic IDs and defaults to the database. <C>No value (NULL)</C> is different from empty text.</>,
-                <>Choose <C>View → Edit record</C> to load full field values and save changes. Primary keys remain unchanged. If the record changed while you were editing, close the editor and refresh before trying again.</>,
+                <>Choose a table. Browse its rows 25 to a page (or 50, 100 or 250), search every column or add a filter, and open a row by its key.</>,
+                <>Select <C>Add row</C> to create an entry. Enter required fields and leave automatic IDs and defaults to the database. <C>No value (NULL)</C> is different from empty text.</>,
+                <>Open a row and choose <C>Edit</C> to load full field values and save changes, or double-click a cell to change one value in place. Primary keys remain unchanged. If the record changed while you were editing, close the editor and refresh before trying again.</>,
                 <>Inside the editor, choose <C>Delete record</C> and review the confirmation. Database relationships may also delete dependent records.</>,
               ]} />
-              <Figure src="/images/docs/native-records.jpg" alt="Database Records with a table selector, Add record, page filtering and three fictional service requests" caption="Browse and maintain the app’s real SQLite records from FormLogic." />
+              <Figure src="/images/docs/native-records.jpg" alt="The Records tab: the app’s tables beside the rows of one, with search, Add filter, Add row and three fictional service requests" caption="Browse and maintain the app’s real SQLite records from FormLogic." />
               <Tip>Owner edits save directly to SQLite and queue connected record automations. Database constraints apply, but these controls do not call the app’s backend validation functions. Use the app itself when those business rules are required.</Tip>
               <P>List cells preview up to 400 characters. Editing loads full text up to 100 KB per field. Secret columns stay hidden; binary and generated fields remain read-only. Existing records need a complete visible primary key for editing or deletion. If creation requires private or binary fields, create the record through the app.</P>
               <div className="mx-auto max-w-sm"><Figure src="/images/docs/native-record-editor-mobile.jpg" alt="Mobile record editor with a read-only ID, editable request title, Save record and Delete record controls" caption="The same record editor at phone width. All pictured requests are fictional." /></div>

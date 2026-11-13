@@ -1,0 +1,28 @@
+<script src="main.js"></script>
+<link rel="stylesheet" href="styles.css">
+
+<App>
+  <Container size="sm">
+    <Stack direction="vertical" gap="lg" padding="xl">
+      <Heading level={1}>Studio jobs</Heading>
+      <Text variant="muted">{status}</Text>
+
+      <Stack direction="horizontal" gap="sm">
+        <Input :bind={draft} placeholder="What needs doing?" @keydown.enter={() => add()} />
+        <Button variant="primary" @click={() => add()}>Add</Button>
+      </Stack>
+
+      #each (item in items) key={item.id}
+        <Card className="task">
+          <Stack direction="horizontal" gap="md" align="center">
+            <Checkbox checked={item.done === 1} @change={() => toggle(item.id, item.done)} />
+            <Text style={{ flex: 1 }} class:is-done={item.done === 1}>{item.title}</Text>
+            <Button variant="ghost" size="sm" @click={() => remove(item.id)}>Delete</Button>
+          </Stack>
+        </Card>
+      #empty
+        <EmptyState title="Nothing yet" description="Add the first job above." />
+      #end
+    </Stack>
+  </Container>
+</App>
