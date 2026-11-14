@@ -5,153 +5,225 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use PDO;
-use RuntimeException;
 
 /**
- * Phone sign-in codes by text for a SoftN app, through the app owner's Twilio Verify service: the
- * "twilio-verify" provider an app names in its manifest (`config.app.verificationProvider`), as
- * Coffee.Dating does. SoftN leaves delivery to the host's operator (its PHP host's
- * operator/verify.mjs did this for Coffee.Dating); FormLogic is that operator here.
+ * Phone sign-in codes for a SoftN app, sent and checked by the plugin that provides them
+ * (docs/PLUGINS.md, "Sign-in codes"). Nothing here knows any provider.
  *
- * The owner gives their Twilio account SID, Verify service SID and auth token (the app's Settings).
- * They are kept in the app's private folder, the token sealed with the site's data key where one is
- * set, and none of it ever reaches the app's code, its page, a log or an answer: the app's backend
- * learns only what the provider decided, in its request context.
+ * An app names a provider for its codes in its manifest (`config.app.verificationProvider`;
+ * Coffee.Dating names "twilio-verify"). SoftN leaves delivery to the host's operator, and FormLogic
+ * is that operator here: the enabled plugin that sends codes for that name (`formlogicPlugin.signInCodes`,
+ * PluginService::signInCodesProvider) is asked, at the two routes of its backend the site calls, to
+ * send each code and to check each one a person types. It reaches its provider only through the
+ * requests the site makes for it (PluginNetwork), with what the app's owner set for it
+ * (PluginAppSettings): their secrets filled in by the site, never seen by its code, the app's code,
+ * a page, a log or an answer. The app's backend learns only what the plugin decided.
  *
  * The contract, the one the app's backend and SoftN's operator adapter share:
  *  - POST /api/auth/send-code: the backend is asked first, with `req.context.verificationProvider`
  *    set. It applies its own limits (per phone, per address, overall) and, if it admits the request,
  *    answers 202 with `challenge_id`, having stored the challenge in `otp_challenges` as `queued`
- *    with `code_hash` `verify:pending`. Only then is a text sent (so the app's limits stand between
- *    a caller and the owner's SMS bill), and the challenge becomes `ready` with the provider's id.
+ *    with `code_hash` `verify:pending`. Only then is a code sent (so the app's limits stand between
+ *    a caller and the owner's bill), and the challenge becomes `ready` with the provider's id for it.
  *  - POST /api/auth/verify: the attempt is counted on the challenge before the provider is asked
  *    (five at most), and the backend is told the provider's yes in `req.context.verification`
- *    (`challengeId`, `phone`, `sid`, `attempt`), which it checks against the challenge it stored.
+ *    (`challengeId`, `phone`, `sid`, `attempt`), which it checks against the challenge it stored. An
+ *    attempt no code was checked on (unavailable) is given back.
+ *
+ * The plugin answers each of its two routes, after any requests it asks the site to make, with
+ * `{result}`: sending, `sent` (with `id`, the provider's id for the code, held to ID_PATTERN) or
+ * `busy`; checking, `approved`, `wrong`, `expired` or `busy`. Anything else, word for word, is
+ * `unavailable`.
  *
  * An app in development (its host configuration says so: never set by FormLogic) shows its own codes
  * and is passed straight through, as is every other request.
  */
 final class NativePhoneVerification
 {
-    public const PROVIDER = 'twilio-verify';
     public const PATHS = ['/api/auth/send-code', '/api/auth/verify'];
-    private const SETTINGS_FILE = 'verify.json';
-    private const SEAL_CONTEXT = 'native-app-verify:';
-    private const ENDPOINT = 'https://verify.twilio.com/v2/Services/';
-    private const ACCOUNT = '/^AC[0-9a-fA-F]{32}$/D';
-    private const SERVICE = '/^VA[0-9a-fA-F]{32}$/D';
-    private const VERIFICATION = '/^VE[0-9a-fA-F]{32}$/D';
+    /** A provider's id for a code it sent, as a challenge keeps it (`verify:{id}`). Never "pending", which marks one not sent yet. */
+    public const ID_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/D';
+
+    /** @param ?\Closure(): int $clock seconds, for tests */
+    public function __construct(
+        private NativeAppService $native,
+        private PluginService $plugins,
+        private PluginAppSettings $settings,
+        private PluginNetwork $network,
+        private ?LegacyPhoneVerification $legacy = null,
+        private ?\Closure $clock = null,
+    ) {
+    }
+
+    // ---------------------------------------------------------------- the owner's settings
+
+    /** The provider the installed app names for its sign-in codes, or null. */
+    public function provider(string $appId): ?string
+    {
+        try { $manifest = $this->native->installedManifest($appId); } catch (\Throwable) { return null; }
+        $name = $manifest['config']['app']['verificationProvider'] ?? null;
+        return is_string($name) && trim($name) !== '' ? trim($name) : null;
+    }
 
     /**
-     * @param ?\Closure(string $url, array<string,string> $fields, string $accountSid, string $authToken): array{status: int, body: string} $transport
-     *   How a request reaches the provider: tests give a fake one. Production has none, and uses curl.
-     * @param ?\Closure(): int $clock seconds, for tests
+     * What the owner sees: the provider the app names, the plugin that sends its codes on this site
+     * (or none), the settings that plugin asks of them (never a secret, only whether one is kept, and
+     * where it may be sent), and whether everything it needs is there. With no plugin for them,
+     * whether details are kept all the same (`keptWithoutPlugin`), for the owner to forget.
      */
-    public function __construct(private NativeAppService $native, private ?\Closure $transport = null, private ?\Closure $clock = null) {}
-
-    // ---------------------------------------------------------------- settings (the owner's)
-
-    /** What the owner sees: whether it is set up, and the two ids, never the token. */
     public function describe(string $appId): array
     {
-        $settings = $this->settings($appId);
+        $this->legacy?->upgrade($appId);
+        $name = $this->provider($appId);
+        $plugin = $name === null ? null : $this->plugins->signInCodesProvider($name, false);
+        if ($plugin === null) {
+            // For a plugin removed since, one the app named before, or from before codes were a plugin's.
+            $kept = $this->settings->keptAny($appId) || ($this->legacy?->kept($appId) ?? false);
+            return ['provider' => $name, 'asked' => $name !== null, 'plugin' => null, 'fields' => [], 'values' => (object) [], 'kept' => (object) [], 'imports' => (object) [], 'configured' => false, 'keptWithoutPlugin' => $kept];
+        }
+        $schema = $plugin['granted']['appSettings'];
+        $shown = $this->settings->describe($appId, $plugin['manifestId'], $schema);
+        $imports = [];
+        $fields = [];
+        foreach ($schema as $field) {
+            if (is_string($field['importFrom'] ?? null)) {
+                $imports[$field['key']] = $field['importFrom'];
+            }
+            // What a form needs to show it; its checks are the server's.
+            unset($field['pattern'], $field['message'], $field['missing'], $field['importFrom']);
+            $fields[] = $field;
+        }
         return [
-            'provider' => self::PROVIDER,
-            'configured' => $settings !== null,
-            'accountSid' => $settings['accountSid'] ?? null,
-            'serviceSid' => $settings['serviceSid'] ?? null,
-            'asked' => $this->asked($appId),
+            'provider' => $name,
+            'asked' => true,
+            'plugin' => ['id' => $plugin['manifestId'], 'name' => $plugin['name'], 'label' => $plugin['granted']['signInCodes']['label'], 'enabled' => $plugin['enabled']],
+            'fields' => $fields,
+            'values' => (object) $shown['values'],
+            'kept' => (object) $shown['kept'],
+            'imports' => (object) $imports,
+            'configured' => $shown['configured'],
+            'keptWithoutPlugin' => false,
         ];
     }
 
-    /** The details are ones Twilio gives: refused here as save() would refuse them. An empty token is checked by save(). */
-    public static function assertDetails(mixed $accountSid, mixed $serviceSid, mixed $authToken): void
+    /**
+     * Keep the owner's settings for the plugin that sends the app's codes (PluginAppSettings::save),
+     * as an import's do too. What the app kept from before codes were a plugin's is moved first,
+     * never after: it never overwrites what its owner saves now.
+     */
+    public function save(string $appId, mixed $values): array
     {
-        $accountSid = is_string($accountSid) ? trim($accountSid) : '';
-        $serviceSid = is_string($serviceSid) ? trim($serviceSid) : '';
-        $authToken = is_string($authToken) ? trim($authToken) : '';
-        if (!preg_match(self::ACCOUNT, $accountSid)) throw new \InvalidArgumentException('Enter the Twilio account SID: AC followed by 32 letters and digits, from the Twilio console.');
-        if (!preg_match(self::SERVICE, $serviceSid)) throw new \InvalidArgumentException('Enter the Verify service SID: VA followed by 32 letters and digits, from Twilio Verify → Services.');
-        if ($authToken !== '' && (strlen($authToken) > 128 || !preg_match('/^[\x21-\x7e]+$/D', $authToken))) throw new \InvalidArgumentException('That auth token is not one Twilio gives.');
+        $this->legacy?->upgrade($appId);
+        $plugin = $this->pluginFor($appId);
+        $this->settings->save($appId, $plugin['manifestId'], $plugin['granted']['appSettings'], $values);
+        return $this->describe($appId);
+    }
+
+    /** Whether save() would take $values, keeping nothing: throws as it would. */
+    public function check(string $appId, mixed $values): void
+    {
+        $this->legacy?->upgrade($appId);
+        $plugin = $this->pluginFor($appId);
+        $this->settings->check($appId, $plugin['manifestId'], $plugin['granted']['appSettings'], $values);
     }
 
     /**
-     * Keep the owner's Twilio details for the app. An empty token keeps the one already kept: the
-     * owner never sees it again, so changing an id must not ask for it.
+     * The owner turns the codes off, or forgets what is kept: the settings of the plugin that sends
+     * the app's codes go; where no plugin does, every plugin's settings the app keeps go. What it
+     * kept from before codes were a plugin's goes in either case.
      */
-    public function save(string $appId, mixed $accountSid, mixed $serviceSid, mixed $authToken): array
-    {
-        self::assertDetails($accountSid, $serviceSid, $authToken);
-        $accountSid = trim((string) $accountSid);
-        $serviceSid = trim((string) $serviceSid);
-        $authToken = is_string($authToken) ? trim($authToken) : '';
-        if ($authToken === '') {
-            $kept = $this->settings($appId);
-            if ($kept === null) throw new \InvalidArgumentException('Enter the Twilio auth token.');
-            $authToken = $kept['authToken'];
-        }
-        $encryption = \FormLogic\Support\DataEncryption::fromEnvironment();
-        $stored = $encryption->enabled()
-            ? ['authToken' => $encryption->seal($authToken, self::SEAL_CONTEXT . $appId), 'sealed' => true]
-            : ['authToken' => $authToken, 'sealed' => false];
-        $this->native->writePrivateFile($appId, self::SETTINGS_FILE, json_encode(['provider' => self::PROVIDER, 'accountSid' => $accountSid, 'serviceSid' => $serviceSid] + $stored, JSON_THROW_ON_ERROR));
-        return $this->describe($appId);
-    }
-
     public function clear(string $appId): array
     {
-        $this->native->removePrivateFile($appId, self::SETTINGS_FILE);
+        $this->legacy?->forget($appId);
+        $name = $this->provider($appId);
+        $plugin = $name === null ? null : $this->plugins->signInCodesProvider($name, false);
+        if ($plugin !== null) {
+            $this->settings->clear($appId, $plugin['manifestId']);
+        } else {
+            $this->settings->forgetAll($appId);
+        }
         return $this->describe($appId);
     }
 
-    /** @return array{accountSid: string, serviceSid: string, authToken: string}|null */
-    private function settings(string $appId): ?array
+    /**
+     * What an app's earlier host kept for its sign-in codes, in the configuration an import brings
+     * (that host's private/config.json): each setting the plugin sending the app's codes says such a
+     * host keeps (`importFrom`), when every one it names is there. Null otherwise.
+     */
+    public function heldIn(string $appId, array $config): ?array
     {
-        $text = $this->native->readPrivateFile($appId, self::SETTINGS_FILE);
-        if ($text === null) return null;
-        $kept = json_decode($text, true);
-        if (!is_array($kept) || ($kept['provider'] ?? null) !== self::PROVIDER || !is_string($kept['accountSid'] ?? null) || !is_string($kept['serviceSid'] ?? null) || !is_string($kept['authToken'] ?? null)) return null;
-        $token = $kept['authToken'];
-        if (($kept['sealed'] ?? false) === true) {
-            try { $token = \FormLogic\Support\DataEncryption::fromEnvironment()->open($token, self::SEAL_CONTEXT . $appId); }
-            catch (\Throwable) { return null; }
+        $name = $this->provider($appId);
+        $plugin = $name === null ? null : $this->plugins->signInCodesProvider($name, false);
+        $held = [];
+        foreach ($plugin['granted']['appSettings'] ?? [] as $field) {
+            if (!is_string($field['importFrom'] ?? null)) {
+                continue;
+            }
+            $value = $config;
+            foreach (explode('.', $field['importFrom']) as $step) {
+                $value = is_array($value) ? ($value[$step] ?? null) : null;
+            }
+            if (!is_string($value) || trim($value) === '') {
+                return null;
+            }
+            $held[$field['key']] = trim($value);
         }
-        return ['accountSid' => $kept['accountSid'], 'serviceSid' => $kept['serviceSid'], 'authToken' => $token];
+        return $held === [] ? null : $held;
     }
 
-    /** Whether the installed app names this provider for its sign-in codes. */
-    public function asked(string $appId): bool
+    private function pluginFor(string $appId): array
     {
-        try { $manifest = $this->native->installedManifest($appId); } catch (\Throwable) { return false; }
-        return ($manifest['config']['app']['verificationProvider'] ?? null) === self::PROVIDER;
+        $name = $this->provider($appId);
+        if ($name === null) {
+            throw new \InvalidArgumentException('This app asks for no sign-in codes.');
+        }
+        return $this->plugins->signInCodesProvider($name, false)
+            ?? throw new \InvalidArgumentException('No plugin on this site sends sign-in codes for "' . substr($name, 0, 64) . '". Ask the site\'s administrator (Admin → Platform → Plugins).');
     }
 
     // ---------------------------------------------------------------- requests (the app's visitors)
 
-    /** Whether this is a request for the provider to answer: its path, the app asking, and not in development. */
+    /** Whether this is a request for the provider to answer: its path, the app naming one, and not in development. */
     public function applies(string $appId, array $request): bool
     {
         return ($request['method'] ?? '') === 'POST' && in_array($request['path'] ?? '', self::PATHS, true)
-            && ($this->native->hostConfig($appId)['development'] ?? false) !== true && $this->asked($appId);
+            && ($this->native->hostConfig($appId)['development'] ?? false) !== true && $this->provider($appId) !== null;
     }
 
     /**
-     * Answer a sign-in request through the provider. $invoke runs the app's backend with the given
-     * context added to its own, and answers `['status' => int, 'body' => mixed]`.
+     * Answer a sign-in request through the plugin that sends the app's codes. $invoke runs the app's
+     * backend with the given context added to its own, and answers `['status' => int, 'body' => mixed]`.
      *
      * @param callable(array): array $invoke
      */
     public function handle(string $appId, array $request, callable $invoke): array
     {
-        $settings = $this->settings($appId);
-        // Not set up: refused before any challenge is admitted or a text is paid for.
-        if ($settings === null) return self::fail(503, 'Sign-in messaging is not configured yet.', 'verification_unavailable');
-        return ($request['path'] ?? '') === '/api/auth/send-code' ? $this->sendCode($appId, $settings, $invoke) : $this->verify($appId, $request, $settings, $invoke);
+        $this->legacy?->upgrade($appId);
+        $ready = $this->ready($appId);
+        // No plugin sends them, it is off, or the owner has not set it up: refused before any challenge
+        // is admitted or a code is paid for.
+        if ($ready === null) return self::fail(503, 'Sign-in messaging is not configured yet.', 'verification_unavailable');
+        return ($request['path'] ?? '') === '/api/auth/send-code' ? $this->sendCode($appId, $ready, $invoke) : $this->verify($appId, $request, $ready, $invoke);
     }
 
-    private function sendCode(string $appId, array $settings, callable $invoke): array
+    /** The provider the app names, the enabled plugin that sends its codes, and the owner's settings for it, all there; or null. */
+    private function ready(string $appId): ?array
     {
-        $result = $invoke(['verificationProvider' => self::PROVIDER]);
+        $name = $this->provider($appId);
+        $plugin = $name === null ? null : $this->plugins->signInCodesProvider($name);
+        if ($plugin === null || !is_array($plugin['granted']['signInCodes'] ?? null)) return null;
+        $schema = $plugin['granted']['appSettings'];
+        if (!$this->settings->configured($appId, $plugin['manifestId'], $schema)) return null;
+        return [
+            'name' => $name, 'plugin' => $plugin,
+            'values' => $this->settings->values($appId, $plugin['manifestId'], $schema),
+            'secrets' => $this->settings->secrets($appId, $plugin['manifestId'], $schema),
+        ];
+    }
+
+    private function sendCode(string $appId, array $ready, callable $invoke): array
+    {
+        $result = $invoke(['verificationProvider' => $ready['name']]);
         if ((int) ($result['status'] ?? 0) !== 202) return $result;
         $id = self::field($result['body'] ?? null, 'challenge_id');
         if (!is_string($id) || !preg_match('/^\w{32}$/D', $id)) return self::fail(503, 'We could not send a code. Please try again shortly.', 'verification_unavailable');
@@ -161,14 +233,14 @@ final class NativePhoneVerification
             return $statement->fetch(PDO::FETCH_ASSOC) ?: null;
         });
         if (!is_array($challenge) || !is_string($challenge['phone'] ?? null)) return self::fail(503, 'We could not send a code. Please try again shortly.', 'verification_unavailable');
-        // Only a challenge the backend has just admitted, waiting for its text: one it answered for
-        // again (an earlier one, or one already sent) is never texted a second time.
+        // Only a challenge the backend has just admitted, waiting for its code: one it answered for
+        // again (an earlier one, or one already sent) is never sent a second time.
         if (($challenge['state'] ?? null) !== 'queued' || ($challenge['code_hash'] ?? null) !== 'verify:pending') return self::fail(409, 'A newer code was requested. Use the latest sign-in request.', 'challenge_replaced');
-        try {
-            $sid = $this->start($settings, $challenge['phone']);
-        } catch (RuntimeException $error) {
+        $sent = $this->ask($appId, $ready, 'sendRoute', ['phone' => $challenge['phone'], 'challenge' => $id]);
+        $sid = $sent['id'] ?? null;
+        if (($sent['result'] ?? null) !== 'sent' || !is_string($sid) || $sid === 'pending' || !preg_match(self::ID_PATTERN, $sid)) {
             $this->native->withDatabase($appId, static fn(PDO $db) => $db->prepare("UPDATE otp_challenges SET state='failed' WHERE id=? AND state='queued'")->execute([$id]));
-            return self::fail($error->getCode() === 429 ? 429 : 503, 'We could not send a code. Please try again shortly.', 'verification_unavailable');
+            return self::fail(($sent['result'] ?? null) === 'busy' ? 429 : 503, 'We could not send a code. Please try again shortly.', 'verification_unavailable');
         }
         $now = $this->now();
         $updated = $this->native->withDatabase($appId, static function (PDO $db) use ($sid, $id, $now) {
@@ -180,7 +252,7 @@ final class NativePhoneVerification
         return $result;
     }
 
-    private function verify(string $appId, array $request, array $settings, callable $invoke): array
+    private function verify(string $appId, array $request, array $ready, callable $invoke): array
     {
         $body = $request['body'] ?? null;
         $id = self::field($body, 'challenge_id');
@@ -195,7 +267,9 @@ final class NativePhoneVerification
                 $statement = $db->prepare('SELECT * FROM otp_challenges WHERE id=?');
                 $statement->execute([$id]);
                 $challenge = $statement->fetch(PDO::FETCH_ASSOC) ?: null;
-                if (!$challenge || (int) $challenge['expires_at'] <= $now || in_array($challenge['state'], ['used', 'failed'], true) || !preg_match('/^verify:VE[0-9a-fA-F]{32}$/D', (string) $challenge['code_hash'])) { $db->exec('COMMIT'); return self::fail(401, 'Code expired or invalid. Request a new one.', 'invalid_code'); }
+                $hash = is_array($challenge) ? (string) $challenge['code_hash'] : '';
+                if (!$challenge || (int) $challenge['expires_at'] <= $now || in_array($challenge['state'], ['used', 'failed'], true)
+                    || !str_starts_with($hash, 'verify:') || $hash === 'verify:pending' || !preg_match(self::ID_PATTERN, substr($hash, 7))) { $db->exec('COMMIT'); return self::fail(401, 'Code expired or invalid. Request a new one.', 'invalid_code'); }
                 if ($challenge['state'] !== 'ready') { $db->exec('COMMIT'); return self::fail(409, 'Your code is still being sent. Try again shortly.', 'verification_pending'); }
                 if ((int) $challenge['attempts'] >= 5) { $db->exec('COMMIT'); return self::fail(429, 'Too many attempts. Request a new code.', 'rate_limited'); }
                 $db->prepare('UPDATE otp_challenges SET attempts=attempts+1 WHERE id=?')->execute([$id]);
@@ -209,77 +283,60 @@ final class NativePhoneVerification
         if (!isset($reserved['challenge'])) return $reserved;
         $challenge = $reserved['challenge'];
         $sid = substr((string) $challenge['code_hash'], 7);
+        $checked = $this->ask($appId, $ready, 'checkRoute', ['id' => $sid, 'phone' => (string) $challenge['phone'], 'code' => $code, 'challenge' => $id]);
+        // Word for word (match is ===): an answer of `true`, or of anything else, is no approval.
+        return match ($checked['result'] ?? null) {
+            // The phone is the challenge's: the backend compares it with the one it was sent, so a
+            // code for one number never signs in another.
+            'approved' => $invoke(['verification' => ['challengeId' => $id, 'phone' => (string) $challenge['phone'], 'sid' => $sid, 'attempt' => (int) $challenge['attempts'] + 1]]),
+            'wrong' => self::fail(401, 'That code is not correct.', 'wrong_code'),
+            'expired' => self::fail(401, 'Code expired or invalid. Request a new one.', 'invalid_code'),
+            'busy' => self::fail(429, 'We could not check your code. Please try again shortly.', 'verification_unavailable'),
+            default => $this->unchecked($appId, $id),
+        };
+    }
+
+    /**
+     * No code was checked (the plugin, its provider or the site's network could not, or the worker
+     * slots were all busy): the attempt counted for it is given back, in a transaction of its own and
+     * never below none, so an outage costs nobody their tries.
+     */
+    private function unchecked(string $appId, string $challengeId): array
+    {
         try {
-            if (!$this->check($settings, $sid, (string) $challenge['phone'], $code)) return self::fail(401, 'That code is not correct.', 'wrong_code');
-        } catch (RuntimeException $error) {
-            if ($error->getCode() === 404) return self::fail(401, 'Code expired or invalid. Request a new one.', 'invalid_code');
-            return self::fail($error->getCode() === 429 ? 429 : 503, 'We could not check your code. Please try again shortly.', 'verification_unavailable');
+            $this->native->withDatabase($appId, static function (PDO $db) use ($challengeId): void {
+                $db->exec('BEGIN IMMEDIATE');
+                try {
+                    $db->prepare('UPDATE otp_challenges SET attempts=attempts-1 WHERE id=? AND attempts>0')->execute([$challengeId]);
+                    $db->exec('COMMIT');
+                } catch (\Throwable $error) {
+                    $db->exec('ROLLBACK');
+                    throw $error;
+                }
+            });
+        } catch (\Throwable $error) {
+            error_log('Sign-in codes for app ' . $appId . ': an attempt was not given back: ' . get_class($error));
         }
-        // The phone is the challenge's: the backend compares it with the one it was sent, so a code
-        // for one number never signs in another.
-        return $invoke(['verification' => ['challengeId' => $id, 'phone' => (string) $challenge['phone'], 'sid' => $sid, 'attempt' => (int) $challenge['attempts'] + 1]]);
+        return self::fail(503, 'We could not check your code. Please try again shortly.', 'verification_unavailable');
     }
 
-    // ---------------------------------------------------------------- the provider
-
-    private function start(array $settings, string $phone): string
+    /**
+     * One step through the plugin (its send or check route), with the requests it asks the site to
+     * make: what it decided, or `unavailable` when it, its provider or the site's network failed.
+     */
+    private function ask(string $appId, array $ready, string $route, array $input): array
     {
-        $answer = $this->post($settings, 'Verifications', ['To' => $phone, 'Channel' => 'sms']);
-        if (($answer['status'] ?? null) !== 'pending' || !is_string($answer['sid'] ?? null) || !preg_match(self::VERIFICATION, $answer['sid']) || ($answer['service_sid'] ?? null) !== $settings['serviceSid'] || ($answer['to'] ?? null) !== $phone) {
-            throw new RuntimeException('Invalid verification response', 502);
+        $plugin = $ready['plugin'];
+        try {
+            return $this->network->call($plugin, $plugin['granted'], $plugin['granted']['signInCodes'][$route], $input + [
+                'appSettings' => (object) $ready['values'],
+                'settings' => (object) $plugin['settings'],
+            ], $ready['secrets']);
+        } catch (\RuntimeException | \JsonException $error) {
+            // Said in the log without anything the request carried: the reason is the site's own words.
+            error_log('Sign-in codes for app ' . $appId . ' through ' . $plugin['manifestId'] . ': ' . $error->getMessage());
+            return ['result' => 'unavailable'];
         }
-        return $answer['sid'];
-    }
-
-    private function check(array $settings, string $sid, string $phone, string $code): bool
-    {
-        $answer = $this->post($settings, 'VerificationCheck', ['VerificationSid' => $sid, 'Code' => $code]);
-        return ($answer['status'] ?? null) === 'approved' && ($answer['sid'] ?? null) === $sid && ($answer['service_sid'] ?? null) === $settings['serviceSid'] && ($answer['to'] ?? null) === $phone;
-    }
-
-    /** One call to the provider: its JSON answer, or a RuntimeException carrying its status. */
-    private function post(array $settings, string $endpoint, array $fields): array
-    {
-        $url = self::ENDPOINT . rawurlencode($settings['serviceSid']) . '/' . $endpoint;
-        $reply = $this->transport !== null
-            ? ($this->transport)($url, $fields, $settings['accountSid'], $settings['authToken'])
-            : self::curl($url, $fields, $settings['accountSid'], $settings['authToken']);
-        $status = (int) ($reply['status'] ?? 0);
-        if ($status < 200 || $status >= 300) throw new RuntimeException('Verification provider unavailable', $status);
-        $body = (string) ($reply['body'] ?? '');
-        if (strlen($body) > 32768) throw new RuntimeException('Provider response limit', 502);
-        $decoded = json_decode($body, true);
-        if (!is_array($decoded)) throw new RuntimeException('Invalid verification response', 502);
-        return $decoded;
-    }
-
-    /** @return array{status: int, body: string} */
-    private static function curl(string $url, array $fields, string $accountSid, string $authToken): array
-    {
-        if (!function_exists('curl_init')) throw new RuntimeException('This server cannot reach the verification provider (PHP curl is not enabled)', 503);
-        $handle = curl_init($url);
-        $body = '';
-        curl_setopt_array($handle, [
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => http_build_query($fields),
-            CURLOPT_USERPWD => $accountSid . ':' . $authToken,
-            CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded', 'Accept: application/json'],
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-            CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_TIMEOUT => 8,
-            // Bounded however the provider answers.
-            CURLOPT_WRITEFUNCTION => static function ($curl, string $chunk) use (&$body): int {
-                if (strlen($body) + strlen($chunk) > 32768) return 0;
-                $body .= $chunk;
-                return strlen($chunk);
-            },
-        ]);
-        $ok = curl_exec($handle);
-        $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
-        curl_close($handle);
-        if ($ok === false && $status === 0) throw new RuntimeException('Verification provider unreachable', 503);
-        return ['status' => $status, 'body' => $body];
     }
 
     // ---------------------------------------------------------------- small things

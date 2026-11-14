@@ -1,0 +1,96 @@
+{
+  "id": "formlogic.twilio-verify",
+  "name": "Sign-in codes by text (Twilio Verify)",
+  "version": "1.1.0",
+  "main": "ui/main.ui",
+  "server": {
+    "entry": "server/main.logic",
+    "requires": {
+      "apiVersion": 1,
+      "capabilities": []
+    },
+    "database": {
+      "kind": "private-sqlite",
+      "migrations": []
+    },
+    "routes": [
+      {
+        "path": "/api/site/codes/send",
+        "method": "POST",
+        "handler": "send",
+        "transaction": "read",
+        "authorization": "anonymous"
+      },
+      {
+        "path": "/api/site/codes/sent",
+        "method": "POST",
+        "handler": "sent",
+        "transaction": "read",
+        "authorization": "anonymous"
+      },
+      {
+        "path": "/api/site/codes/check",
+        "method": "POST",
+        "handler": "check",
+        "transaction": "read",
+        "authorization": "anonymous"
+      },
+      {
+        "path": "/api/site/codes/checked",
+        "method": "POST",
+        "handler": "checked",
+        "transaction": "read",
+        "authorization": "anonymous"
+      }
+    ]
+  },
+  "formlogicPlugin": {
+    "id": "formlogic.twilio-verify",
+    "name": "Sign-in codes by text (Twilio Verify)",
+    "description": "Sends the sign-in codes of apps that ask for Twilio Verify (\"twilio-verify\", as Coffee.Dating does) by text message, through each app owner's own Twilio account, and checks the codes people type. Each owner enters their Twilio details in their app's Settings. This site makes the requests to Twilio and fills in the owner's auth token itself: the plugin's code never sees it.",
+    "uses": [],
+    "settings": [],
+    "passes": [],
+    "network": ["verify.twilio.com"],
+    "signInCodes": {
+      "provider": "twilio-verify",
+      "label": "By text message, through Twilio Verify",
+      "sendRoute": "/api/site/codes/send",
+      "checkRoute": "/api/site/codes/check"
+    },
+    "appSettings": [
+      {
+        "key": "accountSid",
+        "label": "Account SID",
+        "type": "text",
+        "help": "From the Twilio console.",
+        "placeholder": "AC…",
+        "pattern": "AC[0-9a-fA-F]{32}",
+        "message": "Enter the Twilio account SID: AC followed by 32 letters and digits, from the Twilio console.",
+        "importFrom": "sms.TWILIO_SID"
+      },
+      {
+        "key": "serviceSid",
+        "label": "Verify service SID",
+        "type": "text",
+        "help": "From Twilio Verify → Services.",
+        "placeholder": "VA…",
+        "pattern": "VA[0-9a-fA-F]{32}",
+        "message": "Enter the Verify service SID: VA followed by 32 letters and digits, from Twilio Verify → Services.",
+        "importFrom": "sms.TWILIO_VERIFY_SERVICE_SID"
+      },
+      {
+        "key": "authToken",
+        "label": "Auth token",
+        "type": "secret",
+        "help": "From the Twilio console. Kept on this site, and never shown again.",
+        "placeholder": "From the Twilio console",
+        "pattern": "[\\x21-\\x7e]{1,128}",
+        "message": "That auth token is not one Twilio gives.",
+        "missing": "Enter the Twilio auth token.",
+        "importFrom": "sms.TWILIO_TOKEN",
+        "sendTo": ["verify.twilio.com"]
+      }
+    ]
+  }
+}

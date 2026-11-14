@@ -160,23 +160,54 @@ function clientEngineHeader(clientEngine?: string): { headers?: Record<string, s
 }
 
 /** Result of running an onSubmit script via the test endpoint (mirrors ScriptResult). */
-/** An app's phone sign-in codes through its owner's Twilio Verify (NativePhoneVerification): never the token. */
-export interface NativeVerification {
-  provider: 'twilio-verify';
-  configured: boolean;
-  accountSid: string | null;
-  serviceSid: string | null;
-  /** Whether the installed app names this provider for its sign-in codes. */
+/** A setting the plugin that sends an app's sign-in codes asks its owner for (its `appSettings`). */
+export interface AppSettingField {
+  key: string;
+  label: string;
+  help: string;
+  /** A `secret` is never sent back: only whether one is kept. */
+  type: 'text' | 'secret' | 'integer' | 'choice' | 'boolean';
+  optional?: boolean;
+  maxLength?: number;
+  placeholder?: string;
+  min?: number;
+  max?: number;
+  options?: Array<{ value: string; label: string }>;
+  default?: number | string | boolean;
+  /** A secret's: the only hosts the site sends it to. */
+  sendTo?: string[];
+}
+
+/**
+ * An app's phone sign-in codes, as its owner's panel shows them (NativePhoneVerification): the
+ * provider its manifest names, the plugin on this site that sends them (or none), and the settings
+ * that plugin asks the owner for. Never a secret's value.
+ */
+export interface AppSignInCodes {
+  provider: string | null;
+  /** Whether the installed app names a provider for its sign-in codes. */
   asked: boolean;
+  plugin: { id: string; name: string; label: string; enabled: boolean } | null;
+  fields: AppSettingField[];
+  values: Record<string, string | number | boolean>;
+  /** Which secrets are kept. */
+  kept: Record<string, boolean>;
+  /** Where an earlier SoftN host's private/config.json keeps a setting the plugin can take from it (dotted paths). */
+  imports: Record<string, string>;
+  /** Everything the plugin needs from the owner is there. */
+  configured: boolean;
+  /** No plugin here sends the app's codes, and details are kept all the same: the owner may forget them. */
+  keptWithoutPlugin?: boolean;
 }
 
 /** What bringing an app's data did: the version it is now, and what the key file held. */
 export interface NativeDataImport {
   project: import('./nativeHosting').NativeProject;
   keyImported: boolean;
+  /** The key file held what the plugin sending the app's sign-in codes takes from one. */
   verificationFound: boolean;
-  verification: NativeVerification | null;
-  /** Its Twilio details were found but not used, and why: the data came all the same. */
+  verification: AppSignInCodes | null;
+  /** Its sign-in code details were found but not used, and why: the data came all the same. */
   verificationProblem?: string | null;
 }
 
@@ -2393,21 +2424,22 @@ class ApiClient {
   async installNativeStarter(id: string): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native/starter`, { method: 'POST', body: '{}' });
   }
-  /** The owner's Twilio Verify details for the app's phone sign-in codes: the ids, never the token. */
-  async getNativeVerification(id: string): Promise<ApiResponse<NativeVerification>> {
+  /** The app's phone sign-in codes: which plugin sends them, and the owner's settings for it (never a secret). */
+  async getAppSignInCodes(id: string): Promise<ApiResponse<AppSignInCodes>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native/verification`);
   }
-  /** An empty authToken keeps the one already kept. */
-  async saveNativeVerification(id: string, input: { accountSid: string; serviceSid: string; authToken: string }): Promise<ApiResponse<NativeVerification>> {
-    return this.request(`/apps/${encodeURIComponent(id)}/native/verification`, { method: 'PUT', body: JSON.stringify(input) });
+  /** Settings by key; a setting left out keeps its value, and an empty secret keeps the one kept. */
+  async saveAppSignInCodes(id: string, values: Record<string, string | number | boolean>): Promise<ApiResponse<AppSignInCodes>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/verification`, { method: 'PUT', body: JSON.stringify({ values }) });
   }
-  async clearNativeVerification(id: string): Promise<ApiResponse<NativeVerification>> {
+  async clearAppSignInCodes(id: string): Promise<ApiResponse<AppSignInCodes>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native/verification`, { method: 'DELETE' });
   }
   /**
    * The app's data from where it ran before: its database, and optionally the earlier host's
-   * private configuration for the key it was kept under (and, when `useVerification`, its Twilio
-   * details). Installed as the next version; the app's earlier data is put back if it fails.
+   * private configuration for the key it was kept under (and, when `useVerification`, what it kept
+   * for the app's sign-in codes, for the plugin that sends them). Installed as the next version; the
+   * app's earlier data is put back if it fails.
    */
   async importNativeData(id: string, database: File, config: File | null, useVerification: boolean): Promise<ApiResponse<NativeDataImport>> {
     const generation = currentSessionGeneration();

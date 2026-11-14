@@ -988,10 +988,22 @@ $container->set(\FormLogic\Controllers\AppAiController::class, function (Contain
         $c->get(\FormLogic\Controllers\OaiyComputerController::class)
     );
 });
+// A hosted app's phone sign-in codes, sent and checked by the plugin that provides them
+// (NativePhoneVerification): what each app's owner set for a plugin (PluginAppSettings), and the
+// requests the site makes for a plugin within the hosts it was granted (PluginNetwork).
+$container->set(\FormLogic\Services\PluginAppSettings::class, function (Container $c) {
+    return new \FormLogic\Services\PluginAppSettings($c->get(\FormLogic\Services\NativeAppService::class));
+});
+$container->set(\FormLogic\Services\PluginNetwork::class, function (Container $c) {
+    return new \FormLogic\Services\PluginNetwork($c->get(\FormLogic\Services\NativeAppService::class));
+});
 $container->set(\FormLogic\Services\NativePhoneVerification::class, function (Container $c) {
-    return new \FormLogic\Services\NativePhoneVerification($c->get(\FormLogic\Services\NativeAppService::class));
-
-
+    $native = $c->get(\FormLogic\Services\NativeAppService::class);
+    $plugins = $c->get(\FormLogic\Services\PluginService::class);
+    $settings = $c->get(\FormLogic\Services\PluginAppSettings::class);
+    return new \FormLogic\Services\NativePhoneVerification($native, $plugins, $settings, $c->get(\FormLogic\Services\PluginNetwork::class),
+        // The one place that moves what apps kept before sign-in codes were a plugin's.
+        new \FormLogic\Services\LegacyPhoneVerification($native, $plugins, $settings));
 });
 
 // A hosted SoftN app's icon, share image and loading colours (AppLookService), and the page a link
@@ -3612,8 +3624,9 @@ $nativeRecordLimiter = new RateLimitMiddleware($rateLimiter, 180, 60, 'native_re
 $app->map(['GET', 'POST'], '/api/apps/{id}/native/{operation:records}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($nativeRecordLimiter)->add($authRequired);
-// The owner's Twilio Verify details for the app's phone sign-in codes (NativePhoneVerification):
-// read as the rest of the app's settings are, changed under the budget installs use.
+// The owner's settings for the plugin that sends the app's phone sign-in codes
+// (NativePhoneVerification, PluginAppSettings): read as the rest of the app's settings are,
+// changed under the budget installs use.
 $app->get('/api/apps/{id}/native/{operation:verification}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($hostingReadLimiter)->add($authRequired);

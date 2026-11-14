@@ -96,6 +96,11 @@ class IpSafety
         if ($zeroThrough(8)) {
             return true;
         }
+        // NAT64 local-use 64:ff9b:1::/48 (RFC 8215): a network's own translator, which may reach
+        // anything inside it, whatever IPv4 it embeds. Never public.
+        if ($b[0] === 0x00 && $b[1] === 0x64 && $b[2] === 0xff && $b[3] === 0x9b && $b[4] === 0x00 && $b[5] === 0x01) {
+            return true;
+        }
         // NAT64 64:ff9b::/96 — the embedded IPv4 decides.
         if ($b[0] === 0x00 && $b[1] === 0x64 && $b[2] === 0xff && $b[3] === 0x9b) {
             return self::isPrivateAddress($v4At(12));

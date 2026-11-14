@@ -1,8 +1,9 @@
 # Writing a FormLogic plugin
 
-A plugin adds to a FormLogic site: today, by issuing **passes** that apps can require before they
-open (the Age gate that ships with FormLogic is one). A plugin is a SoftN project, the same as any
-SoftN app, with a `formlogicPlugin` section in its `manifest.json`. Its code is ZIPP code:
+A plugin adds to a FormLogic site: by issuing **passes** that apps can require before they open
+(the Age gate that ships with FormLogic is one), and by sending apps' **sign-in codes** (Sign-in
+codes by text, for Twilio Verify, is one). A plugin is a SoftN project, the same as any SoftN app,
+with a `formlogicPlugin` section in its `manifest.json`. Its code is ZIPP code:
 
 - its **backend** (`server/*.logic`) runs in the SoftN runner's sandbox: no network, no files, no
   site data, a database of its own only if it asks for one;
@@ -10,7 +11,10 @@ SoftN app, with a `formlogicPlugin` section in its `manifest.json`. Its code is 
   storage, no camera.
 
 It reaches the site only through what this page describes, and only as far as the administrator
-granted when they installed it. Nothing of FormLogic's own code knows what a plugin does.
+granted when they installed it. Where it needs the camera or a service on the internet, the site
+holds it and the plugin decides: the site's own page takes the pictures, and the site makes the
+requests it asks for, to the hosts it was granted. Nothing of FormLogic's own code knows what a
+plugin does.
 
 An administrator installs a plugin under **Admin → Platform → Plugins**: one that ships with
 FormLogic, or an upload (`.softn`). Before anything is installed they read what it asks for; an
@@ -62,6 +66,11 @@ its passes; removing it also withdraws every pass it issued.
 - `server.requires.capabilities`, the sandbox's own permissions, shown to the administrator in
   words: `sql` (its own records, in a database only it reads), `crypto` (random numbers, sealing
   its own data), `time`, `transaction-scope`. Nothing else is allowed for a plugin.
+- `network`, `signInCodes` and `appSettings` (below): the hosts the site may reach for it, the
+  sign-in codes it sends, and what it asks each app's owner for. All three are shown to the
+  administrator in words before they install it, and again on an update; an update that adds a
+  host says so apart. They are read from its manifest as installed, which only an install or an
+  update by an administrator changes.
 
 ### Passes
 
@@ -116,7 +125,7 @@ the sandboxed frame. Besides `softn.net.fetch` to its own backend, the frame off
 ## Settings
 
 A plugin may declare up to ten settings, which the administrator sets in Admin → Plugins and its
-code is handed (`settings` in each camera-check call, and in `pluginContext`):
+code is handed (`settings` in each camera-check call and sign-in code step, and in `pluginContext`):
 
 ```json
 { "key": "bufferYears", "label": "Years above the app's age an estimate must reach", "help": "…",
@@ -192,11 +201,171 @@ nothing of the turns it asked for, puts a control picture among the camera pictu
 that drops pictures cannot read its digit), and reads any writing the model reports as a reason to
 refuse.
 
+## Sign-in codes (`signInCodes`)
+
+An app that signs people in with a code sent to their phone names a provider for its codes in its
+manifest, `config.app.verificationProvider` (Coffee.Dating names `twilio-verify`). A plugin may be
+that provider:
+
+```json
+"signInCodes": { "provider": "twilio-verify", "label": "By text message, through Twilio Verify",
+                 "sendRoute": "/api/site/codes/send", "checkRoute": "/api/site/codes/check" }
+```
+
+- `provider`: lowercase letters, digits, dots and hyphens, the name apps give. The plugin that is
+  on and provides it sends the codes of every app that names it. One provider, one plugin that is
+  on: installing, updating or turning on a plugin that would send the codes another plugin that is
+  on sends already is refused, and the refusal names the other. Where none does, or the app's owner
+  has not filled in its app settings (below), an app's sign-in requests are refused before its
+  backend is asked: "Sign-in messaging is not configured yet." (503).
+- `sendRoute`, `checkRoute`: two POST routes of its backend under `/api/site/`, which the site
+  calls and its own page cannot.
+
+The site keeps the app's side of it (docs/HOSTED_APPS.md, "Phone sign-in codes"): the app's backend
+admits each request first, the challenge waits in the app's own database, and an attempt is counted
+before the plugin is asked, five at most, and given back when no code was checked (the step was
+unavailable: the plugin, its provider or the site's network failed, or every worker was busy). The
+plugin only sends a code and checks one.
+
+**`sendRoute`** gets `{phone, challenge, appSettings, settings}`: the number as the app's backend
+stored it, the challenge's id, the owner's settings for this app (never a secret) and the
+administrator's. After any requests it asks the site to make (The network, below), it answers
+`{result: "sent", id}`, or `{result: "busy"}` (the app is told 429), or anything else (503). `id` is
+the provider's id for the code: letters, digits and `. _ : -`, up to 128 of them, never `pending`.
+The challenge keeps it, and the app's backend is told it as `sid` when a code is approved.
+
+**`checkRoute`** gets `{id, phone, code, challenge, appSettings, settings}` and answers `{result}`:
+`approved` (the app's backend is told, in `req.context.verification`), `wrong` (401 `wrong_code`),
+`expired` (401 `invalid_code`), `busy` (429), anything else 503. Each is a word, matched exactly:
+`true`, `"APPROVED"` or anything else is not an approval.
+
+The plugin that ships with FormLogic for Twilio Verify, `formlogic.twilio-verify`
+(`resources/plugins/twilio-verify`), is a complete one: four routes, no database, and the Twilio
+answers it accepts are the ones FormLogic accepted when it sent the codes itself.
+
+## The network (`network`)
+
+A plugin's backend has no network, and is given none. A plugin that needs a service names its hosts:
+
+```json
+"network": ["verify.twilio.com"]
+```
+
+At most four, each a lowercase DNS name with no scheme, port, path, address or wildcard. On a route
+the site calls (one under `/api/site/`), the plugin may then answer, in place of its result, with a
+request for the site to make and the route to continue at:
+
+```json
+{
+  "request": {
+    "method": "POST",
+    "url": "https://verify.twilio.com/v2/Services/VA…/Verifications",
+    "headers": { "Accept": "application/json" },
+    "form": { "To": "+61412345678", "Channel": "sms" },
+    "auth": { "basic": { "user": "AC…", "password": { "secret": "authToken" } } }
+  },
+  "continue": "/api/site/codes/sent",
+  "state": { "anything": "JSON, up to 4 KB, handed back" }
+}
+```
+
+The site makes the request, then calls the plugin at `continue` (a POST route of its own under
+`/api/site/`) with what the first route was given, `response: {status, body}` (the body as JSON
+where it is JSON, its text otherwise) and its `state`. The plugin decides from that, and may ask for
+another request. What the site holds every request to (PluginNetwork):
+
+- `https` only, to one of the plugin's hosts exactly as it named it, on port 443, with no user,
+  password or fragment in the address, which is written out again from what was checked; GET, POST,
+  PUT, PATCH or DELETE;
+- the host's addresses are looked up as the request is made: one that is loopback, private,
+  link-local or otherwise not public (NAT64's local-use prefix among them) refuses it, and the
+  connection is pinned to the address checked, through no proxy, so no second look-up can send it
+  elsewhere. The look-up comes before the request's time starts, bounded by the server's own
+  resolver;
+- where the site reaches the internet through an HTTPS proxy (`https_proxy`, or `HTTPS_PROXY`, and
+  the host is not one `no_proxy` or `NO_PROXY` names, nor in a domain it names, nor `*`), the request
+  goes through it instead, tunnelled (CONNECT) with TLS from the site to the host. The site does not
+  look the host up then, and the proxy decides which addresses are reachable. Every other rule here
+  holds as before. A proxy that is not an HTTP proxy (`http://` or `https://`) refuses the request;
+- no redirect is followed (a 3xx is the answer); 5 seconds to connect and 8 in all; an answer over
+  32 KB is refused;
+- a body is `form` (sent as a URL-encoded form) or `json`, up to 16 KB, and none on a GET; up to
+  ten headers of the plugin's own, never one the site writes (`Host`, `Content-Type`,
+  `Content-Length` and the like), and no line breaks;
+- an owner's secret goes only where a request names it, and only to a host it may be sent to (its
+  `sendTo`, below);
+- at most two requests in one step: one call of a site route, and its continuations.
+
+A request the site refuses, or that has no answer, ends the step as unavailable, and the plugin is
+not called back. The site's log says why, never with what the request carried.
+
+## App settings (`appSettings`)
+
+Besides the administrator's settings, a plugin may ask each app's owner for settings of their own,
+which the owner fills in on their app's Settings (for sign-in codes, under Phone sign-in codes). At
+most ten: an `integer`, `choice` or `boolean` as a setting is, and two more types.
+
+```json
+{ "key": "accountSid", "label": "Account SID", "type": "text", "help": "From the Twilio console.", "placeholder": "AC…",
+  "pattern": "AC[0-9a-fA-F]{32}",
+  "message": "Enter the Twilio account SID: AC followed by 32 letters and digits, from the Twilio console.",
+  "importFrom": "sms.TWILIO_SID" }
+{ "key": "authToken", "label": "Auth token", "type": "secret", "pattern": "[\\x21-\\x7e]{1,128}",
+  "message": "That auth token is not one Twilio gives.", "missing": "Enter the Twilio auth token.",
+  "importFrom": "sms.TWILIO_TOKEN", "sendTo": ["verify.twilio.com"] }
+```
+
+- A `text` or a `secret` is a line of text, required unless `"optional": true`, up to `maxLength`
+  (256; at most 1,024). `pattern`, a regular expression, must match all of it: a value that does not
+  is refused with `message`, and an empty one with `missing` (or `message`).
+- A `secret` is kept sealed with the site's data key where one is set, for this app, this plugin and
+  this setting. It is never shown again (left empty on a save, the one kept stays), and never handed
+  to the plugin's code, a log or an answer. A request names it by key, `{"secret": "authToken"}`, as
+  a header's value (alone, or in a list with text: `["Bearer ", {"secret": "apiKey"}]`) or as HTTP
+  basic auth's user or password, and the site fills it in. A site whose data key is set and cannot
+  be used keeps no secret.
+- `sendTo`: the hosts of the plugin's `network` a secret may be sent to. A plugin that names one
+  host need not say it; one that names several must, for each secret, and a manifest that does not
+  is refused. A request to any other host that names the secret is refused. The administrator reads
+  where each secret goes before installing the plugin ("Auth token: a secret, sent only to
+  verify.twilio.com"), and the owner reads it beside the field.
+- Wherever an answer carries a secret back (as it was, as it was sent, URL-encoded either way, in
+  any case, or as a number that spells it), it is blanked before the plugin sees it. After a request
+  that carried a secret, an answer that is not JSON (or is JSON nested deeper than 64) reaches the
+  plugin as null, with its status: text the site does not read through is never handed over.
+- Every other setting is handed to the plugin's code as `appSettings`.
+- `importFrom`: where an app's earlier SoftN host kept the value, a dotted path in its
+  `private/config.json`, never in what that file holds for the app itself (`keyHex`,
+  `cryptoDomains`, `appId`, in any case: such a manifest is refused). The administrator reads each
+  path before installing the plugin. When the owner brings the app's data with that file and says to
+  use what it holds (the panel names the settings it would fill), every value the plugin names is
+  entered as though they had typed it, and held to the same checks. Nothing else of the file
+  reaches the plugin.
+
+They are kept in the app's private folder, one file for each plugin, and each save reads, changes
+and writes them under a lock of its own. Removing a plugin removes them from every app. An owner
+whose app no plugin sends codes for any more (the plugin removed, or the app naming another
+provider) is told details are kept, and may forget them: every plugin's settings the app keeps go.
+
+Before sign-in codes were a plugin's, FormLogic sent Twilio Verify codes itself, from the details an
+owner kept in the app's `private/verify.json`. The first time anything asks about such an app's
+codes (before any save of its owner's), its details move into the Twilio plugin's app settings (a
+sealed token sealed again, never written in the clear), installing the plugin for the site if it is
+not installed. A token that does not open where this runs (its data key missing or mistyped, or a
+key that cannot be used) moves nowhere: the file is kept as it is, and a later request moves it.
+Settings its owner saved since are theirs, and the old file only goes. The plugin is installed this
+way once: once it was installed or found installed, an administrator who removes it is not
+overruled, and an install that failed is tried again an hour later at the soonest
+(LegacyPhoneVerification, the one place that knows the old file).
+
 ## Testing a plugin
 
 - Its backend runs in the SoftN runner exactly as it will on the site; its routes can be called in
   a test with the identity `{formlogic: {appId, userId, roleId: "member"}}`
   (`tests/Integration/CameraCheckServiceTest.php` does this for the Age gate).
+- A plugin that asks for requests is tested with a fake transport in place of the network:
+  `tests/Unit/TwilioVerifyPluginTest.php` installs the Twilio plugin in the runner and answers as
+  Twilio would, and `tests/Unit/PluginNetworkTest.php` holds the network's rules.
 - Admin → Plugins → Camera checks has **Does it read images?** and **Try it on yourself**, which
   runs the whole check on the administrator, records nothing, and shows the model's answer and the
   plugin's decision.

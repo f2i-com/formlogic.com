@@ -173,6 +173,62 @@ describe('SoftnCreateForm', () => {
     expect(mocks.createSoftnApp).not.toHaveBeenCalled();
   });
 
+  it('brings its data, and gives what its key file holds for its sign-in codes to the plugin on this site that sends them', async () => {
+    const { api } = await import('../../lib/api');
+    const signIn = vi.spyOn(api, 'getAppSignInCodes').mockResolvedValue({ data: {
+      provider: 'text-codes', asked: true, plugin: { id: 'example.text-codes', name: 'Codes by text', label: 'Texts', enabled: true },
+      fields: [], values: {}, kept: {}, imports: { account: 'sms.ACCOUNT', secret: 'sms.SECRET' }, configured: false,
+    } } as never);
+    const brought = vi.spyOn(api, 'importNativeData').mockResolvedValue({ data: { project: { version: 2, files: {}, assets: {} }, keyImported: true, verificationFound: true, verification: null } } as never);
+    try {
+      const into = async (label: string, file: File) => {
+        const input = container.querySelector(`input[aria-label="${label}"]`) as HTMLInputElement;
+        Object.defineProperty(input, 'files', { value: [file], configurable: true });
+        await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+        await act(async () => {});
+      };
+      const server = { entry: 'server/main.logic', requires: { apiVersion: 1, capabilities: ['sql'] }, database: { kind: 'private-sqlite', migrations: [] } };
+      const database = new File([new Uint8Array([1, 2, 3])], 'application.sqlite');
+      const key = (sms: Record<string, string>) => new File([JSON.stringify({ keyHex: 'ab'.repeat(32), appId: 'com.example.notes', sms })], 'config.json');
+      await render(true);
+      await choose('upload');
+      await pick(softn({ name: 'Notes', main: 'ui/main.ui', server, config: { app: { verificationProvider: 'text-codes' } } }, { 'server/main.logic': 'function list() {}' }));
+      await into('Choose its database', database);
+      await into('Choose its key file', key({ ACCOUNT: 'acct-1', SECRET: 'made-up' }));
+      // No provider's own words: the checkbox is offered for whatever plugin sends the codes here.
+      const offer = [...container.querySelectorAll('label')].find(label => label.textContent?.includes('sign-in codes were sent with'))!;
+      expect(offer.textContent).not.toMatch(/Twilio/);
+      expect((offer.querySelector('input') as HTMLInputElement).checked).toBe(true);
+      await act(async () => button(/Create from this file/).click());
+      expect(signIn).toHaveBeenCalledWith('app-1');
+      expect(brought).toHaveBeenCalledWith('app-1', database, expect.any(File), true);
+      // A key file without what the plugin takes from one gives it nothing.
+      await act(async () => root.unmount());
+      brought.mockClear();
+      await render(true);
+      await choose('upload');
+      await pick(softn({ name: 'Notes', main: 'ui/main.ui', server, config: { app: { verificationProvider: 'text-codes' } } }, { 'server/main.logic': 'function list() {}' }));
+      await into('Choose its database', database);
+      await into('Choose its key file', key({ ACCOUNT: 'acct-1' }));
+      await act(async () => button(/Create from this file/).click());
+      expect(brought).toHaveBeenCalledWith('app-1', database, expect.any(File), false);
+      // An app that sends no codes is offered nothing, and the server is not asked.
+      await act(async () => root.unmount());
+      signIn.mockClear();
+      await render(true);
+      await choose('upload');
+      await pick(softn({ name: 'Notes', main: 'ui/main.ui', server }, { 'server/main.logic': 'function list() {}' }));
+      await into('Choose its database', database);
+      await into('Choose its key file', key({ ACCOUNT: 'acct-1', SECRET: 'made-up' }));
+      expect(container.textContent).not.toContain('sign-in codes were sent with');
+      await act(async () => button(/Create from this file/).click());
+      expect(signIn).not.toHaveBeenCalled();
+    } finally {
+      signIn.mockRestore();
+      brought.mockRestore();
+    }
+  });
+
   it('takes a .softn file dropped anywhere on the form as the start', async () => {
     await render(true);
     const drop = new Event('drop', { bubbles: true, cancelable: true });

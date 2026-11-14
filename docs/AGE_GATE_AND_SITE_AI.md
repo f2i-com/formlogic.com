@@ -79,7 +79,8 @@ How to write one is `docs/PLUGINS.md`. In short:
 
 - A **plugin** is a SoftN project whose manifest has a `formlogicPlugin` section. Its code is ZIPP
   code: its backend in the SoftN runner's sandbox (no network, no files, its own database if it
-  asks), its pages in the sandboxed frame. Nothing in FormLogic's PHP or pages knows what a plugin
+  asks: a service on the internet is reached by the site for it, only at hosts the administrator
+  granted), its pages in the sandboxed frame. Nothing in FormLogic's PHP or pages knows what a plugin
   does; the words the site shows for its passes come from its manifest.
 - **What it may do** is what its manifest asks and the administrator granted at install, shown to
   them first in words: the passes it issues (kind, value range, strengths, the route that issues

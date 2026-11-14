@@ -1,0 +1,102 @@
+// Sign-in codes by text through an app owner's Twilio Verify service. This backend runs in the SoftN
+// runner's sandbox: no network, no files, nothing of the site but what it is handed. FormLogic calls
+// these four routes (anything under /api/site/ is the site's to call, never a page's), and makes the
+// requests this code asks for, to verify.twilio.com only, the one host it was granted. It fills in
+// the owner's auth token itself where a request names it ({secret: "authToken"}): this code never
+// has it. It is handed the owner's other settings (appSettings: their account SID and Verify service
+// SID) and Twilio's answer ({status, body}), and decides from them.
+//
+// What it answers the site at the end of each step:
+//   sending: {result: "sent", id: the verification's SID}, or "busy" or "unavailable";
+//   checking: {result: "approved"}, or "wrong", "expired", "busy" or "unavailable".
+
+let SERVICES = "https://verify.twilio.com/v2/Services/";
+let HEX = "0123456789abcdefABCDEF";
+
+// A Twilio SID: two letters, then 32 hexadecimal digits.
+function isSid(text, prefix) {
+  if (typeof text != "string" || text.length != 34 || text.substring(0, 2) != prefix) return false;
+  let i = 2;
+  while (i < 34) {
+    if (HEX.indexOf(text.charAt(i)) < 0) return false;
+    i = i + 1;
+  }
+  return true;
+}
+
+function answer(word) {
+  return {status: 200, body: {result: word}};
+}
+
+function settingsOf(body) {
+  let settings = body && body.appSettings ? body.appSettings : null;
+  if (!settings || !isSid(settings.accountSid, "AC") || !isSid(settings.serviceSid, "VA")) return null;
+  return settings;
+}
+
+// A request to one of the Verify service's endpoints, for the site to make, and where to go on with
+// Twilio's answer. The account SID and auth token are HTTP basic auth, as Twilio asks.
+function ask(settings, endpoint, form, next) {
+  return {status: 200, body: {
+    request: {
+      method: "POST",
+      url: SERVICES + settings.serviceSid + "/" + endpoint,
+      headers: {Accept: "application/json"},
+      form: form,
+      auth: {basic: {user: settings.accountSid, password: {secret: "authToken"}}}
+    },
+    continue: next
+  }};
+}
+
+// The site asks for a code to be sent to a number the app has admitted.
+function send(req) {
+  let body = req.body;
+  let settings = settingsOf(body);
+  if (!settings || typeof body.phone != "string" || body.phone.length < 4 || body.phone.length > 32) return answer("unavailable");
+  return ask(settings, "Verifications", {To: body.phone, Channel: "sms"}, "/api/site/codes/sent");
+}
+
+// Twilio's answer to starting a verification: pending, for this service and this number.
+function sent(req) {
+  let body = req.body;
+  let settings = settingsOf(body);
+  let response = body ? body.response : null;
+  if (!settings || !response || typeof response.status != "number") return answer("unavailable");
+  if (response.status == 429) return answer("busy");
+  if (response.status < 200 || response.status >= 300) return answer("unavailable");
+  let verification = response.body;
+  if (!verification || typeof verification != "object" || verification.status != "pending" || !isSid(verification.sid, "VE")
+    || verification.service_sid != settings.serviceSid || verification.to != body.phone) {
+    return answer("unavailable");
+  }
+  return {status: 200, body: {result: "sent", id: verification.sid}};
+}
+
+// The site asks whether a code a person typed is the one sent (the attempt is counted already).
+function check(req) {
+  let body = req.body;
+  let settings = settingsOf(body);
+  if (!settings || typeof body.code != "string" || typeof body.phone != "string") return answer("unavailable");
+  // A verification this plugin did not start is no code to check.
+  if (!isSid(body.id, "VE")) return answer("expired");
+  return ask(settings, "VerificationCheck", {VerificationSid: body.id, Code: body.code}, "/api/site/codes/checked");
+}
+
+// Twilio's answer to the check: approved, for this verification, service and number. Twilio forgets a
+// verification once it expires or is approved, and answers 404 for it.
+function checked(req) {
+  let body = req.body;
+  let settings = settingsOf(body);
+  let response = body ? body.response : null;
+  if (!settings || !response || typeof response.status != "number") return answer("unavailable");
+  if (response.status == 404) return answer("expired");
+  if (response.status == 429) return answer("busy");
+  if (response.status < 200 || response.status >= 300) return answer("unavailable");
+  let verification = response.body;
+  if (!verification || typeof verification != "object") return answer("unavailable");
+  if (verification.status == "approved" && verification.sid == body.id && verification.service_sid == settings.serviceSid && verification.to == body.phone) {
+    return answer("approved");
+  }
+  return answer("wrong");
+}

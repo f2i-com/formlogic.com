@@ -210,31 +210,58 @@ at once than requests run. The app opens the picture through `softn.files`, so *
 device** must be Allowed (or Ask) for its picker to work.
 
 
-**Phone sign-in codes** (Settings, the owner alone, for an app with a backend). An app that signs
-people in with a code by text names `config.app.verificationProvider: "twilio-verify"` in its
-manifest, as Coffee.Dating does; SoftN leaves sending to the host's operator, and FormLogic is that
-operator here (NativePhoneVerification, after Coffee.Dating's operator/verify.mjs). The owner gives
-their own Twilio account SID, Verify service SID and auth token: kept in the app's private folder
-(`private/verify.json`), the token sealed with the site's data key where one is set, never shown
-again, and never given to the app's code, its page, a log or an answer. Then:
+**Phone sign-in codes** (Settings, the owner alone, for an app whose manifest names a provider for
+its codes; no other app shows the panel or its link). An app that signs people in with a code by
+text names a provider in its manifest, `config.app.verificationProvider`; Coffee.Dating names
+`"twilio-verify"`. SoftN leaves sending to the host's operator, and FormLogic is that operator here
+through a plugin: the enabled plugin that provides that name sends the app's codes and checks them
+(docs/PLUGINS.md, "Sign-in codes"; NativePhoneVerification, after Coffee.Dating's
+operator/verify.mjs). For `twilio-verify` FormLogic ships **Sign-in codes by text (Twilio Verify)**
+(`formlogic.twilio-verify`), which an administrator installs under Admin → Platform → Plugins. The
+panel says which plugin sends the app's codes, or that no plugin on this site does and to ask the
+administrator, and shows the settings that plugin asks the owner for: for Twilio, their own account
+SID, Verify service SID and auth token. They are kept in the app's private folder, a secret sealed
+with the site's data key where one is set, never shown again, and never given to the app's code, the
+plugin's code, a page, a log or an answer: the site fills the token into the requests it makes for
+the plugin, and only those to verify.twilio.com, the one host the token may be sent to (said beside
+its field). Then:
 
 - `POST /api/auth/send-code` runs the backend first with `req.context.verificationProvider` set, so
   its own limits (per number, per address, overall) stand before the owner's SMS bill; only a 202
   with a `challenge_id` (stored in `otp_challenges` as `queued` with `code_hash` `verify:pending`) is
-  sent, and the challenge becomes `ready` with the provider's id. A provider that cannot send fails
-  the challenge (429 or 503); one replaced meanwhile is answered 409 `challenge_replaced`.
+  sent, and the challenge becomes `ready` with the provider's id for the code. A plugin or provider
+  that cannot send fails the challenge (429 when it is busy, 503 otherwise); one replaced meanwhile
+  is answered 409 `challenge_replaced`.
 - `POST /api/auth/verify` counts the attempt on the challenge first (five at most), asks the
-  provider, and tells the backend its yes in `req.context.verification` (`challengeId`, `phone`,
-  `sid`, `attempt`), which the backend checks against the challenge it stored.
-- Until the owner sets it up, the request is refused before the backend is asked: "Sign-in
-  messaging is not configured yet." A host configuration in development (never FormLogic's own)
-  passes everything through, and the app shows its own codes.
+  plugin, and tells the backend its yes in `req.context.verification` (`challengeId`, `phone`,
+  `sid`, `attempt`), which the backend checks against the challenge it stored. Only the plugin's
+  word `approved` is a yes. An attempt on which no code was checked (the plugin, Twilio or the
+  network failed, or every worker was busy: 503) is given back.
+- Until a plugin that is on sends the app's codes and the owner has set it up, the request is
+  refused before the backend is asked: "Sign-in messaging is not configured yet." A host
+  configuration in development (never FormLogic's own) passes everything through, and the app
+  shows its own codes.
+- Where no plugin sends the app's codes any more (the plugin removed, or the app naming another
+  provider) but details are still kept, the panel offers **Forget the kept details**, which removes
+  every plugin's settings the app keeps. Turning the codes off removes the plugin's settings for the
+  app; removing a plugin removes them from every app.
+- An app whose owner set Twilio up before codes were a plugin's (FormLogic sent them itself then,
+  from `private/verify.json`) keeps sending them: the first sign-in or visit to its settings, before
+  any save of the owner's, moves the details into the Twilio plugin's settings, the token sealed
+  again, and installs the plugin for the site if it is not installed (once: an administrator who
+  removes it afterwards is not overruled, and a failed install is tried again an hour later at the
+  soonest). A token that does not open where this runs (its data key missing or mistyped) is not
+  moved and its file is kept, for a later request; settings the owner saved since win. A key file
+  brought with the app's data (below) gives the plugin what it names from such a file, when the
+  owner says to use it.
 
 **Bringing data** (Import in the Data section, or "Bring its data too" when adding an app from a `.softn` file).
 An app moved from SoftN's own hosting brings its database (`private/data/application.sqlite`) and,
 optionally, that host's `private/config.json`, for the key the data was kept under: of that file
-only `keyHex`, `cryptoDomains` and the app id are taken (the id must be this app's), and its Twilio
-Verify details when the owner says to use them. The database is checked before anything changes:
+only `keyHex`, `cryptoDomains` and the app id are taken (the id must be this app's), and, when the
+owner says to use them, the settings the plugin that sends the app's sign-in codes takes from such a
+file (its app settings' `importFrom`; both forms ask the server which plugin that is once the app
+exists). The database is checked before anything changes:
 SQLite's own file and check, no trigger, view or virtual table, no host table but the runner's
 (`_migrations`, `_request_limits`, `_formlogic_record_events`, whose queued events are dropped), and
 a migration ledger this version of the app lists, file for file. It is then installed as the app's

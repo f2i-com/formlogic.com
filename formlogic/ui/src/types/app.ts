@@ -184,14 +184,37 @@ export interface PluginSetting {
   default: number | string | boolean;
 }
 
+/** The sign-in codes a plugin sends: for apps that name `provider`, in its words. */
+export interface PluginSignInCodes {
+  provider: string;
+  label: string;
+}
+
+/** A setting a plugin asks each app's owner for, as the administrator reads it. */
+export interface PluginAppSettingWords {
+  key: string;
+  label: string;
+  type: 'text' | 'secret' | 'integer' | 'choice' | 'boolean';
+}
+
+/** What a plugin may do beyond its passes: the hosts the site reaches for it, the codes it sends, what it asks owners. */
+export interface PluginGrantedWords {
+  /** The hosts the site makes HTTPS requests to for it (`network`). */
+  network?: string[];
+  signInCodes?: PluginSignInCodes | null;
+  appSettings?: PluginAppSettingWords[];
+}
+
 /** What a plugin asks, as the administrator reads it before granting it. */
-export interface PluginReview {
+export interface PluginReview extends PluginGrantedWords {
   version: string;
   passes: PluginPass[];
   uses: string[];
   settings: PluginSetting[];
   /** Its sandbox's own permissions, in words. */
   sandbox: string[];
+  /** For an update: the hosts it would reach that it does not now. */
+  networkAdded?: string[];
 }
 
 /** One camera check, as the site's page follows it (CameraCheckService). */
@@ -225,8 +248,8 @@ export interface AccessReceipt {
   live: boolean;
 }
 
-/** An installed plugin, as Admin → Plugins shows it. */
-export interface InstalledPlugin {
+/** An installed plugin, as Admin → Plugins shows it, with what it was granted beyond its passes. */
+export interface InstalledPlugin extends PluginGrantedWords {
   id: string;
   manifestId: string;
   scope: string;

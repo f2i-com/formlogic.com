@@ -2330,10 +2330,11 @@ class NativeAppService
 
     /**
      * What an earlier host's private configuration (its private/config.json) gives an import: the
-     * key and its two domains, and Twilio Verify details where it kept them. Nothing else of it is
-     * taken: an operator's hooks and flags are that host's.
+     * key and its two domains. Nothing else of it is taken here: an operator's hooks and flags are
+     * that host's. (What it kept for the app's sign-in codes is for the plugin that sends them to
+     * name: NativePhoneVerification::heldIn reads only that.)
      *
-     * @return array{key: array{appId: ?string, keyHex: string, cryptoDomains: array{hmac: string, seal: string}}, verification: ?array{accountSid: string, serviceSid: string, authToken: string}}
+     * @return array{key: array{appId: ?string, keyHex: string, cryptoDomains: array{hmac: string, seal: string}}}
      */
     public static function importedKey(string $json): array
     {
@@ -2345,14 +2346,7 @@ class NativeAppService
         $domain = static fn(mixed $value): bool => is_string($value) && preg_match('/^[\x21-\x7e]{1,120}$/D', $value) === 1;
         if (!is_array($domains) || !$domain($domains['hmac'] ?? null) || !$domain($domains['seal'] ?? null)) throw new InvalidArgumentException('That configuration names no crypto domains (cryptoDomains.hmac and .seal), which its key is used with.');
         $appId = is_string($config['appId'] ?? null) && preg_match('/^[a-zA-Z0-9._-]{1,120}$/D', $config['appId']) ? $config['appId'] : null;
-        $sms = is_array($config['sms'] ?? null) ? $config['sms'] : [];
-        $verification = null;
-        if (is_string($sms['TWILIO_SID'] ?? null) && preg_match('/^AC[0-9a-fA-F]{32}$/D', $sms['TWILIO_SID'])
-            && is_string($sms['TWILIO_VERIFY_SERVICE_SID'] ?? null) && preg_match('/^VA[0-9a-fA-F]{32}$/D', $sms['TWILIO_VERIFY_SERVICE_SID'])
-            && is_string($sms['TWILIO_TOKEN'] ?? null) && $sms['TWILIO_TOKEN'] !== '') {
-            $verification = ['accountSid' => $sms['TWILIO_SID'], 'serviceSid' => $sms['TWILIO_VERIFY_SERVICE_SID'], 'authToken' => $sms['TWILIO_TOKEN']];
-        }
-        return ['key' => ['appId' => $appId, 'keyHex' => $keyHex, 'cryptoDomains' => ['hmac' => $domains['hmac'], 'seal' => $domains['seal']]], 'verification' => $verification];
+        return ['key' => ['appId' => $appId, 'keyHex' => $keyHex, 'cryptoDomains' => ['hmac' => $domains['hmac'], 'seal' => $domains['seal']]]];
     }
 
     /** Where an uploaded database waits for importData(), in the app's private folder; the caller removes it. */
@@ -2755,7 +2749,8 @@ class NativeAppService
 
     /**
      * FormLogic's own small settings for an installed app, kept in its private folder beside its keys
-     * (never the app's configuration, which the runner reads): a name such as `verify.json`.
+     * (never the app's configuration, which the runner reads): a name such as a plugin's app
+     * settings (`plugin-….json`, PluginAppSettings).
      */
     public function readPrivateFile(string $appId, string $name): ?string
     {
@@ -2776,6 +2771,67 @@ class NativeAppService
     {
         $path = $this->privateFile($appId, $name);
         if (is_file($path) && !@unlink($path)) throw new RuntimeException('Could not remove the setting');
+    }
+
+    /**
+     * The names of an installed app's private files (as readPrivateFile() takes them) that start
+     * with $prefix, in order: all of a kind of FormLogic's settings, such as every plugin's.
+     *
+     * @return list<string>
+     */
+    public function privateFileNames(string $appId, string $prefix): array
+    {
+        if (!preg_match('/^[a-z][a-z0-9-]{0,30}$/D', $prefix)) throw new InvalidArgumentException('Invalid private setting name');
+        $folder = $this->root($appId) . '/private';
+        $names = [];
+        foreach (is_dir($folder) ? (scandir($folder) ?: []) : [] as $name) {
+            if (str_starts_with($name, $prefix) && preg_match('/^[a-z][a-z0-9-]{0,30}\.json$/D', $name) && $name !== 'config.json'
+                && is_file($folder . '/' . $name) && !is_link($folder . '/' . $name)) $names[] = $name;
+        }
+        sort($names);
+        return $names;
+    }
+
+    /**
+     * Remove one of FormLogic's private files from every installed app that has it, and the lock
+     * beside it: a plugin removed from the site takes each app's settings for it along. How many.
+     */
+    public function removePrivateFileEverywhere(string $name): int
+    {
+        if (!preg_match('/^[a-z][a-z0-9-]{0,30}\.json$/D', $name) || $name === 'config.json') throw new InvalidArgumentException('Invalid private setting name');
+        $root = $this->storageRoot();
+        $removed = 0;
+        foreach (is_dir($root) ? (scandir($root) ?: []) : [] as $folder) {
+            if (!preg_match('/^[0-9a-f]{64}$/D', $folder)) continue;
+            $path = $root . '/' . $folder . '/private/' . $name;
+            if (is_file($path) && !is_link($path) && @unlink($path)) $removed++;
+            $lock = substr($path, 0, -5) . '.lock';
+            if (is_file($lock) && !is_link($lock)) @unlink($lock);
+        }
+        return $removed;
+    }
+
+    /**
+     * Run $work holding an exclusive lock on one of an installed app's private files (a `.lock`
+     * beside it), so a read-modify-write of it is never interleaved with another's.
+     *
+     * @template T
+     * @param callable(): T $work
+     * @return T
+     */
+    public function withPrivateFileLock(string $appId, string $name, callable $work): mixed
+    {
+        $path = $this->privateFile($appId, $name);
+        if (!is_dir(dirname($path))) throw new RuntimeException('Install the app before changing its settings', 409);
+        $lock = @fopen(substr($path, 0, -5) . '.lock', 'c');
+        if ($lock === false) throw new RuntimeException('Could not lock the setting');
+        try {
+            if (!flock($lock, LOCK_EX)) throw new RuntimeException('Could not lock the setting');
+            return $work();
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
     }
 
     private function privateFile(string $appId, string $name): string

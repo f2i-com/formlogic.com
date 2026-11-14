@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import { Check, Copy, ExternalLink, PencilRuler, Rocket } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { api, type AppDomain } from '../../lib/api';
-import { declaresFormlogicAi, declaresFormlogicPayments, type NativeDataSummary, type NativeProject } from '../../lib/nativeHosting';
+import { declaresFormlogicAi, declaresFormlogicPayments, phoneCodeProvider, type NativeDataSummary, type NativeProject } from '../../lib/nativeHosting';
 import { softnWorkspacePath } from '../../lib/softnApps';
 import { cn, copyToClipboard, formatBytes } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
@@ -150,7 +150,7 @@ export function SoftnOverview({ app, project, version, published, dirty, readOnl
         <ul>
           {isOwner && backend && declaresFormlogicAi(project) && <Jump to={`${settings}#app-ai-settings`} label="AI for this app" />}
           {isOwner && backend && declaresFormlogicPayments(project) && <Jump to={`${settings}#settings-payments`} label="Payments" />}
-          {isOwner && backend && <Jump to={`${settings}#settings-signin`} label="Phone sign-in codes" />}
+          {isOwner && backend && !!phoneCodeProvider(project) && <Jump to={`${settings}#settings-signin`} label="Phone sign-in codes" />}
           {isOwner && <Jump to={`${settings}#settings-before`} label="Before it opens" />}
           {isOwner && <Jump to={`${settings}#settings-look`} label="Look and sharing" />}
           <Jump to={`${settings}#settings-engine`} label="Engine" />

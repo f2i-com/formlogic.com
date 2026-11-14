@@ -1,0 +1,4 @@
+<Stack padding="lg" gap="md">
+  <Heading level={2}>Sign-in codes by text</Heading>
+  <Text size="lg">This plugin sends the sign-in codes of apps that ask for Twilio Verify, through each app owner's own Twilio account. It has nothing to show here: an app's owner sets it up in their app's Settings, under Phone sign-in codes.</Text>
+</Stack>

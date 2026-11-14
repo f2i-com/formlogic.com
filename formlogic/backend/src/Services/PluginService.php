@@ -19,6 +19,11 @@ use PDO;
  *    of its backend that issues it, and the words the site shows for it;
  *  - `uses`: what else of the site it may use (`camera`: CameraCheckService);
  *  - `settings`: what the administrator can set for it, handed to its code;
+ *  - `network`: the hosts the site may make HTTPS requests to for it, from the routes the site
+ *    calls (PluginNetwork); its sandbox itself never has a network;
+ *  - `signInCodes`: the provider of apps' sign-in codes it is, and its two routes the site calls
+ *    to send and check one (NativePhoneVerification);
+ *  - `appSettings`: what it asks each app's owner for, secrets among them (PluginAppSettings);
  *  - its sandbox's own permissions (its records, randomness, the time), from the SoftN manifest.
  *
  * Plugins come from FormLogic (resources/plugins, `source` builtin) or from an administrator's
@@ -51,10 +56,24 @@ final class PluginService
     ];
     private const KIND_PATTERN = '/^[a-z][a-z0-9_-]{0,15}$/D';
     private const SETTING_KEY = '/^[a-zA-Z][a-zA-Z0-9_]{0,31}$/D';
+    /** How many hosts a plugin may ask the site to reach for it (`network`). */
+    public const NETWORK_MOST = 4;
+    /** A host as a plugin names it: a lowercase DNS name with a dot, never an address, a port or a scheme. */
+    private const HOST_PATTERN = '/^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/D';
+    /** A provider of sign-in codes, as an app's manifest names one (`config.app.verificationProvider`). */
+    public const PROVIDER_PATTERN = '/^[a-z0-9][a-z0-9.-]{0,63}$/D';
+    /** Where an app's earlier SoftN host kept an app setting, in its private/config.json (`importFrom`). */
+    private const IMPORT_PATH = '/^[A-Za-z0-9_-]{1,64}(?:\.[A-Za-z0-9_-]{1,64}){0,3}$/D';
+    /** What of such a file is the app's own, and never a plugin's to take (lower case). */
+    private const IMPORT_NEVER = ['keyhex', 'cryptodomains', 'appid'];
+    /** How long after an upgrade's install of a plugin failed before it is tried again (installForUpgrade). */
+    private const UPGRADE_RETRY_SECONDS = 3600;
 
     private PDO $pdo;
     /** @var array<string, ?array> rows looked up in this request, by manifest id */
     private array $rows = [];
+    /** @var array<string, array> what each installed plugin was granted beyond its passes (granted()), by its app id */
+    private array $granted = [];
 
     public function __construct(
         MySQLConnection $mysql,
@@ -110,6 +129,17 @@ final class PluginService
                 }
             }
         }
+        $network = $plugin['network'] ?? [];
+        if (!is_array($network) || !array_is_list($network) || count($network) > self::NETWORK_MOST) {
+            throw new \InvalidArgumentException('A plugin names at most ' . self::NETWORK_MOST . ' hosts for the site to reach for it (network).');
+        }
+        foreach ($network as $host) {
+            if (!is_string($host) || !preg_match(self::HOST_PATTERN, $host)) {
+                throw new \InvalidArgumentException('Each host a plugin needs reached is a name such as api.example.com: lowercase, with no scheme, port or path.');
+            }
+        }
+        $codes = $plugin['signInCodes'] ?? null;
+        $network = array_values(array_unique($network));
         return [
             'id' => $id,
             'name' => trim($name),
@@ -119,7 +149,119 @@ final class PluginService
             'uses' => array_values(array_unique($uses)),
             'settings' => self::settingsSchema($plugin['settings'] ?? []),
             'sandbox' => array_values(array_unique($sandbox)),
+            'network' => $network,
+            'signInCodes' => $codes === null ? null : self::signInCodesOf($codes, $routes),
+            'appSettings' => self::appSettingsSchema($plugin['appSettings'] ?? [], $network),
+            // The routes of its backend the site calls (and its own page never may): where a request the
+            // site makes for it may continue (PluginNetwork).
+            'siteRoutes' => array_values(array_unique(array_filter($routes, static fn (string $route) => str_starts_with($route, self::SITE_ROUTE_PREFIX)))),
         ];
+    }
+
+    /**
+     * The sign-in codes a plugin sends (`signInCodes`): the provider apps name for them, the words the
+     * site shows for it, and the two routes of its backend the site calls, under /api/site/.
+     */
+    private static function signInCodesOf(mixed $codes, array $routes): array
+    {
+        $provider = is_array($codes) ? ($codes['provider'] ?? null) : null;
+        $site = static fn (mixed $route): bool => is_string($route) && in_array($route, $routes, true) && str_starts_with($route, self::SITE_ROUTE_PREFIX);
+        if (!is_string($provider) || !preg_match(self::PROVIDER_PATTERN, $provider) || !$site($codes['sendRoute'] ?? null) || !$site($codes['checkRoute'] ?? null)) {
+            throw new \InvalidArgumentException('A plugin that sends sign-in codes names the provider apps ask for (lowercase letters, digits, dots and hyphens), and two POST routes of its backend under ' . self::SITE_ROUTE_PREFIX . ' that the site calls: sendRoute and checkRoute.');
+        }
+        return [
+            'provider' => $provider,
+            'label' => mb_substr(self::text($codes['label'] ?? null), 0, 80) ?: $provider,
+            'sendRoute' => $codes['sendRoute'],
+            'checkRoute' => $codes['checkRoute'],
+        ];
+    }
+
+    /**
+     * What a plugin asks each app's owner for (`appSettings`, kept by PluginAppSettings): at most ten
+     * fields. An `integer`, `choice` or `boolean` is as an administrator's setting is. A `text` or a
+     * `secret` is a line of text, required unless `optional`, which must match all of `pattern` where
+     * the plugin gives one (refused with its `message`, or with `missing` when it is left empty);
+     * `importFrom` names where an app's earlier SoftN host kept it (a dotted path in that host's
+     * private/config.json, never its key, crypto domains or app id), for an owner who brings the
+     * app's data with that file. A `secret` names the hosts of $network it may be sent to
+     * (`sendTo`): the one host, when the plugin has one and says nothing.
+     */
+    private static function appSettingsSchema(mixed $fields, array $network): array
+    {
+        if (!is_array($fields) || !array_is_list($fields) || count($fields) > 10) {
+            throw new \InvalidArgumentException('A plugin asks an app\'s owner for at most ten settings (appSettings).');
+        }
+        $out = [];
+        foreach ($fields as $field) {
+            $type = is_array($field) ? ($field['type'] ?? null) : null;
+            if (in_array($type, ['integer', 'choice', 'boolean'], true)) {
+                $item = self::settingsSchema([$field])[0];
+            } else {
+                $key = is_array($field) ? ($field['key'] ?? null) : null;
+                $label = is_array($field) ? self::text($field['label'] ?? null) : '';
+                if (!in_array($type, ['text', 'secret'], true) || !is_string($key) || !preg_match(self::SETTING_KEY, $key) || $label === '') {
+                    throw new \InvalidArgumentException('Each app setting a plugin asks for needs a key, a label and a type: text, secret, integer, choice or boolean.');
+                }
+                $pattern = $field['pattern'] ?? null;
+                if ($pattern !== null && (!is_string($pattern) || $pattern === '' || strlen($pattern) > 300 || @preg_match(PluginAppSettings::pattern($pattern), '') === false)) {
+                    throw new \InvalidArgumentException("App setting {$key}'s pattern is not a regular expression this site can use.");
+                }
+                $from = $field['importFrom'] ?? null;
+                if ($from !== null && (!is_string($from) || !preg_match(self::IMPORT_PATH, $from))) {
+                    throw new \InvalidArgumentException("App setting {$key}'s importFrom is a dotted path, such as sms.API_KEY.");
+                }
+                // What a key file holds for the app itself is never a plugin's: its key, the domains it
+                // is used with, and the app's id.
+                if (is_string($from) && in_array(strtolower(explode('.', $from)[0]), self::IMPORT_NEVER, true)) {
+                    throw new \InvalidArgumentException("App setting {$key}'s importFrom may not read the app's key, its crypto domains or its id from a key file.");
+                }
+                $most = $field['maxLength'] ?? 256;
+                $item = [
+                    'key' => $key, 'label' => mb_substr($label, 0, 80), 'help' => mb_substr(self::text($field['help'] ?? null), 0, 200), 'type' => $type,
+                    'optional' => ($field['optional'] ?? false) === true,
+                    'maxLength' => is_int($most) && $most >= 1 && $most <= 1024 ? $most : 256,
+                    'placeholder' => mb_substr(self::text($field['placeholder'] ?? null), 0, 60),
+                    'pattern' => $pattern,
+                    'message' => mb_substr(self::text($field['message'] ?? null), 0, 200),
+                    'missing' => mb_substr(self::text($field['missing'] ?? null), 0, 200),
+                    'importFrom' => $from,
+                ];
+                if ($type === 'secret') {
+                    $item['sendTo'] = self::sendToOf($key, $field['sendTo'] ?? null, $network);
+                }
+            }
+            if (isset($out[$item['key']])) {
+                throw new \InvalidArgumentException("A plugin asks an app's owner for {$item['key']} twice.");
+            }
+            $out[$item['key']] = $item;
+        }
+        return array_values($out);
+    }
+
+    /**
+     * The hosts an owner's secret may be sent to: those it names, each one of the plugin's $network;
+     * the one host when the plugin has one and it names none; with several, it must name them.
+     *
+     * @return list<string>
+     */
+    private static function sendToOf(string $key, mixed $sendTo, array $network): array
+    {
+        if ($sendTo === null) {
+            if (count($network) > 1) {
+                throw new \InvalidArgumentException("Secret {$key} names the hosts it may be sent to (sendTo): the plugin reaches more than one.");
+            }
+            return $network;
+        }
+        if (!is_array($sendTo) || !array_is_list($sendTo) || $sendTo === []) {
+            throw new \InvalidArgumentException("Secret {$key}'s sendTo is a list of the hosts it may be sent to, among the plugin's network.");
+        }
+        foreach ($sendTo as $host) {
+            if (!is_string($host) || !in_array($host, $network, true)) {
+                throw new \InvalidArgumentException("Secret {$key} may be sent only to hosts the plugin names in its network.");
+            }
+        }
+        return array_values(array_unique($sendTo));
     }
 
     /** One pass a plugin may issue, with the words the site shows for it. */
@@ -253,7 +395,8 @@ final class PluginService
     /**
      * What installing a project would grant, for the administrator to read before they choose: the
      * plugin's manifest read, and whether it updates one installed now. Throws on a project that is
-     * not a plugin, or not a SoftN project this site runs.
+     * not a plugin, or not a SoftN project this site runs, or one that would send the sign-in codes
+     * another plugin that is on sends already (so installing and updating are refused alike).
      */
     public function inspect(array $project, string $source): array
     {
@@ -267,7 +410,27 @@ final class PluginService
         if ($installed !== null && $installed['source'] !== $source) {
             throw new \InvalidArgumentException('A plugin with this id is already installed from elsewhere. Remove it first.');
         }
+        $this->assertProviderFree($plugin['signInCodes'], $plugin['id']);
         return $plugin + ['updates' => $installed === null ? null : ['version' => $installed['version']]];
+    }
+
+    /**
+     * One provider of sign-in codes, one plugin that is on: refused when another installed plugin
+     * that is on (not $except) sends codes for the same provider, naming it.
+     */
+    private function assertProviderFree(?array $codes, string $except): void
+    {
+        if ($codes === null) {
+            return;
+        }
+        foreach ($this->installed() as $other) {
+            if ($other['manifestId'] === $except || !$other['enabled'] || $other['scope'] !== 'site') {
+                continue;
+            }
+            if (($this->granted($other)['signInCodes']['provider'] ?? null) === $codes['provider']) {
+                throw new \InvalidArgumentException('The plugin "' . $other['name'] . '" sends the sign-in codes for "' . $codes['provider'] . '" already. Turn it off or remove it first.');
+            }
+        }
     }
 
     /** Every installed plugin, with its grants and settings. */
@@ -389,7 +552,152 @@ final class PluginService
         $same = $builtin['version'] === $plugin['version'] && $now['files'] === $shipped['files'] && $now['assets'] === $shipped['assets']
             && self::canon($builtin['passes']) === self::canon($plugin['grants']) && $builtin['uses'] === $plugin['uses']
             && self::canon($builtin['settings']) === self::canon($plugin['settingsSchema']);
-        return $same ? null : self::review($builtin);
+        return $same ? null : self::review($builtin, $this->granted($plugin));
+    }
+
+    /** What installing or updating to $read would grant, for the administrator to read: with the hosts an update adds. */
+    public function reviewFor(array $read): array
+    {
+        $installed = $this->find($read['id']);
+        return self::review($read, $installed === null ? null : $this->granted($installed));
+    }
+
+    /**
+     * What an installed plugin was granted beyond its passes, read from its manifest as installed,
+     * which only an administrator's install or update changes (an upload is read to them first, and
+     * a new version that ships is shown to them before they take it): the hosts the site reaches for
+     * it, the sign-in codes it sends, what it asks apps' owners for, and its routes the site calls.
+     * Nothing, for one whose manifest cannot be read as this plugin's.
+     *
+     * @return array{network: list<string>, signInCodes: ?array, appSettings: list<array>, siteRoutes: list<string>}
+     */
+    public function granted(array $plugin): array
+    {
+        $appId = is_string($plugin['appId'] ?? null) ? $plugin['appId'] : '';
+        if (!array_key_exists($appId, $this->granted)) {
+            try {
+                $read = $appId === '' ? [] : self::pluginManifest($this->native->installedManifest($appId));
+            } catch (\Throwable) {
+                $read = [];
+            }
+            if (($read['id'] ?? null) !== ($plugin['manifestId'] ?? null)) {
+                $read = [];
+            }
+            $this->granted[$appId] = [
+                'network' => $read['network'] ?? [],
+                'signInCodes' => $read['signInCodes'] ?? null,
+                'appSettings' => $read['appSettings'] ?? [],
+                'siteRoutes' => $read['siteRoutes'] ?? [],
+            ];
+        }
+        return $this->granted[$appId];
+    }
+
+    /**
+     * A plugin's network, sign-in codes and app settings as the administrator reads them: each
+     * secret with the hosts it may be sent to, and each setting it takes from an earlier host's key
+     * file with where it is read.
+     */
+    public static function grantedView(array $read): array
+    {
+        $codes = is_array($read['signInCodes'] ?? null) ? $read['signInCodes'] : null;
+        return [
+            'network' => array_values($read['network'] ?? []),
+            'signInCodes' => $codes === null ? null : ['provider' => $codes['provider'], 'label' => $codes['label']],
+            'appSettings' => array_map(static fn (array $field): array => ['key' => $field['key'], 'label' => $field['label'], 'type' => $field['type']]
+                + ($field['type'] === 'secret' ? ['sendTo' => array_values($field['sendTo'] ?? [])] : [])
+                + (is_string($field['importFrom'] ?? null) ? ['importFrom' => $field['importFrom']] : []), $read['appSettings'] ?? []),
+        ];
+    }
+
+    /**
+     * The installed plugin that sends sign-in codes for $provider, the name an app gives in its
+     * manifest, with what it was granted (`granted`): an enabled one before one turned off, then the
+     * one installed first. Null when no plugin here does ($enabledOnly: or none that is on).
+     */
+    public function signInCodesProvider(string $provider, bool $enabledOnly = true): ?array
+    {
+        if (!preg_match(self::PROVIDER_PATTERN, $provider)) {
+            return null;
+        }
+        $found = [];
+        foreach ($this->installed() as $plugin) {
+            if ($plugin['scope'] !== 'site' || ($enabledOnly && !$plugin['enabled'])) {
+                continue;
+            }
+            $granted = $this->granted($plugin);
+            if (($granted['signInCodes']['provider'] ?? null) === $provider) {
+                $found[] = $plugin + ['granted' => $granted];
+            }
+        }
+        usort($found, static fn (array $a, array $b): int => [$b['enabled'], (string) $a['installedAt'], $a['id']] <=> [$a['enabled'], (string) $b['installedAt'], $b['id']]);
+        return $found[0] ?? null;
+    }
+
+    /**
+     * Install a plugin that ships with FormLogic because an upgrade moves into it what FormLogic once
+     * did itself (LegacyPhoneVerification), with no administrator there to do it: once for this site.
+     * Once it has been installed this way, or found installed already, an administrator who removes
+     * it afterwards is not overruled: null then. An install that failed is tried again an hour later
+     * at the soonest, never on every request: null meanwhile. The installed plugin when it is there.
+     */
+    public function installForUpgrade(string $manifestId): ?array
+    {
+        $marker = substr('plugin_upgrade:' . $manifestId, 0, 64);
+        $was = $this->upgradeMark($marker);
+        $installed = $this->find($manifestId);
+        if ($installed !== null) {
+            if (($was['state'] ?? null) !== 'done') {
+                $this->markUpgrade($marker, 'done');
+            }
+            return $installed;
+        }
+        if (($was['state'] ?? null) === 'done' || (($was['state'] ?? null) === 'failed' && $was['at'] > time() - self::UPGRADE_RETRY_SECONDS)) {
+            return null;
+        }
+        try {
+            $plugin = $this->installBuiltin($manifestId, self::SYSTEM_USER_ID);
+        } catch (\Throwable $e) {
+            // Another request installed it meanwhile, or it cannot be installed here.
+            unset($this->rows[$manifestId]);
+            $plugin = $this->find($manifestId);
+            if ($plugin === null) {
+                error_log('Plugin ' . $manifestId . ' was not installed for an upgrade: ' . $e->getMessage());
+                $this->markUpgrade($marker, 'failed');
+                return null;
+            }
+        }
+        $this->markUpgrade($marker, 'done');
+        return $plugin;
+    }
+
+    /** @return ?array{state: string, at: int} what installForUpgrade() wrote down for a plugin, or null */
+    private function upgradeMark(string $marker): ?array
+    {
+        $read = $this->pdo->prepare('SELECT meta_value FROM system_meta WHERE meta_key = ?');
+        $read->execute([$marker]);
+        $value = $read->fetchColumn();
+        if ($value === false) {
+            return null;
+        }
+        $mark = json_decode((string) $value, true);
+        // Anything else written there is an install that was done.
+        return is_array($mark) && in_array($mark['state'] ?? null, ['done', 'failed'], true) && is_int($mark['at'] ?? null)
+            ? ['state' => $mark['state'], 'at' => $mark['at']] : ['state' => 'done', 'at' => 0];
+    }
+
+    private function markUpgrade(string $marker, string $state): void
+    {
+        $value = json_encode(['state' => $state, 'at' => time()], JSON_THROW_ON_ERROR);
+        try {
+            $update = $this->pdo->prepare('UPDATE system_meta SET meta_value = ? WHERE meta_key = ?');
+            $update->execute([$value, $marker]);
+            if ($update->rowCount() === 0) {
+                $this->pdo->prepare('INSERT INTO system_meta (meta_key, meta_value) VALUES (?, ?)')->execute([$marker, $value]);
+            }
+        } catch (\PDOException) {
+            // Written meanwhile by another request.
+        }
     }
 
     /** Keys in order at every level: MySQL's JSON columns give an object back with its keys reordered. */
@@ -405,8 +713,11 @@ final class PluginService
         return $value;
     }
 
-    /** What a plugin asks, as the administrator reads it before granting it. */
-    public static function review(array $plugin): array
+    /**
+     * What a plugin asks, as the administrator reads it before granting it. $was: what the version
+     * installed now was granted (granted()), for an update: the hosts it adds are said apart.
+     */
+    public static function review(array $plugin, ?array $was = null): array
     {
         return [
             'version' => $plugin['version'],
@@ -414,6 +725,8 @@ final class PluginService
             'uses' => $plugin['uses'],
             'settings' => $plugin['settings'],
             'sandbox' => array_map(fn (string $permission) => self::SANDBOX[$permission], $plugin['sandbox']),
+        ] + self::grantedView($plugin) + [
+            'networkAdded' => $was === null ? [] : array_values(array_diff($plugin['network'] ?? [], $was['network'] ?? [])),
         ];
     }
 
@@ -481,7 +794,7 @@ final class PluginService
             $this->apps->deleteApp($appId);
             throw $e;
         }
-        unset($this->rows[$plugin['id']]);
+        unset($this->rows[$plugin['id']], $this->granted[$appId]);
         return $this->find($plugin['id']) ?? throw new \RuntimeException('The plugin was not recorded.');
     }
 
@@ -505,7 +818,7 @@ final class PluginService
             ->execute([$read['name'], $read['version'], json_encode($read['passes'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
                 json_encode($read['uses'], JSON_THROW_ON_ERROR), json_encode($read['settings'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
                 json_encode(self::settingsValues($read['settings'], $plugin['settings']), JSON_THROW_ON_ERROR), gmdate('Y-m-d H:i:s'), $plugin['id']]);
-        unset($this->rows[$plugin['manifestId']]);
+        unset($this->rows[$plugin['manifestId']], $this->granted[$plugin['appId']]);
         return $this->find($plugin['manifestId']) ?? $plugin;
     }
 
@@ -528,9 +841,13 @@ final class PluginService
         return $this->find($manifestId) ?? $plugin;
     }
 
+    /** Turn a plugin on or off; on, it may not send the sign-in codes another plugin that is on sends. */
     public function setEnabled(string $manifestId, bool $enabled): array
     {
         $plugin = $this->find($manifestId) ?? throw new \InvalidArgumentException('That plugin is not installed.');
+        if ($enabled) {
+            $this->assertProviderFree($this->granted($plugin)['signInCodes'], $manifestId);
+        }
         $this->pdo->prepare('UPDATE plugins SET enabled = ?, updated_at = ? WHERE id = ?')->execute([$enabled ? 1 : 0, gmdate('Y-m-d H:i:s'), $plugin['id']]);
         unset($this->rows[$manifestId]);
         return $this->find($manifestId) ?? $plugin;
@@ -539,6 +856,7 @@ final class PluginService
     /**
      * Remove a plugin: its project and app, and every pass it issued, so the apps that require it
      * are closed until another is chosen. Apps keep their setting and say the plugin is not here.
+     * What each app's owner set for it (PluginAppSettings) goes too, from every app.
      */
     public function remove(string $manifestId): void
     {
@@ -551,15 +869,28 @@ final class PluginService
         }
         $this->apps->deleteApp($plugin['appId']);
         $this->pdo->prepare('DELETE FROM plugins WHERE id = ?')->execute([$plugin['id']]);
-        unset($this->rows[$manifestId]);
+        unset($this->rows[$manifestId], $this->granted[$plugin['appId']]);
+        try {
+            $this->native->removePrivateFileEverywhere(PluginAppSettings::fileName($manifestId));
+        } catch (\Throwable $e) {
+            error_log('Plugin ' . $manifestId . ' was removed, and its apps\' settings for it were not: ' . get_class($e));
+        }
     }
 
     /** The account plugins' projects belong to: no password opens it, and nobody may act as it. */
     private function ensureSystemUser(): void
     {
-        $this->pdo->prepare(
-            "INSERT IGNORE INTO users (id, email, password_hash, name) VALUES (?, ?, '!', 'Plugins')"
-        )->execute([self::SYSTEM_USER_ID, self::SYSTEM_EMAIL]);
+        $exists = $this->pdo->prepare('SELECT 1 FROM users WHERE id = ?');
+        $exists->execute([self::SYSTEM_USER_ID]);
+        if ($exists->fetchColumn() !== false) {
+            return;
+        }
+        try {
+            $this->pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, '!', 'Plugins')")
+                ->execute([self::SYSTEM_USER_ID, self::SYSTEM_EMAIL]);
+        } catch (\PDOException) {
+            // Made meanwhile by another install.
+        }
     }
 
     private function format(array $row): array

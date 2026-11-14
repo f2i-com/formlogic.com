@@ -52,7 +52,7 @@ import { useAiReady } from '../../hooks/useAiReady';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { api } from '../../lib/api';
 import { apiOf } from '../../lib/appApi';
-import { declaresFormlogicAi, declaresFormlogicPayments, exportNativeProject, importNativeProject, type NativeProject, type NativeProjectBytes } from '../../lib/nativeHosting';
+import { declaresFormlogicAi, declaresFormlogicPayments, exportNativeProject, importNativeProject, phoneCodeProvider, type NativeProject, type NativeProjectBytes } from '../../lib/nativeHosting';
 import { withMediaBytes } from '../../lib/nativeMedia';
 import { isSoftnApp, projectFromUpload, projectHasBackend, SOFTN_SECTIONS, softnWorkspacePath, type SoftnSection } from '../../lib/softnApps';
 import { cn, copyToClipboard } from '../../lib/utils';
@@ -177,7 +177,18 @@ function Workspace({ app }: { app: App }) {
   const liveUrl = `${window.location.origin}/app/${encodeURIComponent(app.slug)}${project?.home ? '' : '/native'}`;
   // An app without a backend of its own runs in the browser alone: it has no database here.
   const backend = project ? projectHasBackend(project) : true;
-
+  // Phone sign-in codes: shown when the app names a plugin to send them, and also when it names
+  // none now (it changed, or the plugin went) but details given for sending them are still kept,
+  // so the owner can forget them. Asked once Settings is open.
+  const namesCodeProvider = !!project && !!phoneCodeProvider(project);
+  const [keptCodes, setKeptCodes] = useState(false);
+  useEffect(() => {
+    if (section !== 'settings' || !isOwner || !backend || namesCodeProvider) return;
+    let current = true;
+    void api.getAppSignInCodes(app.id).then(result => { if (current) setKeptCodes(result.data?.keptWithoutPlugin === true); });
+    return () => { current = false; };
+  }, [app.id, section, isOwner, backend, namesCodeProvider]);
+  const showsCodes = isOwner && backend && (namesCodeProvider || keptCodes);
   // The live app's backend (its installed manifest.json), which answers calls whatever the draft holds: the API
   // section is there while the live app or the draft has one, and shows the live app's.
   const liveBackend = useMemo(() => apiOf(draft.installedFiles?.['manifest.json']) !== null, [draft.installedFiles]);
@@ -590,7 +601,7 @@ function Workspace({ app }: { app: App }) {
                   onImported={result => {
                     setReloadKey(key => key + 1); setPreviewKey(key => key + 1);
                     toast.success('Data brought in', result.keyImported ? 'With the key it was kept under.' : 'The app keeps its own key here.');
-                    if (result.verification?.configured) toast.info('Sign-in codes are on', 'Its Twilio Verify details now send this app’s codes.');
+                    if (result.verification?.configured) toast.info('Sign-in codes are on', `${result.verification.plugin?.name ?? 'The plugin that sends them'} sends this app’s codes with the details from its key file.`);
                     if (result.verificationProblem) toast.warning('Sign-in codes are not set up', result.verificationProblem);
                   }} />
                 : undefined} />
@@ -622,7 +633,7 @@ function Workspace({ app }: { app: App }) {
           {/* The page is long: one line of links to its panels, each an address a link elsewhere can use. */}
           <nav aria-label="Settings on this page" className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
             {([['settings-access', 'Who can use it', true], ['settings-before', 'Before it opens', isOwner], ['settings-files', 'Files on this device', isOwner && !isSite], ['settings-outside', 'Outside sites', isOwner && isSite],
-              ['settings-signin', 'Phone sign-in codes', isOwner && backend], ['app-ai-settings', 'AI', isOwner && backend && declaresFormlogicAi(project)],
+              ['settings-signin', 'Phone sign-in codes', showsCodes], ['app-ai-settings', 'AI', isOwner && backend && declaresFormlogicAi(project)],
               ['settings-payments', 'Payments', isOwner && backend && declaresFormlogicPayments(project)], ['settings-look', 'Look and sharing', isOwner],
               ['settings-engine', 'Engine', !isSite && !!(draft.engine && draft.enginePolicy)], ['settings-more', 'More tools', true]] as const)
               .filter(([, , shown]) => shown).map(([id, label]) =>
@@ -664,8 +675,9 @@ function Workspace({ app }: { app: App }) {
                 </label>)}
             </fieldset>
           </Panel>}
-          {app.ownerId === userId && backend && <Panel id="settings-signin" title="Phone sign-in codes" icon={<MessageSquare className="h-4 w-4" />}>
-            <PhoneSignInPanel appId={app.id} version={version} disabled={readOnly} />
+          {/* Only for an app whose manifest names a provider for the codes it texts: no other app sends any. */}
+          {showsCodes && <Panel id="settings-signin" title="Phone sign-in codes" icon={<MessageSquare className="h-4 w-4" />}>
+            <PhoneSignInPanel appId={app.id} version={version} disabled={readOnly} onForgotten={() => setKeptCodes(false)} />
           </Panel>}
           {app.ownerId === userId && backend && declaresFormlogicAi(project) && <div id="app-ai-settings" className="min-w-0 scroll-mt-24"><Panel title="AI for this app" icon={<Sparkles className="h-4 w-4" />}>
             <AppAiPanel appId={app.id} />

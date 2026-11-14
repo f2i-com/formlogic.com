@@ -7,7 +7,7 @@ import { api } from '../../lib/api';
 import { importNativeProject } from '../../lib/nativeHosting';
 import { STRENGTH_WORDS } from '../../lib/passes';
 import { toast } from '../../stores/toastStore';
-import type { AvailablePlugin, InstalledPlugin, PluginPass, PluginReview, PluginSetting, UploadedPlugin } from '../../types/app';
+import type { AvailablePlugin, InstalledPlugin, PluginGrantedWords, PluginReview, PluginSetting, UploadedPlugin } from '../../types/app';
 import { AdminCameraCheckCard } from './AdminCameraCheckCard';
 import { HELP } from '../../components/ui/listLook';
 
@@ -16,20 +16,47 @@ const USES: Record<string, string> = {
   camera: 'Use the camera, in this site\'s own page: it asks members for pictures and sends its own instructions with them to the AI on your computer running OAIY (Camera checks, below), which uses that computer; it decides from what the AI says. It never sees a picture.',
 };
 
-/** What a plugin may do, in words: the passes it issues, what it uses, and its sandbox's own permissions. */
-function grantsOf(passes: PluginPass[], uses: string[], sandbox: string[]): string[] {
+/** "a", "a and b", "a, b and c". */
+function listed(items: string[]): string {
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** A setting a plugin asks owners for, as the server says it: a secret with where it may go, and where a setting is read from an earlier host's key file. */
+type SettingWords = NonNullable<PluginGrantedWords['appSettings']>[number] & { sendTo?: string[]; importFrom?: string };
+type GrantsReview = Pick<PluginReview, 'passes' | 'uses' | 'sandbox' | 'networkAdded'> & Omit<PluginGrantedWords, 'appSettings'> & { appSettings?: SettingWords[] };
+
+/**
+ * What a plugin may do, in words: the passes it issues, what it uses, the sign-in codes it sends,
+ * the hosts this site reaches for it, what it asks each app's owner for (each secret with the only
+ * hosts it is sent to, and what it would take from an earlier host's key file), and its sandbox's
+ * own permissions.
+ */
+function grantsOf(review: GrantsReview): string[] {
+  const settings = review.appSettings ?? [];
+  const secrets = settings.filter((field) => field.type === 'secret');
+  const imported = settings.filter((field) => field.importFrom);
   return [
-    ...passes.map((pass) => `Issue a ${pass.label.toLowerCase()} pass (${pass.min}–${pass.max}${pass.unit ? ` ${pass.unit}` : ''}): ${pass.strengths.map((s) => pass.strengthLabels?.[s] || STRENGTH_WORDS[s].label).join(', or ')}`),
-    ...uses.map((use) => USES[use] ?? use),
-    ...sandbox,
+    ...review.passes.map((pass) => `Issue a ${pass.label.toLowerCase()} pass (${pass.min}–${pass.max}${pass.unit ? ` ${pass.unit}` : ''}): ${pass.strengths.map((s) => pass.strengthLabels?.[s] || STRENGTH_WORDS[s].label).join(', or ')}`),
+    ...review.uses.map((use) => USES[use] ?? use),
+    ...(review.signInCodes ? [`Send the sign-in codes of apps that ask for “${review.signInCodes.provider}” (${review.signInCodes.label}), and check the codes people type`] : []),
+    ...(review.network?.length ? [`Reach ${listed(review.network)} over HTTPS, through this site: the site makes each request it asks for, only in the steps the site calls (never from its own page), and gives it back the answer. Nowhere else.`] : []),
+    ...(settings.length ? [`Ask each app's owner for: ${listed(settings.map((field) => field.label))}.`] : []),
+    ...secrets.map((field) => `${field.label}: a secret, ${field.sendTo?.length ? `sent only to ${listed(field.sendTo)}` : 'sent to no host'}. Kept on this site and filled in by the site itself, never given to its code.`),
+    ...(imported.length ? [`Take from the key file of an app's earlier SoftN host, when its owner brings the app's data and says so: ${listed(imported.map((field) => `${field.label} (${field.importFrom})`))}. Nothing else of that file.`] : []),
+    ...review.sandbox,
   ];
 }
 
-function Grants({ review }: { review: Pick<PluginReview, 'passes' | 'uses' | 'sandbox'> }) {
+function Grants({ review }: { review: GrantsReview }) {
   return (
-    <ul className="list-disc pl-5 text-xs leading-5 text-gray-500 dark:text-slate-400">
-      {grantsOf(review.passes, review.uses, review.sandbox).map((grant) => <li key={grant}>{grant}</li>)}
-    </ul>
+    <>
+      {review.networkAdded && review.networkAdded.length > 0 && (
+        <p className="text-xs font-medium text-amber-700 dark:text-amber-300">New in this version: it would also reach {listed(review.networkAdded)}.</p>
+      )}
+      <ul className="list-disc pl-5 text-xs leading-5 text-gray-500 dark:text-slate-400">
+        {grantsOf(review).map((grant) => <li key={grant}>{grant}</li>)}
+      </ul>
+    </>
   );
 }
 
@@ -146,7 +173,7 @@ export function AdminPluginsCard() {
       >
         <div className="space-y-3">
           <p className={HELP}>
-            Plugins are SoftN apps that add to the site. Their code runs sandboxed, with no network, and can do only what it was granted when installed, listed under it.
+            Plugins are SoftN apps that add to the site. Their code runs sandboxed, with no network of its own, and can do only what it was granted when installed, listed under it: where one needs a host reached, this site makes the request for it, to the hosts listed and no others.
             App owners choose whether their apps ask for what a plugin issues. Turning one off closes the apps that ask for it; removing it also withdraws everything it issued.
           </p>
 
@@ -176,7 +203,7 @@ export function AdminPluginsCard() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0 flex-1 basis-56">
                         <p className="text-sm font-medium text-gray-900 dark:text-white">{plugin.name} <span className="text-xs font-normal text-gray-500 dark:text-slate-400">v{plugin.version}{plugin.source === 'upload' ? ' · uploaded' : ''}</span></p>
-                        <Grants review={{ passes: plugin.grants, uses: plugin.uses, sandbox: [] }} />
+                        <Grants review={{ passes: plugin.grants, uses: plugin.uses, sandbox: [], network: plugin.network, signInCodes: plugin.signInCodes, appSettings: plugin.appSettings }} />
                       </div>
                       <Switch
                         label={plugin.enabled ? 'On' : 'Off'}

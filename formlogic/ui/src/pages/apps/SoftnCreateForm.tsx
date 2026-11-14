@@ -9,7 +9,8 @@ import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { readKeyFile } from '../../lib/appKeyFile';
-import { formlogicAsks, importNativeProject } from '../../lib/nativeHosting';
+import { formlogicAsks, importNativeProject, phoneCodeProvider } from '../../lib/nativeHosting';
+import { holdsSignInSettings } from '../../lib/signInCodes';
 import { backendOf, withBackend } from '../../lib/softnBackend';
 import { api } from '../../lib/api';
 import { createSoftnApp, projectFromUpload, projectHasBackend, softnWorkspacePath, uploadName, type SoftnStart } from '../../lib/softnApps';
@@ -21,7 +22,8 @@ type Method = 'ai' | 'builder' | 'upload';
 
 /** What a chosen .softn file holds, read as soon as it is chosen: its app's name, and whether it brings a backend. */
 /** `asks`: what the app asks of FormLogic itself (its AI, its payments), said before it is created. */
-interface FileReview { name: string; backend: boolean; asks: string[] }
+/** `codes`: its manifest names a provider for the sign-in codes it sends by text. */
+interface FileReview { name: string; backend: boolean; asks: string[]; codes: boolean }
 
 const isFileDrag = (event: React.DragEvent) => [...(event.dataTransfer?.types ?? [])].includes('Files');
 
@@ -54,8 +56,12 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
   // Its data from where it ran before, optional: the database, and the key file it was kept under.
   const [data, setData] = useState<File | null>(null);
   const [keyFile, setKeyFile] = useState<File | null>(null);
-  const [keyTwilio, setKeyTwilio] = useState(false);
-  const [useTwilio, setUseTwilio] = useState(true);
+  // The key file's configuration, and whether to give the plugin that sends the app's sign-in codes
+  // what it takes from such a file: known only once the app is made (lib/signInCodes).
+  const [keyConfig, setKeyConfig] = useState<Record<string, unknown> | null>(null);
+  const [useCodes, setUseCodes] = useState(true);
+  // The chosen file's backend names a provider for its sign-in codes (with the page's own, below).
+  const [backendCodes, setBackendCodes] = useState(false);
   const [dataError, setDataError] = useState('');
   // A file with no backend of its own, and the app's full file to take one from (optional).
   const [backendFile, setBackendFile] = useState<File | null>(null);
@@ -67,19 +73,21 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
   /** Read the backend file and put it with the page at once, so what would refuse it shows now, not at Create. */
   const takeBackend = async (picked: File | null, page: File | null) => {
     latestBackend.current = picked;
-    setBackendFile(null); setBackendError('');
+    setBackendFile(null); setBackendError(''); setBackendCodes(false);
     if (!picked || !page) return;
     setReadingBackend(true);
     try {
       const backend = backendOf(await importNativeProject(picked));
       if (!backend) throw new Error(`${picked.name} has no backend either: its manifest.json has no server block. Choose the app's full file, the one with its server/ folder.`);
-      withBackend(await projectFromUpload(page), backend);
-      if (latestBackend.current === picked) setBackendFile(picked);
+      const together = withBackend(await projectFromUpload(page), backend);
+      if (latestBackend.current === picked) { setBackendFile(picked); setBackendCodes(!!phoneCodeProvider(together)); }
     } catch (reason) {
       if (latestBackend.current === picked) setBackendError(reason instanceof Error ? reason.message : 'That file could not be read as a SoftN app.');
     } finally { if (latestBackend.current === picked) setReadingBackend(false); }
   };
   const withItsBackend = !!review?.backend || !!backendFile;
+  // The app, as it will be, sends sign-in codes by text: its own backend's manifest says so, or the one added to it.
+  const sendsCodes = backendFile && !review?.backend ? backendCodes : !!review?.codes;
   const dataInput = useRef<HTMLInputElement>(null);
   const keyInput = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
@@ -100,12 +108,12 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
     latest.current = picked;
     setFile(picked); setReview(null); setFileError(''); setError('');
     // A backend chosen for the last file is not this one's.
-    latestBackend.current = null; setBackendFile(null); setBackendError(''); setReadingBackend(false);
+    latestBackend.current = null; setBackendFile(null); setBackendError(''); setReadingBackend(false); setBackendCodes(false);
     if (!picked) return;
     setChosen(true); setMethod('upload');
     try {
       const project = await projectFromUpload(picked);
-      if (latest.current === picked) setReview({ name: uploadName(project, picked), backend: projectHasBackend(project), asks: formlogicAsks(project) });
+      if (latest.current === picked) setReview({ name: uploadName(project, picked), backend: projectHasBackend(project), asks: formlogicAsks(project), codes: !!phoneCodeProvider(project) });
     } catch (reason) {
       if (latest.current === picked) setFileError(reason instanceof Error ? reason.message : 'That file could not be read as a SoftN app.');
     }
@@ -120,7 +128,15 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
       if (created.error) toast.info('Your app was created', created.error);
       // Its data, once its first version is in: installed as the next version, or not at all.
       if (created.project && method === 'upload' && withItsBackend && data) {
-        const brought = await api.importNativeData(created.app.id, data, keyFile, keyTwilio && useTwilio);
+        // What the key file holds for the app's sign-in codes is given to the plugin on this site
+        // that sends them, where there is one and it takes those settings from such a file.
+        let codes = false;
+        if (keyConfig && useCodes && sendsCodes) {
+          const signIn = await api.getAppSignInCodes(created.app.id);
+          codes = !!signIn.data?.plugin && holdsSignInSettings(keyConfig, signIn.data.imports);
+          if (signIn.data && !signIn.data.plugin) toast.info('Sign-in codes are not set up', 'No plugin on this site sends this app’s sign-in codes yet: an administrator adds one in Admin → Platform → Plugins.');
+        }
+        const brought = await api.importNativeData(created.app.id, data, keyFile, codes);
         if (brought.error) toast.error('Your app was created, without its data', `${brought.error} You can bring it from Import, in the app's Data section.`);
         else toast.success('Its data came with it', brought.data?.keyImported ? 'With the key it was kept under.' : 'The app has a key of its own here.');
         if (brought.data?.verificationProblem) toast.warning('Sign-in codes are not set up', brought.data.verificationProblem);
@@ -212,8 +228,8 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
       <input ref={keyInput} type="file" accept=".json,application/json" className="hidden" aria-label="Choose its key file" onChange={event => {
         const picked = event.target.files?.[0] ?? null;
         event.target.value = '';
-        setKeyFile(null); setKeyTwilio(false); setDataError('');
-        if (picked) void readKeyFile(picked).then(info => { if ('error' in info) setDataError(info.error); else { setKeyFile(picked); setKeyTwilio(info.twilio); } });
+        setKeyFile(null); setKeyConfig(null); setDataError('');
+        if (picked) void readKeyFile(picked).then(info => { if ('error' in info) setDataError(info.error); else { setKeyFile(picked); setKeyConfig(info.config); } });
       }} />
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button size="sm" variant="secondary" disabled={creating || disabled} onClick={() => dataInput.current?.click()} leftIcon={<Database className="h-4 w-4" />}>{data ? 'Another database' : 'Choose its database'}</Button>
@@ -223,9 +239,9 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
         <Button size="sm" variant="ghost" disabled={creating || disabled} onClick={() => keyInput.current?.click()} leftIcon={<KeyRound className="h-4 w-4" />}>{keyFile ? 'Another key file' : 'Add its key file'}</Button>
         {keyFile && <span className="break-all text-xs text-gray-600 dark:text-slate-300">{keyFile.name}</span>}
       </div>}
-      {keyTwilio && <label className="mt-2 flex items-start gap-2 text-xs leading-5 text-gray-600 dark:text-slate-300">
-        <input type="checkbox" className="mt-0.5" checked={useTwilio} onChange={event => setUseTwilio(event.target.checked)} disabled={creating || disabled} />
-        <span>It also holds Twilio Verify details: use them to send this app&apos;s sign-in codes.</span>
+      {keyFile && sendsCodes && <label className="mt-2 flex items-start gap-2 text-xs leading-5 text-gray-600 dark:text-slate-300">
+        <input type="checkbox" className="mt-0.5" checked={useCodes} onChange={event => setUseCodes(event.target.checked)} disabled={creating || disabled} />
+        <span>Where it holds the details this app&apos;s sign-in codes were sent with, use them here: they go to the plugin that sends the codes on this site.</span>
       </label>}
       {dataError && <p role="alert" className="mt-2 rounded-lg bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">{dataError}</p>}
     </div>}

@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   getAppUsers: vi.fn(),
   listFlows: vi.fn(),
   getAppForms: vi.fn(),
+  getAppSignInCodes: vi.fn(),
   withMediaBytes: vi.fn(),
   keepUnchanged: vi.fn(),
   dataManager: null as null | { table?: string; view?: string; query?: string; onNavigate(table: string | undefined, view: string, query?: string, options?: { replace?: boolean }): void },
@@ -37,6 +38,7 @@ vi.mock('../../lib/api', () => ({ api: {
   getAppDomains: mocks.getAppDomains, createAppDomain: mocks.createAppDomain,
   getAppAi: mocks.getAppAi,
   getNativeDataSummary: mocks.getNativeDataSummary, getAppUsers: mocks.getAppUsers, listFlows: mocks.listFlows, getAppForms: mocks.getAppForms,
+  getAppSignInCodes: mocks.getAppSignInCodes,
   getPassKinds: async () => ({ data: { passes: [] } }),
   isAdminActing: () => false, isDemoMode: () => false,
 } }));
@@ -46,6 +48,7 @@ vi.mock('../../lib/nativeHosting', () => ({
   importNativeProject: async () => ({ version: 0, files: { 'manifest.json': '{"id":"a"}', 'ui/main.ui': '<Text>Changed</Text>' }, assets: {}, access: 'application' }),
   declaresFormlogicAi: (project: { files: Record<string, string> }) => 'formlogicAi' in JSON.parse(project.files['manifest.json'] ?? '{}'),
   declaresFormlogicPayments: () => false,
+  phoneCodeProvider: (project: { files: Record<string, string> }) => JSON.parse(project.files['manifest.json'] ?? '{}').config?.app?.verificationProvider ?? null,
 }));
 // The page holds the app's media by name: their bytes are read for a download or an editor, and a save names what the server has.
 vi.mock('../../lib/nativeMedia', () => ({ withMediaBytes: mocks.withMediaBytes, keepUnchanged: mocks.keepUnchanged, pictureUrl: () => '' }));
@@ -102,6 +105,7 @@ beforeEach(() => {
   mocks.getAppUsers.mockReset().mockResolvedValue({ data: { users: [], count: 0 } });
   mocks.listFlows.mockReset().mockResolvedValue({ data: { flows: [] } });
   mocks.getAppForms.mockReset().mockResolvedValue({ data: { forms: [] } });
+  mocks.getAppSignInCodes.mockReset().mockResolvedValue({ data: { plugin: null, provider: null, fields: [], values: {}, kept: {}, keptWithoutPlugin: false } });
   mocks.dataManager = null;
   mocks.history = null;
   mocks.appApi = null;
@@ -181,6 +185,31 @@ describe('SoftnAppWorkspace', () => {
       mocks.getAppForms.mockClear();
       await render('published', withBackend(1), '/edit');
       expect(mocks.getAppForms).not.toHaveBeenCalled();
+    });
+
+    it('shows the phone sign-in codes, and links to them, only for an app whose manifest names a provider for its codes', async () => {
+      const links = () => [...container.querySelectorAll('a')].map(a => a.textContent ?? '');
+      for (const at of ['/settings', '']) {
+        await render('published', withBackend(1), at);
+        expect(container.textContent).not.toContain('phone sign-in');
+        expect(links().some(text => text.includes('Phone sign-in codes'))).toBe(false);
+        await act(async () => root.unmount());
+      }
+      const texting: NativeProject = { ...withBackend(1), files: { ...withBackend(1).files, 'manifest.json': '{"id":"a","server":{"entry":"server/main.logic"},"config":{"app":{"verificationProvider":"twilio-verify"}}}' } };
+      await render('published', texting, '/settings');
+      expect(container.textContent).toContain('phone sign-in');
+      expect(links()).toContain('Phone sign-in codes');
+      await act(async () => root.unmount());
+      await render('published', texting);
+      expect(links().some(text => text.includes('Phone sign-in codes'))).toBe(true);
+    });
+
+    it('still shows the phone sign-in codes where details are kept for an app that names no provider now, so they can be forgotten', async () => {
+      mocks.getAppSignInCodes.mockResolvedValue({ data: { plugin: null, provider: null, fields: [], values: {}, kept: {}, keptWithoutPlugin: true } });
+      await render('published', withBackend(1), '/settings');
+      await act(async () => {});
+      expect(mocks.getAppSignInCodes).toHaveBeenCalledWith('app-1');
+      expect(container.textContent).toContain('phone sign-in');
     });
 
     it('has no link or button named for the studio anywhere on the page of an app with no forms', async () => {

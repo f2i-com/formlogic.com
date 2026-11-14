@@ -29,6 +29,20 @@ class IpSafetyTest extends TestCase
         $this->assertFalse(IpSafety::isPublicIp('::ffff:127.0.0.1'));   // IPv4-mapped loopback
     }
 
+    /**
+     * NAT64: the well-known prefix 64:ff9b::/96 is as public as the IPv4 it embeds; the local-use
+     * prefix 64:ff9b:1::/48 (RFC 8215) is a network's own translator, never public, whatever it embeds.
+     */
+    public function testNat64LocalUseIsNeverPublicAndTheWellKnownPrefixIsItsIpv4(): void
+    {
+        $this->assertTrue(IpSafety::isPublicIp('64:ff9b::808:808'));             // 8.8.8.8
+        $this->assertFalse(IpSafety::isPublicIp('64:ff9b::7f00:1'));             // 127.0.0.1
+        $this->assertFalse(IpSafety::isPublicIp('64:ff9b:1::808:808'));          // local-use, embedding 8.8.8.8
+        $this->assertFalse(IpSafety::isPublicIp('64:ff9b:1:ffff:ffff:ffff:808:808'));
+        $this->assertFalse(IpSafety::isPublicIp('64:ff9b:1::a00:5'));            // local-use, embedding 10.0.0.5
+        $this->assertTrue(IpSafety::isPublicIp('64:ff9b:2::808:808'), 'outside the /48, decoded as before');
+    }
+
     public function testResolvesToPublicHostRejectsPrivateLiteralsAndBlockedHosts(): void
     {
         $err = null;

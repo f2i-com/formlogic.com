@@ -48,36 +48,42 @@ class NativeAppController
         $readOnly = $this->isDemoRequest($request);
         if ($request->getMethod() !== 'GET' && ($blocked = $this->blockIfDemo($request, $response, self::DEMO_READ_ONLY))) return $blocked;
         return $this->respond($response, function () use ($request, $response, $app, $args, $readOnly) {
-            // Phone sign-in codes through the owner's Twilio Verify (NativePhoneVerification): the
-            // two ids are shown back, the token never is.
+            // Phone sign-in codes, sent by the plugin that provides the app's provider
+            // (NativePhoneVerification): the owner's settings for it, a secret never shown back.
             if (($args['operation'] ?? '') === 'verification') {
                 if ($this->verification === null) throw new \RuntimeException('Phone verification is not available on this server', 503);
                 if ($request->getMethod() === 'GET') return $this->verification->describe($app['id']);
                 if ($request->getMethod() === 'DELETE') return $this->verification->clear($app['id']);
                 $input = $request->getParsedBody();
-                if (!is_array($input)) throw new \InvalidArgumentException('Provide the Twilio details');
-                return $this->verification->save($app['id'], $input['accountSid'] ?? null, $input['serviceSid'] ?? null, $input['authToken'] ?? null);
+                if (!is_array($input) || !is_array($input['values'] ?? null)) throw new \InvalidArgumentException('Send the settings, as values.');
+                return $this->verification->save($app['id'], $input['values']);
             }
             // The app's data from where it ran before: its database, and optionally the earlier
-            // host's private configuration for the key it was kept under (and its Twilio details,
-            // when the owner says to use them).
+            // host's private configuration for the key it was kept under (and, when the owner says
+            // to use it, what it kept for the app's sign-in codes, for the plugin that sends them).
             if (($args['operation'] ?? '') === 'import') {
                 $uploads = $request->getUploadedFiles();
                 $database = $uploads['database'] ?? null;
                 if (!$database instanceof \Psr\Http\Message\UploadedFileInterface || $database->getError() !== UPLOAD_ERR_OK) throw new \InvalidArgumentException('Choose the app\'s database file (application.sqlite).');
                 $config = $uploads['config'] ?? null;
-                $imported = ['key' => null, 'verification' => null];
+                $imported = ['key' => null];
+                $held = null;
                 if ($config instanceof \Psr\Http\Message\UploadedFileInterface && $config->getError() === UPLOAD_ERR_OK) {
                     if ($config->getSize() !== null && $config->getSize() > 65536) throw new \InvalidArgumentException('That key file is too large to be a host configuration.');
-                    $imported = NativeAppService::importedKey((string) $config->getStream());
+                    $text = (string) $config->getStream();
+                    $imported = NativeAppService::importedKey($text);
+                    // Only what the plugin that sends the app's codes names (its settings' `importFrom`).
+                    $held = $this->verification?->heldIn($app['id'], (array) json_decode($text, true));
+                    unset($text);
                 }
-                $useVerification = (($request->getParsedBody() ?? [])['useVerification'] ?? '') === '1' && $imported['verification'] !== null && $this->verification !== null;
-                // Twilio details this site would not keep are said before anything changes, and
-                // never take the data with them: the data is the import, the details a setting.
+                $found = $held !== null;
+                $useVerification = (($request->getParsedBody() ?? [])['useVerification'] ?? '') === '1' && $found;
+                // Settings the plugin would not take are said before anything changes, and never
+                // take the data with them: the data is the import, the settings a setting.
                 $verificationProblem = null;
                 if ($useVerification) {
-                    try { NativePhoneVerification::assertDetails($imported['verification']['accountSid'], $imported['verification']['serviceSid'], $imported['verification']['authToken']); }
-                    catch (\InvalidArgumentException $e) { $verificationProblem = 'Its Twilio details were not used: ' . $e->getMessage(); $useVerification = false; }
+                    try { $this->verification->check($app['id'], $held); }
+                    catch (\InvalidArgumentException $e) { $verificationProblem = 'Its sign-in code details were not used: ' . $e->getMessage(); $useVerification = false; }
                 }
                 $path = $this->native->importDropPath($app['id']);
                 try {
@@ -89,10 +95,13 @@ class NativeAppController
                 }
                 $verification = null;
                 if ($useVerification) {
-                    try { $verification = $this->verification->save($app['id'], $imported['verification']['accountSid'], $imported['verification']['serviceSid'], $imported['verification']['authToken']); }
-                    catch (\Throwable $e) { error_log('Native import: Twilio details not kept for app ' . $app['id'] . ': ' . get_class($e)); $verificationProblem = 'Its Twilio details could not be kept: enter them in Settings → Phone sign-in codes.'; }
+                    try { $verification = $this->verification->save($app['id'], $held); }
+                    catch (\Throwable $e) { error_log('Native import: sign-in code details not kept for app ' . $app['id'] . ': ' . get_class($e)); $verificationProblem = 'Its sign-in code details could not be kept: enter them in Settings → Phone sign-in codes.'; }
                 }
-                return ['project' => $installed, 'keyImported' => $imported['key'] !== null, 'verificationFound' => $imported['verification'] !== null, 'verification' => $verification, 'verificationProblem' => $verificationProblem];
+                unset($held);
+                // The project is as it was (only its data came): with `media=refs`, its media named as the app's page reads them.
+                if (($request->getQueryParams()['media'] ?? null) === 'refs') $installed = $this->native->ownerProject($app['id']) ?? $installed;
+                return ['project' => $installed, 'keyImported' => $imported['key'] !== null, 'verificationFound' => $found, 'verification' => $verification, 'verificationProblem' => $verificationProblem];
             }
             // A new SoftN app's first version: the starter project, named after the app. Only
             // for an app with nothing installed (install() refuses expectedVersion 0 otherwise).

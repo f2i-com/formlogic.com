@@ -8,7 +8,8 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * An app's data brought from where it ran before: what of the earlier host's configuration is
- * taken (the key and its domains, and Twilio details), and which databases are refused before
+ * taken here (the key and its domains: what it kept for the app's sign-in codes is read only where
+ * the plugin sending them says, NativePhoneVerificationTest), and which databases are refused before
  * anything of the app changes. The import itself runs through install() (tested with the runner).
  */
 final class NativeImportDataTest extends TestCase
@@ -66,17 +67,16 @@ final class NativeImportDataTest extends TestCase
         try { $act(); return 'taken'; } catch (\InvalidArgumentException $e) { return $e->getMessage(); }
     }
 
-    public function testTheEarlierHostsConfigurationGivesItsKeyAndTwilioDetailsAndNothingElse(): void
+    public function testTheEarlierHostsConfigurationGivesItsKeyAndNothingElse(): void
     {
         $taken = NativeAppService::importedKey(json_encode([
             'appId' => 'com.coffeedating.app', 'keyHex' => strtoupper(str_repeat('ab', 32)), 'development' => true, 'enableRequestHook' => true,
             'cryptoDomains' => ['hmac' => 'coffee:otp:v1', 'seal' => 'coffee:outbox:v1'], 'capabilities' => ['sql', 'net'],
-            'sms' => ['TWILIO_SID' => 'AC' . str_repeat('1', 32), 'TWILIO_TOKEN' => 'token', 'TWILIO_VERIFY_SERVICE_SID' => 'VA' . str_repeat('2', 32)],
+            'sms' => ['TWILIO_SID' => 'A' . 'C' . str_repeat('1', 32), 'TWILIO_TOKEN' => 'token', 'TWILIO_VERIFY_SERVICE_SID' => 'V' . 'A' . str_repeat('2', 32)],
         ]));
-        $this->assertSame(['appId' => 'com.coffeedating.app', 'keyHex' => str_repeat('ab', 32), 'cryptoDomains' => ['hmac' => 'coffee:otp:v1', 'seal' => 'coffee:outbox:v1']], $taken['key'], 'its development flag, hooks and capabilities are that host\'s');
-        $this->assertSame(['accountSid' => 'AC' . str_repeat('1', 32), 'serviceSid' => 'VA' . str_repeat('2', 32), 'authToken' => 'token'], $taken['verification']);
-        // Twilio details left empty (the template the old host shipped with) are no details.
-        $this->assertNull(NativeAppService::importedKey(json_encode(['keyHex' => str_repeat('a', 64), 'cryptoDomains' => ['hmac' => 'h', 'seal' => 's'], 'sms' => ['TWILIO_SID' => '', 'TWILIO_TOKEN' => '', 'TWILIO_VERIFY_SERVICE_SID' => '']]))['verification']);
+        // Its development flag, hooks and capabilities are that host's; its sign-in code details are for
+        // the plugin that sends the app's codes to name, and only it reads them (NativePhoneVerification::heldIn).
+        $this->assertSame(['key' => ['appId' => 'com.coffeedating.app', 'keyHex' => str_repeat('ab', 32), 'cryptoDomains' => ['hmac' => 'coffee:otp:v1', 'seal' => 'coffee:outbox:v1']]], $taken);
         $this->assertStringContainsString('holds no key', $this->refusal(fn() => NativeAppService::importedKey('{"keyHex":"short","cryptoDomains":{"hmac":"h","seal":"s"}}')));
         $this->assertStringContainsString('crypto domains', $this->refusal(fn() => NativeAppService::importedKey(json_encode(['keyHex' => str_repeat('a', 64)]))));
         $this->assertStringContainsString('not the JSON', $this->refusal(fn() => NativeAppService::importedKey('not json')));

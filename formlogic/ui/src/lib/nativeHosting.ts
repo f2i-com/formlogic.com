@@ -80,6 +80,18 @@ export function declaresFormlogicPayments(project: Pick<NativeProject, 'files'>)
 }
 
 /**
+ * The provider an app's manifest names for the sign-in codes it sends by text
+ * (`config.app.verificationProvider`), or null for an app that sends none: only an app that names
+ * one has anything for its owner to set up.
+ */
+export function phoneCodeProvider(project: Pick<NativeProject, 'files'>): string | null {
+  try {
+    const provider = record(record(record(JSON.parse(project.files['manifest.json'] ?? '{}'))?.config)?.app)?.verificationProvider;
+    return typeof provider === 'string' && provider.trim() ? provider.trim() : null;
+  } catch { return null; }
+}
+
+/**
  * What a project may hold, which the server holds an install to as well (NativeAppService's
  * MAX_* constants; nativeHosting.limits.test.ts keeps the two equal). A game's art and sound run
  * to hundreds of files and tens of megabytes.

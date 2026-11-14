@@ -96,10 +96,13 @@ final class PluginController
         return $this->jsonResponse($response, ['revoked' => true]);
     }
 
-    /** GET /api/admin/plugins: what is installed (with any update that ships), and what ships to install. */
+    /**
+     * GET /api/admin/plugins: what is installed (with what it was granted beyond its passes, in
+     * words, and any update that ships), and what ships to install.
+     */
     public function adminList(Request $request, Response $response): Response
     {
-        $installed = array_map(fn (array $plugin) => $plugin + ['update' => $this->plugins->pendingUpdate($plugin)], $this->plugins->installed());
+        $installed = array_map(fn (array $plugin) => $plugin + PluginService::grantedView($this->plugins->granted($plugin)) + ['update' => $this->plugins->pendingUpdate($plugin)], $this->plugins->installed());
         $have = array_column($installed, 'manifestId');
         $available = [];
         foreach ($this->plugins->builtins() as $id => $plugin) {
@@ -134,7 +137,7 @@ final class PluginController
         } catch (\InvalidArgumentException | \JsonException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
-        return $this->jsonResponse($response, ['plugin' => ['id' => $plugin['id'], 'name' => $plugin['name'], 'description' => $plugin['description'], 'updates' => $plugin['updates']] + PluginService::review($plugin)]);
+        return $this->jsonResponse($response, ['plugin' => ['id' => $plugin['id'], 'name' => $plugin['name'], 'description' => $plugin['description'], 'updates' => $plugin['updates']] + $this->plugins->reviewFor($plugin)]);
     }
 
     /** POST /api/admin/plugin-uploads {project}: install an uploaded plugin, or update it, granting what it asks. */
@@ -183,7 +186,8 @@ final class PluginController
         }
         try {
             $this->audit?->log($action, 'admin', $plugin['manifestId'], $request->getAttribute('userId'), \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request),
-                ['version' => $plugin['version'], 'grants' => array_column($plugin['grants'], 'kind'), 'uses' => $plugin['uses']]);
+                ['version' => $plugin['version'], 'grants' => array_column($plugin['grants'], 'kind'), 'uses' => $plugin['uses'],
+                    'network' => isset($plugin['appId']) ? $this->plugins->granted($plugin)['network'] : []]);
         } catch (\Throwable) {
             // audit is best-effort
         }
