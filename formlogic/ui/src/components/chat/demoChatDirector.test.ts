@@ -125,6 +125,41 @@ describe('demoChatDirector', () => {
     expect([...forms.values()][0].fields.some((f) => f.type === 'phone')).toBe(true);
   });
 
+  it('puts each tool card after the line of the script it followed, and keeps an earlier build\'s in the same conversation', async () => {
+    makeLocalWorld();
+    demoChatDirector.attach({ userId: USER, navigate: () => {} });
+    const threadId = await newThread();
+    const feedback = DEMO_ROOT_SCENARIOS[0];
+
+    await demoChatDirector.respond(feedback.prompt, threadId);
+
+    // The feedback build: a line, a card (create the form), a line, a card (the fields), a line, two cards
+    // (theme, publish), the closing line. Each card is placed after the line said just before it.
+    const { messages } = await getChatStore(USER).listMessages(threadId);
+    const line = (start: string) => messages.find((m) => m.content.startsWith(start))!.seq;
+    const cards = demoChatDirector.getSnapshot().activities;
+    expect(cards.map((card) => [card.detail, card.afterSeq])).toEqual([
+      ['Customer feedback', line('On it')],
+      ['Adding 5 fields', line('This is the form builder')],
+      ['Applying a sky-blue theme', line('Five fields')],
+      ['Publishing the form', line('Five fields')],
+    ]);
+    // The closing line comes after every card: nothing stands after it.
+    expect(cards.every((card) => card.afterSeq! < line('Published'))).toBe(true);
+
+    // A follow-up in the same conversation: the earlier cards stay where they were, and its own follow its lines.
+    await demoChatDirector.respond(feedback.followUps![0].prompt, threadId);
+    const after = demoChatDirector.getSnapshot().activities;
+    expect(after.slice(0, 4)).toEqual(cards);
+    const { messages: more } = await getChatStore(USER).listMessages(threadId);
+    expect(after[4].afterSeq).toBe(more.find((m) => m.content.startsWith('Good idea — a phone number'))!.seq);
+
+    // Another conversation starts with none of them.
+    const other = await newThread();
+    await demoChatDirector.respond('write me a poem', other);
+    expect(demoChatDirector.getSnapshot().activities).toEqual([]);
+  });
+
   it('a failing step apologises, resets the chips, and marks the card failed', async () => {
     makeLocalWorld();
     __setDemoStageDepsForTests({

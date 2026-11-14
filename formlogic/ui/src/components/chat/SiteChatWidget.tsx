@@ -59,7 +59,7 @@ import {
   historyFor,
 } from './chatEngine';
 import { getChatStore, type ChatMessage, type ChatThread } from './chatStore';
-import { demoChatDirector } from './demoChatDirector';
+import { demoChatDirector, type DemoActivity } from './demoChatDirector';
 import { acceptChatImage, CHAT_IMAGES_PER_MESSAGE, downscaleChatImage } from './chatImages';
 import { CODEX_PROVIDER_ID, CODEX_REASONING_EFFORTS } from '../../client-runtime/desktop/desktopTunnel';
 import { chatPrivacyBadge, chatThreadTitle, chatToolLinkPath, prepareSoftnHandOff } from './siteChatView';
@@ -431,11 +431,12 @@ function AccountChatWidget() {
     y.set(Math.min(0, Math.max(minY, pos.y)));
   }, [isMobile, panelVisible, x, y]);
 
-  // Keep the transcript pinned to the bottom while streaming (unless reading older).
+  // Keep the transcript pinned to the bottom while streaming (unless reading older), and while the
+  // guided demo works: a card it adds, or its "Thinking…", is its newest line too.
   useEffect(() => {
     const el = listRef.current;
     if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
-  }, [messages, liveTurn]);
+  }, [messages, liveTurn, demoSnap.activities, demoSnap.typing]);
 
   const loadOlder = useCallback(async () => {
     if (!userId || !activeThreadId || loadingOlder || !hasMore) return;
@@ -794,7 +795,9 @@ function AccountChatWidget() {
 
   if (!user) return null;
 
-  const badge = chatPrivacyBadge(lastSource, prefs);
+  // (none in the guided demo: nothing it says is sent to any AI, as its own notice says, and "sent to
+  // your configured AI service" stood right above that)
+  const badge = isDemo ? null : chatPrivacyBadge(lastSource, prefs);
   // The conversation-controls strip renders only when it would hold something: a real
   // account always has Follow-AI, while the demo only ever gets Clear.
   const hasConversationControls =
@@ -804,6 +807,21 @@ function AccountChatWidget() {
   const confirmMode = prefs?.chatToolMode === 'confirm';
   const turnForThread = liveTurn && liveTurn.threadId === activeThreadId ? liveTurn : null;
   const demoChipsVisible = isDemo && view === 'chat' && !demoRunning && demoSnap.chips.length > 0;
+  // The guided demo's tool cards, each right after the line of its script it followed (afterSeq), so
+  // the conversation reads in the order it happened and its newest line is at the bottom. Drawn all
+  // together after the messages, each new line landed above a growing stack of cards, out of sight.
+  // A card whose line is in older history not loaded is not drawn; one whose line has not been read
+  // back yet stands at the end until it is.
+  const demoCardsAfter = new Map<number, DemoActivity[]>();
+  const demoLooseCards: DemoActivity[] = [];
+  if (isDemo && demoSnap.threadId === activeThreadId) {
+    const shownSeqs = new Set(messages.map((message) => message.seq));
+    const oldestShown = messages.length > 0 ? messages[0].seq : Number.POSITIVE_INFINITY;
+    for (const card of demoSnap.activities) {
+      if (card.afterSeq !== undefined && shownSeqs.has(card.afterSeq)) demoCardsAfter.set(card.afterSeq, [...(demoCardsAfter.get(card.afterSeq) ?? []), card]);
+      else if (card.afterSeq === undefined || card.afterSeq > oldestShown) demoLooseCards.push(card);
+    }
+  }
 
   const onHeaderPointerDown = (event: React.PointerEvent) => {
     if (isMobile) return;
@@ -1073,29 +1091,33 @@ function AccountChatWidget() {
             )
           )}
           {messages.map((message) => (
-            <div
-              key={message.id}
-              className={cn(
-                'max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-3 py-1.5 text-sm',
-                message.role === 'user'
-                  ? 'ml-auto rounded-br-sm bg-primary-600 text-primary-foreground'
-                  : 'mr-auto rounded-bl-sm bg-gray-100 text-gray-900 dark:bg-slate-800 dark:text-slate-100'
-              )}
-            >
-              {message.images && message.images.length > 0 && (
-                <span className="mb-1 flex flex-wrap gap-1.5">
-                  {message.images.map((src, i) => (
-                    <img
-                      key={i}
-                      src={src}
-                      alt="Attached image"
-                      className="max-h-28 max-w-full rounded-lg object-contain"
-                    />
-                  ))}
-                </span>
-              )}
-              {message.content}
-            </div>
+            <React.Fragment key={message.id}>
+              <div
+                className={cn(
+                  'max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-3 py-1.5 text-sm',
+                  message.role === 'user'
+                    ? 'ml-auto rounded-br-sm bg-primary-600 text-primary-foreground'
+                    : 'mr-auto rounded-bl-sm bg-gray-100 text-gray-900 dark:bg-slate-800 dark:text-slate-100'
+                )}
+              >
+                {message.images && message.images.length > 0 && (
+                  <span className="mb-1 flex flex-wrap gap-1.5">
+                    {message.images.map((src, i) => (
+                      <img
+                        key={i}
+                        src={src}
+                        alt="Attached image"
+                        className="max-h-28 max-w-full rounded-lg object-contain"
+                      />
+                    ))}
+                  </span>
+                )}
+                {message.content}
+              </div>
+              {demoCardsAfter.get(message.seq)?.map((activity) => (
+                <ToolActivityCard key={activity.id} activity={activity} onOpenLink={openLink} />
+              ))}
+            </React.Fragment>
           ))}
           {turnForThread && (
             <>
@@ -1142,7 +1164,7 @@ function AccountChatWidget() {
           )}
           {isDemo && demoSnap.threadId === activeThreadId && (
             <>
-              {demoSnap.activities.map((activity) => (
+              {demoLooseCards.map((activity) => (
                 <ToolActivityCard key={activity.id} activity={activity} onOpenLink={openLink} />
               ))}
               {demoSnap.typing && (

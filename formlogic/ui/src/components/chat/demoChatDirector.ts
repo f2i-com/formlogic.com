@@ -30,12 +30,20 @@ import {
   type DemoStage,
 } from './demoChatScript';
 
+/**
+ * A tool card of the script's, and where it stands in the conversation: after the message the script
+ * said last before it (`afterSeq`, that message's place in the thread). Drawn there, between the
+ * messages: drawn all together after every message, each new line of the script landed above a stack
+ * of cards, out of sight, and the chat seemed not to say them.
+ */
+export type DemoActivity = ChatToolActivity & { afterSeq?: number };
+
 export interface DemoDirectorSnapshot {
   running: boolean;
   typing: boolean;
   /** The thread the current/most recent script belongs to (cards render there only). */
   threadId: string | null;
-  activities: ChatToolActivity[];
+  activities: DemoActivity[];
   /** Current suggestion chips (roots when idle; follow-ups + remaining roots after a run). */
   chips: string[];
   /** Bumps whenever the director appended a message — the widget reloads the thread. */
@@ -88,6 +96,8 @@ class DemoChatDirector {
   /** What the chips currently offer (roots + the last scenario's follow-ups). */
   private available: DemoScenario[] = [...DEMO_ROOT_SCENARIOS];
   private memory: DemoMemory = {};
+  /** The place in the thread of the message this run said last: a new tool card stands after it. */
+  private lastSaidSeq: number | null = null;
 
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);
@@ -121,7 +131,10 @@ class DemoChatDirector {
     const scenario = matchDemoScenario(text, [...this.available, ...DEMO_MATCHABLE_SCENARIOS]);
     if (!scenario) {
       const gen = ++this.generation;
-      this.patch({ running: true, typing: true, threadId });
+      this.lastSaidSeq = null;
+      // (another conversation's cards are not this one's)
+      const activities = this.snapshot.threadId === threadId ? this.snapshot.activities : [];
+      this.patch({ running: true, typing: true, threadId, activities });
       await waitImpl(BEATS.typing);
       if (gen !== this.generation) return;
       await this.append(threadId, DEMO_FALLBACK_REPLY);
@@ -135,7 +148,10 @@ class DemoChatDirector {
     const gen = ++this.generation;
     // A fresh build starts a fresh memory; follow-ups extend the existing one.
     if (!scenario.followUp) this.memory = {};
-    this.patch({ running: true, typing: false, threadId, activities: [], chips: [] });
+    this.lastSaidSeq = null;
+    // The cards of an earlier build in the same conversation keep their places (a follow-up's go after them).
+    const activities = this.snapshot.threadId === threadId ? this.snapshot.activities : [];
+    this.patch({ running: true, typing: false, threadId, activities, chips: [] });
     const cancelled = () => gen !== this.generation;
     const bail = new Error('demo-cancelled');
     const stage = this.buildStage(threadId, cancelled, bail);
@@ -236,14 +252,18 @@ class DemoChatDirector {
 
   private async append(threadId: string, text: string): Promise<void> {
     if (!this.userId) return;
-    await getChatStore(this.userId).appendMessage(threadId, 'assistant', text);
+    const said = await getChatStore(this.userId).appendMessage(threadId, 'assistant', text);
+    this.lastSaidSeq = said.seq;
     this.patch({ version: this.snapshot.version + 1 });
   }
 
+  /** A new card stands after the message said last; a card already shown keeps its place as it finishes. */
   private upsertActivity(activity: ChatToolActivity): void {
     const index = this.snapshot.activities.findIndex((a) => a.id === activity.id);
     const activities =
-      index === -1 ? [...this.snapshot.activities, activity] : this.snapshot.activities.map((a, i) => (i === index ? activity : a));
+      index === -1
+        ? [...this.snapshot.activities, { ...activity, ...(this.lastSaidSeq !== null ? { afterSeq: this.lastSaidSeq } : {}) }]
+        : this.snapshot.activities.map((a, i) => (i === index ? { ...activity, ...(a.afterSeq !== undefined ? { afterSeq: a.afterSeq } : {}) } : a));
     this.patch({ activities });
   }
 
@@ -259,6 +279,7 @@ class DemoChatDirector {
     this.navigateFn = null;
     this.available = [...DEMO_ROOT_SCENARIOS];
     this.memory = {};
+    this.lastSaidSeq = null;
     this.snapshot = {
       running: false,
       typing: false,

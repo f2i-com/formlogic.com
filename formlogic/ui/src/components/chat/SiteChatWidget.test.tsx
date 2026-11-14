@@ -27,7 +27,10 @@ const h = vi.hoisted(() => ({
   demoAttach: vi.fn(),
   demoRespond: vi.fn(),
   lastLocation: '',
+  /** The fake director's snapshot: set afresh before each test, which may give it a run's cards. */
+  demoSnapshot: {} as Record<string, unknown>,
 }));
+const DEMO_IDLE = { running: false, typing: false, threadId: null, activities: [], chips: ['Chip one', 'Chip two'], version: 0 };
 
 vi.mock('./chatEngine', async () => {
   const actual = await vi.importActual<typeof import('./chatEngine')>('./chatEngine');
@@ -44,18 +47,10 @@ vi.mock('./chatImages', async () => {
 // deterministic fake so the widget tests pin only the WIRING (chips render, sends route
 // to the director instead of the live engine).
 vi.mock('./demoChatDirector', () => {
-  const snapshot = {
-    running: false,
-    typing: false,
-    threadId: null,
-    activities: [],
-    chips: ['Chip one', 'Chip two'],
-    version: 0,
-  };
   return {
     demoChatDirector: {
       subscribe: () => () => undefined,
-      getSnapshot: () => snapshot,
+      getSnapshot: () => h.demoSnapshot,
       attach: h.demoAttach,
       respond: h.demoRespond,
       stop: () => undefined,
@@ -176,6 +171,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.innerHTML = '';
   h.lastLocation = '';
+  h.demoSnapshot = { ...DEMO_IDLE };
   __resetChatStoresForTests();
   __setChatStoreIndexedDbForTests(null); // memory-backed history for every test
   vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
@@ -922,6 +918,45 @@ describe('demo account', () => {
     const threads = await store.listThreads();
     const { messages } = await store.listMessages(threads[0].id);
     expect(messages.map((m) => [m.role, m.content])).toEqual([['user', 'demo hello']]);
+  });
+
+  it('shows each of a build\'s tool cards after the line it followed, ends on its last line, and claims no AI', async () => {
+    // Drawn all together after every message, each new line of the script landed above a stack of cards,
+    // out of sight in a chat that keeps to its bottom: the demo seemed not to say them.
+    signInDemo();
+    const store = getChatStore('demo');
+    const thread = await store.createThread('Turn my idea into an app');
+    await store.appendMessage(thread.id, 'user', 'Turn my idea into an app');
+    const one = await store.appendMessage(thread.id, 'assistant', 'Line one');
+    const two = await store.appendMessage(thread.id, 'assistant', 'Line two');
+    await store.appendMessage(thread.id, 'assistant', 'The closing line');
+    h.demoSnapshot = {
+      ...DEMO_IDLE,
+      threadId: thread.id,
+      activities: [
+        { id: 'c1', name: 'create_form', status: 'done', detail: 'Card one', afterSeq: one.seq },
+        { id: 'c2', name: 'update_form', status: 'done', detail: 'Card two', afterSeq: two.seq },
+        { id: 'c3', name: 'update_form', status: 'done', detail: 'Card three', afterSeq: two.seq },
+        // (one whose line is in older history than the page loaded is not drawn)
+        { id: 'c0', name: 'create_form', status: 'done', detail: 'Card from long ago', afterSeq: 0 },
+      ],
+    };
+    await renderWidget();
+    await openPanel();
+    await flush();
+
+    const list = panel()!.querySelector('[aria-label="Chat messages"]')!;
+    const said = (node: Element) => {
+      const text = node.textContent ?? '';
+      return ['Turn my idea into an app', 'Line one', 'Line two', 'The closing line', 'Card one', 'Card two', 'Card three'].find((t) => text.includes(t)) ?? null;
+    };
+    expect(Array.from(list.children).map(said).filter(Boolean)).toEqual([
+      'Turn my idea into an app', 'Line one', 'Card one', 'Line two', 'Card two', 'Card three', 'The closing line',
+    ]);
+    expect(list.textContent).not.toContain('Card from long ago');
+    // Nothing the demo says goes to any AI: no "sent to your configured AI service" over its own notice.
+    expect(panel()!.querySelector('[data-testid="chat-privacy-badge"]')).toBeNull();
+    expect(panel()!.textContent).toContain('no AI credits');
   });
 
   it('clicking a chip sends its label through the same demo path', async () => {
