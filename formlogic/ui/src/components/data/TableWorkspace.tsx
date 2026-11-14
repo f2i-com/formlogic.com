@@ -6,7 +6,7 @@ import { Plus, X } from 'lucide-react';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import type { NativeStructure } from '../../lib/nativeHosting';
-import { NativeRecordEditor } from '../studio/NativeRecordEditor';
+import { NativeRecordEditor, type RowSaved } from '../studio/NativeRecordEditor';
 import type { BrowseState } from './address';
 import { BrowseView } from './BrowseView';
 import { ExportView } from './ExportView';
@@ -87,15 +87,16 @@ export function TableWorkspace({ appId, appSlug, version, table, tables, view, r
   const columns = page.data?.columns?.length ?? table.columns;
   const listed = new Set(tables.map(each => each.name));
 
-  const saved = (message: string) => {
-    // The editor says what it did in its own words ("Record deleted."); here they are rows.
-    const removed = /deleted/i.test(message);
-    const added = !editor?.key;
+  const saved = (outcome: RowSaved, made?: Record<string, string>) => {
+    const removed = outcome === 'deleted';
+    const added = outcome === 'created';
     setEditor(null);
     setNotice({ tone: 'done', text: added ? 'Row added.' : removed ? 'Row deleted.' : 'Row saved.' });
     // A row that is gone has no details to show: if it is the open one, it closes.
     const open = resolveRow(state.row, page.data);
     if (removed && open && editor?.key && rowId(open) === rowId(editor.key)) onState({ row: null }, { replace: true });
+    // A row added is opened beside the rows, wherever it falls among them (usually on the last page), with what the database gave it: its number, its defaults.
+    else if (added && made && shown === 'browse') onState({ row: made });
     page.reload();
     if (added || removed) onChanged();
   };
@@ -112,9 +113,9 @@ export function TableWorkspace({ appId, appSlug, version, table, tables, view, r
 
   return <section aria-label={`Table ${name}`} className="flex min-w-0 flex-1 flex-col lg:min-h-0">
     <div className={cn('flex min-h-10 flex-none flex-wrap items-center gap-x-2.5 gap-y-1 border-b px-3 py-[5px]', line)}>
-      {/* On a phone the picker above already names the table and counts its rows: the heading is there for a screen reader, and the room goes to the tabs. */}
-      <h2 className={cn('min-w-0 max-w-full truncate font-mono text-sm font-semibold max-sm:sr-only', strong)} title={name}>{name}</h2>
-      <span className={cn('text-xs max-sm:sr-only', muted)}>{[typeof rows === 'number' ? count(rows, 'row') : '', typeof columns === 'number' ? count(columns, 'column') : ''].filter(Boolean).join(' · ')}</span>
+      {/* Below a wide screen the picker above already names the table and counts its rows: the heading is there for a screen reader, and the room goes to the tabs and Add row. */}
+      <h2 className={cn('min-w-0 max-w-full truncate font-mono text-sm font-semibold max-lg:sr-only', strong)} title={name}>{name}</h2>
+      <span className={cn('text-xs max-lg:sr-only', muted)}>{[typeof rows === 'number' ? count(rows, 'row') : '', typeof columns === 'number' ? count(columns, 'column') : ''].filter(Boolean).join(' · ')}</span>
       {readOnly && <span className="rounded border border-slate-300 px-1.5 py-px text-[11px] font-medium text-slate-600 dark:border-slate-600 dark:text-slate-300">Read-only</span>}
       {/* The tabs scroll sideways if they ever outgrow their line; Add row moves to the next one when there is no room beside them. */}
       <div role="tablist" aria-label="Table views" className="flex min-w-0 max-w-full gap-0.5 overflow-x-auto sm:ml-1.5" onKeyDown={onTabKey}>
@@ -127,11 +128,13 @@ export function TableWorkspace({ appId, appSlug, version, table, tables, view, r
           </button>;
         })}
       </div>
-      <span className="flex-1" />
-      {/* The same in every view: offered once the table has said rows can be made here, and the reason given when they cannot. */}
+      {/* The same in every view: offered once the table has said rows can be made here, and the reason given when they cannot.
+          At the end of the tabs' line, on a phone as a plus a finger wide, so it takes no line of its own. */}
       {!readOnly && schema && (schema.canCreate
-        ? <button type="button" className={cn(smallButton, 'h-7 px-2.5')} onClick={() => setEditor({})}><Plus className="h-3 w-3" strokeWidth={2.4} aria-hidden="true" />Add row</button>
-        : <span className={cn('text-xs', muted)}>Add rows in the app: a required column here is secret or binary.</span>)}
+        ? <button type="button" title="Add row" className={cn(smallButton, 'ml-auto h-7 px-2.5 max-sm:w-10 max-sm:px-0')} onClick={() => setEditor({})}>
+          <Plus className="h-3 w-3 max-sm:h-4 max-sm:w-4" strokeWidth={2.4} aria-hidden="true" /><span className="max-sm:sr-only">Add row</span>
+        </button>
+        : <span className={cn('ml-auto text-xs', muted)}>Add rows in the app: a required column here is secret or binary.</span>)}
     </div>
 
     {notice && <div role={notice.tone === 'problem' ? 'alert' : 'status'}

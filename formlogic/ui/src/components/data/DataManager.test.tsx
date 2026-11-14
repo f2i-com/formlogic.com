@@ -18,10 +18,12 @@ vi.mock('../../lib/api', async importOriginal => {
 });
 // The full row editor is the studio's own, tested there: here, what it is opened with and what follows its answer.
 vi.mock('../studio/NativeRecordEditor', () => ({
-  NativeRecordEditor: (props: { table: string; recordKey?: Record<string, string>; fields: NativeRecordField[]; onClose(): void; onSaved(message: string): void }) =>
+  NativeRecordEditor: (props: { table: string; recordKey?: Record<string, string>; fields: NativeRecordField[]; onClose(): void; onSaved(outcome: 'created' | 'updated' | 'deleted', key?: Record<string, string>): void }) =>
     <div data-testid="row-editor" data-table={props.table} data-key={props.recordKey ? JSON.stringify(props.recordKey) : 'new'} data-fields={props.fields.map(field => field.name).join(',')}>
-      <button type="button" onClick={() => props.onSaved(props.recordKey ? 'Record updated.' : 'Record created.')}>editor saves</button>
-      <button type="button" onClick={() => props.onSaved('Record deleted.')}>editor deletes</button>
+      <button type="button" onClick={() => props.onSaved(props.recordKey ? 'updated' : 'created')}>editor saves</button>
+      {/* A row added, as the server names it. */}
+      <button type="button" onClick={() => props.onSaved('created', { id: '9001' })}>editor adds row 9001</button>
+      <button type="button" onClick={() => props.onSaved('deleted')}>editor deletes</button>
     </div>,
 }));
 import { readQuery, writeQuery, NOTHING, type BrowseState } from './address';
@@ -403,6 +405,30 @@ describe('sorting', () => {
 });
 
 describe('searching', () => {
+  it('marks where each row matched the search, whatever its case, in the grid and in the open row', async () => {
+    mocks.manage.mockResolvedValue(record({ ...fullRow, notes: 'Window seat, WINDOW side' }));
+    await mount({ query: query({ q: 'window', row: { id: '8214' } }) });
+    expect(all('mark', cell(0, 'notes')).map(node => node.textContent)).toEqual(['Window']);
+    // Only where it is: a value without it has no mark.
+    expect(all('mark', cell(0, 'status'))).toHaveLength(0);
+    const details = one('aside[aria-label="Row id 8214 of bookings"]')!;
+    expect(all('mark', details).map(node => node.textContent)).toEqual(['Window', 'WINDOW']);
+    // No search, no marks.
+    await visit({ table: 'bookings', query: '' });
+    expect(all('mark', grid())).toHaveLength(0);
+  });
+
+  it('shows the line breaks of a value on one line as ↵, and keeps them in the text', async () => {
+    mocks.browse.mockImplementation(async (_app: string, _table: string, asking: NativeBrowseQuery) => bookings(asking, { rows: [{ ...bookingRows[0], notes: 'Gift wrap\nLeave at the door' }, ...bookingRows.slice(1)] }));
+    await mount();
+    const notes = cell(0, 'notes');
+    expect(all('[data-break]', notes)).toHaveLength(1);
+    expect(notes.textContent).toBe('Gift wrap↵\nLeave at the door');
+    expect(one('[data-break]', notes)!.getAttribute('aria-hidden')).toBe('true');
+    // The whole of it on hover, though it is shorter than a cut.
+    expect(notes.getAttribute('title')).toBe('Gift wrap\nLeave at the door');
+  });
+
   it('sends the search once the typing has rested for 300 ms, without a new entry in the history', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await mount();
@@ -1096,7 +1122,11 @@ describe('editing a cell in place', () => {
     expect(editorBox()).toBeNull();
     // The reason is said in the cell that was pressed, and only there.
     expect(one('[role="alert"]', cell(0, 'photo'))!.textContent).toContain('photo cannot be changed here');
+    // A key's value opens its row at a press: a second press is no try at changing it, and says nothing.
     await doubleClick(cell(0, 'id'));
+    expect(one('[role="alert"]', cell(0, 'id'))).toBeNull();
+    // Enter on the key's cell (the keyboard's way to edit) says why it cannot be changed, there alone.
+    await press(cell(0, 'id'), 'Enter');
     expect(all('[role="alert"]').map(node => node.textContent)).toEqual(['A row’s key cannot be changed.']);
     expect(one('[role="alert"]', cell(0, 'id'))).toBeTruthy();
 
@@ -1334,6 +1364,22 @@ describe('adding a row', () => {
     expect(notice()).toContain('Row added.');
     expect(mocks.browse.mock.calls.length).toBe(rowRequests + 1);
     expect(mocks.summary.mock.calls.length).toBe(listRequests + 1);
+  });
+
+  it('opens the row it added beside the rows, wherever it falls among them, by the key the server named', async () => {
+    await mount();
+    await click(button('Add row'));
+    mocks.manage.mockResolvedValue(record({ id: '9001', customer_id: null, status: 'new', total: '0', notes: null }));
+    await click(button('editor adds row 9001'));
+    expect(notice()).toContain('Row added.');
+    expect(readQuery(navigations.at(-1)!.query).row).toEqual({ id: '9001' });
+    expect(one('aside[aria-label="Row id 9001 of bookings"]')).toBeTruthy();
+    // Added from another view, it is not opened: the rows are not on screen to open it beside.
+    await remount({ view: 'structure' });
+    const before = navigations.length;
+    await click(button('Add row'));
+    await click(button('editor adds row 9001'));
+    expect(navigations.slice(before).some(each => readQuery(each.query).row)).toBe(false);
   });
 
   it('is the same in every view: offered where rows can be made here, and the reason given where they cannot', async () => {

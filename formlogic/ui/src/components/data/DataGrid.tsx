@@ -9,7 +9,7 @@ import { useRef, useState, type FocusEvent, type KeyboardEvent } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpRight } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { NativeBrowse, NativeFilter, NativeForeignKey, NativeRecordField, NativeSort } from '../../lib/nativeHosting';
-import { CellEditor, CellValue, Tick } from './cells';
+import { CellEditor, CellValue, Marked, Tick } from './cells';
 import { cellKind, cellText, foreignKeyFilters, isNumericType, rowId, rowName } from './format';
 import { body, focusRing, line, link, openRow, strong, tickedRow } from './styles';
 import { useCellEdit } from './useCellEdit';
@@ -43,6 +43,8 @@ interface DataGridProps {
   onSaved(): void;
   /** The server said the row changed under an edit: load this page again. */
   onStale(): void;
+  /** What the rows were searched for: marked in the values (cells' Marked). */
+  mark?: string;
 }
 
 const cellBase = 'h-[26px] scroll-mt-7 border-b border-slate-100 px-[5px] first:pl-3 last:pr-3 dark:border-slate-800/70';
@@ -56,7 +58,7 @@ const headCell = 'sticky top-0 z-10 h-7 border-b bg-slate-100 dark:bg-slate-900'
  */
 const filler = (className: string) => <td aria-hidden="true" data-filler="" className={cn(className, 'w-full p-0 first:pl-0 last:pr-0')} />;
 
-export function DataGrid({ appId, table, data, fields, stale, sort, onSort, editable, selected, onSelect, foreignKeys, tables, onFollow, onOpenRow, openId, onSaved, onStale }: DataGridProps) {
+export function DataGrid({ appId, table, data, fields, stale, sort, onSort, editable, selected, onSelect, foreignKeys, tables, onFollow, onOpenRow, openId, onSaved, onStale, mark }: DataGridProps) {
   const grid = useRef<HTMLTableElement>(null);
   const columns = data.columns ?? [];
   const rows = data.rows ?? [];
@@ -173,8 +175,9 @@ export function DataGrid({ appId, table, data, fields, stale, sort, onSort, edit
             const inside = 'inline-flex max-w-full items-center gap-1 rounded-sm align-top';
             return <td key={column} data-column={column} data-kind={isCut ? 'cut' : kind} data-editing={boxed ? '' : undefined}
               tabIndex={stop(index + 1, at + offset)} aria-readonly={canEdit ? undefined : true} aria-busy={editingHere?.phase === 'reading' || undefined}
-              onDoubleClick={editable && !editingHere ? () => startEdit(index, column) : undefined}
-              title={!boxed && text.length > 40 ? text : undefined}
+              // A key's value opens its row at a press: a second press is not a try at changing it (Enter or F2 still says why it cannot be).
+              onDoubleClick={editable && !editingHere && !field?.primary ? () => startEdit(index, column) : undefined}
+              title={!boxed && (text.length > 40 || text.includes('\n')) ? text : undefined}
               className={cn(cellBase, cellFocus, numeric && 'text-right tabular-nums',
                 boxed ? 'min-w-[12rem] py-0.5 align-top' : 'max-w-[22rem] overflow-hidden text-ellipsis whitespace-nowrap',
                 editingHere?.phase === 'reading' && 'opacity-60',
@@ -184,15 +187,15 @@ export function DataGrid({ appId, table, data, fields, stale, sort, onSort, edit
                     onSave={next => editing.save(next, backToCell)} onCancel={refocus => { if (refocus) backToCell(); editing.cancel(); }} />
                 // The key is the way into the row.
                 : field?.primary && key && kind === 'value' ? <button type="button" tabIndex={stop(index + 1, at + offset)} onClick={() => onOpenRow(key)} aria-label={`${text}: open row ${name}`} aria-expanded={isOpen}
-                    className={cn(inside, link, focusRing)}><span className="min-w-0 truncate">{text}</span></button>
+                    className={cn(inside, link, focusRing)}><span className="min-w-0 truncate"><Marked text={text} mark={mark} breaks /></span></button>
                 : target && foreign ? <button type="button" tabIndex={stop(index + 1, at + offset)} onClick={() => onFollow(foreign.table, target)}
                     aria-label={`${text}: open ${foreign.table} where ${target.map(filter => `${filter.column} is ${filter.value}`).join(' and ')}`}
                     className={cn(inside, link, focusRing)}>
-                    <span className="min-w-0 truncate">{text}</span><ArrowUpRight className="h-2.5 w-2.5 flex-none" strokeWidth={2.4} aria-hidden="true" />
+                    <span className="min-w-0 truncate"><Marked text={text} mark={mark} breaks /></span><ArrowUpRight className="h-2.5 w-2.5 flex-none" strokeWidth={2.4} aria-hidden="true" />
                   </button>
-                : <CellValue value={value} cut={isCut} />}
-              {/* Why this cell did not open for editing, said in the cell. */}
-              {refusedHere && <p role="alert" className="max-w-[20rem] whitespace-normal py-0.5 text-left font-sans text-[11px] font-normal leading-normal text-red-700 dark:text-red-300">{refusedHere}</p>}
+                : <CellValue value={value} cut={isCut} mark={mark} />}
+              {/* Why this cell did not open for editing, said in the cell: as wide as the sentence needs, so a narrow column does not stand it a word to a line. */}
+              {refusedHere && <p role="alert" className="w-max max-w-[20rem] whitespace-normal py-0.5 text-left font-sans text-[11px] font-normal leading-normal text-red-700 dark:text-red-300">{refusedHere}</p>}
             </td>;
           })}
           {filler(cellBase)}

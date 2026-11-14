@@ -626,6 +626,15 @@ final class NativeRecordStore
                     $stmt->execute();
                 }
                 $result = ['saved' => true];
+                // The row made, by its key, so the page can open it: the key as it was given, or the number
+                // the database gave a whole-number key it numbers itself. None where neither says it.
+                if ($action === 'create' && $schema['primaryKey'] !== []) {
+                    $made = [];
+                    foreach ($schema['primaryKey'] as $name) if (isset($values[$name])) $made[$name] = (string) $values[$name];
+                    $numbered = array_column(array_filter($schema['fields'], static fn(array $field): bool => $field['auto']), 'name');
+                    if ($made === [] && count($schema['primaryKey']) === 1 && $numbered === $schema['primaryKey']) $made = [$numbered[0] => (string) $this->db->lastInsertId()];
+                    if (count($made) === count($schema['primaryKey'])) $result['key'] = $made;
+                }
             }
             $this->db->exec('COMMIT');
             return $result;

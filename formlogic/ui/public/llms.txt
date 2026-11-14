@@ -69,8 +69,9 @@ A forms app can carry a project too: App Studio > Screens > Hosting & app tools 
 Native app hosting, with the same source editor under its Source tab.
 
 list_native_app_records inspects the app's tables and record previews. For owner CRUD
-through the UI, open Data & forms > Records > Database records: Add record creates,
-View > Edit record loads full values, and Delete record requires confirmation. Writes
+through the UI, open the app's Data section (a forms app: Data & forms > Records >
+Database records): Add row creates (the new row then opens), Edit on an open row loads full
+values and Save changes stores them, and Delete row requires confirmation. Writes
 apply database constraints and connected record automations, but bypass the app's
 backend validation functions. Do not use shortened list previews as replacement values.
 Keep primary keys unchanged and handle stale-record conflicts by reloading, not by

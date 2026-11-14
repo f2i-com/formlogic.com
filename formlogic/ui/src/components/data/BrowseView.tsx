@@ -131,6 +131,8 @@ export function BrowseView({ appId, table, page, state, limit, onLimit, onState,
   const rowsProps = {
     appId, table, fields, stale: page.loading, editable: !readOnly, selected, onSelect: select, foreignKeys: foreignKeysByColumn(structure), tables,
     onFollow: follow, onOpenRow: (key: Record<string, string>) => onState({ row: key }), openId, onSaved: page.reload, onStale: page.reload,
+    // The search the rows on screen answer (the address's, not the box's while it is typed in), marked where each matched.
+    mark: state.q,
   };
   const chosen = <>
     <span role="status" className="text-xs font-semibold text-primary-700 dark:text-primary-400">{number(picked.length)} selected</span>
@@ -138,7 +140,7 @@ export function BrowseView({ appId, table, page, state, limit, onLimit, onState,
     <button type="button" className={cn(smallButton, danger)} onClick={() => setConfirming(true)}>Delete</button>
   </>;
   const details = open && data && <RowDetails appId={appId} table={table} rowKey={open} reloads={page.reloads} preview={openAt >= 0 ? rows[openAt] : undefined} cut={openAt >= 0 ? data.cut?.[String(openAt)] : undefined}
-    columns={columns} structure={structure} tables={tables} readOnly={readOnly} hiddenColumns={data.hiddenColumns ?? 0} previous={neighbour(-1)} next={neighbour(1)} sheet={viewport !== 'desktop'}
+    columns={columns} structure={structure} tables={tables} readOnly={readOnly} hiddenColumns={data.hiddenColumns ?? 0} previous={neighbour(-1)} next={neighbour(1)} sheet={viewport !== 'desktop'} mark={state.q}
     onStep={key => onState({ row: key })} onClose={() => onState({ row: null })} onFollow={follow} onUsedBy={(to, filters) => onOpenTable(to, { filters })} onEdit={onEditRow}
     onDeleted={() => { onNotice({ tone: 'done', text: 'Row deleted.' }); onState({ row: null }, { replace: true }); page.reload(); onChanged(); }} />;
 
@@ -202,7 +204,7 @@ export function BrowseView({ appId, table, page, state, limit, onLimit, onState,
       Paging reaches the first {number(reach)} rows. To see the rest, narrow them with a search or a filter, or export the table.
     </p>}
     <Pager page={page} narrowed={narrowed} limit={limit} onLimit={onLimit} onGo={offset => onState({ offset })}
-      notes={!readOnly && keyed ? [phone ? 'Open a row out to edit its values' : 'Double-click a cell to edit', 'Edits reach the live app at once'] : []} />
+      notes={!readOnly && keyed ? [phone ? 'Open a row out to edit its values' : 'Double-click a cell to edit', 'Edits go straight to the app’s database'] : []} />
 
     {/* On a phone the ticked rows' buttons stay in reach while the cards scroll: above the page's bottom navigation, with room left under the pager to scroll clear of them. */}
     {phone && picked.length > 0 && <>

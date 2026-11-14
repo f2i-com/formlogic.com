@@ -105,7 +105,7 @@ function saveItem() {
   const openEditor = async (dialog) => {
     await dialog.getByRole('button', { name: /open row 1$/i }).click();
     await dialog.page().getByRole('button', { name: 'Edit', exact: true }).click();
-    const editor = dialog.page().getByRole('dialog', { name: 'Edit database record', exact: true });
+    const editor = dialog.page().getByRole('dialog', { name: 'Edit row', exact: true });
     await expect(editor.getByLabel('title', { exact: true })).toHaveValue('Arrange a site visit for the community centre');
     return editor;
   };

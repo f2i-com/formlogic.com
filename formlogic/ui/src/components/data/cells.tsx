@@ -1,6 +1,6 @@
 // What a cell holds, as it is shown and as it is edited. The grid, a phone's cards and a row's
 // details all use these, so a value reads the same wherever it is.
-import { useEffect, useRef, useState, type FocusEvent, type InputHTMLAttributes, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type FocusEvent, type InputHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react';
 import { Check, Minus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { cellKind, cellText } from './format';
@@ -20,12 +20,39 @@ export function Tick({ indeterminate = false, className, ...props }: Omit<InputH
 }
 
 /**
+ * Text as a value shows it. `mark`: what the rows were searched for, marked wherever the text holds
+ * it, whatever its case, so a page of matches shows where each matched. `breaks`: the text is on one
+ * line, where a line break would read as a space, so each is drawn as a muted ↵ (the break itself
+ * stays in the text, for a screen reader and for a copy).
+ */
+export function Marked({ text, mark = '', breaks = false }: { text: string; mark?: string; breaks?: boolean }) {
+  const sought = mark.trim().toLowerCase();
+  const lines = breaks ? text.split('\n') : [text];
+  const out: ReactNode[] = [];
+  lines.forEach((line, at) => {
+    if (at > 0) out.push(<span key={`break${at}`} data-break="" aria-hidden="true" className={cn('px-px', muted)}>↵</span>, '\n');
+    const lower = line.toLowerCase();
+    // Marked only where lower case keeps the text's length, so a place in one is a place in the other.
+    if (!sought || lower.length !== line.length) { out.push(line); return; }
+    let from = 0;
+    for (let found = lower.indexOf(sought); found >= 0; found = lower.indexOf(sought, from)) {
+      if (found > from) out.push(line.slice(from, found));
+      out.push(<mark key={`mark${at}:${found}`} className="rounded-[2px] bg-amber-200/80 text-inherit dark:bg-amber-400/30">{line.slice(found, found + sought.length)}</mark>);
+      from = found + sought.length;
+    }
+    if (from < line.length) out.push(line.slice(from));
+  });
+  return <>{out}</>;
+}
+
+/**
  * A value by the manager's rules: NULL in muted italics, an empty text named as one (it is not
  * NULL), a binary value as a muted `[binary]`, and a preview that was cut marked with an ellipsis
  * that says the text goes on. Anything else is shown exactly as stored. `wrap`: on several lines
- * (a card opened out, a row's details); otherwise on one, cut by its place.
+ * (a card opened out, a row's details); otherwise on one, cut by its place, its line breaks drawn
+ * as ↵. `mark`: the search, marked in the text (Marked).
  */
-export function CellValue({ value, cut = false, wrap = false }: { value: unknown; cut?: boolean; wrap?: boolean }) {
+export function CellValue({ value, cut = false, wrap = false, mark }: { value: unknown; cut?: boolean; wrap?: boolean; mark?: string }) {
   const kind = cellKind(value);
   if (kind === 'null') return <span data-kind="null" className={cn('italic', muted)}>NULL</span>;
   if (kind === 'empty') return <span data-kind="empty" className={muted} title="An empty text. It is not NULL.">empty</span>;
@@ -35,9 +62,9 @@ export function CellValue({ value, cut = false, wrap = false }: { value: unknown
     <span className={cn('flex-none pl-0.5', muted)} title="This text is longer than the part shown." aria-hidden="true">…</span>
     <span className="sr-only"> (the text is longer than the part shown)</span>
   </>;
-  if (wrap) return <span data-kind={cut ? 'cut' : 'value'} className="whitespace-pre-wrap [overflow-wrap:anywhere]">{text}{cut && more}</span>;
-  if (!cut) return <span data-kind="value">{text}</span>;
-  return <span data-kind="cut" className="flex min-w-0 items-baseline"><span className="min-w-0 overflow-hidden whitespace-nowrap">{text}</span>{more}</span>;
+  if (wrap) return <span data-kind={cut ? 'cut' : 'value'} className="whitespace-pre-wrap [overflow-wrap:anywhere]"><Marked text={text} mark={mark} />{cut && more}</span>;
+  if (!cut) return <span data-kind="value"><Marked text={text} mark={mark} breaks /></span>;
+  return <span data-kind="cut" className="flex min-w-0 items-baseline"><span className="min-w-0 overflow-hidden whitespace-nowrap"><Marked text={text} mark={mark} breaks /></span>{more}</span>;
 }
 
 interface CellEditorProps {
@@ -112,7 +139,9 @@ export function CellEditor({ label, original, numeric, nullable, busy, error, bu
     <div className="flex items-start gap-1">
       {tall
         ? <textarea ref={box} {...shared} rows={buttons ? 5 : 4} className={cn(look, 'resize-y py-1 leading-normal', buttons ? 'max-sm:py-2' : 'min-w-[20rem]')} />
-        : <input ref={box} {...shared} type="text" inputMode={numeric ? 'decimal' : undefined} className={cn(look, buttons ? 'h-7 max-sm:h-10' : 'h-[22px]')} />}
+        : <input ref={box} {...shared} type="text" inputMode={numeric ? 'decimal' : undefined} className={cn(look, buttons ? 'h-7 max-sm:h-10' : 'h-[22px]')}
+            // In the grid the box is as wide as the value it opens on (the text is monospaced), up to a point, so the whole of it is in view.
+            style={buttons ? undefined : { minWidth: `${Math.min(48, Math.max(12, initial.length + 3))}ch` }} />}
       {nullable && !buttons && <button type="button" className={small} disabled={busy} aria-label="Set to NULL" title="Save NULL: no value" onClick={() => onSave(null)}>NULL</button>}
     </div>
     {asking && <div role="group" aria-label="The box is empty" className={cn('mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] leading-normal', muted)}>

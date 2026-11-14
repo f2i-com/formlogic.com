@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, ChevronDown, ChevronRight, ChevronUp, Pencil } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { NativeBrowse, NativeFilter, NativeForeignKey, NativeRecordField } from '../../lib/nativeHosting';
-import { CellEditor, CellValue, Tick } from './cells';
+import { CellEditor, CellValue, Marked, Tick } from './cells';
 import { cellKind, cellText, count, foreignKeyFilters, isNumericType, rowId, rowName } from './format';
 import { body, focusRing, line, link, muted, openRow, strong, tickedRow } from './styles';
 import { useCellEdit } from './useCellEdit';
@@ -31,9 +31,11 @@ interface RowCardsProps {
   openId: string | null;
   onSaved(): void;
   onStale(): void;
+  /** What the rows were searched for: marked in the values (cells' Marked). */
+  mark?: string;
 }
 
-export function RowCards({ appId, table, data, fields, stale, editable, selected, onSelect, foreignKeys, tables, onFollow, onOpenRow, openId, onSaved, onStale }: RowCardsProps) {
+export function RowCards({ appId, table, data, fields, stale, editable, selected, onSelect, foreignKeys, tables, onFollow, onOpenRow, openId, onSaved, onStale, mark }: RowCardsProps) {
   const list = useRef<HTMLUListElement>(null);
   const columns = data.columns ?? [];
   const rows = data.rows ?? [];
@@ -70,7 +72,7 @@ export function RowCards({ appId, table, data, fields, stale, editable, selected
       const title = <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
         {titled.map(column => <span key={column} className="flex min-w-0 max-w-full items-baseline gap-1.5">
           <span className={cn('max-w-[9rem] flex-none truncate text-[11px] font-normal', muted)}>{column}</span>
-          <span className="min-w-0 truncate"><CellValue value={row[column]} cut={cut.includes(column)} /></span>
+          <span className="min-w-0 truncate"><CellValue value={row[column]} cut={cut.includes(column)} mark={mark} /></span>
         </span>)}
       </span>;
 
@@ -117,8 +119,9 @@ export function RowCards({ appId, table, data, fields, stale, editable, selected
               ? <button type="button" onClick={() => onFollow(foreign.table, target)}
                   aria-label={`${cellText(value)}: open ${foreign.table} where ${target.map(filter => `${filter.column} is ${filter.value}`).join(' and ')}`}
                   // In the summary the link is one line of text: its press area reaches past the line, over the name above it.
-                  className={cn('inline-flex max-w-full items-center gap-1 rounded-sm', all ? 'min-h-10' : '-my-2.5 py-2.5', link, focusRing)}>
-                  <span className="min-w-0 truncate">{cellText(value)}</span><ArrowUpRight className="h-3 w-3 flex-none" strokeWidth={2.4} aria-hidden="true" />
+                  // At least a finger's width too: a one-digit key is narrower than one.
+                  className={cn('inline-flex min-w-10 max-w-full items-center gap-1 rounded-sm', all ? 'min-h-10' : '-my-2.5 py-2.5', link, focusRing)}>
+                  <span className="min-w-0 truncate"><Marked text={cellText(value)} mark={mark} breaks /></span><ArrowUpRight className="h-3 w-3 flex-none" strokeWidth={2.4} aria-hidden="true" />
                 </button>
               : null;
 
@@ -126,7 +129,7 @@ export function RowCards({ appId, table, data, fields, stale, editable, selected
             if (!all) return <div key={column} data-column={column} className={cn('min-w-0 pb-1', editingHere && 'opacity-60')}>
               <dt className={cn('truncate font-mono text-[10.5px] leading-4', muted)} title={column}>{column}</dt>
               <dd data-kind={kind === 'value' && cut.includes(column) ? 'cut' : kind} className={cn('truncate font-mono text-xs leading-5', body)}>
-                {follow ?? <CellValue value={value} cut={cut.includes(column)} />}
+                {follow ?? <CellValue value={value} cut={cut.includes(column)} mark={mark} />}
               </dd>
               {refusedHere && <p role="alert" className="pb-1 text-[11px] leading-normal text-red-700 dark:text-red-300">{refusedHere}</p>}
             </div>;
@@ -134,7 +137,7 @@ export function RowCards({ appId, table, data, fields, stale, editable, selected
             return <div key={column} data-column={column} className={cn('flex flex-wrap items-center gap-x-2', canEdit ? 'min-h-10' : 'min-h-7', editingHere && 'opacity-60')}>
               <dt className={cn('w-[36%] flex-none truncate font-mono text-[11px]', muted)} title={column}>{column}</dt>
               <dd data-kind={kind === 'value' && cut.includes(column) ? 'cut' : kind} className={cn('min-w-0 flex-1 py-1 font-mono text-xs', body)}>
-                {follow ?? <CellValue value={value} cut={cut.includes(column)} wrap />}
+                {follow ?? <CellValue value={value} cut={cut.includes(column)} wrap mark={mark} />}
               </dd>
               {/* One value is edited at a time: a press here while another is open goes back to that one, where its text is. */}
               {canEdit && <button type="button" data-edit={mark} disabled={editingHere !== null}

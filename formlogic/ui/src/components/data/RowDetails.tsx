@@ -9,7 +9,7 @@ import { cn } from '../../lib/utils';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import type { NativeFilter, NativeRecordDetail, NativeStructure } from '../../lib/nativeHosting';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { CellValue } from './cells';
+import { CellValue, Marked } from './cells';
 import { count, foreignKeyFilters, foreignKeysByColumn, rowId, rowTitle } from './format';
 import { body, danger, focusRing, iconButton, line, link, muted, panelHeading, quietSurface, smallButton, strong } from './styles';
 
@@ -48,11 +48,13 @@ interface RowDetailsProps {
   onEdit(key: Record<string, string>): void;
   /** The row was deleted. */
   onDeleted(): void;
+  /** What the rows were searched for: marked in the values (cells' Marked). */
+  mark?: string;
 }
 
 interface Read { id: string; record?: NativeRecordDetail; error?: string }
 
-export function RowDetails({ appId, table, rowKey, preview, cut = [], columns, structure, tables, readOnly, reloads, hiddenColumns, previous, next, sheet, onStep, onClose, onFollow, onUsedBy, onEdit, onDeleted }: RowDetailsProps) {
+export function RowDetails({ appId, table, rowKey, preview, cut = [], columns, structure, tables, readOnly, reloads, hiddenColumns, previous, next, sheet, onStep, onClose, onFollow, onUsedBy, onEdit, onDeleted, mark }: RowDetailsProps) {
   const id = rowId(rowKey);
   const [read, setRead] = useState<Read | null>(null);
   const [again, setAgain] = useState(0);
@@ -144,9 +146,9 @@ export function RowDetails({ appId, table, rowKey, preview, cut = [], columns, s
                 : target && key ? <button type="button" onClick={() => onFollow(key.table, target)}
                     aria-label={`${String(value)}: open ${key.table} where ${target.map(filter => `${filter.column} is ${filter.value}`).join(' and ')}`}
                     className={cn('inline-flex max-w-full items-center gap-1 rounded-sm text-left max-sm:min-h-10', link, focusRing)}>
-                    <span className="min-w-0 [overflow-wrap:anywhere]">{String(value)}</span><ArrowUpRight className="h-3 w-3 flex-none" strokeWidth={2.4} aria-hidden="true" />
+                    <span className="min-w-0 [overflow-wrap:anywhere]"><Marked text={String(value)} mark={mark} /></span><ArrowUpRight className="h-3 w-3 flex-none" strokeWidth={2.4} aria-hidden="true" />
                   </button>
-                : <CellValue value={value} cut={isPreview(column)} wrap />}
+                : <CellValue value={value} cut={isPreview(column)} wrap mark={mark} />}
             </dd>
           </div>;
         })}

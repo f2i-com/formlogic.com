@@ -58,25 +58,27 @@ test('Native source highlighting and full-record CRUD work on desktop and mobile
   const browser = hosting.getByRole('region', { name: 'Database records browser' });
   await browser.getByRole('combobox', { name: 'Table', exact: true }).selectOption('items');
   await browser.getByRole('button', { name: 'Add row', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: 'Create database record', exact: true });
+  const editor = page.getByRole('dialog', { name: 'Add row', exact: true });
   const stamp = `CRUD review ${Date.now()}`;
   const title = `${stamp} ${'Full source text '.repeat(40)}`;
   await editor.getByLabel('title', { exact: true }).fill(title);
   expect(await editor.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   await page.screenshot({ path: '../../../ecosystem-audit/native-record-create-mobile.png' });
-  await editor.getByRole('button', { name: 'Create record', exact: true }).click();
+  await editor.getByRole('button', { name: 'Add row', exact: true }).click();
   await expect(browser.getByText('Row added.', { exact: true })).toBeVisible();
-  // The row just added, found by a search over the whole table and opened from its card.
+  // The row just added opens by itself, wherever it falls among the rows; it is found by a search too.
+  const sheet = page.getByRole('dialog', { name: /^Row id \d+ of items$/ });
+  await expect(sheet).toBeVisible();
+  await sheet.getByRole('button', { name: 'Back', exact: true }).click();
   await browser.getByRole('searchbox', { name: 'Search this table' }).fill(stamp);
   const cards = browser.getByRole('list', { name: 'Rows of items' }).getByRole('listitem');
   await expect(cards).toHaveCount(1);
   await cards.first().getByRole('button', { name: /^Open row / }).click();
-  const sheet = page.getByRole('dialog', { name: /^Row id \d+ of items$/ });
   await sheet.getByRole('button', { name: 'Edit', exact: true }).click();
-  const edit = page.getByRole('dialog', { name: 'Edit database record', exact: true });
+  const edit = page.getByRole('dialog', { name: 'Edit row', exact: true });
   await expect(edit.getByLabel('title', { exact: true })).toHaveValue(title);
   await edit.getByLabel('title', { exact: true }).fill(title + ' Edited');
-  await edit.getByRole('button', { name: 'Save record', exact: true }).click();
+  await edit.getByRole('button', { name: 'Save changes', exact: true }).click();
   // The open row is read again after the change: it shows the whole new value.
   await expect(sheet.locator('[data-column="title"] dd')).toContainText('Full source text Edited');
   // Wide, the same open row stands beside the rows.
@@ -85,12 +87,12 @@ test('Native source highlighting and full-record CRUD work on desktop and mobile
   await details.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(edit.getByLabel('title', { exact: true })).toHaveValue(title + ' Edited');
   await page.screenshot({ path: '../../../ecosystem-audit/native-record-edit-desktop.png' });
-  await edit.getByRole('button', { name: 'Delete record', exact: true }).click();
-  const confirm = page.getByRole('dialog', { name: 'Delete this record?', exact: true });
+  await edit.getByRole('button', { name: 'Delete row', exact: true }).click();
+  const confirm = page.getByRole('dialog', { name: 'Delete this row?', exact: true });
   await confirm.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(edit).toBeVisible();
-  await edit.getByRole('button', { name: 'Delete record', exact: true }).click();
-  await confirm.getByRole('button', { name: 'Delete permanently', exact: true }).click();
+  await edit.getByRole('button', { name: 'Delete row', exact: true }).click();
+  await confirm.getByRole('button', { name: 'Delete the row', exact: true }).click();
   await expect(browser.getByText('Row deleted.', { exact: true })).toBeVisible();
   const records = await (await context.request.get(`/api/apps/${app.id}/native/records?table=items`)).json();
   expect(records.rows.some((row: { title: string }) => row.title === title + ' Edited')).toBe(false);

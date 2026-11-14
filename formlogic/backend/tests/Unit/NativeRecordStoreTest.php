@@ -162,6 +162,22 @@ final class NativeRecordStoreTest extends TestCase
         $this->assertSame('Updated', $this->db->query('SELECT body FROM pairs')->fetchColumn());
     }
 
+    /** A row added says which row it is, so the data manager can open it: by the number the database gave it, or the key it was given. */
+    public function testARowAddedIsNamedByItsKey(): void
+    {
+        $this->db->exec("INSERT INTO notes(id, title) VALUES (41, 'Before')");
+        $this->assertSame(['saved' => true, 'key' => ['id' => '42']], $this->store->operate(['action' => 'create', 'table' => 'notes', 'values' => ['title' => 'Numbered']]));
+        $this->assertSame(['saved' => true, 'key' => ['id' => '7']], $this->store->operate(['action' => 'create', 'table' => 'notes', 'values' => ['id' => '7', 'title' => 'Given']]));
+        $this->db->exec('CREATE TABLE pairs(a TEXT, b INTEGER, body TEXT, PRIMARY KEY(a, b)) WITHOUT ROWID');
+        $this->assertSame(['saved' => true, 'key' => ['a' => 'G', 'b' => '2']], $this->store->operate(['action' => 'create', 'table' => 'pairs', 'values' => ['a' => 'G', 'b' => '2']]));
+        // A text key the database fills in itself (a default) is not named: the page has nothing to open it by.
+        $this->db->exec("CREATE TABLE tags(name TEXT PRIMARY KEY DEFAULT 'untitled', colour TEXT)");
+        $this->assertSame(['saved' => true], $this->store->operate(['action' => 'create', 'table' => 'tags', 'values' => ['colour' => 'red']]));
+        // Nor is a row of a table with no key.
+        $this->db->exec('CREATE TABLE log(message TEXT)');
+        $this->assertSame(['saved' => true], $this->store->operate(['action' => 'create', 'table' => 'log', 'values' => ['message' => 'hello']]));
+    }
+
     public function testForeignKeyRulesAreEnforced(): void
     {
         $this->db->exec('CREATE TABLE replies(id INTEGER PRIMARY KEY,note_id INTEGER REFERENCES notes(id));');

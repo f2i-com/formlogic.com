@@ -2435,7 +2435,8 @@ class ApiClient {
       return { error: error instanceof Error ? error.message : 'Network error' };
     }
   }
-  async manageNativeRecord(id: string, input: { table: string; action: 'read' | 'create' | 'update' | 'delete'; key?: Record<string, string>; revision?: string; values?: Record<string, string | null> }): Promise<ApiResponse<{ saved?: boolean; record?: import('./nativeHosting').NativeRecordDetail }>> {
+  /** `key` in a create's answer: the row made, where the server knows it (the key given, or the number the database gave it). */
+  async manageNativeRecord(id: string, input: { table: string; action: 'read' | 'create' | 'update' | 'delete'; key?: Record<string, string>; revision?: string; values?: Record<string, string | null> }): Promise<ApiResponse<{ saved?: boolean; key?: Record<string, string>; record?: import('./nativeHosting').NativeRecordDetail }>> {
 
     return this.request(`/apps/${encodeURIComponent(id)}/native/records`, { method: 'POST', body: JSON.stringify(input) });
   }

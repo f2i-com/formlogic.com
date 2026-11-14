@@ -653,14 +653,14 @@ function _init() {
               <P>In <C>App Studio → Data &amp; forms</C>, open a native table, or choose <C>Records → Database records</C>. The owner can manage the same SQLite database used by the hosted app. This is separate from FormLogic form responses.</P>
               <Steps items={[
                 <>Choose a table. Browse its rows 25 to a page (or 50, 100 or 250), search every column or add a filter, and open a row by its key.</>,
-                <>Select <C>Add row</C> to create an entry. Enter required fields and leave automatic IDs and defaults to the database. <C>No value (NULL)</C> is different from empty text.</>,
-                <>Open a row and choose <C>Edit</C> to load full field values and save changes, or double-click a cell to change one value in place. Primary keys remain unchanged. If the record changed while you were editing, close the editor and refresh before trying again.</>,
-                <>Inside the editor, choose <C>Delete record</C> and review the confirmation. Database relationships may also delete dependent records.</>,
+                <>Select <C>Add row</C> to create an entry. Enter required fields and leave automatic IDs and defaults to the database. <C>No value (NULL)</C> is different from empty text. The new row opens beside the others once it is added.</>,
+                <>Open a row and choose <C>Edit</C> to load full field values and <C>Save changes</C>, or double-click a cell to change one value in place. Primary keys remain unchanged. If the row changed while you were editing, close the editor and refresh before trying again.</>,
+                <>Inside the editor, choose <C>Delete row</C> and review the confirmation. Database relationships may also delete dependent rows.</>,
               ]} />
               <Figure src="/images/docs/native-records.jpg" alt="The Records tab: the app’s tables beside the rows of one, with search, Add filter, Add row and three fictional service requests" caption="Browse and maintain the app’s real SQLite records from FormLogic." />
               <Tip>Owner edits save directly to SQLite and queue connected record automations. Database constraints apply, but these controls do not call the app’s backend validation functions. Use the app itself when those business rules are required.</Tip>
               <P>List cells preview up to 400 characters. Editing loads full text up to 100 KB per field. Secret columns stay hidden; binary and generated fields remain read-only. Existing records need a complete visible primary key for editing or deletion. If creation requires private or binary fields, create the record through the app.</P>
-              <div className="mx-auto max-w-sm"><Figure src="/images/docs/native-record-editor-mobile.jpg" alt="Mobile record editor with a read-only ID, editable request title, Save record and Delete record controls" caption="The same record editor at phone width. All pictured requests are fictional." /></div>
+              <div className="mx-auto max-w-sm"><Figure src="/images/docs/native-record-editor-mobile.jpg" alt="Mobile row editor with a read-only ID, an editable request title, and Save changes and Delete row controls" caption="The same record editor at phone width. All pictured requests are fictional." /></div>
               <P><GuideLink file="docs/HOSTED_APPS.md#owner-record-api">Owner record API and database maintenance reference</GuideLink>.</P>
             </section>
 
