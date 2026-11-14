@@ -74,24 +74,51 @@ test('every operational Playwright session call executes its real options agains
   assert.equal(helper.E2E_FRONTEND_BASE_URL, frontend);
   const config = read('formlogic/ui/playwright.config.ts'); touched.add('formlogic/ui/playwright.config.ts');
   assert.match(config, /baseURL: E2E_FRONTEND_BASE_URL/);
+  // A call names what its own file defines (its `email`, its `PASSWORD`, an `admin` request
+  // context): any name this scope does not hold is an inert stand-in, a text that is also a request
+  // context, so the call runs as written whatever its file calls things. Built-ins are left alone.
+  const inert = name => Object.assign(new String(`inert-${name}`), { post: (...args) => inertContext.post(...args), request: inertContext });
+  const tolerant = scope => new Proxy(scope, {
+    has: (target, name) => typeof name === 'string' && (name in target || !(name in globalThis)),
+    get: (target, name) => (name in target ? target[name] : typeof name === 'string' ? inert(name) : undefined),
+  });
   let count = 0;
+  /** Files with sign-in calls that do not send the shared session headers, and how many. */
+  const ownHeaders = {};
+  // The ones that do so on purpose, and why. Any other is a sign-in written without the shared
+  // Origin and JSON headers, which the server refuses: it fails here rather than in a run.
+  const OWN_HEADERS = {
+    // A custom domain's demo start and sign-in, each carrying that domain's Origin (asDomain):
+    // what a visitor of the domain sends, which the test means to be refused.
+    'formlogic/ui/e2e/softn-app-domain.spec.ts': 2,
+  };
   for (const folder of ['formlogic/ui/e2e', 'formlogic/ui/scripts']) {
     for (const name of readdirSync(path.join(root, folder)).filter(n => /\.(?:spec\.ts|mjs)$/.test(n))) {
       const relative = `${folder}/${name}`;
       const source = parsed(relative);
-      const calls = collect(source, n => ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'post' && /\/(?:auth\/(?:login|register|mfa\/verify)|demo\/start)/.test(n.arguments[0]?.getText(source) ?? ''));
+      // The calls that sign in or start a demo. Each sends the shared session headers, or is one of
+      // OWN_HEADERS below, which send headers of their own on purpose.
+      const signIns = collect(source, n => ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'post'
+        && /\/(?:auth\/(?:login|register|mfa\/verify)|demo\/start)/.test(n.arguments[0]?.getText(source) ?? ''));
+      const calls = signIns.filter(n => /\bsession(?:Json)?Headers\(/.test(n.arguments[1]?.getText(source) ?? ''));
+      if (signIns.length > calls.length) ownHeaders[relative] = signIns.length - calls.length;
       if (!calls.length) { touched.delete(relative); continue; }
       for (const call of calls) {
         label = `${relative}:${source.getLineAndCharacterOfPosition(call.getStart(source)).line + 1}`;
         const request = inertContext;
         const context = { request };
         const scope = { context, ctx: context, page: { context: () => context }, req: request, API: api, API_BASE: `${api}/api`, APP_BASE: frontend, origin: frontend, process: { env }, EMAIL: env.E2E_EMAIL, PASSWORD: env.E2E_PASSWORD, sessionHeaders: helper.sessionHeaders, sessionJsonHeaders };
-        await vm.runInNewContext(call.getText(source), scope, { timeout: 1000 });
+        const before = captures.length;
+        await vm.runInNewContext(`with (__scope) { ${call.getText(source)} }`, { __scope: tolerant(scope) }, { timeout: 1000 });
+        // Each call is one request, captured with the shared headers it was written with.
+        assert.equal(captures.length - before, 1, `${label} sent one request`);
         count++;
       }
     }
   }
-  assert.equal(count, 15, '12 E2E calls plus three capture/performance script calls');
+  // Not a fixed number: one was pinned here, and every new test that signs in made this fail.
+  assert.ok(count >= 15, `${count} session calls: at least the fifteen there were when this was written`);
+  assert.deepEqual(ownHeaders, OWN_HEADERS, 'every sign-in call sends the shared session headers, or is listed in OWN_HEADERS with why it does not');
   } finally {
     inertContext._channel = originalChannel;
     await inertContext.dispose();
@@ -157,7 +184,9 @@ test('captured callers reach real CSRF middleware only with the configured Origi
     capture(`shared-options:${route}`, `${api}${route}`, { headers: sessionJsonHeaders(frontend), body: '{}' });
   }
   const php = process.env.FORMLOGIC_TEST_PHP || 'php';
-  const result = spawnSync(php, ['-d', 'xdebug.mode=off', 'scripts/test-fixtures/session-origin-capture.php'], { cwd: root, input: JSON.stringify(captures), env: process.env, encoding: 'utf8' });
+  // The backend's own Composer autoloader unless another is named: read only, as the bootstrap asks.
+  const autoload = process.env.FORMLOGIC_TEST_VENDOR_AUTOLOAD || path.join(root, 'formlogic/backend/vendor/autoload.php');
+  const result = spawnSync(php, ['-d', 'xdebug.mode=off', 'scripts/test-fixtures/session-origin-capture.php'], { cwd: root, input: JSON.stringify(captures), env: { ...process.env, FORMLOGIC_TEST_VENDOR_AUTOLOAD: autoload }, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr + result.stdout);
   const receipt = JSON.parse(result.stdout);
   assert.equal(receipt.failed, 0); assert.equal(receipt.checks, captures.length * 7);

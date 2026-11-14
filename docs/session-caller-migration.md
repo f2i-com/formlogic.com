@@ -37,13 +37,13 @@ The versioned `docs/ecosystem/qualification/0.1.6/` packet remains unchanged. It
 
 ## Offline verification
 
-From the repository root, set `FORMLOGIC_TEST_VENDOR_AUTOLOAD` to an existing read-only Composer autoloader, and optionally `FORMLOGIC_TEST_PHP` and `FORMLOGIC_TEST_BASH` to installed PHP/Git Bash executables. Then run:
+From the repository root, after `composer install` in `formlogic/backend` (the suite reads its `vendor/autoload.php`, read only; set `FORMLOGIC_TEST_VENDOR_AUTOLOAD` to use another Composer autoloader), and optionally with `FORMLOGIC_TEST_PHP` and `FORMLOGIC_TEST_BASH` naming installed PHP/Git Bash executables, run:
 
 ```sh
 node --test scripts/session-request.test.mjs
 ```
 
-This suite executes all nineteen real session call sites with fictional inputs. For fifteen Playwright calls it executes the real APIRequestContext POST/header/JSON serializer and intercepts its channel before transport. The smoke test executes its actual cookie-jar request function. The AI test invokes the isolated API module with an injected transport and verifies subsequent cookie/CSRF handling. The workflow's actual seed shell executes with curl replaced by an argument capture; its origin-only Node CLI remains real. No network request, listener, browser, account, token issuance, host install or provider is involved.
+This suite executes every real session call site with fictional inputs. For each Playwright call that signs in, registers, verifies MFA or starts a demo with the shared session headers (`sessionHeaders()`; there were fifteen when it was written, and it holds to at least that many) it executes the real APIRequestContext POST/header/JSON serializer and intercepts its channel before transport; each must send exactly one request. A name a call's own file defines (its `email`, an `admin` request context) is an inert stand-in. A call that sends headers of its own on purpose, such as a custom domain's sign-in with that domain's Origin, is named in the test's `OWN_HEADERS` with why; any other sign-in call without the shared headers fails it. The smoke test executes its actual cookie-jar request function. The AI test invokes the isolated API module with an injected transport and verifies subsequent cookie/CSRF handling. The workflow's actual seed shell executes with curl replaced by an argument capture; its origin-only Node CLI remains real. No network request, listener, browser, account, token issuance, host install or provider is involved.
 
 The captured serialized request bodies and headers are replayed through the actual candidate CSRF middleware with an in-memory counter handler. Four shared-helper route cases additionally cover every session endpoint, including MFA. **6 tests passed; 23 captured requests produced 161 passing middleware checks.** Missing, untrusted or duplicate Origin, non-JSON content, absent configuration and Host/metadata substitution reach no handler. These checks do not establish HTTP wire/SAPI behavior, live cookies, proxy deployment or end-to-end account creation.
 
