@@ -45,7 +45,10 @@ function element(overrides: Partial<BlueprintElement>): BlueprintElement {
 
 async function render(
   el: BlueprintElement,
-  opts: { linkedNoteText?: string | null; onSave?: (p: Record<string, unknown>, n?: string) => void; onDelete?: () => void } = {},
+  opts: {
+    linkedNoteText?: string | null; onSave?: (p: Record<string, unknown>, n?: string) => void; onDelete?: () => void;
+    linkTargets?: Array<{ id: string; label: string }>; onLink?: (id: string) => void;
+  } = {},
 ) {
   await act(async () => {
     root.render(
@@ -55,6 +58,8 @@ async function render(
         linkedNoteText={opts.linkedNoteText ?? null}
         onSave={opts.onSave ?? (() => {})}
         onDelete={opts.onDelete ?? (() => {})}
+        linkTargets={opts.linkTargets}
+        onLink={opts.onLink}
       />,
     );
   });
@@ -173,6 +178,39 @@ describe('SelectionPanel (diagram selection editor)', () => {
     const [props] = onSave.mock.calls[0];
     expect('label' in props).toBe(false);
     expect('cardinality' in props).toBe(false);
+  });
+
+  it('form: names each field type in words, keeps a type it does not offer, and saves on Enter', async () => {
+    const onSave = vi.fn();
+    await render(
+      element({ elementType: 'form', properties: { title: 'Guests', fields: [{ name: 'email', type: 'email' }, { name: 'stars', type: 'rating' }] } }),
+      { onSave },
+    );
+    const first = byLabel<HTMLSelectElement>('Field type 1');
+    expect([...first.options].map((option) => option.textContent)).toEqual(['Short text', 'Long text', 'Number', 'Date', 'Email', 'Phone', 'Checkbox (yes or no)', 'Dropdown (one of a list)']);
+    expect(byLabel<HTMLSelectElement>('Field type 2').value).toBe('rating');
+    expect(container.textContent).not.toContain('Not saved yet');
+    const title = byLabel<HTMLInputElement>('Entity title');
+    setValue(title, 'Visitors');
+    expect(container.textContent).toContain('Not saved yet');
+    act(() => title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0]).toMatchObject({ title: 'Visitors', fields: [{ name: 'email', type: 'email' }, { name: 'stars', type: 'rating' }] });
+  });
+
+  it('links to another card chosen from a list, without a line drawn by hand', async () => {
+    const onLink = vi.fn();
+    await render(element({ elementType: 'form', properties: { title: 'Orders' } }), {
+      onLink,
+      linkTargets: [{ id: 'el-2', label: 'Form: Customers' }, { id: 'el-3', label: 'Flow: Send a receipt' }],
+    });
+    const list = container.querySelector('select[id^="link-"]') as HTMLSelectElement;
+    expect([...list.options].map((option) => option.textContent)).toEqual(['Choose something to link this to…', 'Form: Customers', 'Flow: Send a receipt']);
+    act(() => setValue(list, 'el-3'));
+    expect(onLink).toHaveBeenCalledWith('el-3');
+    // Nothing to link to, or a line itself: no list.
+    await render(element({ elementType: 'edge', properties: { edgeType: 'relation', sourceId: 'a', targetId: 'b' } }), { onLink, linkTargets: [{ id: 'el-2', label: 'Form: Customers' }] });
+    expect(container.querySelector('select[id^="link-"]')).toBeNull();
   });
 
   it('drawings: no Save button, Delete still routes through onDelete', async () => {

@@ -17,6 +17,7 @@ import {
   ReactFlow,
   applyEdgeChanges,
   applyNodeChanges,
+  useConnection,
   useReactFlow,
   type Connection,
   type Edge,
@@ -25,12 +26,14 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import './DiagramCanvas.css';
 import {
   Boxes,
   Circle as CircleIcon,
   Diamond,
   FileText,
   ImagePlus,
+  LayoutGrid,
   Loader2,
   Map as MapIcon,
   Monitor,
@@ -58,7 +61,8 @@ import { BottomSheet } from '../../components/ui/BottomSheet';
 import type { Blueprint, BlueprintElement, BlueprintOperation } from '../../types/blueprints';
 import { SelectionPanel } from './SelectionPanel';
 import { clearSelectionDraft } from './selectionDraft';
-import { sketchFields, type SketchField } from './sketch';
+import { SKETCH_FIELD_WORDS, sketchFields, type SketchField } from './sketch';
+import { facingSide, freeSpot, lineEnds, tidy, type Box, type Spot } from './placement';
 
 type BlueprintNodeData = {
   title: string;
@@ -139,19 +143,44 @@ const TOUCH_TOOL = 'max-sm:h-11 max-sm:min-w-11';
 const CONNECTOR_DOT =
   '!h-2.5 !w-2.5 !border-2 !border-white !bg-primary-500 dark:!border-slate-900';
 
-/** A dot on every side — start OR end a wire from any of them (ConnectionMode.Loose). */
-function Connectors() {
+/** The handle that covers a whole card while a line is drawn to it (see CardTarget). */
+const CARD_HANDLE = 'card';
+
+/**
+ * A dot on every side — start OR end a wire from any of them (ConnectionMode.Loose) — and, while
+ * a line is being drawn from another card, the whole card to end it on.
+ */
+function Connectors({ id, ghost = false }: { id: string; ghost?: boolean }) {
   return (
     <>
       <Handle id="t" type="source" position={Position.Top} className={CONNECTOR_DOT} />
       <Handle id="r" type="source" position={Position.Right} className={CONNECTOR_DOT} />
       <Handle id="b" type="source" position={Position.Bottom} className={CONNECTOR_DOT} />
       <Handle id="l" type="source" position={Position.Left} className={CONNECTOR_DOT} />
+      {/* A card the AI only proposes is not there yet: nothing is linked to it. */}
+      {!ghost && <CardTarget id={id} />}
     </>
   );
 }
 
-function BlueprintNodeCard({ data, selected }: NodeProps) {
+/**
+ * While a line is drawn from another card, this card takes it anywhere on it: a dot is hard to
+ * hit, with a finger above all. The line is then joined to the side that faces where it came
+ * from (DiagramCanvas's link), so this handle is never an edge's end.
+ */
+function CardTarget({ id }: { id: string }) {
+  const from = useConnection((connection) => (connection.inProgress ? connection.fromNode.id : null));
+  if (from === null || from === id) return null;
+  return <Handle id={CARD_HANDLE} type="target" position={Position.Left} isConnectableStart={false} className="sketch-card-target" />;
+}
+
+/** What a card is, in a word, under its title. */
+const KIND_WORDS: Record<string, string> = {
+  form: 'Form', flow: 'Flow', actor: 'Actor', app: 'App', screen: 'Screen', event: 'Event', intelligence: 'AI step',
+  service: 'Service', decision: 'Decision', group: 'Group',
+};
+
+function BlueprintNodeCard({ id, data, selected }: NodeProps) {
   const d = data as BlueprintNodeData;
   const Icon = ELEMENT_ICONS[d.elementType] ?? Workflow;
   // Drawing layer (§11A.1b): ink strokes and pasted images render raw — no card chrome.
@@ -191,7 +220,7 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
           draggable={false}
           className={cn('h-full w-full rounded-lg object-fill shadow-sm', selected && 'ring-2 ring-primary-500/50')}
         />
-        <Connectors />
+        <Connectors id={id} ghost={d.ghost} />
       </div>
     );
   }
@@ -217,7 +246,7 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
             <rect x={2} y={2} width={w - 4} height={h - 4} rx={8} fill="none" stroke={stroke} strokeWidth={2} />
           )}
         </svg>
-        <Connectors />
+        <Connectors id={id} ghost={d.ghost} />
       </div>
     );
   }
@@ -242,7 +271,7 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
             {d.text?.trim() ? d.text : 'Select to write…'}
           </p>
         )}
-        <Connectors />
+        <Connectors id={id} ghost={d.ghost} />
       </div>
     );
   }
@@ -273,7 +302,7 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
             {d.text?.trim() ? d.text : 'Select to write…'}
           </p>
         )}
-        <Connectors />
+        <Connectors id={id} ghost={d.ghost} />
       </div>
     );
   }
@@ -291,9 +320,9 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
         </span>
         <span className="truncate text-sm font-medium text-gray-900 dark:text-white">{d.sync?.title ?? d.title}</span>
       </div>
-      <p className="mt-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-gray-400 dark:text-slate-500">
-        {d.elementType}
-        {d.concept ? ' · concept' : ''}
+      <p className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-slate-400">
+        {KIND_WORDS[d.elementType] ?? d.elementType}
+        {d.elementType === 'form' && d.fields.length > 0 ? ` · ${d.fields.length} field${d.fields.length === 1 ? '' : 's'}` : ''}
         {d.sync?.state === 'missing' && (
           <span className="rounded bg-red-100 px-1 py-px font-semibold text-red-700 dark:bg-red-500/15 dark:text-red-300">missing</span>
         )}
@@ -310,7 +339,7 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
           {d.fields.slice(0, 8).map((field) => (
             <li key={field.name} className="flex items-baseline justify-between gap-2 text-[11px]">
               <span className="truncate font-mono text-gray-700 dark:text-slate-300">{field.name}</span>
-              <span className="flex-none text-gray-400 dark:text-slate-500">{field.type}</span>
+              <span className="flex-none text-gray-500 dark:text-slate-400">{SKETCH_FIELD_WORDS[field.type]?.short ?? field.type}</span>
             </li>
           ))}
           {d.fields.length > 8 && (
@@ -338,7 +367,7 @@ function BlueprintNodeCard({ data, selected }: NodeProps) {
           className="nodrag mt-1.5 w-full rounded-md border border-dashed border-gray-300 bg-transparent px-1.5 py-1 font-mono text-[11px] text-gray-700 placeholder:text-gray-400 focus:border-primary-400 focus:outline-none dark:border-slate-700 dark:text-slate-200 dark:placeholder:text-slate-500"
         />
       )}
-      <Connectors />
+      <Connectors id={id} ghost={d.ghost} />
     </div>
   );
 }
@@ -383,9 +412,45 @@ async function pastedImageProps(file: File): Promise<{ src: string; w: number; h
   }
 }
 
-/** The sketched field list on a form element (properties.fields), shape-tolerant. */
-
 const NODE_TYPES = { blueprint: BlueprintNodeCard };
+
+/** The ends of the lines, drawn pointing at the card: a crow's foot (many), a bar (one), an arrow. */
+function LineEnds() {
+  const line = { stroke: 'currentColor', strokeWidth: 1.5, fill: 'none' };
+  return (
+    <svg width="0" height="0" className="absolute text-slate-400 dark:text-slate-500" aria-hidden="true">
+      <defs>
+        <marker id="sketch-many" viewBox="0 0 16 16" refX="16" refY="8" markerWidth="16" markerHeight="16" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+          <path d="M2 8 L16 1 M2 8 L16 8 M2 8 L16 15" {...line} />
+        </marker>
+        <marker id="sketch-one" viewBox="0 0 16 16" refX="16" refY="8" markerWidth="16" markerHeight="16" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+          <path d="M9 1 L9 15 M13 1 L13 15" {...line} />
+        </marker>
+        <marker id="sketch-arrow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+          <path d="M1 1 L11 6 L1 11 Z" fill="currentColor" stroke="none" />
+        </marker>
+      </defs>
+    </svg>
+  );
+}
+
+/** A new card's size, before it is drawn and measured: room is found for it by this. */
+function sizeOf(elementType: string, extra?: Record<string, unknown>): { w: number; h: number } {
+  if (elementType === 'shape') return { w: Number(extra?.w) || 160, h: Number(extra?.h) || 110 };
+  if (elementType === 'note') return { w: 176, h: 104 };
+  if (elementType === 'text') return { w: 140, h: 40 };
+  if (elementType === 'form') return { w: 200, h: 64 };
+  return { w: 180, h: 64 };
+}
+
+/** A card in a few words, for a list of what to link to. */
+function summaryOf(element: BlueprintElement): string {
+  const properties = element.properties as { title?: unknown; text?: unknown };
+  const kind = KIND_WORDS[element.elementType] ?? (element.elementType === 'note' ? 'Note' : element.elementType === 'text' ? 'Text' : element.elementType === 'image' ? 'Image' : element.elementType === 'shape' ? 'Shape' : element.elementType);
+  const words = typeof properties.title === 'string' && properties.title.trim() ? properties.title.trim()
+    : typeof properties.text === 'string' && properties.text.trim() ? properties.text.trim().replace(/\s+/g, ' ') : '';
+  return words ? `${kind}: ${words.length > 40 ? `${words.slice(0, 39)}…` : words}` : kind;
+}
 
 /** Elements → React Flow nodes/edges (edge elements become RF edges). */
 function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] } {
@@ -412,22 +477,19 @@ function toCanvas(elements: BlueprintElement[]): { nodes: Node[]; edges: Edge[] 
       const props = element.properties as {
         edgeType?: string; sourceId?: string; targetId?: string; cardinality?: string; fkField?: string;
       };
-      const isRelation = props.edgeType === 'relation';
       const anchors = element.properties as { sourceHandle?: unknown; targetHandle?: unknown };
+      // A line's own name, where it has one; else what it means, in words, and ends to say so.
+      const ends = lineEnds(props.edgeType, props.cardinality);
+      const named = (element.properties as { label?: unknown }).label;
       edges.push({
         id: element.id,
         source: String(props.sourceId ?? ''),
         target: String(props.targetId ?? ''),
-        ...(typeof anchors.sourceHandle === 'string' ? { sourceHandle: anchors.sourceHandle } : {}),
-        ...(typeof anchors.targetHandle === 'string' ? { targetHandle: anchors.targetHandle } : {}),
-        // ER reading for relations: cardinality + the FK field that will hold the link.
-        // Form→form relations read as ER (cardinality + FK); generic associations
-        // (notes/images/shapes/text linked up) read as a plain line.
-        label: typeof (element.properties as { label?: unknown }).label === 'string'
-          ? (element.properties as { label: string }).label
-          : isRelation
-            ? (props.cardinality ? `${props.cardinality}${props.fkField ? ` · ${props.fkField}` : ''}` : undefined)
-            : String(props.edgeType ?? 'relation'),
+        ...(typeof anchors.sourceHandle === 'string' && anchors.sourceHandle !== CARD_HANDLE ? { sourceHandle: anchors.sourceHandle } : {}),
+        ...(typeof anchors.targetHandle === 'string' && anchors.targetHandle !== CARD_HANDLE ? { targetHandle: anchors.targetHandle } : {}),
+        label: typeof named === 'string' && named.trim() ? named : ends.label,
+        ...(ends.start ? { markerStart: ends.start } : {}),
+        ...(ends.end ? { markerEnd: ends.end } : {}),
         animated: props.edgeType === 'triggers',
         interactionWidth: 24,
       });
@@ -517,13 +579,50 @@ export function DiagramCanvas({
   // The phone's list of sketch tools (a sheet): the toolbar has no room for ten of them there.
   const [toolsOpen, setToolsOpen] = useState(false);
   const navigate = useNavigate();
+  const reactFlow = useReactFlow();
+  // The canvas's own box on the screen: what is in view, and its middle, where a new card goes.
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  // Everything selected (a shift-click or a drag round several selects more than one), one per
+  // line: a string, so the same selection said again changes nothing.
+  const [selectedKey, setSelectedKey] = useState('');
+  const selectedIds = useMemo(() => (selectedKey === '' ? [] : selectedKey.split('\n')), [selectedKey]);
 
   // Lets go of the selection: its panel closes (what was typed in it is kept as a draft).
   const deselect = useCallback(() => {
     setNodes((current) => (current.some((node) => node.selected) ? current.map((node) => (node.selected ? { ...node, selected: false } : node)) : current));
     setRfEdges((current) => (current.some((edge) => edge.selected) ? current.map((edge) => (edge.selected ? { ...edge, selected: false } : edge)) : current));
     setSelectedId(null);
+    setSelectedKey('');
   }, []);
+
+  // Each card's box on the canvas, where it is drawn (a card in a box: where that is on the canvas).
+  const boxOf = useCallback((id: string): Box | null => {
+    const node = reactFlow.getNode(id);
+    if (!node) return null;
+    const at = reactFlow.getInternalNode(id)?.internals.positionAbsolute ?? node.position;
+    return { x: at.x, y: at.y, w: node.measured?.width ?? node.width ?? 180, h: node.measured?.height ?? node.height ?? 64 };
+  }, [reactFlow]);
+
+  /**
+   * Where a new card of this size goes: near where it was wanted (else the middle of what is in
+   * view), never over another card; and if that is out of view, the view goes to it.
+   */
+  const placeFor = useCallback((size: { w: number; h: number }, want?: Spot): Spot => {
+    const pane = paneRef.current?.getBoundingClientRect();
+    const middle = pane && pane.width > 0 ? reactFlow.screenToFlowPosition({ x: pane.left + pane.width / 2, y: pane.top + pane.height / 2 }) : { x: 240, y: 180 };
+    const taken = reactFlow.getNodes().map((node) => boxOf(node.id)).filter((box): box is Box => box !== null);
+    // A phone's canvas is narrow: the next card goes below the last, not off the side of the screen.
+    const lean = pane && pane.width < 640 ? { x: 3, y: 1 } : { x: 1, y: 1 };
+    const spot = freeSpot(want ?? { x: middle.x - size.w / 2, y: middle.y - size.h / 2 }, size, taken, lean);
+    if (pane && pane.width > 0) {
+      const topLeft = reactFlow.screenToFlowPosition({ x: pane.left, y: pane.top });
+      const bottomRight = reactFlow.screenToFlowPosition({ x: pane.right, y: pane.bottom });
+      if (spot.x < topLeft.x || spot.y < topLeft.y || spot.x + size.w > bottomRight.x || spot.y + size.h > bottomRight.y) {
+        void reactFlow.setCenter(spot.x + size.w / 2, spot.y + size.h / 2, { zoom: reactFlow.getZoom(), duration: 300 });
+      }
+    }
+    return spot;
+  }, [boxOf, reactFlow]);
   // The selection the page was last told of (see onSelectionChange).
   const announcedSelectionRef = useRef<string | null>(null);
   // The page's side panel opened: one side panel at a time (state derived during render, the
@@ -545,10 +644,14 @@ export function DiagramCanvas({
 
   if (canvasSource !== initial) {
     setCanvasSource(initial);
-    setRfEdges(initial.edges);
+    // What was selected stays selected when the diagram comes back after a change (a Save, a
+    // line from "Link to"): its panel stays open.
+    const kept = new Set(selectedKey === '' ? [] : selectedKey.split('\n'));
+    setRfEdges(initial.edges.map((edge) => (kept.has(edge.id) ? { ...edge, selected: true } : edge)));
     setNodes(
       initial.nodes.map((node) => ({
         ...node,
+        ...(kept.has(node.id) ? { selected: true } : {}),
         data: {
           ...node.data,
           onAddField: (name: string) => addFieldRef.current(node.id, name),
@@ -702,6 +805,7 @@ export function DiagramCanvas({
 
   // §11A: quick-sketch — drop a fresh CONCEPT element of any §11.4 kind at a spawn
   // point. This is the design-tool half of the canvas; "place existing" is the other.
+  // Without a point it goes in the middle of what is in view; either way, never over another card.
   const sketchElement = useCallback(
     (elementType: string, title: string, extra?: Record<string, unknown>, position?: { x: number; y: number }) => {
       const base: Record<string, unknown> = elementType === 'form'
@@ -711,6 +815,8 @@ export function DiagramCanvas({
           : elementType === 'text'
             ? {}
             : { title };
+      const size = sizeOf(elementType, extra);
+      const at = placeFor(size, position ? { x: position.x - size.w / 2, y: position.y - size.h / 2 } : undefined);
       void commit(
         [
           {
@@ -719,53 +825,59 @@ export function DiagramCanvas({
             targetId: `el-${generateId()}`,
             elementType: elementType as BlueprintOperation['elementType'],
             properties: { ...base, ...extra },
-            layout: position
-              ? { x: Math.round(position.x), y: Math.round(position.y) }
-              : { x: 120 + Math.round(Math.random() * 260), y: 120 + Math.round(Math.random() * 180) },
+            layout: { x: at.x, y: at.y },
           },
         ],
         true,
       );
     },
-    [commit],
+    [commit, placeFor],
   );
 
-  const onConnect = useCallback(
-    (connection: Connection) => {
-      if (!connection.source || !connection.target || connection.source === connection.target) return;
-      // §11A D2: the wire's MEANING comes from what it connects (§11.5) — form→form is
-      // an ER RELATION (1:N, FK suggested from the source title; the D3 materialiser
-      // turns it into a linked_record field), anything→flow is a TRIGGER, and
-      // actor→anything is USES ("this role works with that"). Combinations with no
-      // meaning yet refuse honestly instead of drawing a decorative line.
+  /**
+   * A line from one card to another. Its MEANING comes from what it connects (§11.5); it joins
+   * each card at the dot it was drawn from or to, or else at the side that faces the other card
+   * (a line ended anywhere on a card, or made from the panel's "Link to").
+   */
+  const link = useCallback(
+    (source: string, target: string, sourceHandle?: string | null, targetHandle?: string | null) => {
+      // Both ends must be on the diagram (not a card the AI only proposes, which is not there yet).
+      if (source === target || !elements.some((element) => element.id === source) || !elements.some((element) => element.id === target)) return;
+      // §11A D2: form→form is an ER RELATION (1:N, FK suggested from the source title; the D3
+      // materialiser turns it into a linked_record field), anything→flow is a TRIGGER, and
+      // actor→anything is USES ("this role works with that").
       const typeOf = (id: string) => elements.find((element) => element.id === id)?.elementType;
-      const sourceType = typeOf(connection.source);
-      const targetType = typeOf(connection.target);
+      const sourceType = typeOf(source);
+      const targetType = typeOf(target);
       let properties: Record<string, unknown> | null = null;
       if (sourceType === 'form' && targetType === 'form') {
         const sourceTitle = String(
-          (elements.find((element) => element.id === connection.source)?.properties as { title?: unknown } | undefined)?.title ?? 'parent',
+          (elements.find((element) => element.id === source)?.properties as { title?: unknown } | undefined)?.title ?? 'parent',
         );
         const fkField = sourceTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'parent';
-        properties = { edgeType: 'relation', sourceId: connection.source, targetId: connection.target, cardinality: '1:N', fkField, state: 'concept' };
+        properties = { edgeType: 'relation', sourceId: source, targetId: target, cardinality: '1:N', fkField, state: 'concept' };
       } else if (targetType === 'flow') {
-        properties = { edgeType: 'triggers', sourceId: connection.source, targetId: connection.target, state: 'concept' };
+        properties = { edgeType: 'triggers', sourceId: source, targetId: target, state: 'concept' };
       } else if (sourceType === 'flow' && targetType === 'form') {
         // The flow PRODUCES records into that form (§11.5 sends-data).
-        properties = { edgeType: 'sends-data', sourceId: connection.source, targetId: connection.target, state: 'concept' };
+        properties = { edgeType: 'sends-data', sourceId: source, targetId: target, state: 'concept' };
       } else if (sourceType === 'actor') {
-        properties = { edgeType: 'uses', sourceId: connection.source, targetId: connection.target, state: 'concept' };
+        properties = { edgeType: 'uses', sourceId: source, targetId: target, state: 'concept' };
       }
-      if (properties === null && sourceType === 'ink') {
+      if (sourceType === 'ink' || targetType === 'ink') {
         return; // strokes are drawings, not connectors
       }
       if (properties === null) {
         // Anything else links generically (owner direction: notes, images, shapes and
         // text connect too) — a plain association with no cardinality or FK.
-        properties = { edgeType: 'relation', sourceId: connection.source, targetId: connection.target, state: 'concept' };
+        properties = { edgeType: 'relation', sourceId: source, targetId: target, state: 'concept' };
       }
-      if (connection.sourceHandle) properties.sourceHandle = connection.sourceHandle;
-      if (connection.targetHandle) properties.targetHandle = connection.targetHandle;
+      const from = boxOf(source);
+      const to = boxOf(target);
+      const fromSide = sourceHandle && sourceHandle !== CARD_HANDLE ? sourceHandle : from && to ? facingSide(to, from) : null;
+      const toSide = targetHandle && targetHandle !== CARD_HANDLE ? targetHandle : from && to ? facingSide(from, to) : null;
+      if (fromSide) properties.sourceHandle = fromSide;
+      if (toSide) properties.targetHandle = toSide;
       void commit(
         [
           {
@@ -779,32 +891,25 @@ export function DiagramCanvas({
         true,
       );
     },
-    [commit, elements],
+    [boxOf, commit, elements],
+  );
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      if (connection.source && connection.target) link(connection.source, connection.target, connection.sourceHandle, connection.targetHandle);
+    },
+    [link],
   );
 
   // §11A D2: double-click empty canvas = a fresh CONCEPT form entity (no resourceRef —
-  // the materialiser creates the real form later). Zoom-on-double-click is disabled so
-  // this gesture is unambiguous; double-clicks on nodes/edges don't land on the pane.
-  const reactFlow = useReactFlow();
+  // the materialiser creates the real form later), centred where it was clicked unless that
+  // would cover another card. Zoom-on-double-click is disabled so this gesture is
+  // unambiguous; double-clicks on nodes/edges don't land on the pane.
   const onPaneDoubleClick = useCallback(
     (event: ReactMouseEvent) => {
       if (!(event.target as HTMLElement).classList.contains('react-flow__pane')) return;
-      const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      void commit(
-        [
-          {
-            operationId: `op-${generateId()}`,
-            type: 'blueprint.element.create',
-            targetId: `el-${generateId()}`,
-            elementType: 'form',
-            properties: { title: 'New form', fields: [] },
-            layout: { x: Math.round(position.x), y: Math.round(position.y) },
-          },
-        ],
-        true,
-      );
+      sketchElement('form', 'New form', undefined, reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
     },
-    [commit, reactFlow],
+    [reactFlow, sketchElement],
   );
 
   // Types that can live INSIDE a box (owner direction: shapes nest, text/images/notes
@@ -956,7 +1061,7 @@ export function DiagramCanvas({
         toast.error('Image too large', 'It stores inline on the diagram — attach something smaller.');
         return;
       }
-      const center = reactFlow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+      const at = placeFor({ w: props.w, h: props.h });
       void commit(
         [
           {
@@ -965,13 +1070,13 @@ export function DiagramCanvas({
             targetId: `el-${generateId()}`,
             elementType: 'image' as BlueprintOperation['elementType'],
             properties: props,
-            layout: { x: Math.round(center.x - props.w / 2), y: Math.round(center.y - props.h / 2) },
+            layout: { x: at.x, y: at.y },
           },
         ],
         true,
       );
     },
-    [commit, reactFlow],
+    [commit, placeFor],
   );
 
   // Paste an image anywhere on the page while the canvas is open → an image element at
@@ -987,7 +1092,7 @@ export function DiagramCanvas({
           toast.error('Image too large', 'It stores inline on the diagram — paste something smaller.');
           return;
         }
-        const center = reactFlow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+        const at = placeFor({ w: props.w, h: props.h });
         void commit(
           [
             {
@@ -996,7 +1101,7 @@ export function DiagramCanvas({
               targetId: `el-${generateId()}`,
               elementType: 'image' as BlueprintOperation['elementType'],
               properties: props,
-              layout: { x: Math.round(center.x - props.w / 2), y: Math.round(center.y - props.h / 2) },
+              layout: { x: at.x, y: at.y },
             },
           ],
           true,
@@ -1005,52 +1110,129 @@ export function DiagramCanvas({
     };
     document.addEventListener('paste', onPaste);
     return () => document.removeEventListener('paste', onPaste);
-  }, [commit, reactFlow]);
+  }, [commit, placeFor]);
 
+  // Removes everything selected, in one batch (one undo): a card's lines go with it first (the
+  // gateway refuses a line to nothing), and what sat in a box that goes stays where it was, on
+  // the canvas itself.
   const deleteSelected = useCallback(() => {
-    if (!selectedId) return;
+    const chosen = new Set([...selectedIds, ...(selectedId ? [selectedId] : [])].filter((id) => elements.some((element) => element.id === id)));
+    if (chosen.size === 0) return;
     // A deleted element's unsaved panel draft must not linger and reappear if an id is
     // ever reused (and it is simply dead weight otherwise).
-    clearSelectionDraft(selectedId);
-    // Deleting a node deletes its connected edges first (the gateway refuses dangling edges).
-    const connectedEdges = elements
+    for (const id of chosen) clearSelectionDraft(id);
+    const lines = elements
       .filter((element) => element.elementType === 'edge')
       .filter((element) => {
         const props = element.properties as { sourceId?: string; targetId?: string };
-        return element.id === selectedId || props.sourceId === selectedId || props.targetId === selectedId;
+        return chosen.has(element.id) || chosen.has(String(props.sourceId)) || chosen.has(String(props.targetId));
       })
       .map((element) => element.id);
-    const targets = [...new Set([...connectedEdges, selectedId])];
-    const ordered = [
-      ...targets.filter((id) => elements.find((element) => element.id === id)?.elementType === 'edge'),
-      ...targets.filter((id) => elements.find((element) => element.id === id)?.elementType !== 'edge'),
+    const released = elements.filter((element) => {
+      const parentId = (element.properties as { parentId?: unknown }).parentId;
+      return element.elementType !== 'edge' && !chosen.has(element.id) && typeof parentId === 'string' && chosen.has(parentId);
+    });
+    const operations: BlueprintOperation[] = [
+      ...released.flatMap((element): BlueprintOperation[] => {
+        const at = reactFlow.getInternalNode(element.id)?.internals.positionAbsolute;
+        const properties: Record<string, unknown> = { ...element.properties };
+        delete properties.parentId;
+        return [
+          { operationId: `op-${generateId()}`, type: 'blueprint.element.update', targetId: element.id, properties },
+          ...(at ? [{ operationId: `op-${generateId()}`, type: 'blueprint.layout.set' as const, targetId: element.id, layout: { x: Math.round(at.x), y: Math.round(at.y) } }] : []),
+        ];
+      }),
+      ...lines.map((targetId) => ({ operationId: `op-${generateId()}`, type: 'blueprint.element.delete' as const, targetId })),
+      ...[...chosen].filter((id) => !lines.includes(id)).map((targetId) => ({ operationId: `op-${generateId()}`, type: 'blueprint.element.delete' as const, targetId })),
     ];
     setSelectedId(null);
-    void commit(
-      ordered.map((targetId) => ({
-        operationId: `op-${generateId()}`,
-        type: 'blueprint.element.delete' as const,
-        targetId,
-      })),
-      true,
-    );
-  }, [commit, elements, selectedId]);
+    setSelectedKey('');
+    void commit(operations, true);
+  }, [commit, elements, reactFlow, selectedId, selectedIds]);
 
-  // Delete/Backspace removes the selected element (same edges-first gateway batch as
-  // the toolbar button) — unless the user is typing in an input. React Flow's own
-  // delete handling stays OFF so nothing bypasses the operation log.
+  // Delete/Backspace removes what is selected (same edges-first gateway batch as the
+  // toolbar button) and Escape lets go of it — unless the user is typing in an input.
+  // React Flow's own delete handling stays OFF so nothing bypasses the operation log.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+      if (event.key !== 'Delete' && event.key !== 'Backspace' && event.key !== 'Escape') return;
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
-      if (selectedId === null) return;
+      if (selectedId === null && selectedIds.length === 0) return;
       event.preventDefault();
-      deleteSelected();
+      if (event.key === 'Escape') deselect();
+      else deleteSelected();
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [deleteSelected, selectedId]);
+  }, [deleteSelected, deselect, selectedId, selectedIds]);
+
+  // On a phone the panel is a sheet over the foot of the canvas: the card it is for is moved into
+  // the room above it (and in from the side), so what is being changed stays in sight.
+  useEffect(() => {
+    if (!selectedId) return;
+    const timer = window.setTimeout(() => {
+      const sheet = document.querySelector('[data-selection-panel]')?.getBoundingClientRect();
+      const pane = paneRef.current?.getBoundingClientRect();
+      const card = paneRef.current?.querySelector(`.react-flow__node[data-id="${CSS.escape(selectedId)}"]`)?.getBoundingClientRect();
+      // Only where the panel lies over the canvas, not beside it.
+      if (!sheet || !pane || !card || sheet.top >= pane.bottom || sheet.left > pane.left + 8) return;
+      const roomTop = pane.top + 56;
+      const roomBottom = sheet.top - 16;
+      const down = card.top >= roomTop && card.bottom <= roomBottom ? 0 : (roomTop + roomBottom) / 2 - (card.top + card.bottom) / 2;
+      const across = card.left < pane.left + 8 ? pane.left + 8 - card.left : card.right > pane.right - 8 ? Math.max(pane.left + 8 - card.left, pane.right - 8 - card.right) : 0;
+      if (down === 0 && across === 0) return;
+      const viewport = reactFlow.getViewport();
+      void reactFlow.setViewport({ ...viewport, x: viewport.x + across, y: viewport.y + down }, { duration: 250 });
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [reactFlow, selectedId]);
+
+  // Each line joins its two cards at the sides that face each other, wherever the cards are moved
+  // to: a line held to the dot it was drawn from looped round a card moved past the other.
+  const shownEdges = useMemo(() => {
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const boxOfNode = (id: string): Box | null => {
+      const node = byId.get(id);
+      if (!node) return null;
+      let x = node.position.x;
+      let y = node.position.y;
+      let parent = node.parentId ? byId.get(node.parentId) : undefined;
+      for (let hop = 0; parent && hop < 8; hop += 1) {
+        x += parent.position.x;
+        y += parent.position.y;
+        parent = parent.parentId ? byId.get(parent.parentId) : undefined;
+      }
+      return { x, y, w: node.measured?.width ?? node.width ?? 180, h: node.measured?.height ?? node.height ?? 64 };
+    };
+    return rfEdges.map((edge) => {
+      const from = boxOfNode(edge.source);
+      const to = boxOfNode(edge.target);
+      return from && to ? { ...edge, sourceHandle: facingSide(to, from), targetHandle: facingSide(from, to) } : edge;
+    });
+  }, [nodes, rfEdges]);
+
+  // Tidy up: the sketch laid out left to right along its lines, where it was. Ink strokes stay
+  // where they were drawn, and what sits in a box moves with its box. One layout batch (no
+  // conflict, one undo); the cards move at once, before the server has answered.
+  const tidyUp = useCallback(() => {
+    const cards = nodes
+      .filter((node) => !node.parentId && (node.data as BlueprintNodeData).elementType !== 'ink')
+      .map((node) => ({ id: node.id, x: node.position.x, y: node.position.y, w: node.measured?.width ?? node.width ?? 180, h: node.measured?.height ?? node.height ?? 64 }));
+    if (cards.length < 2) return;
+    const placed = tidy(cards, rfEdges.map((edge) => ({ from: edge.source, to: edge.target })));
+    const moved = cards.filter((card) => {
+      const spot = placed.get(card.id)!;
+      return spot.x !== Math.round(card.x) || spot.y !== Math.round(card.y);
+    });
+    if (moved.length === 0) return;
+    setNodes((current) => current.map((node) => (placed.has(node.id) ? { ...node, position: placed.get(node.id)! } : node)));
+    void commit(
+      moved.map((card) => ({ operationId: `op-${generateId()}`, type: 'blueprint.layout.set' as const, targetId: card.id, layout: { ...placed.get(card.id)! } })),
+      false,
+    );
+    window.setTimeout(() => { void reactFlow.fitView({ padding: 0.2, maxZoom: 1, duration: 300 }); }, 60);
+  }, [commit, nodes, reactFlow, rfEdges]);
 
   const selectedElement = selectedId !== null
     ? elements.find((element) => element.id === selectedId) ?? null
@@ -1306,10 +1488,19 @@ export function DiagramCanvas({
           <span className="hidden @5xl/tools:inline">{penMode ? 'Drawing' : 'Draw'}</span>
         </button>
         <div className="ml-auto flex items-center gap-1 sm:gap-2">
-          {busy && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
-          <span className="hidden font-mono text-[10px] text-gray-500 dark:text-slate-400 @xl/tools:inline" title="Revision: what the diagram says · how it is laid out">
-            rev {blueprint.semanticRevision}·{blueprint.layoutRevision}
-          </span>
+          {busy && <Loader2 className="h-4 w-4 animate-spin text-gray-400" aria-label="Saving" />}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="max-sm:min-w-11"
+            disabled={busy || nodes.filter((node) => !node.parentId).length < 2}
+            aria-label="Tidy up the diagram"
+            title="Lay the diagram out neatly along its lines"
+            onClick={tidyUp}
+          >
+            <LayoutGrid className="h-4 w-4 text-gray-500 dark:text-slate-400" aria-hidden="true" />
+            <span className="ml-1.5 hidden @5xl/tools:inline">Tidy up</span>
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -1445,7 +1636,8 @@ export function DiagramCanvas({
       </BottomSheet>
       <div className="flex min-h-0 flex-1">
         <div
-          className="relative min-h-0 min-w-0 flex-1"
+          ref={paneRef}
+          className="sketch-canvas relative min-h-0 min-w-0 flex-1"
           onDragOver={(event) => {
             if (event.dataTransfer.types.includes('application/formlogic-diagram-tool')) {
               event.preventDefault();
@@ -1471,7 +1663,7 @@ export function DiagramCanvas({
                 <MapIcon className="mx-auto h-7 w-7 text-primary-500" aria-hidden="true" />
                 <p className="mt-3 text-sm font-medium text-gray-900 dark:text-white">Sketch the shape of your app</p>
                 <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">
-                  The boxes you draw become real forms, and the lines between them become links and
+                  The forms you sketch become real forms, and the lines between them become links and
                   automations. Nothing is built until you choose to create the app.
                 </p>
                 <Button
@@ -1487,7 +1679,7 @@ export function DiagramCanvas({
           )}
           <ReactFlow
           nodes={[...nodes, ...ghost.nodes]}
-          edges={[...rfEdges, ...ghost.edges]}
+          edges={[...shownEdges, ...ghost.edges]}
           nodeTypes={NODE_TYPES}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
@@ -1504,9 +1696,12 @@ export function DiagramCanvas({
           zoomOnDoubleClick={false}
           deleteKeyCode={null}
           connectionMode={ConnectionMode.Loose}
+          // A card's dot is easy to find, and the line snaps to one when it comes near.
+          connectionRadius={36}
           onSelectionChange={({ nodes: selectedNodes, edges: selectedEdges }) => {
             const id = selectedNodes[0]?.id ?? selectedEdges[0]?.id ?? null;
             setSelectedId(id);
+            setSelectedKey([...selectedNodes, ...selectedEdges].map((item) => item.id).join('\n'));
             // The canvas repeats the selection it already has on every render (this handler is
             // new each time): the page is told only when something else becomes selected.
             if (id !== announcedSelectionRef.current) {
@@ -1514,7 +1709,10 @@ export function DiagramCanvas({
               if (id !== null) onSelect?.();
             }
           }}
+          // A sketch of a few cards is shown at its own size, not blown up to fill the screen.
           fitView
+          fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
+          minZoom={0.2}
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={20} />
@@ -1524,10 +1722,12 @@ export function DiagramCanvas({
         </ReactFlow>
         {/* How to sketch, as a quiet line over the canvas beside the zoom buttons: in the toolbar
             it took a row of its own wherever the window was not wide, and three on a phone. */}
+        <LineEnds />
         {!penMode && (
           <p className="pointer-events-none absolute left-[6.5rem] right-3 top-[15px] z-[5] flex">
             <span className="rounded-md bg-white/85 px-2 py-1 text-[11px] leading-4 text-gray-500 backdrop-blur-sm dark:bg-slate-950/70 dark:text-slate-400">
-              Double-click the canvas to add a form; drag one card onto another to link them.
+              <span className="sketch-hint-mouse">Double-click to add a form. To link two things, drag from a dot on one onto the other.</span>
+              <span className="sketch-hint-touch">Tap Add to put something here. To link two things, drag from a dot on one onto the other.</span>
             </span>
           </p>
         )}
@@ -1593,6 +1793,13 @@ export function DiagramCanvas({
             onSave={saveSelectedProperties}
             onDelete={deleteSelected}
             onClose={deselect}
+            // A line to another card without drawing it: on a phone, or from the keyboard.
+            linkTargets={selectedElement.elementType === 'edge' || selectedElement.elementType === 'ink'
+              ? []
+              : elements
+                .filter((element) => element.id !== selectedElement.id && element.elementType !== 'edge' && element.elementType !== 'ink')
+                .map((element) => ({ id: element.id, label: summaryOf(element) }))}
+            onLink={(targetId) => link(selectedElement.id, targetId)}
           />
         )}
       </div>

@@ -1,0 +1,45 @@
+/* The diagram's canvas (DiagramCanvas.tsx): what Tailwind's classes do not say as well. */
+
+/* While a line is drawn from another card, the whole card takes it, not just its dots: a dashed
+   outline round each card it may end on, solid round the one under the pointer. */
+.sketch-canvas .react-flow__handle.sketch-card-target {
+  position: absolute;
+  inset: -6px;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  transform: none;
+  border-radius: 16px;
+  border: 2px dashed rgb(99 102 241 / 0.5);
+  background: rgb(99 102 241 / 0.04);
+  pointer-events: all;
+  cursor: crosshair;
+  z-index: 10;
+}
+.sketch-canvas .react-flow__handle.sketch-card-target:hover,
+.sketch-canvas .react-flow__handle.sketch-card-target.connectingto {
+  border-style: solid;
+  background: rgb(99 102 241 / 0.12);
+}
+
+/* A finger's dots: big enough to start a line from. */
+@media (pointer: coarse) {
+  .sketch-canvas .react-flow__handle:not(.sketch-card-target) {
+    width: 18px !important;
+    height: 18px !important;
+  }
+}
+
+/* How to sketch, said for a mouse or for a finger. */
+.sketch-hint-touch {
+  display: none;
+}
+@media (pointer: coarse) {
+  .sketch-hint-touch {
+    display: inline;
+  }
+  .sketch-hint-mouse {
+    display: none;
+  }
+}

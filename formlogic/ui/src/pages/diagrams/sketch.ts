@@ -10,6 +10,18 @@ export type SketchField = { name: string; type: string };
 
 export const SKETCH_FIELD_TYPES = ['short_text', 'long_text', 'number', 'date', 'email', 'phone', 'checkbox', 'dropdown'] as const;
 
+/** Each field type in words: briefly on a card, in full in the panel's list. A type not listed is shown as it is. */
+export const SKETCH_FIELD_WORDS: Record<string, { short: string; long: string }> = {
+  short_text: { short: 'text', long: 'Short text' },
+  long_text: { short: 'long text', long: 'Long text' },
+  number: { short: 'number', long: 'Number' },
+  date: { short: 'date', long: 'Date' },
+  email: { short: 'email', long: 'Email' },
+  phone: { short: 'phone', long: 'Phone' },
+  checkbox: { short: 'yes / no', long: 'Checkbox (yes or no)' },
+  dropdown: { short: 'choice', long: 'Dropdown (one of a list)' },
+};
+
 export function sketchFields(properties: Record<string, unknown>): SketchField[] {
   const raw = properties.fields;
   if (!Array.isArray(raw)) return [];

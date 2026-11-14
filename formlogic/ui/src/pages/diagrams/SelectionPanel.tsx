@@ -1,11 +1,11 @@
 // The diagram's selection editor, extracted verbatim from DiagramCanvas.tsx
 // (audit XR-02 — behavior-neutral split behind SelectionPanel.test.tsx).
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
 import { readSelectionDraft, writeSelectionDraft, clearSelectionDraft } from './selectionDraft';
 import { Plus, Trash2, X } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import type { BlueprintElement } from '../../types/blueprints';
-import { DIAGRAM_INPUT_CLS, SKETCH_FIELD_TYPES, sketchFields, type SketchField } from './sketch';
+import { DIAGRAM_INPUT_CLS, SKETCH_FIELD_TYPES, SKETCH_FIELD_WORDS, sketchFields, type SketchField } from './sketch';
 
 const INPUT_CLS = DIAGRAM_INPUT_CLS;
 /** A field's name over its control. */
@@ -36,6 +36,8 @@ export function SelectionPanel({
   onSave,
   onDelete,
   onClose,
+  linkTargets = [],
+  onLink,
 }: {
   element: BlueprintElement;
   busy: boolean;
@@ -45,6 +47,10 @@ export function SelectionPanel({
   onDelete: () => void;
   /** Lets go of the selection, which closes the panel; its head shows a close button for it. */
   onClose?: () => void;
+  /** The other cards a line may be drawn to from here, in a few words each (none: no "Link to"). */
+  linkTargets?: Array<{ id: string; label: string }>;
+  /** Draws a line from this card to that one, meaning what the two are, as dragging one would. */
+  onLink?: (targetId: string) => void;
 }) {
   const isEdge = element.elementType === 'edge';
   const edgeProps = element.properties as { edgeType?: string; cardinality?: string; fkField?: string; label?: string };
@@ -63,6 +69,13 @@ export function SelectionPanel({
   const [cardinality, setCardinality] = useState(restored?.cardinality ?? String(edgeProps.cardinality ?? '1:N'));
   const [fkField, setFkField] = useState(restored?.fkField ?? String(edgeProps.fkField ?? ''));
   const [edgeLabel, setEdgeLabel] = useState(restored?.edgeLabel ?? String(edgeProps.label ?? ''));
+  // What is typed here and not yet saved: said beside Save, so it is not left behind unawares.
+  const dirty = title !== String((element.properties as { title?: unknown }).title ?? '')
+    || notes !== (linkedNoteText ?? '')
+    || bodyText !== String((element.properties as { text?: unknown }).text ?? '')
+    || JSON.stringify(fields) !== JSON.stringify(sketchFields(element.properties))
+    || (isErRelation && (cardinality !== String(edgeProps.cardinality ?? '1:N') || fkField !== String(edgeProps.fkField ?? '')))
+    || (isEdge && edgeLabel !== String(edgeProps.label ?? ''));
 
   // Mirror the buffer into the cache on unmount, so a deselect preserves it.
   useEffect(() => () => {
@@ -101,11 +114,17 @@ export function SelectionPanel({
     }
     onSave(next, notes);
   };
+  /** Enter in a one-line box saves, as Save does. */
+  const saveOnEnter = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    save();
+  };
 
   // Desktop: a fixed right rail. Phones (audit FL-26): a bottom sheet — a 256px
   // side panel on a 390px viewport left ~134px of canvas, unusable.
   return (
-    <div className="scrollbar-thin border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900 max-md:fixed max-md:inset-x-0 max-md:bottom-[var(--fl-mobile-nav-h)] max-md:z-40 max-md:max-h-[45dvh] max-md:overflow-y-auto max-md:rounded-t-2xl max-md:pb-[calc(var(--fl-mobile-fab-h)+0.5rem)] max-md:border-t max-md:shadow-2xl md:w-72 md:flex-none md:overflow-y-auto md:border-l">
+    <div data-selection-panel className="scrollbar-thin border-gray-200 bg-white p-3 dark:border-slate-700/60 dark:bg-slate-900 max-md:fixed max-md:inset-x-0 max-md:bottom-[var(--fl-mobile-nav-h)] max-md:z-40 max-md:max-h-[45dvh] max-md:overflow-y-auto max-md:rounded-t-2xl max-md:pb-[calc(var(--fl-mobile-fab-h)+0.5rem)] max-md:border-t max-md:shadow-2xl md:w-72 md:flex-none md:overflow-y-auto md:border-l">
       {/* The panel's head: what is selected, and the way to close the panel (on a phone it
           covers the foot of the canvas, where a tap to let go would otherwise have to land). */}
       <div className="mb-2 flex items-center justify-between gap-2">
@@ -132,6 +151,7 @@ export function SelectionPanel({
           <input
             value={edgeLabel}
             onChange={(e) => setEdgeLabel(e.target.value)}
+            onKeyDown={saveOnEnter}
             placeholder={isErRelation ? 'places / belongs to…' : 'relates to…'}
             aria-label="Relationship name"
             className={INPUT_CLS + ' w-full'}
@@ -147,7 +167,7 @@ export function SelectionPanel({
               {cardinality !== 'N:M' && (
                 <>
                   <label className={`mt-3 ${LABEL_CLS}`}>Name of the question added to the other form</label>
-                  <input value={fkField} onChange={(e) => setFkField(e.target.value)} placeholder="customer" aria-label="Relation FK field" className={INPUT_CLS + ' w-full font-mono text-xs'} />
+                  <input value={fkField} onChange={(e) => setFkField(e.target.value)} onKeyDown={saveOnEnter} placeholder="customer" aria-label="Relation FK field" className={INPUT_CLS + ' w-full font-mono text-xs'} />
                 </>
               )}
               {cardinality === 'N:M' && (
@@ -181,7 +201,7 @@ export function SelectionPanel({
           <label className={LABEL_CLS}>
             {isForm ? 'Form title' : 'Title'}
           </label>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Entity title" className={INPUT_CLS + ' w-full'} />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={saveOnEnter} aria-label="Entity title" className={INPUT_CLS + ' w-full'} />
           {!isForm && (
             <>
               <label className={`mt-3 ${LABEL_CLS}`}>Notes</label>
@@ -222,6 +242,7 @@ export function SelectionPanel({
                 <input
                   value={field.name}
                   onChange={(e) => setFields((rows) => rows.map((row, i) => (i === index ? { ...row, name: e.target.value } : row)))}
+                  onKeyDown={saveOnEnter}
                   placeholder="field_name"
                   aria-label={`Field name ${index + 1}`}
                   className={INPUT_CLS + ' w-full font-mono text-xs'}
@@ -230,9 +251,11 @@ export function SelectionPanel({
                   value={field.type}
                   onChange={(e) => setFields((rows) => rows.map((row, i) => (i === index ? { ...row, type: e.target.value } : row)))}
                   aria-label={`Field type ${index + 1}`}
-                  className={INPUT_CLS + ' w-28 flex-none cursor-pointer text-xs'}
+                  className={INPUT_CLS + ' w-32 flex-none cursor-pointer text-xs'}
                 >
-                  {SKETCH_FIELD_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                  {SKETCH_FIELD_TYPES.map((type) => <option key={type} value={type}>{SKETCH_FIELD_WORDS[type].long}</option>)}
+                  {/* A type the panel does not offer (one an AI wrote) is kept, and shown as it is. */}
+                  {!(SKETCH_FIELD_TYPES as readonly string[]).includes(field.type) && <option value={field.type}>{field.type}</option>}
                 </select>
                 {/* A finger's size on a phone; in the desktop rail it gives its room to the name. */}
                 <Button
@@ -251,10 +274,29 @@ export function SelectionPanel({
           )}
         </>
       )}
+      {/* A line to another card, without drawing one: a finger's way, and the keyboard's. */}
+      {!isEdge && onLink && linkTargets.length > 0 && (
+        <>
+          <label htmlFor={`link-${element.id}`} className={`mt-3 ${LABEL_CLS}`}>Link to</label>
+          <select
+            id={`link-${element.id}`}
+            value=""
+            disabled={busy}
+            onChange={(e) => { if (e.target.value) onLink(e.target.value); }}
+            className={INPUT_CLS + ' w-full cursor-pointer'}
+          >
+            <option value="">Choose something to link this to…</option>
+            {linkTargets.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}
+          </select>
+        </>
+      )}
       {!isDrawing && (
-        <Button size="sm" className="mt-3 w-full" isLoading={busy} disabled={busy} onClick={save}>
-          Save
-        </Button>
+        <>
+          <Button size="sm" className="mt-3 w-full" isLoading={busy} disabled={busy} onClick={save}>
+            Save
+          </Button>
+          {dirty && !busy && <p className={`mt-1 text-center ${HELP_CLS}`} role="status">Not saved yet</p>}
+        </>
       )}
       <Button variant="outline" size="sm" className="mt-2 w-full" disabled={busy} onClick={onDelete}>
         <Trash2 className="mr-1.5 h-3.5 w-3.5 text-red-500" />
