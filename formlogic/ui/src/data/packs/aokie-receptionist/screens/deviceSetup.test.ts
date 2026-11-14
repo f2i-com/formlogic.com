@@ -3,7 +3,7 @@
 // automatic JSX via the native-esbuild test seam) and EXECUTED in a JSDOM document against a
 // mocked window.FormLogic - the compiled artifact is exactly what the iframe runs.
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AOKIE_DEVICE_SETUP_SCREEN } from './deviceSetupScreen';
 import { flushScreen as flush, runScreen, setupScreenTestEsbuild, teardownScreenTestEsbuild } from '../../aokieScreenTestHarness';
 
@@ -304,21 +304,25 @@ describe('device setup section screen (TSX)', () => {
         return Promise.resolve({ status: 'failed', error: { message: 'not allowed' } });
       },
     }));
-    await flush();
-    expect(unavailable.root.querySelector('#banner')?.textContent)
-      .toContain('OAIY is not reachable right now - connect it above, then press Refresh.');
-    expect(unavailable.root.querySelector('#dongles')?.textContent).toContain('No dongle found');
-    // The companion admission refusal hides the section honestly.
-    expect(unavailable.root.querySelector('#companion')?.textContent)
-      .toContain('Your role does not include Companion administration.');
+    // Waited for, not a fixed flush: the reads settle in a few turns, more on a busy runner
+    // (package run 43624493830 found the banner not yet drawn after 25 ms).
+    await vi.waitFor(() => {
+      expect(unavailable.root.querySelector('#banner')?.textContent)
+        .toContain('OAIY is not reachable right now - connect it above, then press Refresh.');
+      expect(unavailable.root.querySelector('#dongles')?.textContent).toContain('No dongle found');
+      // The companion admission refusal hides the section honestly.
+      expect(unavailable.root.querySelector('#companion')?.textContent)
+        .toContain('Your role does not include Companion administration.');
+    });
 
     // A rejected records() read banners its message and leaves the honest empty state.
     const calls2 = newCalls();
     const broken = await runScreen(AOKIE_DEVICE_SETUP_SCREEN, mockFormLogic(calls2, {
       records: () => Promise.reject(new Error('events backend down')),
     }));
-    await flush();
-    expect(broken.root.querySelector('#banner')?.textContent).toBe('events backend down');
-    expect(broken.root.querySelector('#events')?.textContent).toContain('No hardware events recorded.');
+    await vi.waitFor(() => {
+      expect(broken.root.querySelector('#banner')?.textContent).toBe('events backend down');
+      expect(broken.root.querySelector('#events')?.textContent).toContain('No hardware events recorded.');
+    });
   });
 });
