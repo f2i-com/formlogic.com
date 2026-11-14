@@ -52,7 +52,10 @@ reason it cannot be hosted, file by file) shows before anything is created. Medi
 WAV, Ogg, Opus, AAC, FLAC, M4A), video (MP4, WebM), fonts (WOFF, WOFF2, TTF, OTF), 3D models (glTF,
 GLB and its `.bin`, OBJ, STL, FBX), and WGSL shaders, text and Markdown: what SoftN's frame serves
 an app's page (v0.0.28 on), which can also `fetch` them. Scene3D draws a model from them from
-SoftN v0.0.30 (before it, it refused the frame's `data:` URLs as "Unsafe model URL").
+SoftN v0.0.30 (before it, it refused the frame's `data:` URLs as "Unsafe model URL"). WebAssembly
+modules (`.wasm`) are media too from SoftN v0.0.41, which runs each in a worker of its own that
+reaches nothing of the page or the network (`softn.wasm.*` from the app's logic, `<WasmApp>` for a
+program that draws).
 
 Source files are the app's pages (`.html`, or `.ui` in an app made before SoftN's HTML pages), their
 logic (`.js`, or `.logic`; `.py` for Python), stylesheets (`.css`), JSON, seed data (`.xdb`), and a
@@ -1351,7 +1354,7 @@ imports it), and it opens a page file of the app or a place on the same page (`#
 **Links out of the app.** The frame's sandbox is `allow-scripts` alone: it may open no window, and
 an address it goes to in place of the app is a page of this site, which refuses to be framed. A
 frame that keeps its links (the runtime's `features` name `links/1`, and `ready` says `links: 1`;
-after SoftN v0.0.40) never leaves the app for a link the person clicks. A link to another site, a
+from SoftN v0.0.41) never leaves the app for a link the person clicks. A link to another site, a
 mail address or a phone number comes to this page as `{ type: 'link', href }` on the app's port:
 `HostedAppFrame` reads it again (`lib/outsideLink.ts`: http, https, mailto and tel only, at most
 2,000 characters, printable, no name or password before a host) and shows it over the app
@@ -1378,7 +1381,7 @@ played from one `.glb` through the file's own cameras, light from a panorama (an
 run; an `.exr` is kept as media too and read by a piece of its own), depth of field and occlusion,
 each from a piece of the runtime the frame fetches only when a scene asks for it. A media file
 may be 32 MB for that (one `.glb` of a one-minute film was 23.7 MB).
-The pictures inside a `.glb` are drawn from the frame after SoftN v0.0.40, whose own content policy
+The pictures inside a `.glb` are drawn from SoftN v0.0.41's frame on, whose own content policy
 names `blob:` in `connect-src` (three.js reads them from `blob:` addresses the frame made; no
 network), and a page reads a `.json` among its files with `fetch()` (`fetch("data/levels.json")`),
 as it does in SoftN Web. With v0.0.40's frame a model was drawn in its materials' plain colours and

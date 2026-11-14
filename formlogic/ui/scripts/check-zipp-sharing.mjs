@@ -145,7 +145,7 @@ try {
       // data: URLs it was handed): that is no network at all. From v0.0.36 it names the site's ZIPP
       // folder beside its own (`/zipp/`, this site's static ZIPP install, whose glue it imports and
       // whose torch package it fetches, each checked against its digest), and in script-src too.
-      // After v0.0.40 it names `blob:` as well, no network either: an address the frame made from
+      // From v0.0.41 it names `blob:` as well, no network either: an address the frame made from
       // bytes it holds, which an opaque origin alone can read (three.js reads a `.glb`'s pictures
       // that way). Nothing else may join them.
       const runtimeDirectory = `${origin}/hosted-runtime/`;
