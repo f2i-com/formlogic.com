@@ -290,7 +290,7 @@ test.describe('hosted SoftN apps', () => {
     const records = Array.from({ length: 40 }, (_, i) => ({ id: `note-${i}`, title: `Seeded note ${i}` }));
     const files: Record<string, string> = {
       'manifest.json': JSON.stringify({ name: `Seeded notes ${Date.now()}`, version: '1.0.0', main: 'ui/main.ui', files: { xdb: ['xdb/notes.xdb'] } }),
-      'ui/main.ui': '<logic>\nvar notes = [];\nfunction _init() { notes = db.query("notes"); }\nfunction add() { db.create("notes", { title: "Added here" }); notes = db.query("notes"); }\n</logic>\n<Stack padding="24" gap="12"><Text>Notes: {notes.length}</Text><Text>{notes.length > 0 ? notes[0].data.title : "none"}</Text><Button onClick={add}>Add a note</Button><Text>{asset("assets/shaders/tint.wgsl").startsWith("data:text/plain") ? "Shader served" : "Shader missing"}</Text></Stack>',
+      'ui/main.ui': '<logic>\nvar notes = [];\nfunction _init() { notes = db.query("notes"); }\nfunction add() { db.create("notes", { title: "Added here" }); notes = db.query("notes"); }\n</logic>\n<Stack padding="24" gap="12"><Text>Notes: {notes.length}</Text><Text>{notes.length > 0 ? notes[0].data.title : "none"}</Text><Button onClick={add}>Add a note</Button><Text>{asset("assets/shaders/tint.wgsl").startsWith("blob:") || asset("assets/shaders/tint.wgsl").startsWith("data:text/plain") ? "Shader served" : "Shader missing"}</Text></Stack>',
       'xdb/notes.xdb': JSON.stringify({ collection: 'notes', records }),
       'assets/shaders/tint.wgsl': '@compute @workgroup_size(1) fn main() {}',
     };
@@ -302,7 +302,8 @@ test.describe('hosted SoftN apps', () => {
     await workspaceAppId(page);
     await expect(preview(page).getByText('Notes: 40', { exact: true })).toBeVisible({ timeout: 60000 });
     await expect(preview(page).getByText('Seeded note 0', { exact: true })).toBeVisible();
-    // A kind of media the frame did not serve before SoftN v0.0.28.
+    // A kind of media the frame did not serve before SoftN v0.0.28. From v0.0.41 it serves media as
+    // `blob:` addresses of the bytes it is given (a `data:` URL before).
     await expect(preview(page).getByText('Shader served', { exact: true })).toBeVisible();
     await preview(page).getByRole('button', { name: 'Add a note', exact: true }).click();
     await expect(preview(page).getByText('Notes: 41', { exact: true })).toBeVisible();
