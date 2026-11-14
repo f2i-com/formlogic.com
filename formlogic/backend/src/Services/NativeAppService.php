@@ -1696,7 +1696,7 @@ class NativeAppService
      *
      * @param array{media: array{file: string}, kept: array<string, array{kept: string, size: int}>} $runtime
      * @param resource|null $pack the media pack, opened on the first media file asked for ($packIndex its index)
-     * @param array<string, mixed>|null $project project.json, read on the first file that needs it
+     * @param array<mixed>|null $project project.json (as get() reads it), read on the first file that needs it
      */
     private function installedFile(string $appId, string $root, array $runtime, string $path, &$pack, ?array &$packIndex, ?array &$project): string
     {
