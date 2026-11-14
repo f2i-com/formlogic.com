@@ -86,8 +86,8 @@ export function AdminAppAiSetup({ setup, settings, desktop, onReload, onSaved }:
   // engines draw them), and, where another provider on it chats, that provider's models.
   const listKey = computer && computer.online ? computer.connectionId : null;
   const ownProvider = computer !== null && computer.providerId !== engine;
-  const pictures = useModelList(listKey, () => api.adminOaiyModels(computer?.connectionId ?? '', engine));
-  const chats = useModelList(listKey && ownProvider ? `${listKey}|${computer?.providerId}` : null, () => api.adminOaiyModels(computer?.connectionId ?? '', computer?.providerId ?? engine));
+  const pictures = useModelList(listKey, (signal) => api.adminOaiyModels(computer?.connectionId ?? '', engine, signal));
+  const chats = useModelList(listKey && ownProvider ? `${listKey}|${computer?.providerId}` : null, (signal) => api.adminOaiyModels(computer?.connectionId ?? '', computer?.providerId ?? engine, signal));
   const pictureModels = pictures.models ? pictures.models.filter((model) => model.type === 'image') : null;
   const chatModels = chats.models ? chats.models.filter((model) => !model.type) : null;
   const suggestion = pictureModels ? suggestedPictureModel(pictureModels) : null;

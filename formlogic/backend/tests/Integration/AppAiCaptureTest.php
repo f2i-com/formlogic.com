@@ -451,7 +451,7 @@ JS;
         // On the owner's own computer, not heard from for ten minutes: it waits for the computer, not its turn.
         $connection = bin2hex(random_bytes(16));
         $key = base64_encode(random_bytes(32));
-        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Home PC', ?, NOW() - INTERVAL 10 MINUTE, ?)")
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, ai_polled_at, e2e_public_key) VALUES (?, ?, 'Home PC', ?, NOW() - INTERVAL 10 MINUTE, NOW() - INTERVAL 10 MINUTE, ?)")
             ->execute([$connection, $this->ownerId, 'inst-' . bin2hex(random_bytes(4)), $key]);
         $own = $this->app('application', true, 'own');
         self::$pdo->prepare("UPDATE app_ai_settings SET own_connection_id = ?, own_instance_id = 'inst-own', own_public_key = ?, own_provider_id = 'oaiy-engine', own_picture_model = 'flux-test', own_device_name = 'Home PC' WHERE app_id = ?")

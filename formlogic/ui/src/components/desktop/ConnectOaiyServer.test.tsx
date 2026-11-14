@@ -79,6 +79,47 @@ it('says why a code could not be made', async () => {
   expect(container.querySelector('[role="alert"]')?.textContent).toContain('3 codes waiting');
 });
 
+it('withdraws a code that waits with Cancel, so it links nothing afterwards, and stops asking after it', async () => {
+  vi.spyOn(api, 'createDesktopLinkCode').mockResolvedValue({ data: code });
+  const status = vi.spyOn(api, 'getDesktopLinkCode').mockResolvedValue({ data: { id: 'c1', scope: 'ai', expiresAt: code.expiresAt, status: 'waiting' } });
+  const withdraw = vi.spyOn(api, 'withdrawDesktopLinkCode').mockResolvedValue({ data: { status: 'withdrawn' } });
+  await mount();
+  await act(async () => button('Make a code')!.click());
+  await act(async () => { vi.advanceTimersByTime(3000); });
+  expect(status).toHaveBeenCalledTimes(1);
+  await act(async () => button('Cancel')!.click());
+  expect(withdraw).toHaveBeenCalledWith('c1');
+  expect(container.querySelector('[data-testid="oaiy-link-code"]')).toBeNull();
+  expect(button('Connect an OAIY server')).toBeTruthy();
+  await act(async () => { vi.advanceTimersByTime(9000); });
+  expect(status).toHaveBeenCalledTimes(1);
+});
+
+it('keeps following a code a server has just used, and says why it could not be withdrawn', async () => {
+  vi.spyOn(api, 'createDesktopLinkCode').mockResolvedValue({ data: code });
+  const status = vi.spyOn(api, 'getDesktopLinkCode').mockResolvedValue({ data: { id: 'c1', scope: 'ai', expiresAt: code.expiresAt, status: 'waiting' } });
+  vi.spyOn(api, 'withdrawDesktopLinkCode').mockResolvedValue({ error: 'A server has used that code already. To undo its link, unlink the computer.', status: 409, code: 'desktop_link_used' });
+  await mount();
+  await act(async () => button('Make a code')!.click());
+  await act(async () => button('Cancel')!.click());
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain('A server has used that code already');
+  expect(container.querySelector('[data-testid="oaiy-link-code"]')?.textContent).toBe('K7QM-2WXR-9DFT');
+  await act(async () => { vi.advanceTimersByTime(3000); });
+  expect(status).toHaveBeenCalledTimes(1);
+});
+
+it('stops waiting on a link the server began and never finished, and offers a new code', async () => {
+  vi.spyOn(api, 'createDesktopLinkCode').mockResolvedValue({ data: code });
+  const status = vi.spyOn(api, 'getDesktopLinkCode').mockResolvedValue({ data: { id: 'c1', scope: 'ai', expiresAt: code.expiresAt, status: 'failed', message: 'FormLogic could not finish linking that server. Make a new code and try again.' } });
+  await mount();
+  await act(async () => button('Make a code')!.click());
+  await act(async () => { vi.advanceTimersByTime(3000); });
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain('could not finish linking that server');
+  expect(button('Make a code')).toBeTruthy();
+  await act(async () => { vi.advanceTimersByTime(9000); });
+  expect(status).toHaveBeenCalledTimes(1);
+});
+
 it('says so when the server it linked has been unlinked since, and offers a new code', async () => {
   vi.spyOn(api, 'createDesktopLinkCode').mockResolvedValue({ data: code });
   vi.spyOn(api, 'getDesktopLinkCode').mockResolvedValue({ data: { id: 'c1', scope: 'ai', expiresAt: code.expiresAt, status: 'unlinked', connectionId: 'dc-1', message: 'This server was linked with this code and has been unlinked since. Make a new code to link it again.' } });

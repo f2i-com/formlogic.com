@@ -127,6 +127,57 @@ final class AppAiPicturesTest extends TestCase
         }
     }
 
+    /**
+     * A flat truecolor PNG of $width × $height, written row by row so the test never holds it whole:
+     * a 6,000 px square is about 100 KB on disk and 108 MB of pixels.
+     */
+    private static function flatPng(int $width, int $height): string
+    {
+        $chunk = static fn(string $type, string $data): string => pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));
+        $zlib = deflate_init(ZLIB_ENCODING_DEFLATE, ['level' => 9]);
+        $row = "\0" . str_repeat("\x40\x80\xC0", $width);
+        $idat = '';
+        for ($y = 0; $y < $height; $y++) $idat .= deflate_add($zlib, $row, ZLIB_NO_FLUSH);
+        $idat .= deflate_add($zlib, '', ZLIB_FINISH);
+        return "\x89PNG\r\n\x1a\n" . $chunk('IHDR', pack('NNCCCCC', $width, $height, 8, 2, 0, 0, 0)) . $chunk('IDAT', $idat) . $chunk('IEND', '');
+    }
+
+    /**
+     * The worker that opened a 6,000 px square PNG of about 100 KB, an edit's picture or the AI's
+     * own, died: GD holds it decoded at four bytes a pixel, far past the 128 MB PHP's command line
+     * gives by default, and a fatal error nothing catches ended the worker, every time it was started
+     * again. It is refused now, by its header, before anything is decoded.
+     */
+    public function testASmallFileOfAHugePictureIsRefusedBeforeItCanKillTheWorker(): void
+    {
+        $png = self::flatPng(6000, 6000);
+        $this->assertLessThan(200000, strlen($png), 'a small file');
+        $file = tempnam(sys_get_temp_dir(), 'app-ai-huge-');
+        file_put_contents($file, $png);
+        try {
+            foreach (['reference', 'deliverable'] as $as) {
+                $process = proc_open([PHP_BINARY, '-d', 'memory_limit=128M', '-d', 'xdebug.mode=off', dirname(__DIR__) . '/Support/app-ai-picture-open.php', $file, $as], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+                $out = (string) stream_get_contents($pipes[1]) . (string) stream_get_contents($pipes[2]);
+                $exit = proc_close($process);
+                $this->assertSame([0, ['refused' => 'too_large']], [$exit, json_decode($out, true)], $as . ': ' . $out);
+            }
+        } finally {
+            @unlink($file);
+        }
+        $this->assertSame('too_large', AppAiPictures::refusal($png));
+    }
+
+    /** 16 megapixels, as a photo an app takes (PhotoSanitizer), and 8,192 pixels a side. */
+    public function testWhatAPictureMayBeIsReadFromItsHeaderAlone(): void
+    {
+        $this->assertSame(16000000, AppAiPictures::MAX_SOURCE_PIXELS);
+        $this->assertNull(AppAiPictures::refusal(self::flatPng(4000, 4000)), 'sixteen megapixels');
+        $this->assertSame('too_large', AppAiPictures::refusal(self::flatPng(4001, 4000)));
+        $this->assertSame('too_large', AppAiPictures::refusal(self::flatPng(8193, 16)), 'a side too long');
+        $this->assertSame('not_a_picture', AppAiPictures::refusal('<svg xmlns="http://www.w3.org/2000/svg"/>'));
+        $this->assertSame('not_a_picture', AppAiPictures::refusal("GIF89a\x01\x00\x01\x00\x00\x00\x00;"), 'not one of the three it reads');
+    }
+
     public function testBaselineIsToldFromProgressive(): void
     {
         $this->assertTrue(AppAiPictures::isBaselineJpeg(self::picture(64, 64, 'jpeg')));

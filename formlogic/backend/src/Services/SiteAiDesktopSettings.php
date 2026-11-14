@@ -88,11 +88,15 @@ final class SiteAiDesktopSettings
         return $stmt->fetchColumn() !== false;
     }
 
-    /** Whether the chosen computer has checked in within the last 90 seconds, as a desktop counts as fresh. */
+    /**
+     * Whether the chosen computer has asked its AI lane for work in the last 90 seconds
+     * (DesktopAiRelayService::notePolled). Its heartbeat alone says only that it is linked: a computer
+     * whose OAIY is closed, or too old to have the lane, sends one and answers no AI request.
+     */
     public function online(array $site): bool
     {
         $stmt = $this->pdo->prepare(
-            'SELECT 1 FROM desktop_connections WHERE id = ? AND owner_user_id = ? AND last_seen_at > (NOW() - INTERVAL 90 SECOND)'
+            'SELECT 1 FROM desktop_connections WHERE id = ? AND owner_user_id = ? AND ai_polled_at > (NOW() - INTERVAL 90 SECOND)'
         );
         $stmt->execute([$site['connectionId'], $site['ownerUserId']]);
         return $stmt->fetchColumn() !== false;
@@ -106,15 +110,15 @@ final class SiteAiDesktopSettings
     }
 
     /**
-     * The administrator's linked computers that could serve: each with a published chat key, and
-     * whether it has been heard from in the last 90 seconds.
+     * The administrator's linked computers that could serve: each with a published chat key, whether
+     * it has asked its AI lane for work in the last 90 seconds (online), and when it last did.
      */
     public function candidates(string $adminUserId): array
     {
         $stmt = $this->pdo->prepare(
-            "SELECT id, desktop_instance_id, device_name, e2e_public_key, last_seen_at,
-                    last_seen_at > (NOW() - INTERVAL 90 SECOND) AS fresh
-             FROM desktop_connections WHERE owner_user_id = ? AND e2e_public_key IS NOT NULL ORDER BY last_seen_at DESC"
+            "SELECT id, desktop_instance_id, device_name, e2e_public_key, ai_polled_at,
+                    ai_polled_at > (NOW() - INTERVAL 90 SECOND) AS fresh
+             FROM desktop_connections WHERE owner_user_id = ? AND e2e_public_key IS NOT NULL ORDER BY ai_polled_at DESC, last_seen_at DESC"
         );
         $stmt->execute([$adminUserId]);
         return array_map(static fn(array $row) => [
@@ -123,7 +127,7 @@ final class SiteAiDesktopSettings
             'deviceName' => (string) ($row['device_name'] ?? ''),
             'fingerprint' => self::fingerprint((string) $row['e2e_public_key']),
             'online' => (bool) $row['fresh'],
-            'lastSeenAt' => $row['last_seen_at'],
+            'lastSeenAt' => $row['ai_polled_at'],
         ], $stmt->fetchAll(PDO::FETCH_ASSOC));
     }
 

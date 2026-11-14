@@ -31,7 +31,11 @@ What exists, and the facts this design rests on, are in "Grounding" at the end.
   key, seals the turn to the pinned desktop key, queues it for that desktop with the member as the
   requester, reads the sealed frames back and opens them. PHP's ext-sodium produces the pinned
   envelope vectors byte for byte (`docs/contracts/e2e-envelope-vectors.json`), so OAIY needs no
-  change for this.
+  change for this. A camera check keeps that turn key in its row while OAIY works on it
+  (`camera_checks.channel`, cleared when the check ends), sealed with `DATA_ENCRYPTION_KEY` where one
+  is set, as App AI's jobs keep theirs: the turn it opens holds the member's pictures. While a key is
+  set but cannot be used, nothing is sent (the key would have to be kept in the clear): the check
+  ends as unavailable and is not counted as a try.
 - Everything that uses Site AI today goes through `AIService`, so chat, the generators and cloud
   `llm_chat` move with it.
 

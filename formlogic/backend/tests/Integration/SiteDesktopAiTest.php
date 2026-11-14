@@ -253,7 +253,7 @@ final class SiteDesktopAiTest extends TestCase
         $never = new SiteDesktopAi($this->relay, $this->settings, static function (): void {
             throw new \LogicException('no wait: the answer comes before any');
         });
-        self::$pdo->prepare("UPDATE desktop_connections SET last_seen_at = NOW() - INTERVAL 10 MINUTE WHERE owner_user_id = ?")->execute([$this->adminId]);
+        self::$pdo->prepare("UPDATE desktop_connections SET last_seen_at = NOW() - INTERVAL 10 MINUTE, ai_polled_at = NOW() - INTERVAL 10 MINUTE WHERE owner_user_id = ?")->execute([$this->adminId]);
         try {
             $never->chat([['role' => 'user', 'content' => 'hi']], $this->memberId, null, null, 30);
             self::fail('an offline computer');
@@ -262,7 +262,7 @@ final class SiteDesktopAiTest extends TestCase
         }
         self::assertSame(0, $this->rows());
 
-        self::$pdo->prepare('UPDATE desktop_connections SET last_seen_at = NOW() WHERE owner_user_id = ?')->execute([$this->adminId]);
+        self::$pdo->prepare('UPDATE desktop_connections SET last_seen_at = NOW(), ai_polled_at = NOW() WHERE owner_user_id = ?')->execute([$this->adminId]);
         // Other members' turns fill the site's own cap, which is below the lane's.
         for ($i = 0; $i < SiteDesktopAi::MAX_WAITING; $i++) {
             $this->relay->enqueue($this->adminId, $this->makeUser(), [
@@ -380,7 +380,7 @@ final class SiteDesktopAiTest extends TestCase
 
     private function connection(string $owner, string $instance, ?string $key): void
     {
-        self::$pdo->prepare('INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, ?, ?, NOW(), ?)')
+        self::$pdo->prepare('INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, ai_polled_at, e2e_public_key) VALUES (?, ?, ?, ?, NOW(), NOW(), ?)')
             ->execute([bin2hex(random_bytes(16)), $owner, 'Test PC', $instance, $key]);
     }
 

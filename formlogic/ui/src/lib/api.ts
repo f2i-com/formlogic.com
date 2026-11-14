@@ -127,6 +127,24 @@ function retryAfterSeconds(body: unknown, header: string | null | undefined): nu
   const seconds = typeof body === 'number' ? body : header != null && /^\d{1,6}$/.test(header.trim()) ? Number(header.trim()) : NaN;
   return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : undefined;
 }
+
+/** How often a computer's listing is read while the computer has not answered it (followListing). */
+export const LISTING_POLL_MS = 750;
+/** How long a listing is read for before the page stops: a little past the server's own 20 seconds. */
+export const LISTING_WAIT_MS = 22_000;
+
+/** Wait $ms, or less when $signal is aborted meanwhile. */
+function pause(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener('abort', done, { once: true });
+  });
+}
 const NOT_FORMLOGIC_REPLY ='Your answers were not sent: something on the network answered instead of FormLogic (a Wi-Fi sign-in page, for example). Your answers are still here. Check your connection and send them again.';
 
 /**
@@ -1876,6 +1894,13 @@ class ApiClient {
     return { data: res.body?.data as DesktopLinkStatus };
   }
 
+  /** DELETE /api/desktop-links/codes/{id}: withdraw a code no server has used yet (409 `desktop_link_used` once one has). */
+  async withdrawDesktopLinkCode(id: string): Promise<ApiResponse<{ status: 'withdrawn' }>> {
+    const res = await this.requestWithMeta(`/desktop-links/codes/${seg(id)}`, { method: 'DELETE' });
+    if (!res.ok) return { error: (res.body?.message as string) ?? `Server error (${res.status})`, status: res.status, code: res.body?.code as string | undefined };
+    return { data: res.body?.data as { status: 'withdrawn' } };
+  }
+
   /** GET /api/data-nodes/backup-link/{id} — how that code is getting on. */
   async getBackupLink(id: string): Promise<ApiResponse<import('../types/dataPlacement').BackupLinkStatus>> {
     const res = await this.requestWithMeta(`/data-nodes/backup-link/${seg(id)}`);
@@ -3200,13 +3225,50 @@ class ApiClient {
   async adminGetCameraCheck(): Promise<ApiResponse<AdminCameraCheckState>> {
     return this.request('/admin/camera-check');
   }
-  /** What one of the administrator's OAIY computers offers, asked of it now: its providers, and one provider's models. */
-  async adminOaiyProviders(connectionId: string): Promise<ApiResponse<{ providers: Array<{ id: string; label: string; model: string | null }>; engineProvider: string }>> {
-    return this.request(`/admin/oaiy/providers?${new URLSearchParams({ connectionId })}`);
+  /** What one of the administrator's OAIY computers offers, asked of it now (followListing): its providers, and one provider's models. */
+  async adminOaiyProviders(connectionId: string, signal?: AbortSignal): Promise<ApiResponse<{ providers: Array<{ id: string; label: string; model: string | null }>; engineProvider: string }>> {
+    return this.followListing('/admin/oaiy/providers', { connectionId }, signal);
   }
   /** Each model with its `type` where OAIY gives one: `image` for a picture model; a language model has none. */
-  async adminOaiyModels(connectionId: string, providerId: string): Promise<ApiResponse<{ models: Array<{ id: string; name: string; type?: string }> }>> {
-    return this.request(`/admin/oaiy/models?${new URLSearchParams({ connectionId, providerId })}`);
+  async adminOaiyModels(connectionId: string, providerId: string, signal?: AbortSignal): Promise<ApiResponse<{ models: Array<{ id: string; name: string; type?: string }> }>> {
+    return this.followListing('/admin/oaiy/models', { connectionId, providerId }, signal);
+  }
+  /**
+   * A computer's listing (OaiyComputerController), asked and then read: the first request asks the
+   * computer and is answered 202 `{listing}`; that handle is read back every LISTING_POLL_MS until
+   * the list comes (200), the server says why not, LISTING_WAIT_MS pass, or $signal is aborted. No
+   * request waits on the computer, so none holds the server's PHP worker while it answers. A server
+   * from before answers 200 at once, as it always did.
+   */
+  private async followListing<T>(path: string, query: Record<string, string>, signal?: AbortSignal): Promise<ApiResponse<T>> {
+    const deadline = Date.now() + LISTING_WAIT_MS;
+    let handle: string | null = null;
+    // Stopped before the list came: the server lets the listing go at once, so the computer is not left
+    // answering nobody and the places it holds are free (keepalive: also as the page closes).
+    const letGo = () => {
+      if (handle === null) return;
+      void this.requestWithMeta(`${path}?${new URLSearchParams({ ...query, listing: handle, letGo: '1' })}`, { keepalive: true }).catch(() => undefined);
+    };
+    for (;;) {
+      if (signal?.aborted) {
+        letGo();
+        return { error: 'The list was not asked for any more.' };
+      }
+      const res = await this.requestWithMeta(`${path}?${new URLSearchParams(handle === null ? query : { ...query, listing: handle })}`);
+      if (!res.ok) {
+        const code = typeof res.body?.code === 'string' ? res.body.code : undefined;
+        return { error: (res.body?.message as string | undefined) ?? res.networkError ?? `Server error (${res.status})`, ...(res.status ? { status: res.status } : {}), ...(code ? { code } : {}) };
+      }
+      if (res.status !== 202) return { data: (res.body ?? {}) as T };
+      const listing = res.body?.listing;
+      if (typeof listing !== 'string' || listing === '') return { error: 'The server did not say how to read the list.' };
+      handle = listing;
+      if (Date.now() + LISTING_POLL_MS > deadline) {
+        letGo();
+        return { error: 'The computer did not send the list in time. Try again.' };
+      }
+      await pause(LISTING_POLL_MS, signal);
+    }
   }
   /** App AI (docs/HOSTED_APPS.md): the owner's "AI for this app". */
   async getAppAi(appId: string): Promise<ApiResponse<AppAiView>> {
@@ -3215,13 +3277,13 @@ class ApiClient {
   async putAppAi(appId: string, settings: { mode: AppAiMode; own?: AppAiOwnChoice | null } & Partial<AppAiLimits>): Promise<ApiResponse<AppAiView>> {
     return unwrapData(await this.request<{ data: AppAiView }>(`/apps/${seg(appId)}/ai`, { method: 'PUT', body: JSON.stringify(settings) }));
   }
-  /** "Use my OAIY": what one of the owner's own computers offers, asked of it now. */
-  async getAppAiProviders(appId: string, connectionId: string): Promise<ApiResponse<{ providers: Array<{ id: string; label: string; model: string | null }>; engineProvider: string }>> {
-    return this.request(`/apps/${seg(appId)}/ai/providers?${new URLSearchParams({ connectionId })}`);
+  /** "Use my OAIY": what one of the owner's own computers offers, asked of it now (followListing). */
+  async getAppAiProviders(appId: string, connectionId: string, signal?: AbortSignal): Promise<ApiResponse<{ providers: Array<{ id: string; label: string; model: string | null }>; engineProvider: string }>> {
+    return this.followListing(`/apps/${seg(appId)}/ai/providers`, { connectionId }, signal);
   }
   /** That provider's models, each with its `type` where OAIY gives one (`image` for a picture model). */
-  async getAppAiModels(appId: string, connectionId: string, providerId: string): Promise<ApiResponse<{ models: Array<{ id: string; name: string; type?: string }> }>> {
-    return this.request(`/apps/${seg(appId)}/ai/models?${new URLSearchParams({ connectionId, providerId })}`);
+  async getAppAiModels(appId: string, connectionId: string, providerId: string, signal?: AbortSignal): Promise<ApiResponse<{ models: Array<{ id: string; name: string; type?: string }> }>> {
+    return this.followListing(`/apps/${seg(appId)}/ai/models`, { connectionId, providerId }, signal);
   }
   /** A real small job, sent where the app's AI goes, kept for the owner and never delivered to the app. */
   async testAppAi(appId: string, kind: 'picture' | 'chat'): Promise<ApiResponse<{ jobId: string }>> {
@@ -4972,6 +5034,12 @@ class ApiClient {
     });
   }
 
+  /** POST /api/desktop/ai/requests/{id}/cancel — the browser stopped: the computer is told to stop the turn too (requesting user only). */
+  async cancelDesktopAiRequest(requestId: string): Promise<DesktopAiApiResponse<{ cancelled: boolean }>> {
+    // keepalive: sent also as the page closes, which is when it matters most (a plain request is dropped then).
+    return this.desktopAiRequest(`/desktop/ai/requests/${encodeURIComponent(requestId)}/cancel`, { method: 'POST', keepalive: true });
+  }
+
   // ── Site AI preferences + plan allowances (plan Phase 2, §5.5/§6) ────────────
   // Typed §5.8 codes (e.g. ai_allowance_exceeded) ride through via .code; the
   // {data: …} response envelope is unwrapped (a pre-Phase-2 backend that returns
@@ -6115,6 +6183,10 @@ interface DesktopConnection {
   updatedAt: string;
   /** Linked for AI only (an OAIY server's one-time code): no commands, flows or backups. */
   aiOnly?: boolean;
+  /** It takes AI requests (it published its sealing key). */
+  aiKey?: boolean;
+  /** When it last asked its AI lane for work: what App AI calls online (its heartbeat, lastSeenAt, is the link's). */
+  aiPolledAt?: string | null;
 }
 
 /** Connector routing (ROUTE-001): assignments + candidates + the machines to pick from. */

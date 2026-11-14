@@ -106,7 +106,7 @@ final class CameraCheckServiceTest extends TestCase
         }
 
         // The administrator's OAIY: the contract's test desktop, its own engine reading the pictures.
-        self::$pdo->prepare('INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, ?, ?, NOW(), ?)')
+        self::$pdo->prepare('INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, ai_polled_at, e2e_public_key) VALUES (?, ?, ?, ?, NOW(), NOW(), ?)')
             ->execute([$connection = bin2hex(random_bytes(16)), $this->adminId, 'Test PC', 'inst-camera', self::$vectors['desktop']['publicKey']]);
         $computers = new SiteAiDesktopSettings(self::$mysql, self::$tmpRoot . '/site-ai-' . bin2hex(random_bytes(3)) . '.json');
         $settings = new CameraCheckSettings($computers, self::$tmpRoot . '/camera-' . bin2hex(random_bytes(3)) . '.json');
@@ -168,6 +168,61 @@ final class CameraCheckServiceTest extends TestCase
         // Nothing of the check is kept but its outcome.
         $row = self::$pdo->query("SELECT turn, channel, steps FROM camera_checks WHERE id = " . self::$pdo->quote($check['id']))->fetch(PDO::FETCH_ASSOC);
         self::assertSame([null, null], [$row['turn'], $row['channel']]);
+    }
+
+    /**
+     * While a check waits for OAIY's answer, the key that reads it (which opens the turn holding the member's pictures)
+     * is kept sealed with the site's data key where one is set, as App AI's are; the answer is still read with it.
+     */
+    public function testTheTurnsKeyIsKeptSealedWithTheSitesDataKey(): void
+    {
+        $this->withDataKey(\FormLogic\Support\DataEncryption::generateKey(), function (): void {
+            $kept = null;
+            [$check] = $this->check(function (array $honest) use (&$kept) {
+                // (after the check was sent, before its answer is read)
+                $kept = (string) self::$pdo->query("SELECT channel FROM camera_checks WHERE user_id = " . self::$pdo->quote($this->memberId) . " AND status = 'assessing'")->fetchColumn();
+                return $honest;
+            });
+            self::assertTrue(\FormLogic\Support\DataEncryption::isSealed($kept), 'the turn\'s key is sealed at rest: ' . substr((string) $kept, 0, 12));
+            self::assertSame('passed', $check['outcome'], 'and OAIY\'s answer was read with it');
+        });
+    }
+
+    /**
+     * A data key that is set and cannot be used: the turn's key could only be kept in the clear, so nothing is sent, and
+     * the check ends as unavailable without being counted as a try.
+     */
+    public function testNothingIsSentWhileTheSitesDataKeyCannotBeUsed(): void
+    {
+        $this->withDataKey('not-a-key', function (): void {
+            self::assertFalse(\FormLogic\Support\DataEncryption::fromEnvironment()->usable());
+            $started = $this->checks->start($this->memberId, 'formlogic.age-gate', $this->slug, 'age');
+            $frames = array_map(fn () => 'data:image/jpeg;base64,' . base64_encode("\xFF\xD8\xFF\xE0" . random_bytes(40000)), $started['steps']);
+            try {
+                $this->checks->submit($this->memberId, $started['id'], $frames);
+                self::fail('a check was sent with a data key that cannot be used');
+            } catch (\FormLogic\Support\DataEncryptionException) {
+            }
+            self::assertSame([], $this->relay->listPending($this->adminId, null, 10, 'inst-camera'), 'nothing reached the lane');
+            $row = self::$pdo->query('SELECT status, outcome, submitted_at, channel FROM camera_checks WHERE id = ' . self::$pdo->quote($started['id']))->fetch(PDO::FETCH_ASSOC);
+            self::assertSame(['done', 'unavailable', null, null], [$row['status'], $row['outcome'], $row['submitted_at'], $row['channel']], 'ended, and not a try');
+        });
+    }
+
+    /** `$run` with the site's data key `$key`, everywhere FormLogic reads it (a .env's in $_ENV comes first); what was there is put back. */
+    private function withDataKey(string $key, \Closure $run): void
+    {
+        $name = \FormLogic\Support\DataEncryption::KEY_ENV;
+        $kept = [getenv($name), $_ENV[$name] ?? null, $_SERVER[$name] ?? null];
+        putenv($name . '=' . $key);
+        $_ENV[$name] = $_SERVER[$name] = $key;
+        try {
+            $run();
+        } finally {
+            $kept[0] === false ? putenv($name) : putenv($name . '=' . $kept[0]);
+            if ($kept[1] === null) unset($_ENV[$name]); else $_ENV[$name] = $kept[1];
+            if ($kept[2] === null) unset($_SERVER[$name]); else $_SERVER[$name] = $kept[2];
+        }
     }
 
     /**

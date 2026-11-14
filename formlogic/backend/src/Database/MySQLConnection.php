@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = 'ec2f846d34a6ed67078dc95818d3856f';
+    public const SCHEMA_STAMP = '727c9ad1a3a48b55d763c52cdacd38a1';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -1097,6 +1097,7 @@ class MySQLConnection
                 desktop_instance_id VARCHAR(128) NOT NULL,
                 api_key_id VARCHAR(36) NULL,
                 last_seen_at TIMESTAMP NULL,
+                ai_polled_at TIMESTAMP NULL,
                 capabilities_json JSON NULL,
                 trusted_origins_json JSON NULL,
                 e2e_public_key VARCHAR(88) NULL,
@@ -1612,7 +1613,7 @@ class MySQLConnection
                 message VARCHAR(300) NULL,
                 relay_id VARCHAR(36) NULL,
                 relay_owner VARCHAR(36) NULL,
-                channel VARCHAR(128) NULL,
+                channel TEXT NULL,
                 created_at DATETIME NOT NULL,
                 submitted_at DATETIME NULL,
                 finished_at DATETIME NULL,
@@ -2714,6 +2715,18 @@ class MySQLConnection
         // key here for browser TOFU pinning; NULL until POST /api/v1/desktop-ai/pubkey.
         if ($pdo->query("SHOW COLUMNS FROM desktop_connections LIKE 'e2e_public_key'")->rowCount() === 0) {
             $pdo->exec("ALTER TABLE desktop_connections ADD COLUMN e2e_public_key VARCHAR(88) NULL AFTER trusted_origins_json");
+        }
+        // When the computer last asked its AI lane for work (DesktopAiRelayService::notePolled): what
+        // App AI, the site's AI and camera checks call "online", rather than its heartbeat, which a
+        // computer sends whether or not anything on it takes AI requests. NULL until it first asks.
+        if ($pdo->query("SHOW COLUMNS FROM desktop_connections LIKE 'ai_polled_at'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE desktop_connections ADD COLUMN ai_polled_at TIMESTAMP NULL AFTER last_seen_at");
+        }
+        // camera_checks.channel holds the turn's key sealed with the site's data key (CameraCheckService,
+        // DataEncryption), longer than the 88 characters of the plain key it was sized for.
+        $cameraChannel = $pdo->query("SHOW COLUMNS FROM camera_checks LIKE 'channel'")->fetch(PDO::FETCH_ASSOC);
+        if (is_array($cameraChannel) && stripos((string) ($cameraChannel['Type'] ?? ''), 'varchar') === 0) {
+            $pdo->exec('ALTER TABLE camera_checks MODIFY channel TEXT NULL');
         }
         // ROUTE-001: a relay command may be TARGETED at one desktop instance — only that
         // instance sees/claims it; NULL keeps the legacy owner-wide first-to-claim fan-out.

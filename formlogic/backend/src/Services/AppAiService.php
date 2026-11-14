@@ -41,6 +41,12 @@ class AppAiService
     public const OPEN = ['queued', 'sending', 'running'];
     /** Statuses an app's cancel still stops: waiting, sent, or back but not yet delivered. */
     public const CANCELLABLE = ['queued', 'sending', 'running', 'delivering'];
+    /**
+     * The code a cancelled job keeps: `cancelled` while it still waited, its use given back; and
+     * CANCELLED_SENT once it had gone to the AI, which spent the use whether or not the answer is
+     * wanted now, so it stays counted (cancel, refund).
+     */
+    public const CANCELLED_SENT = 'cancelled_sent';
     /** Who asked, for a request no FormLogic page marked: nobody known. Its jobs are refused. */
     public const NOBODY = 'nobody';
     /** A binding's kind for a row written by a deliver route: a follow-up job for the delivered job's requester. */
@@ -352,10 +358,14 @@ class AppAiService
         return $jobs === [] ? (object) [] : $jobs;
     }
 
-    /** Whether the OAIY computer a job waits for (its connection id) has been heard from in the last 90 seconds. */
+    /**
+     * Whether the OAIY computer a job waits for (its connection id) has asked its AI lane for work in
+     * the last 90 seconds (DesktopAiRelayService::notePolled): its heartbeat alone says only that it is
+     * linked, not that anything on it takes AI requests.
+     */
     private function heardFrom(string $connectionId): bool
     {
-        $statement = $this->pdo()->prepare('SELECT 1 FROM desktop_connections WHERE id = ? AND last_seen_at > (NOW() - INTERVAL 90 SECOND)');
+        $statement = $this->pdo()->prepare('SELECT 1 FROM desktop_connections WHERE id = ? AND ai_polled_at > (NOW() - INTERVAL 90 SECOND)');
         $statement->execute([$connectionId]);
         return $statement->fetchColumn() !== false;
     }
@@ -470,10 +480,12 @@ class AppAiService
 
     /**
      * An app's cancel (contract §0.11): its jobs row's `status` updated to `cancelled`, or the row
-     * deleted, by a request that carries App AI's binding. A job not yet delivered is cancelled and its
-     * use given back; what the AI is still doing for it is let go, and a result that comes back is
-     * thrown away (AppAiWorker). A row updated to cancelled is told so once, `{jobId, status:
-     * "cancelled"}`; a deleted row, nothing. A job already answered stands. Answers how many it cancelled.
+     * deleted, by a request that carries App AI's binding. A job not yet delivered is cancelled; what
+     * the AI is still doing for it is let go, and a result that comes back is thrown away
+     * (AppAiWorker). Its use is given back only while it still waited: once it was sent the AI spent
+     * it, and an app that could cancel every job as it ran would get its pictures for nothing. A row
+     * updated to cancelled is told so once, `{jobId, status: "cancelled"}`; a deleted row, nothing. A
+     * job already answered stands. Answers how many it cancelled.
      */
     private function cancel(string $appId, bool $deleted, array $data, ?callable $readRow, string $table): int
     {
@@ -496,15 +508,16 @@ class AppAiService
         $cancelled = 0;
         $pdo->beginTransaction();
         try {
-            // Its open jobs, and any cancelled before whose use a failed refund has not yet given back
-            // (this event is then dispatched again).
-            $open = $pdo->prepare("SELECT id, status FROM app_ai_jobs WHERE app_id = ? AND app_job_id = ? AND requester_kind <> ? AND (status IN ({$marks}) OR (status = 'cancelled' AND refunded = 0)) FOR UPDATE");
+            // Its open jobs, and any cancelled while it waited whose use a failed refund has not yet
+            // given back (this event is then dispatched again).
+            $open = $pdo->prepare("SELECT id, status FROM app_ai_jobs WHERE app_id = ? AND app_job_id = ? AND requester_kind <> ? AND (status IN ({$marks}) OR (status = 'cancelled' AND code = 'cancelled' AND refunded = 0)) FOR UPDATE");
             $open->execute([$appId, mb_substr((string) $key, 0, 100), self::TEST_REQUESTER, ...self::CANCELLABLE]);
             foreach ($open->fetchAll(PDO::FETCH_ASSOC) as $row) {
-                $ids[] = (string) $row['id'];
+                $waited = in_array($row['status'], ['queued', 'cancelled'], true);
+                if ($waited) $ids[] = (string) $row['id'];
                 if ($row['status'] === 'cancelled') continue;
-                $pdo->prepare("UPDATE app_ai_jobs SET status = 'cancelled', code = 'cancelled', message = ?, finished_at = ?, next_attempt_at = ?, reference = NULL WHERE id = ?")
-                    ->execute([$deleted ? 'The app deleted the job.' : 'The app cancelled the job.', self::stamp($clock), $deleted ? null : self::stamp($clock - 1), $row['id']]);
+                $pdo->prepare("UPDATE app_ai_jobs SET status = 'cancelled', code = ?, message = ?, finished_at = ?, next_attempt_at = ?, reference = NULL WHERE id = ?")
+                    ->execute([$waited ? 'cancelled' : self::CANCELLED_SENT, $deleted ? 'The app deleted the job.' : 'The app cancelled the job.', self::stamp($clock), $deleted ? null : self::stamp($clock - 1), $row['id']]);
                 $cancelled++;
             }
             $pdo->commit();
@@ -601,16 +614,55 @@ class AppAiService
     }
 
     /**
+     * A job the app cancelled while the worker was sending it (CANCELLED_SENT), which the worker
+     * then found never reached the AI: the computer was off or full, it failed before it was sent,
+     * the worker that was sending it died, or what had just been asked for was let go at once. It is
+     * one cancelled while it waited after all (`cancelled`), and its use is given back. A job that
+     * started on the AI (`started_at`) is not touched. Answers whether its use was given back.
+     */
+    public function unsent(string $jobId): bool
+    {
+        return $this->givenBackUnasked($jobId, true);
+    }
+
+    /**
+     * A job the app cancelled once it was sent (CANCELLED_SENT) whose turn no computer had taken when
+     * it was let go (SiteDesktopAi::cancelTurn said 'pending'): it waited on the lane, behind other
+     * turns or for a computer that stopped asking, and the AI was asked nothing. As unsent(), whether
+     * or not it had started there; its use is given back. Answers whether it was.
+     */
+    public function untaken(string $jobId): bool
+    {
+        return $this->givenBackUnasked($jobId, false);
+    }
+
+    /** unsent() and untaken(): a cancelled job the AI was never asked, made one cancelled while it waited, and given back. */
+    private function givenBackUnasked(string $jobId, bool $unstartedOnly): bool
+    {
+        $pdo = $this->pdo();
+        $pdo->prepare("UPDATE app_ai_jobs SET code = 'cancelled' WHERE id = ? AND status = 'cancelled' AND code = ?" . ($unstartedOnly ? ' AND started_at IS NULL' : ''))
+            ->execute([$jobId, self::CANCELLED_SENT]);
+        // Only a job that is now cancelled-while-it-waited: anything else the worker found (one another
+        // worker failed, and gave back, say) is that end's to say.
+        $now = $pdo->prepare('SELECT status, code FROM app_ai_jobs WHERE id = ?');
+        $now->execute([$jobId]);
+        $row = $now->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row) || $row['status'] !== 'cancelled' || $row['code'] !== 'cancelled') return false;
+        return $this->refund($jobId);
+    }
+
+    /**
      * Give a job's use back (it failed without a result, or expired): each counter it was counted
-     * in, once. Answers whether this call gave it back.
+     * in, once. Never a job the app cancelled once it had gone to the AI (CANCELLED_SENT): that use
+     * was spent. Answers whether this call gave it back.
      */
     public function refund(string $jobId): bool
     {
         $pdo = $this->pdo();
         $pdo->beginTransaction();
         try {
-            $statement = $pdo->prepare("SELECT * FROM app_ai_jobs WHERE id = ? AND refunded = 0 AND counted_day IS NOT NULL AND status NOT IN ('refused') FOR UPDATE");
-            $statement->execute([$jobId]);
+            $statement = $pdo->prepare("SELECT * FROM app_ai_jobs WHERE id = ? AND refunded = 0 AND counted_day IS NOT NULL AND status NOT IN ('refused') AND NOT (status = 'cancelled' AND code <=> ?) FOR UPDATE");
+            $statement->execute([$jobId, self::CANCELLED_SENT]);
             $job = $statement->fetch(PDO::FETCH_ASSOC);
             if (!is_array($job)) { $pdo->commit(); return false; }
             $requester = ['kind' => $job['requester_kind'], 'id' => $job['requester_id'], 'ipKey' => $job['ip_key']];
@@ -683,7 +735,12 @@ class AppAiService
         $reference = null;
         if ($kind === 'edit') {
             $reference = $row['reference'] ?? null;
-            if (!is_string($reference) || strlen($reference) > self::MAX_REFERENCE_BYTES * 4 / 3 + 64 || !preg_match('#^data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$#D', $reference)) return $bad('An edit needs its picture: a PNG, JPEG or WebP data URL of at most 2 MB.', ['kind' => $kind]);
+            if (!is_string($reference) || strlen($reference) > self::MAX_REFERENCE_BYTES * 4 / 3 + 64 || !preg_match('#^data:image/(?:png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$#D', $reference, $encoded)) return $bad('An edit needs its picture: a PNG, JPEG or WebP data URL of at most 2 MB.', ['kind' => $kind]);
+            // Its size is read from its header now, not when the worker opens it: a small file can say
+            // it is a picture far larger than the worker could hold (AppAiPictures::MAX_SOURCE_PIXELS).
+            $refused = AppAiPictures::refusal((string) base64_decode($encoded[1], true));
+            if ($refused === 'too_large') return $bad('An edit\'s picture may be at most 16 megapixels, and 8,192 pixels a side.', ['kind' => $kind]);
+            if ($refused !== null) return $bad('An edit needs its picture: a PNG, JPEG or WebP data URL of at most 2 MB.', ['kind' => $kind]);
         }
         if (AppAiSiteSettings::refusedWord($prompt, $site['words']) !== null) return [['appJobId' => $appJobId, 'kind' => $kind], ['code' => 'prompt_refused', 'message' => 'That request includes words this site does not allow.']];
         return [['appJobId' => $appJobId, 'kind' => $kind, 'prompt' => $prompt, 'size' => $size, 'seed' => $seed, 'reference' => $reference], null];
@@ -809,13 +866,16 @@ class AppAiService
         ];
     }
 
-    /** When an OAIY computer was last heard from, and whether that was in the last 90 seconds. */
+    /**
+     * When an OAIY computer last asked its AI lane for work, and whether that was in the last 90
+     * seconds (heardFrom); lastSeenAt is null for one that never has.
+     */
     private function computerSeen(string $connectionId): array
     {
-        $statement = $this->pdo()->prepare('SELECT last_seen_at, last_seen_at > (NOW() - INTERVAL 90 SECOND) AS fresh FROM desktop_connections WHERE id = ?');
+        $statement = $this->pdo()->prepare('SELECT ai_polled_at, ai_polled_at > (NOW() - INTERVAL 90 SECOND) AS fresh FROM desktop_connections WHERE id = ?');
         $statement->execute([$connectionId]);
         $row = $statement->fetch(PDO::FETCH_ASSOC);
-        return ['online' => is_array($row) && (bool) $row['fresh'], 'lastSeenAt' => is_array($row) ? $row['last_seen_at'] : null];
+        return ['online' => is_array($row) && (bool) $row['fresh'], 'lastSeenAt' => is_array($row) ? $row['ai_polled_at'] : null];
     }
 
     /**
@@ -838,7 +898,7 @@ class AppAiService
             return $out($reason === 'ai_paused' ? 'paused' : 'off', self::REASONS[$reason] ?? self::REASONS['ai_off']);
         }
         if ($available['target'] !== 'env' && !$this->computerOnline($appId, $settings, $available)) {
-            return $out('offline', 'The computer its AI runs on is offline. Requests wait for it, for up to 30 minutes.', $this->computerSeen((string) $available['target'])['lastSeenAt']);
+            return $out('offline', 'The computer its AI runs on is not taking AI requests: it may be off, or OAIY may be closed there. Requests wait for it, for up to 30 minutes.', $this->computerSeen((string) $available['target'])['lastSeenAt']);
         }
         if ($waiting + $running > 0) return $out('busy', "Working on {$running}, with {$waiting} waiting.");
         return $out('idle', 'Ready: ' . $available['label'] . '.');

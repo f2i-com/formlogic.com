@@ -63,6 +63,29 @@ final class DesktopLinkController
     }
 
     /**
+     * DELETE /api/desktop-links/codes/{id}: withdraw a code no server has used yet (the page's
+     * Cancel). Someone else's code is answered as one that does not exist; one a server has used
+     * says how to undo its link. Held to what making one is: not in the shared demo, and not by an
+     * administrator acting as the account.
+     */
+    public function withdraw(Request $request, Response $response, array $args): Response
+    {
+        if ($this->isDemoRequest($request)) return $this->jsonError($response, 'Not available in the demo', 403, 'demo_readonly');
+        $actor = $request->getAttribute('adminActorId');
+        if (is_string($actor) && $actor !== '') return $this->jsonError($response, 'Administrators cannot change the computers linked to other accounts', 403, 'acting_as_denied');
+        $userId = (string) $request->getAttribute('userId');
+        $id = (string) ($args['id'] ?? '');
+        $outcome = $this->links->withdraw($userId, $id);
+        $response = $response->withHeader('Cache-Control', 'no-store');
+        if ($outcome === 'withdrawn') {
+            $this->record($request, 'desktop.link_code.withdraw', $userId, ['codeId' => $id]);
+            return $this->jsonResponse($response, ['data' => ['status' => 'withdrawn']]);
+        }
+        if ($outcome === 'used') return $this->jsonError($response, 'A server has used that code already. To undo its link, unlink the computer.', 409, 'desktop_link_used');
+        return $this->jsonError($response, 'Unknown code', 404, 'desktop_link_not_found');
+    }
+
+    /**
      * POST /api/oauth/oaiy-link {code, device_name?} (JSON or a form): answers as the browser link's
      * token exchange does, so the server keeps the same link/account.json.
      */

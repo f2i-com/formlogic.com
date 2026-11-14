@@ -143,8 +143,10 @@ it('saves the source and limits as numbers, and says how it is doing once saved'
 it.each<[string, AppAiView, RegExp]>([
   ['ready, for chat only', onSite({}, { availability: { enabled: true, source: 'site', label: 'This site\'s AI', kinds: ['chat'], reason: null } }), /^Ready\. This site's AI answers, for chat only: no picture model is chosen yet\.$/],
   ['busy', onSite({ state: 'busy', running: 1, waiting: 3 }), /^Busy\. 1 being made, 3 waiting\.$/],
-  ['offline', onSite({ state: 'offline', offlineSince: '2026-11-09 07:00:00' }), /^Offline since .+\. The computer its AI runs on is not answering\. Requests wait for it, for up to 30 minutes\.$/],
-  ['offline, never heard from', onSite({ state: 'offline', offlineSince: null }), /^Offline\. The computer its AI runs on is not answering\./],
+  // (in the server's words, which say why: the computer is off, or OAIY is closed there, its link perhaps still alive)
+  ['offline', onSite({ state: 'offline', offlineSince: '2026-11-09 07:00:00', message: 'The computer its AI runs on is not taking AI requests: it may be off, or OAIY may be closed there. Requests wait for it, for up to 30 minutes.' }), /^Offline since .+\. The computer its AI runs on is not taking AI requests: it may be off, or OAIY may be closed there\. Requests wait for it, for up to 30 minutes\.$/],
+  ['offline, never heard from', onSite({ state: 'offline', offlineSince: null, message: 'The computer its AI runs on is not taking AI requests: it may be off, or OAIY may be closed there. Requests wait for it, for up to 30 minutes.' }), /^Offline\. The computer its AI runs on is not taking AI requests/],
+  ['offline, from a server that says no words', onSite({ state: 'offline', offlineSince: null, message: '' }), /^Offline\. The computer its AI runs on is not answering\. Requests wait for it, for up to 30 minutes\.$/],
   ['paused', onSite({ state: 'paused', message: 'The site\'s administrator has paused AI for apps.' }), /^Paused\. The site's administrator has paused AI for apps\.$/],
   ['stopped', onSite({ state: 'blocked', message: 'An administrator stopped this app\'s AI: Complaints' }), /^Stopped\. An administrator stopped this app's AI: Complaints$/],
   ['on, and not working', onSite({ state: 'off', message: 'This site has no AI set up yet.' }), /^Not working\. This site has no AI set up yet\.$/],
@@ -160,7 +162,7 @@ it('runs a test and shows its picture, with the time it took, when it is done', 
   const follow = vi.spyOn(api, 'getAppAiTest')
     .mockResolvedValueOnce({ data: { status: 'queued', waitedSeconds: 1 } })
     .mockResolvedValueOnce({ data: { status: 'running', waitedSeconds: 4 } })
-    .mockResolvedValueOnce({ data: { status: 'done', picture: 'data:image/png;base64,iVBORw0KGgo=', model: 'flux-3-image-klein', seed: 42, seconds: 37.5 } });
+    .mockResolvedValueOnce({ data: { status: 'done', picture: 'data:image/png;base64,iVBORw0KGgo=', model: 'picture-model-b', seed: 42, seconds: 37.5 } });
   await mount();
   await act(async () => button('Test a picture')!.click());
   const result = () => container.querySelector('[data-testid="ai-test"]')!.textContent;
@@ -174,7 +176,7 @@ it('runs a test and shows its picture, with the time it took, when it is done', 
   expect(follow).toHaveBeenCalledTimes(3);
   expect(result()).toContain('Test picture: It works');
   expect(container.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,iVBORw0KGgo=');
-  expect(result()).toContain('Made in 37.5 s · with flux-3-image-klein · seed 42');
+  expect(result()).toContain('Made in 37.5 s · with picture-model-b · seed 42');
   // Today's numbers and the log now count it.
   expect(read).toHaveBeenCalledTimes(2);
 });
@@ -200,8 +202,8 @@ it('says why it cannot be read', async () => {
 it('uses the owner\'s own OAIY: their only computer is chosen, its picture models listed, and one suggested', async () => {
   const computers = [{ connectionId: 'dc-1', instanceId: 'inst-1', deviceName: 'Home PC', fingerprint: 'AAAA BBBB', online: true, lastSeenAt: null }];
   vi.spyOn(api, 'getAppAi').mockResolvedValue({ data: view({ computers }) });
-  const models = vi.spyOn(api, 'getAppAiModels').mockResolvedValue({ data: { models: [{ id: 'nanbeige', name: 'nanbeige' }, { id: 'sdxl', name: 'SD XL', type: 'image' }, { id: 'flux-3-image-klein', name: 'flux-3-image-klein', type: 'image' }] } });
-  const put = vi.spyOn(api, 'putAppAi').mockResolvedValue({ data: view({ computers, settings: { ...view().settings, mode: 'own', own: { connectionId: 'dc-1', deviceName: 'Home PC', providerId: 'oaiy-engine', pictureModel: 'flux-3-image-klein', chatModel: null } } }) });
+  const models = vi.spyOn(api, 'getAppAiModels').mockResolvedValue({ data: { models: [{ id: 'chat-model-a', name: 'chat-model-a' }, { id: 'picture-model-a', name: 'Picture A', type: 'image' }, { id: 'picture-model-b', name: 'picture-model-b', type: 'image' }] } });
+  const put = vi.spyOn(api, 'putAppAi').mockResolvedValue({ data: view({ computers, settings: { ...view().settings, mode: 'own', own: { connectionId: 'dc-1', deviceName: 'Home PC', providerId: 'oaiy-engine', pictureModel: 'picture-model-b', chatModel: null } } }) });
   await mount();
   expect(models).not.toHaveBeenCalled();
   await act(async () => modes()[2].click());
@@ -209,14 +211,15 @@ it('uses the owner\'s own OAIY: their only computer is chosen, its picture model
   expect(own.querySelector<HTMLInputElement>('input[name="app-ai-own-computer"]')!.checked).toBe(true);
   expect(own.textContent).toContain('Home PConline');
   expect(models).toHaveBeenCalledTimes(1);
-  expect(models).toHaveBeenCalledWith('app-1', 'dc-1', 'oaiy-engine');
+  expect(models).toHaveBeenCalledWith('app-1', 'dc-1', 'oaiy-engine', expect.any(AbortSignal));
   const select = own.querySelector('select')!;
-  expect([...select.options].map((option) => option.textContent)).toEqual(['None: no pictures', 'SD XL (sdxl)', 'flux-3-image-klein']);
-  expect(select.value).toBe('flux-3-image-klein');
-  expect(own.textContent).toContain('Suggested: flux-3-image-klein. Save to use it.');
+  expect([...select.options].map((option) => option.textContent)).toEqual(['None: no pictures', 'Picture A (picture-model-a)', 'picture-model-b']);
+  // No model is preferred by name: the first picture model the computer lists is the suggestion.
+  expect(select.value).toBe('picture-model-a');
+  expect(own.textContent).toContain('Suggested: picture-model-a. Save to use it.');
   expect(own.textContent).toContain('Chat is answered by the model chosen in OAIY on Home PC.');
   await act(async () => button('Save')!.click());
-  expect(put).toHaveBeenCalledWith('app-1', { mode: 'own', perRequesterDay: 10, perIpDay: 20, perIpHour: 10, perAppDay: 500, own: { connectionId: 'dc-1', providerId: 'oaiy-engine', pictureModel: 'flux-3-image-klein' } });
+  expect(put).toHaveBeenCalledWith('app-1', { mode: 'own', perRequesterDay: 10, perIpDay: 20, perIpHour: 10, perAppDay: 500, own: { connectionId: 'dc-1', providerId: 'oaiy-engine', pictureModel: 'picture-model-a' } });
 });
 
 it('links a computer right there when the owner has none, and saves nothing until there is one', async () => {
@@ -241,7 +244,7 @@ it('has the owner pick between two computers, and type the model for one that is
     { connectionId: 'dc-2', instanceId: 'inst-2', deviceName: 'Office PC', fingerprint: 'BBBB', online: true, lastSeenAt: null },
   ];
   vi.spyOn(api, 'getAppAi').mockResolvedValue({ data: view({ computers }) });
-  const models = vi.spyOn(api, 'getAppAiModels').mockResolvedValue({ data: { models: [{ id: 'sdxl', name: 'sdxl', type: 'image' }] } });
+  const models = vi.spyOn(api, 'getAppAiModels').mockResolvedValue({ data: { models: [{ id: 'picture-model-a', name: 'picture-model-a', type: 'image' }] } });
   await mount();
   await act(async () => modes()[2].click());
   const own = container.querySelector('[data-testid="app-ai-own"]')!;
@@ -254,7 +257,7 @@ it('has the owner pick between two computers, and type the model for one that is
   expect(own.textContent).toContain('The computer is offline, so it cannot list its models now.');
   expect(button('Save')!.disabled).toBe(false);
   await act(async () => picks[1].click());
-  expect(models).toHaveBeenCalledWith('app-1', 'dc-2', 'oaiy-engine');
-  expect(own.querySelector('select')?.value).toBe('sdxl');
+  expect(models).toHaveBeenCalledWith('app-1', 'dc-2', 'oaiy-engine', expect.any(AbortSignal));
+  expect(own.querySelector('select')?.value).toBe('picture-model-a');
   expect(own.textContent).toContain('Is it another computer? Link it here:');
 });

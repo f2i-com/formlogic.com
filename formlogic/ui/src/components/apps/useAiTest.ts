@@ -73,9 +73,14 @@ export function useLinkWatch(count: number, reload: () => void | Promise<void>) 
 /**
  * A computer's models, asked of it now. `key` names what is asked (a computer and a provider); null
  * asks nothing (the computer is offline, or none is chosen). Asked again when the key changes, or on
- * `retry`. `models` is null until it has answered, and when it did not.
+ * `retry`. `models` is null until it has answered, and when it did not; `listing` is true meanwhile.
+ *
+ * `list` asks the computer and reads its answer back until it comes (the API's followListing: a
+ * read every 750 ms for up to 22 seconds, no request waiting on the computer). It is given a signal
+ * that is aborted once its answer is not wanted (another key, a retry, or the page closed), so a
+ * list asked for nobody stops being read.
  */
-export function useModelList(key: string | null, list: () => Promise<Answer<{ models: AiModel[] }>>) {
+export function useModelList(key: string | null, list: (signal: AbortSignal) => Promise<Answer<{ models: AiModel[] }>>) {
   const [attempt, setAttempt] = useState(0);
   const [listed, setListed] = useState<{ key: string; models: AiModel[] | null; error: string | null } | null>(null);
   const call = useRef(list);
@@ -83,12 +88,19 @@ export function useModelList(key: string | null, list: () => Promise<Answer<{ mo
   const wanted = key === null ? null : `${key}#${attempt}`;
   useEffect(() => {
     if (wanted === null) return;
-    let cancelled = false;
-    void call.current().then((result) => {
-      if (cancelled) return;
+    const unwanted = new AbortController();
+    void call.current(unwanted.signal).then((result) => {
+      if (unwanted.signal.aborted) return;
       setListed({ key: wanted, models: result.data?.models ?? null, error: result.data ? null : result.error ?? 'The computer did not list its models.' });
     });
-    return () => { cancelled = true; };
+    // The page closing or reloading ends no effect: the listing is let go then too (its letGo is sent with keepalive,
+    // which outlives the page), or it would hold one of the owner's places on the computer until its time ran out.
+    const leaving = () => unwanted.abort();
+    window.addEventListener('pagehide', leaving);
+    return () => {
+      window.removeEventListener('pagehide', leaving);
+      unwanted.abort();
+    };
   }, [wanted]);
   const current = wanted !== null && listed?.key === wanted ? listed : null;
   const retry = useCallback(() => setAttempt((n) => n + 1), []);

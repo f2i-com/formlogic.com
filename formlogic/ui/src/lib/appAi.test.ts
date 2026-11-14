@@ -3,18 +3,18 @@ import { describe, expect, it } from 'vitest';
 import { sinceWords, suggestedPictureModel, utcStamp, whenWords } from './appAi';
 
 describe('suggestedPictureModel', () => {
-  it('suggests FLUX 3 Image Klein where the computer has it, wherever it is listed', () => {
-    expect(suggestedPictureModel([{ id: 'nanbeige', name: 'nanbeige' }, { id: 'sdxl', name: 'SD XL', type: 'image' }, { id: 'flux-3-image-klein', name: 'FLUX 3 Klein', type: 'image' }])).toBe('flux-3-image-klein');
+  it('suggests the first picture model the computer lists, never a language or a video model', () => {
+    expect(suggestedPictureModel([{ id: 'language-a', name: 'Language A' }, { id: 'video-a', name: 'Video A', type: 'video' }, { id: 'picture-a', name: 'Picture A', type: 'image' }, { id: 'picture-b', name: 'Picture B', type: 'image' }])).toBe('picture-a');
   });
 
-  it('suggests the first picture model otherwise, never a language or a video model', () => {
-    expect(suggestedPictureModel([{ id: 'nanbeige', name: 'nanbeige' }, { id: 'ltx-2.5', name: 'ltx-2.5', type: 'video' }, { id: 'sdxl', name: 'SD XL', type: 'image' }, { id: 'pony', name: 'pony', type: 'image' }])).toBe('sdxl');
-    // A language model that happens to carry the name is not a picture model.
-    expect(suggestedPictureModel([{ id: 'flux-3-image-klein', name: 'flux-3-image-klein' }, { id: 'pony', name: 'pony', type: 'image' }])).toBe('pony');
+  it('names no model of its own: the computer\'s list, in its own order, decides', () => {
+    const listed = [{ id: 'picture-a', name: 'Picture A', type: 'image' }, { id: 'picture-b', name: 'Picture B', type: 'image' }];
+    expect(suggestedPictureModel(listed)).toBe('picture-a');
+    expect(suggestedPictureModel([...listed].reverse())).toBe('picture-b');
   });
 
   it('suggests nothing when the computer lists no picture model', () => {
-    expect(suggestedPictureModel([{ id: 'nanbeige', name: 'nanbeige' }])).toBeNull();
+    expect(suggestedPictureModel([{ id: 'language-a', name: 'Language A' }])).toBeNull();
     expect(suggestedPictureModel([])).toBeNull();
   });
 });

@@ -29,7 +29,8 @@ function statusWords(view: AppAiView): { tone: 'ready' | 'warn' | 'off' | 'stopp
     case 'busy':
       return { tone: 'ready', lead: 'Busy', detail: `${status.running} being made, ${status.waiting} waiting.` };
     case 'offline':
-      return { tone: 'warn', lead: `Offline ${sinceWords(status.offlineSince)}`.trim(), detail: 'The computer its AI runs on is not answering. Requests wait for it, for up to 30 minutes.' };
+      // (the server's words say why: the computer is off, or OAIY is closed there, and its link may still be alive)
+      return { tone: 'warn', lead: `Offline ${sinceWords(status.offlineSince)}`.trim(), detail: status.message || 'The computer its AI runs on is not answering. Requests wait for it, for up to 30 minutes.' };
     case 'paused':
       return { tone: 'warn', lead: 'Paused', detail: status.message };
     case 'blocked':

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Support\DataEncryption;
+use FormLogic\Support\DataEncryptionException;
 use PDO;
 
 /**
@@ -48,6 +50,9 @@ final class CameraCheckService
     private const MAX_ASSET_BYTES = 40000;
     private const MAX_ANSWER = 16000;
 
+    /** What a turn's key pair is sealed for: the check's own row, so a key moved to another reads nothing. */
+    private const SEAL_CONTEXT = 'camera_checks.channel:';
+
     private PDO $pdo;
 
     public function __construct(
@@ -58,8 +63,17 @@ final class CameraCheckService
         private PluginService $plugins,
         private AppService $apps,
         private NativeAppService $native,
+        // The site's data key (DataEncryption), which seals the turn's key while the check waits for OAIY's
+        // answer, as App AI's are. Optional, so PHP-DI fills none and the environment's is read when first
+        // needed; the tests may give one.
+        private ?DataEncryption $encryption = null,
     ) {
         $this->pdo = $mysql->getConnection();
+    }
+
+    private function encryption(): DataEncryption
+    {
+        return $this->encryption ??= DataEncryption::fromEnvironment();
     }
 
     /** Camera checks are set up on this site. */
@@ -400,6 +414,11 @@ final class CameraCheckService
             $body['verify'] = ['task' => $turn['verify']['task'], 'images' => $named];
         }
         try {
+            // A data key that is set and cannot be used: the turn's key could only be kept in the clear, which is never
+            // done once encryption is asked for (DataEncryption), so nothing is sent.
+            if (!$this->encryption()->usable()) {
+                throw new DataEncryptionException('DATA_ENCRYPTION_KEY is not a valid key');
+            }
             // Always the person whose check it is, a trial's administrator too: a turn with no requester
             // is the computer's owner's own, and would go to it even once they were no longer an
             // administrator (DesktopAiRelayService::SERVED_SQL).
@@ -409,22 +428,33 @@ final class CameraCheckService
             $this->finish($row, 'unavailable', true);
             throw $e instanceof SiteAiBusyException ? new SiteAiBusyException('The camera check is not available right now. ' . $e->getMessage(), $e->reason) : $e;
         }
-        // The template is not needed again: only the steps, and the key to read OAIY's answer.
+        // The template is not needed again: only the steps, and the key to read OAIY's answer, sealed with the
+        // site's data key where one is set (the member's pictures are in the turn it opens).
+        $channel = $this->encryption()->seal(base64_encode($pair), self::SEAL_CONTEXT . $row['id']);
         $this->pdo->prepare(
             "UPDATE camera_checks SET status = 'assessing', submitted_at = ?, relay_id = ?, relay_owner = ?, channel = ?, turn = NULL WHERE id = ?"
-        )->execute([gmdate('Y-m-d H:i:s'), $relayId, $settings['ownerUserId'], base64_encode($pair), $row['id']]);
+        )->execute([gmdate('Y-m-d H:i:s'), $relayId, $settings['ownerUserId'], $channel, $row['id']]);
         sodium_memzero($pair);
     }
 
     /** One look at OAIY's answer; when it is there, the plugin decides. */
     private function advance(array $row): array
     {
-        $pair = base64_decode((string) $row['channel'], true);
-        if ($pair === false || $row['relay_id'] === null) {
+        // Sealed (DataEncryption), or as a check sent before the key was sealed kept it; one that cannot be opened
+        // (its data key gone) reads nothing, and the check cannot be decided.
+        try {
+            $encoded = $this->encryption()->open((string) $row['channel'], self::SEAL_CONTEXT . $row['id']);
+        } catch (\Throwable) {
+            $encoded = '';
+        }
+        $pair = base64_decode($encoded, true);
+        if ($pair === false || strlen($pair) !== SODIUM_CRYPTO_BOX_KEYPAIRBYTES || $row['relay_id'] === null) {
             return [$this->finish($row, 'unavailable', true), null];
         }
         try {
-            $seen = $this->desktop->collect((string) $row['relay_id'], (string) $row['relay_owner'], $pair);
+            // Every frame of the answer, or none: an age decision is never made on part of one (a lost
+            // frame fails the check as unavailable, below, where a chat goes on without its few words).
+            $seen = $this->desktop->collect((string) $row['relay_id'], (string) $row['relay_owner'], $pair, gapless: true);
         } catch (\Throwable $e) {
             error_log('Camera check ' . $row['id'] . ': ' . $e->getMessage());
             return [$this->finish($row, 'unavailable', true), ['error' => $e->getMessage()]];
@@ -436,7 +466,8 @@ final class CameraCheckService
         }
         if ($seen['status'] !== 'done' && $seen['final'] === null) {
             if (self::expired($row)) {
-                $this->desktop->abandon((string) $row['relay_id'], (string) $row['relay_owner']);
+                // Cancelled, not only abandoned: a computer already working on it is told to stop.
+                $this->desktop->cancel((string) $row['relay_id'], (string) $row['relay_owner']);
                 return [$this->finish($row, 'unavailable', true), null];
             }
             return [$row, null];
@@ -658,7 +689,7 @@ final class CameraCheckService
         $stmt->execute([$userId, gmdate('Y-m-d H:i:s')]);
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             if ($row['relay_id'] !== null) {
-                $this->desktop->abandon((string) $row['relay_id'], (string) $row['relay_owner']);
+                $this->desktop->cancel((string) $row['relay_id'], (string) $row['relay_owner']);
             }
             $this->finish($row, 'unavailable', true);
         }

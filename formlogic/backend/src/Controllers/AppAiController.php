@@ -118,6 +118,8 @@ final class AppAiController
         $kind = is_array($body) && ($body['kind'] ?? null) === 'chat' ? 'chat' : 'picture';
         try {
             $jobId = $this->ai->queueTest($app, $kind);
+        } catch (\PDOException $e) {
+            return $this->databaseFailed($response, 'app test', $e);
         } catch (\RuntimeException $e) {
             return $this->jsonError($response, $e->getMessage(), 409, 'ai_unavailable');
         }
@@ -183,6 +185,8 @@ final class AppAiController
         if ($worker['state'] !== 'ok') return $this->jsonError($response, (string) $worker['message'], 409, 'worker_' . $worker['state']);
         try {
             $jobId = $this->ai->queueSiteTest((string) $request->getAttribute('userId'), $kind);
+        } catch (\PDOException $e) {
+            return $this->databaseFailed($response, 'site test', $e);
         } catch (\RuntimeException $e) {
             return $this->jsonError($response, $e->getMessage(), 409, 'ai_unavailable');
         }
@@ -257,6 +261,16 @@ final class AppAiController
             'code' => 'trusted_proxies_unset',
             'message' => 'This site is reached through Cloudflare, but TRUSTED_PROXIES is not set, so every visitor reads as one of a few Cloudflare addresses and the per-address allowances are shared by everyone. Set TRUSTED_PROXIES to Cloudflare\'s ranges (and any proxy of your own in front of PHP), and TRUSTED_PROXY_HEADER to X-Forwarded-For.',
         ]];
+    }
+
+    /**
+     * A test that could not be queued because the database failed. Its own words name the tables and
+     * the server, so they are logged, and the person is told only that it did not start.
+     */
+    private function databaseFailed(Response $response, string $what, \PDOException $e): Response
+    {
+        error_log('App AI ' . $what . ': the database failed: ' . $e->getMessage());
+        return $this->jsonError($response, 'The test could not be started. Try again in a moment.', 500, 'test_failed');
     }
 
     private function ownedApp(Request $request, array $args): ?array

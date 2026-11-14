@@ -535,7 +535,12 @@ $container->set(\FormLogic\Services\SiteAiDesktopSettings::class, function (Cont
 $container->set(\FormLogic\Services\SiteDesktopAi::class, function (Container $c) {
     return new \FormLogic\Services\SiteDesktopAi(
         $c->get(\FormLogic\Services\DesktopAiRelayService::class),
-        $c->get(\FormLogic\Services\SiteAiDesktopSettings::class)
+        $c->get(\FormLogic\Services\SiteAiDesktopSettings::class),
+        // A computer's listings are asked for and read back in two requests, their turn's key
+        // derived from a secret of their own, made from the JWT secret as the link codes' is. No
+        // JWT secret, or one too short to be one, gives none (a hash of nothing is anyone's to make),
+        // and listings then say they need it (SiteDesktopAi::listingKeys).
+        secret: (static fn (string $jwt): ?string => strlen($jwt) >= 16 ? hash('sha256', 'formlogic-oaiy-listings:' . $jwt) : null)((string) ($c->get('settings')['jwt']['secret'] ?? ''))
     );
 });
 
@@ -2236,6 +2241,11 @@ $app->post('/api/desktop-links/codes', function ($request, $response) use ($cont
 $app->get('/api/desktop-links/codes/{id}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DesktopLinkController::class)->status($request, $response, $getArgs($request));
 })->add($authRequired);
+// Withdraw a code not used yet (DesktopLinkCodeService::withdraw): the page's Cancel. A code that is
+// someone else's is answered as one that does not exist.
+$app->delete('/api/desktop-links/codes/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DesktopLinkController::class)->withdraw($request, $response, $getArgs($request));
+})->add($authRequired);
 $app->post('/api/data-nodes/{id}/approve', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DataPlacementController::class)->approveNode($request, $response, $getArgs($request));
 })->add($authRequired);
@@ -3611,14 +3621,23 @@ $appAiTestLimiter = new RateLimitMiddleware($rateLimiter, 10, 3600, 'app_ai_test
 $app->post('/api/apps/{id}/ai/test', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\AppAiController::class)->ownerTest($request, $response, $getArgs($request));
 })->add($appAiTestLimiter)->add($authRequired);
-// "Use my OAIY": what one of the owner's own computers offers, asked of it now (each listing waits
-// on the computer, so it has a budget of its own).
+// "Use my OAIY": what one of the owner's own computers offers, asked of it now (each listing asks
+// the computer, so it has a budget of its own). A listing is asked once and then read until it is
+// back (`?listing=`, OaiyComputerController): only the asking counts against that budget. The
+// reads, a page's one every second or so until the computer answers, have a wider one.
 $appAiListingLimiter = new RateLimitMiddleware($rateLimiter, 60, 3600, 'app_ai_listings', true, true);
+$appAiListingReadLimiter = new RateLimitMiddleware($rateLimiter, 240, 60, 'app_ai_listing_reads', true);
 $app->get('/api/apps/{id}/ai/{listing:providers|models}', function ($request, $response) use ($container, $getArgs) {
     $args = $getArgs($request);
     $controller = $container->get(\FormLogic\Controllers\AppAiController::class);
     return $args['listing'] === 'providers' ? $controller->ownerProviders($request, $response, $args) : $controller->ownerModels($request, $response, $args);
-})->add($appAiListingLimiter)->add($authRequired);
+})->add(function ($request, $handler) use ($appAiListingLimiter, $appAiListingReadLimiter) {
+    // Only a request that names a listing by its handle is a read; anything else (none, or `listing[]=…`) is the asking's.
+    $listing = $request->getQueryParams()['listing'] ?? null;
+    return is_string($listing) && $listing !== ''
+        ? $appAiListingReadLimiter->process($request, $handler)
+        : $appAiListingLimiter->process($request, $handler);
+})->add($authRequired);
 $app->get('/api/apps/{id}/ai/test/{job:[a-f0-9]{32}}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\AppAiController::class)->ownerTestResult($request, $response, $getArgs($request));
 })->add($hostingReadLimiter)->add($authRequired);
@@ -3991,6 +4010,10 @@ $app->get('/api/desktop/ai/requests/{id}/stream', function ($request, $response)
 })->add($relayStreamRateLimiter)->add($authRequired);
 $app->post('/api/desktop/ai/requests/{id}/input', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->postInput($request, $response, $getArgs($request));
+})->add($desktopAiRateLimiter)->add($authRequired);
+// The browser stopped, or its page closed: the computer is told to stop the turn too.
+$app->post('/api/desktop/ai/requests/{id}/cancel', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->cancelRequest($request, $response, $getArgs($request));
 })->add($desktopAiRateLimiter)->add($authRequired);
 $app->get('/api/desktop/ai/pubkey', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\DesktopAiRelayController::class)->getPubkey($request, $response);

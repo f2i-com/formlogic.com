@@ -123,7 +123,7 @@ final class AppAiWorkerTest extends TestCase
         $this->desktop = new SiteDesktopAi($this->relay, $this->computers);
         if ($computer) {
             $connection = bin2hex(random_bytes(16));
-            self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Studio PC', 'inst-site-ai', NOW(), ?)")
+            self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, ai_polled_at, e2e_public_key) VALUES (?, ?, 'Studio PC', 'inst-site-ai', NOW(), NOW(), ?)")
                 ->execute([$connection, $this->adminId, self::$vectors['desktop']['publicKey']]);
             $this->computers->choose($this->adminId, $connection);
         }
@@ -132,6 +132,13 @@ final class AppAiWorkerTest extends TestCase
         $this->ai = new AppAiService(self::$mysql, $this->site, $this->visitors, $this->native, $this->computers, $configured);
         $this->router = new NativeRecordEventRouter(new FlowService(self::$mysql), $this->ai);
         $this->results = self::$tmpRoot . '/results-' . bin2hex(random_bytes(3));
+    }
+
+    /** The site's data key, everywhere FormLogic reads it (a .env's in $_ENV comes first); tearDown takes it away. */
+    private function dataKey(string $key): void
+    {
+        putenv(DataEncryption::KEY_ENV . '=' . $key);
+        $_ENV[DataEncryption::KEY_ENV] = $_SERVER[DataEncryption::KEY_ENV] = $key;
     }
 
     private function worker(?DataEncryption $encryption = null, ?AppAiUpstream $env = null): AppAiWorker
@@ -472,7 +479,7 @@ JS;
     {
         $this->boot();
         $app = $this->app();
-        putenv(DataEncryption::KEY_ENV . '=' . DataEncryption::generateKey());
+        $this->dataKey(DataEncryption::generateKey());
         $id = $this->queue($app['id'], 'picture');
         $this->worker(DataEncryption::fromEnvironment())->tick();
         $channel = (string) $this->job($id)['channel'];
@@ -483,16 +490,48 @@ JS;
         $this->assertSame('done', $this->job($id)['status']);
     }
 
+    /**
+     * A data key that is set and cannot be used: the turn's key could only be kept in the clear, so nothing is sent (as
+     * DataEncryption has it, an operator who asked for encryption never quietly gets plain text). The job waits, and
+     * goes once the key is put right.
+     */
+    public function testNothingIsSentWhileTheSitesDataKeyCannotBeUsed(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $this->dataKey('not-a-key');
+        $id = $this->queue($app['id'], 'picture');
+        $this->assertFalse(DataEncryption::fromEnvironment()->usable());
+        $this->worker(DataEncryption::fromEnvironment())->tick();
+        $job = $this->job($id);
+        $this->assertSame(['queued', null, null], [$job['status'], $job['relay_id'], $job['channel']], 'not sent');
+        $this->assertSame([], $this->relay->listPending($this->adminId, null, 10, 'inst-site-ai'), 'nothing reached the lane');
+        $this->assertGreaterThan(time() + 30, strtotime((string) $job['next_attempt_at'] . ' UTC'), 'and it is asked again later, not on every pass');
+
+        $this->dataKey(DataEncryption::generateKey());
+        self::$pdo->prepare('UPDATE app_ai_jobs SET next_attempt_at = NULL WHERE id = ?')->execute([$id]);
+        $this->worker(DataEncryption::fromEnvironment())->tick();
+        $job = $this->job($id);
+        $this->assertSame('running', $job['status'], 'sent once the key can be used');
+        $this->assertTrue(DataEncryption::isSealed((string) $job['channel']));
+    }
+
     public function testAnOfflineComputerKeepsJobsWaitingUntilTheyRunOut(): void
     {
         $this->boot();
         $app = $this->app();
-        self::$pdo->prepare('UPDATE desktop_connections SET last_seen_at = NOW() - INTERVAL 10 MINUTE WHERE owner_user_id = ?')->execute([$this->adminId]);
-        $id = $this->queue($app['id'], 'picture');
+        // Linked and heartbeating, but its AI lane unasked for ten minutes: what answers the app's requests is off.
+        // (The heartbeat alone, what "online" read before, would have had the job sent to a lane nobody reads.)
+        self::$pdo->prepare('UPDATE desktop_connections SET last_seen_at = NOW(), ai_polled_at = NOW() - INTERVAL 10 MINUTE WHERE owner_user_id = ?')->execute([$this->adminId]);
+        $visitor = bin2hex(random_bytes(16));
+        $id = $this->queue($app['id'], 'picture', [], $visitor);
         $worker = $this->worker();
         $this->assertSame(0, $worker->tick()['sent']);
         $this->assertSame('queued', $this->job($id)['status']);
         $this->assertSame('offline', $this->ai->ownerView($app)['status']['state']);
+        // and the page is told why its job waits (AppAiService::heardFrom)
+        $jobs = $this->ai->forRequest($app, ['kinds' => ['picture', 'chat'], 'uses' => ['pictures', 'chat']], ['kind' => 'visitor', 'id' => $visitor], '203.0.113.9')['context']['jobs'];
+        $this->assertSame('computer_offline', $jobs[$this->job($id)['app_job_id']]['waiting'] ?? null);
         self::$pdo->prepare('UPDATE app_ai_jobs SET created_at = ? WHERE id = ?')->execute([AppAiService::stamp(time() - AppAiWorker::QUEUED_EXPIRY - 60), $id]);
         $this->assertSame(1, $worker->tick()['expired']);
         $job = $this->job($id);
@@ -757,6 +796,30 @@ JS;
         self::$pdo->prepare('DELETE FROM app_ai_jobs WHERE app_id IS NULL AND requester_id = ?')->execute([$this->adminId]);
     }
 
+    /**
+     * One the app cancelled once it was sent, while its turn still waited on the lane (behind other turns, or for a
+     * computer that stopped asking): no computer took it, the AI was asked nothing, and its use is given back. (One a
+     * computer took is spent: the test after this one.)
+     */
+    public function testAJobCancelledBeforeAnyComputerTookItsTurnIsGivenBack(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $visitor = bin2hex(random_bytes(16));
+        $id = $this->queue($app['id'], 'picture', [], $visitor);
+        $worker = $this->worker();
+        $this->assertSame(1, $worker->tick()['sent']);
+        $this->assertSame(1, $this->used($app['id']));
+        $binding = AppAiService::binding(['kind' => 'visitor', 'id' => $visitor], self::IP_KEY);
+        $cancel = ['record' => ['id' => $this->job($id)['app_job_id'], 'status' => 'cancelled']];
+        $this->assertSame(1, $this->ai->capture($app['id'], bin2hex(random_bytes(16)), 'app.record.updated.ai_jobs', $cancel, [$binding], null));
+        $this->assertSame(AppAiService::CANCELLED_SENT, $this->job($id)['code'], 'sent: whether a computer took it is not known yet');
+        $worker->tick();
+        $job = $this->job($id);
+        $this->assertSame(['cancelled', 'cancelled', 1, 0], [$job['status'], $job['code'], (int) $job['refunded'], $this->used($app['id'])]);
+        $this->assertNull($job['relay_id'], 'let go on the lane');
+    }
+
     /** Cancel (contract §0.11): a job being drawn is let go, its late picture thrown away, and the app told once. */
     public function testACancelledJobIsLetGoItsLateResultThrownAwayAndTheAppToldOnce(): void
     {
@@ -770,8 +833,10 @@ JS;
         $binding = AppAiService::binding(['kind' => 'visitor', 'id' => $visitor], self::IP_KEY);
         $cancel = ['record' => ['id' => $this->job($id)['app_job_id'], 'status' => 'cancelled']];
         $this->assertSame(1, $this->ai->capture($app['id'], bin2hex(random_bytes(16)), 'app.record.updated.ai_jobs', $cancel, [$binding], null));
-        $this->assertSame(['cancelled', 1], [$this->job($id)['status'], (int) $this->job($id)['refunded']]);
+        // Cancelled once it had gone to the AI: the use was spent, and stays counted.
+        $this->assertSame(['cancelled', AppAiService::CANCELLED_SENT, 0, 1], [$this->job($id)['status'], $this->job($id)['code'], (int) $this->job($id)['refunded'], $this->used($app['id'])]);
         $this->assertSame(0, $this->ai->capture($app['id'], bin2hex(random_bytes(16)), 'app.record.updated.ai_jobs', $cancel, [$binding], null), 'once');
+        $this->assertFalse($this->ai->refund($id), 'and nothing gives it back later');
 
         $this->oaiySends($relayId, $pair, [0 => self::pictureFrame(self::jpeg(512, 512))]);
         $tick = $worker->tick();
@@ -830,7 +895,7 @@ JS;
         self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'Owner')")->execute([$owner, $owner . '@test.local']);
         $this->owners[] = $owner;
         $connection = bin2hex(random_bytes(16));
-        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Home PC', 'inst-own', NOW(), ?)")
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, ai_polled_at, e2e_public_key) VALUES (?, ?, 'Home PC', 'inst-own', NOW(), NOW(), ?)")
             ->execute([$connection, $owner, self::$vectors['desktop']['publicKey']]);
         $app = $this->app($owner);
         self::$pdo->prepare("UPDATE app_ai_settings SET mode = 'own', own_connection_id = ?, own_instance_id = 'inst-own', own_public_key = ?, own_provider_id = 'oaiy-engine', own_picture_model = 'flux-3-image-klein', own_device_name = 'Home PC' WHERE app_id = ?")
@@ -1102,6 +1167,189 @@ JS;
         $this->assertNotNull($this->job($b1)['started_at'], 'the other app goes before this app\'s second');
         $this->assertNull($this->job($a2)['started_at']);
         sleep(2);
+    }
+
+    // ------------------------------------------------------------------ a worker that cannot be stopped by one job
+
+    /**
+     * A job a worker was sending when it died (as one did opening a picture it could not hold) is
+     * failed by the next worker, as FormLogic's own failure, and its use given back. Before, it was
+     * put back in the queue and sent first, and killed every worker after.
+     */
+    public function testAJobAWorkerDiedSendingIsFailedAndNotSentAgain(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $id = $this->queue($app['id'], 'picture');
+        self::$pdo->prepare("UPDATE app_ai_jobs SET status = 'sending' WHERE id = ?")->execute([$id]);
+        $tick = $this->worker()->tick();
+        $this->assertSame([0, 1], [$tick['sent'], $tick['delivered']]);
+        $job = $this->job($id);
+        $this->assertSame(['failed', 'engine_failed', 1], [$job['status'], $job['code'], (int) $job['refunded']]);
+        $this->assertSame(0, $this->used($app['id']), 'its use given back');
+        $this->assertSame([], $this->relay->listPending($this->adminId, null, 10, 'inst-site-ai'), 'nothing went to the computer');
+        $this->assertSame([['status' => 'failed', 'code' => 'engine_failed']], $this->appRows($app['id'], 'SELECT status, code FROM deliveries'));
+        $this->assertSame(0, $this->failuresInRow($app['id']), 'the app\'s AI never saw it');
+    }
+
+    /**
+     * A job its app cancels while the worker is sending it stays cancelled, whatever the send then
+     * comes to, and its use is given back, since it never reached the AI. Before, a computer that
+     * was full put it back in the queue (it was sent later and delivered as done, the app's cancel
+     * lost), and a cancel during sending was never given back.
+     */
+    public function testAJobCancelledWhileItIsBeingSentStaysCancelledAndIsGivenBack(): void
+    {
+        foreach (['the computer is full' => true, 'the computer takes it' => false] as $case => $full) {
+            $this->boot();
+            $app = $this->app();
+            $id = $this->queue($app['id'], 'picture');
+            $this->assertSame(1, $this->used($app['id']), $case);
+            // The app's cancel lands as the turn is queued: as AppAiService::cancel leaves a job that was being sent.
+            $cancel = static function () use ($id): void {
+                self::$pdo->prepare("UPDATE app_ai_jobs SET status = 'cancelled', code = ?, message = 'The app cancelled the job.', finished_at = UTC_TIMESTAMP(3), next_attempt_at = UTC_TIMESTAMP(3) WHERE id = ? AND status = 'sending'")
+                    ->execute([AppAiService::CANCELLED_SENT, $id]);
+            };
+            $relay = new class (self::$mysql, $cancel, $full) extends DesktopAiRelayService {
+                public function __construct(MySQLConnection $mysql, private \Closure $before, private bool $full) { parent::__construct($mysql); }
+                public function enqueue(string $ownerUserId, string $requestingUserId, array $data, ?string $source = null, ?int $laneCap = null): array
+                {
+                    ($this->before)();
+                    if ($this->full) throw new \RuntimeException('queue_full_lane');
+                    return parent::enqueue($ownerUserId, $requestingUserId, $data, $source, $laneCap);
+                }
+            };
+            $this->desktop = new SiteDesktopAi($relay, $this->computers);
+            $this->worker()->tick();
+            $job = $this->job($id);
+            $this->assertSame(['cancelled', 'cancelled', 1], [$job['status'], $job['code'], (int) $job['refunded']], $case);
+            $this->assertNull($job['started_at'], $case);
+            $this->assertSame(0, $this->used($app['id']), "{$case}: its use given back");
+            $this->assertSame([], $this->relay->listPending($this->adminId, null, 10, 'inst-site-ai'), "{$case}: nothing waits for the computer");
+            // A later pass does not send it.
+            $this->worker()->tick();
+            $this->assertSame('cancelled', $this->job($id)['status'], $case);
+        }
+    }
+
+    /**
+     * A job claimed for sending a moment ago is another worker's to finish (a cron run beside a
+     * `--watch` worker): left alone. One claimed longer ago than a send takes was a dead worker's:
+     * failed and given back. One a dead worker's app cancelled while it was being sent is given back.
+     */
+    public function testOnlyAJobADeadWorkerLeftIsFailedAndOneCancelledMeanwhileIsGivenBack(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $live = $this->queue($app['id'], 'picture');
+        $dead = $this->queue($app['id'], 'picture');
+        $cancelled = $this->queue($app['id'], 'picture');
+        $claimed = static fn(string $id, int $secondsAgo) => self::$pdo->prepare("UPDATE app_ai_jobs SET status = 'sending', next_attempt_at = ? WHERE id = ?")
+            ->execute([AppAiService::stamp(microtime(true) - $secondsAgo), $id]);
+        $claimed($live, 5);
+        $claimed($dead, AppAiWorker::SENDING_STALE + 30);
+        self::$pdo->prepare("UPDATE app_ai_jobs SET status = 'cancelled', code = ?, finished_at = ?, next_attempt_at = NULL WHERE id = ?")
+            ->execute([AppAiService::CANCELLED_SENT, AppAiService::stamp(microtime(true) - AppAiWorker::SENDING_STALE - 30), $cancelled]);
+        $this->assertSame(3, $this->used($app['id']));
+        $this->worker()->tick();
+        $this->assertSame('sending', $this->job($live)['status'], 'another worker is sending it');
+        $this->assertSame(['failed', 'engine_failed', 1], [$this->job($dead)['status'], $this->job($dead)['code'], (int) $this->job($dead)['refunded']]);
+        $this->assertSame(['cancelled', 'cancelled', 1], [$this->job($cancelled)['status'], $this->job($cancelled)['code'], (int) $this->job($cancelled)['refunded']]);
+        $this->assertSame(1, $this->used($app['id']), 'the live one\'s use stands; the other two are given back');
+    }
+
+    /** An edit's picture far larger than its file is refused as it is sent, and the worker goes on. */
+    public function testAnEditWhosePictureIsTooLargeToOpenIsRefusedAndTheWorkerGoesOn(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $chunk = static fn(string $type, string $data): string => pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));
+        $zlib = deflate_init(ZLIB_ENCODING_DEFLATE, ['level' => 9]);
+        $idat = '';
+        for ($y = 0; $y < 6000; $y++) $idat .= deflate_add($zlib, "\0" . str_repeat("\x10\x20\x30", 6000), ZLIB_NO_FLUSH);
+        $idat .= deflate_add($zlib, '', ZLIB_FINISH);
+        $huge = 'data:image/png;base64,' . base64_encode("\x89PNG\r\n\x1a\n" . $chunk('IHDR', pack('NNCCCCC', 6000, 6000, 8, 2, 0, 0, 0)) . $chunk('IDAT', $idat) . $chunk('IEND', ''));
+        $edit = $this->queue($app['id'], 'edit', ['reference' => $huge]);
+        $after = $this->queue($app['id'], 'chat');
+        $tick = $this->worker()->tick();
+        $this->assertSame(['failed', 'too_large'], [$this->job($edit)['status'], $this->job($edit)['code']]);
+        $this->assertSame(1, $tick['sent']);
+        $this->assertSame('running', $this->job($after)['status'], 'the next job is sent in the same pass');
+    }
+
+    /**
+     * Each pass looks at each app's oldest few jobs, not the site's oldest: jobs waiting on one
+     * owner's computer that is off cannot fill the window. Before, a pass read the site's 500 oldest,
+     * and every other app's jobs waited behind them.
+     */
+    public function testAnotherAppsJobIsSentHoweverManyWaitOnAComputerThatIsOff(): void
+    {
+        $this->boot();
+        $owner = 'u-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'Owner')")->execute([$owner, $owner . '@test.local']);
+        $this->owners[] = $owner;
+        $connection = bin2hex(random_bytes(16));
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, ai_polled_at, e2e_public_key) VALUES (?, ?, 'Home PC', 'inst-off', NOW() - INTERVAL 1 HOUR, NOW() - INTERVAL 1 HOUR, ?)")
+            ->execute([$connection, $owner, self::$vectors['desktop']['publicKey']]);
+        $stuck = $this->app($owner);
+        self::$pdo->prepare("UPDATE app_ai_settings SET mode = 'own', own_connection_id = ?, own_instance_id = 'inst-off', own_public_key = ?, own_provider_id = 'oaiy-engine', own_device_name = 'Home PC' WHERE app_id = ?")
+            ->execute([$connection, self::$vectors['desktop']['publicKey'], $stuck['id']]);
+        $prompt = json_encode([['role' => 'user', 'content' => 'Say hello.']]);
+        for ($batch = 0; $batch < 6; $batch++) {
+            $rows = [];
+            $values = [];
+            for ($i = 0; $i < 100; $i++) {
+                $rows[] = '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+                array_push($values, bin2hex(random_bytes(16)), $stuck['id'], bin2hex(random_bytes(16)), 'old-' . $batch . '-' . $i, 'visitor', bin2hex(random_bytes(16)), self::IP_KEY,
+                    'chat', 'queued', 'own-oaiy', $connection, $prompt, AppAiService::stamp(time() - 1200 + $batch * 100 + $i));
+            }
+            self::$pdo->prepare('INSERT INTO app_ai_jobs (id, app_id, event_id, app_job_id, requester_kind, requester_id, ip_key, kind, status, source, target, prompt, created_at) VALUES ' . implode(', ', $rows))->execute($values);
+        }
+        $healthy = $this->app();
+        $id = $this->queue($healthy['id'], 'chat');
+        $this->worker()->tick();
+        $this->assertSame('running', $this->job($id)['status'], 'sent though 600 jobs waited before it');
+        $asked = self::$pdo->prepare("SELECT COUNT(*) FROM app_ai_jobs WHERE app_id = ? AND status = 'queued' AND next_attempt_at > UTC_TIMESTAMP(3)");
+        $asked->execute([$stuck['id']]);
+        $this->assertSame(1, (int) $asked->fetchColumn(), 'the computer that is off was asked about one of its jobs, which waits a moment before it is asked again');
+    }
+
+    /** A computer that is off is asked about a job again in a moment, not on every pass. */
+    public function testAJobForAComputerThatIsOffWaitsAMomentBeforeItIsTriedAgain(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        self::$pdo->prepare('UPDATE desktop_connections SET last_seen_at = NOW() - INTERVAL 10 MINUTE, ai_polled_at = NOW() - INTERVAL 10 MINUTE WHERE owner_user_id = ?')->execute([$this->adminId]);
+        $id = $this->queue($app['id'], 'picture');
+        $this->assertSame(0, $this->worker()->tick()['sent']);
+        $job = $this->job($id);
+        $this->assertSame('queued', $job['status']);
+        $this->assertGreaterThan(gmdate('Y-m-d H:i:s', time() + AppAiWorker::OFFLINE_RETRY - 3), (string) $job['next_attempt_at']);
+    }
+
+    /** A job no computer took in time, twice, fails without counting against its app's AI: a busy computer is not a failing AI. */
+    public function testAJobNoComputerTookDoesNotRestItsAppsAi(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $id = $this->queue($app['id'], 'picture');
+        $worker = $this->worker();
+        for ($send = 0; $send < AppAiWorker::MAX_ATTEMPTS; $send++) {
+            $worker->tick();
+            self::$pdo->prepare("UPDATE desktop_ai_requests SET expires_at = DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE owner_user_id = ? AND status = 'pending'")->execute([$this->adminId]);
+            $this->relay->expireStale($this->adminId);
+            $worker->tick();
+        }
+        $job = $this->job($id);
+        $this->assertSame(['failed', 'timeout', 1], [$job['status'], $job['code'], (int) $job['refunded']]);
+        $this->assertSame(0, $this->failuresInRow($app['id']));
+    }
+
+    private function failuresInRow(string $appId): int
+    {
+        $statement = self::$pdo->prepare('SELECT failures_in_row FROM app_ai_settings WHERE app_id = ?');
+        $statement->execute([$appId]);
+        return (int) $statement->fetchColumn();
     }
 
     private function engines(): RuntimeEngineService

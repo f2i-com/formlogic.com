@@ -113,12 +113,17 @@ class DesktopAiRelayService
      *
      * @return array{request: array, created: bool}
      * @throws \InvalidArgumentException on invalid payload / foreign idempotency-key reuse
-     * @throws \RuntimeException 'queue_full_user'|'queue_full_desktop' on a tripped lane cap
+     * @throws \RuntimeException 'queue_full_user'|'queue_full_desktop'|'queue_full_lane' on a tripped lane cap
      *
      * $source: SOURCE_APP_AI for App AI's worker, which is not held to the requester's own cap; null
      * for everything else. A separate argument, never read from $data, which a browser writes.
+     *
+     * $laneCap: how many turns the target may have waiting or running in this turn's lane (the
+     * picture lane, or the other), for a caller that keeps a smaller cap of its own (SiteDesktopAi).
+     * It is counted with the others, under the same lock, so two turns queued at once cannot both
+     * take its last place.
      */
-    public function enqueue(string $ownerUserId, string $requestingUserId, array $data, ?string $source = null): array
+    public function enqueue(string $ownerUserId, string $requestingUserId, array $data, ?string $source = null, ?int $laneCap = null): array
     {
         if ($source !== null && $source !== self::SOURCE_APP_AI) {
             throw new \InvalidArgumentException('Unknown request source');
@@ -188,6 +193,9 @@ class DesktopAiRelayService
             }
             if ($this->countInFlightForTarget($ownerUserId, $targetInstanceId) >= self::MAX_IN_FLIGHT_PER_TARGET) {
                 throw new \RuntimeException('queue_full_desktop');
+            }
+            if ($laneCap !== null && $this->countInFlightForTarget($ownerUserId, $targetInstanceId, $kind === self::PICTURE_KIND) >= $laneCap) {
+                throw new \RuntimeException('queue_full_lane');
             }
 
             $stmt = $this->mysql->prepare("
@@ -270,6 +278,27 @@ class DesktopAiRelayService
     }
 
     /**
+     * Where a request stands, for a server-side reader that waits on it without holding a worker
+     * (SiteDesktopAi::collect): its status, whether a computer ever took it (`taken`: one let go
+     * unclaimed is a busy or absent computer, not a failing one), and its age in seconds, by the
+     * database's own clock, never PHP's. Also its `kind` and the public key it was sealed with
+     * (`ephPub`, base64), by which a reader can tell it is the turn it asked for. Null when it is not
+     * $ownerUserId's.
+     *
+     * @return array{status: string, taken: bool, age: int, kind: string, ephPub: string}|null
+     */
+    public function progress(string $id, string $ownerUserId): ?array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT status, claimed_at IS NOT NULL AS taken, TIMESTAMPDIFF(SECOND, created_at, NOW()) AS age, kind, eph_pub
+            FROM desktop_ai_requests WHERE id = :id AND owner_user_id = :o
+        ");
+        $stmt->execute(['id' => $id, 'o' => $ownerUserId]);
+        $row = $stmt->fetch();
+        return $row ? ['status' => (string) $row['status'], 'taken' => (bool) $row['taken'], 'age' => (int) $row['age'], 'kind' => (string) $row['kind'], 'ephPub' => (string) $row['eph_pub']] : null;
+    }
+
+    /**
      * Live queue position (plan §5.2: computed at read, never stored): the number of pending,
      * non-expired requests AHEAD of this one for the same owner + target, in the same FIFO
      * order listPending serves (created_at, id). 0 for a non-pending request; null if unknown.
@@ -349,9 +378,36 @@ class DesktopAiRelayService
         return array_map([$this, 'format'], $stmt->fetchAll());
     }
 
+    /** Seconds within which a lane poll does not write its time again: a computer polls about every 25. */
+    public const POLLED_EVERY_SECONDS = 20;
+
     /**
-     * Long-poll: return pending requests as soon as any exist, or after up to $waitMs (capped
-     * at MAX_WAIT_MS). $waitMs=0 returns immediately (the default the tests exercise).
+     * The computer asked its AI lane for work: noted on its connection (`ai_polled_at`), which is what
+     * App AI, the site's AI and camera checks call "online" (SiteAiDesktopSettings::online, AppAiService),
+     * rather than its heartbeat, which a computer sends whether or not anything on it takes AI requests.
+     * Written at most every POLLED_EVERY_SECONDS; never fails the poll.
+     */
+    public function notePolled(string $ownerUserId, string $instanceId): void
+    {
+        try {
+            $this->mysql->prepare(
+                'UPDATE desktop_connections SET ai_polled_at = NOW() WHERE owner_user_id = ? AND desktop_instance_id = ? '
+                . 'AND (ai_polled_at IS NULL OR ai_polled_at < (NOW() - INTERVAL ' . self::POLLED_EVERY_SECONDS . ' SECOND))'
+            )->execute([$ownerUserId, $instanceId]);
+        } catch (\Throwable $e) {
+            error_log('Desktop AI lane: when the computer asked for work was not noted: ' . get_class($e) . ' ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Long-poll: return pending requests as soon as one of them could be claimed, or after up to
+     * $waitMs (capped at MAX_WAIT_MS) with whatever is pending. $waitMs=0 returns immediately (the
+     * default the tests exercise).
+     *
+     * A request waiting for a lane its computer is busy in (claimable) is not a reason to answer at
+     * once: the computer could only be refused it (lane_busy), and would poll again within a couple
+     * of seconds, for as long as its turn runs. It is held instead, and answered the moment the lane
+     * comes free.
      *
      * Every poll sweeps once as it starts, whatever its wait, and a held one again only when
      * SWEEP_INTERVAL_SECONDS have passed — not on every round (see that constant).
@@ -359,6 +415,7 @@ class DesktopAiRelayService
      */
     public function pollPending(string $ownerUserId, ?string $sinceId, int $waitMs, int $limit = 50, ?string $instanceId = null): array
     {
+        if ($instanceId !== null) $this->notePolled($ownerUserId, $instanceId);
         $waitMs = LongPollBudget::milliseconds($waitMs, self::MAX_WAIT_MS);
         $deadline = microtime(true) + ($waitMs / 1000);
         $sweepDue = 0.0;
@@ -368,7 +425,7 @@ class DesktopAiRelayService
                 $sweepDue = microtime(true) + $this->sweepIntervalSeconds;
             }
             $pending = $this->readPending($ownerUserId, $sinceId, $limit, $instanceId);
-            if ($pending !== [] || $waitMs === 0) {
+            if ($waitMs === 0 || ($pending !== [] && $this->claimable($ownerUserId, $pending, $instanceId))) {
                 return $pending;
             }
             if (microtime(true) >= $deadline) {
@@ -377,6 +434,42 @@ class DesktopAiRelayService
             usleep(self::POLL_INTERVAL_MS * 1000);
         } while (microtime(true) < $deadline);
         return $this->readPending($ownerUserId, $sinceId, $limit, $instanceId);
+    }
+
+    /**
+     * Whether $instanceId could claim any of $pending now, by claim()'s own rule: no claimed or
+     * streaming request holds that request's lane on its target, unless it is one this computer
+     * left silent long enough to be let go as it claims the next (releaseAbandoned). Should the
+     * check itself fail, the answer is yes, and the poll answers as it did before it held.
+     *
+     * @param array[] $pending
+     */
+    private function claimable(string $ownerUserId, array $pending, ?string $instanceId): bool
+    {
+        $ids = array_values(array_map(static fn (array $row): string => (string) $row['requestId'], $pending));
+        $marks = implode(',', array_fill(0, count($ids), '?'));
+        // int class constants, safe to interpolate
+        $picture = self::ABANDONED_PICTURE_SECONDS;
+        $other = self::ABANDONED_SECONDS;
+        try {
+            $stmt = $this->mysql->prepare("
+                SELECT 1 FROM desktop_ai_requests r
+                WHERE r.owner_user_id = ? AND r.id IN ({$marks})
+                  AND NOT EXISTS (
+                      SELECT 1 FROM desktop_ai_requests s
+                      WHERE s.owner_user_id = r.owner_user_id AND s.status IN ('claimed', 'streaming')
+                        AND s.target_instance_id <=> r.target_instance_id
+                        AND (s.kind = 'image') = (r.kind = 'image')
+                        AND NOT (s.claimed_by <=> ? AND s.claimed_at < (NOW() - INTERVAL IF(s.kind = 'image', {$picture}, {$other}) SECOND))
+                  )
+                LIMIT 1
+            ");
+            $stmt->execute([$ownerUserId, ...$ids, $instanceId]);
+            return $stmt->fetchColumn() !== false;
+        } catch (\PDOException $e) {
+            error_log('Desktop AI lane: whether a waiting request could be claimed was not read, so the poll answers at once: ' . $e->getMessage());
+            return true;
+        }
     }
 
     /**
@@ -396,6 +489,8 @@ class DesktopAiRelayService
                 throw new \InvalidArgumentException('instanceId must be a string ≤ ' . self::MAX_INSTANCE_ID . ' chars');
             }
             $instanceId = $data['instanceId'];
+            // A computer taking work is asking its lane for it (notePolled), as a poll is.
+            $this->notePolled($ownerUserId, $instanceId);
         }
 
         // Only a still-pending, non-expired request can be claimed — and only by its TARGET
@@ -486,6 +581,10 @@ class DesktopAiRelayService
         if ($envelopeBytes === false || $envelopeBytes === '' || strlen($envelopeBytes) > self::MAX_FRAME_BYTES) {
             throw new \InvalidArgumentException('envelope must be a base64 sealed frame of at most ' . self::MAX_FRAME_BYTES . ' bytes');
         }
+        // A computer writing a turn's answer is at work on its lane (notePolled): one that does not poll while it
+        // writes (OAIY before 0.1.14 answered inside its poll loop) stays online through a long answer. Before the
+        // frame's own transaction, as a statement of its own.
+        if ($instanceId !== null && $instanceId !== '') $this->notePolled($ownerUserId, $instanceId);
 
         $this->mysql->beginTransaction();
         try {
@@ -616,10 +715,13 @@ class DesktopAiRelayService
 
     /**
      * Web-side read of OUT frames (the sealed reply stream) with seq > $since, oldest first.
-     * Requesting-user enforcement happens in the controller before this is called.
-     * @return array[] rows of {seq, envelope(base64)}
+     * Requesting-user enforcement happens in the controller before this is called. With
+     * $maxFrameBytes, a frame larger than that comes back with a null envelope, its bytes never
+     * read out of MySQL: a server-side reader (SiteDesktopAi) takes no frame larger than OAIY sends,
+     * where the lane keeps up to MAX_FRAME_BYTES for browsers.
+     * @return array[] rows of {seq, envelope(base64)|null}
      */
-    public function fetchOutput(string $id, string $ownerUserId, int $since, int $limit = 200): array
+    public function fetchOutput(string $id, string $ownerUserId, int $since, int $limit = 200, ?int $maxFrameBytes = null): array
     {
         // The owner scope keeps a guessed id from reading another tenant's stream even if a
         // controller check is ever lost; frames carry no owner column of their own.
@@ -628,7 +730,7 @@ class DesktopAiRelayService
         if (!$stmt->fetchColumn()) {
             return [];
         }
-        return $this->fetchFrames($id, 'out', $since, $limit);
+        return $this->fetchFrames($id, 'out', $since, $limit, $maxFrameBytes);
     }
 
     /**
@@ -897,19 +999,29 @@ class DesktopAiRelayService
      */
     public function cancel(string $id, string $ownerUserId): bool
     {
+        return $this->cancelSaying($id, $ownerUserId) !== null;
+    }
+
+    /**
+     * cancel(), saying what the request was doing as it was let go: 'pending' (no computer had taken
+     * it, so nothing was asked of the AI), 'claimed' or 'streaming' (one was working on it), or null
+     * (it was not open). Read under the row's lock: a claim, one atomic UPDATE of a pending row, waits
+     * for it, and then finds the row expired, so a request said 'pending' here was never taken.
+     */
+    public function cancelSaying(string $id, string $ownerUserId): ?string
+    {
         $this->mysql->beginTransaction();
         try {
-            $stmt = $this->mysql->prepare("
-                UPDATE desktop_ai_requests SET status = 'expired', envelope = NULL, finished_at = NOW()
-                WHERE id = :id AND owner_user_id = :o AND status IN ('pending', 'claimed', 'streaming')
-            ");
-            $stmt->execute(['id' => $id, 'o' => $ownerUserId]);
-            $open = $stmt->rowCount() === 1;
-            if ($open) {
+            $read = $this->mysql->prepare('SELECT status FROM desktop_ai_requests WHERE id = :id AND owner_user_id = :o FOR UPDATE');
+            $read->execute(['id' => $id, 'o' => $ownerUserId]);
+            $was = $read->fetchColumn();
+            $was = is_string($was) && in_array($was, ['pending', 'claimed', 'streaming'], true) ? $was : null;
+            if ($was !== null) {
+                $this->mysql->prepare("UPDATE desktop_ai_requests SET status = 'expired', envelope = NULL, finished_at = NOW() WHERE id = :id")->execute(['id' => $id]);
                 $this->mysql->prepare('DELETE FROM desktop_ai_frames WHERE request_id = :id')->execute(['id' => $id]);
             }
             $this->mysql->commit();
-            return $open;
+            return $was;
         } catch (\Throwable $e) {
             if ($this->mysql->inTransaction()) {
                 $this->mysql->rollBack();
@@ -941,12 +1053,14 @@ class DesktopAiRelayService
         return (int) $stmt->fetchColumn();
     }
 
-    /** @return array[] rows of {seq, envelope(base64)} */
-    private function fetchFrames(string $requestId, string $direction, int $since, int $limit = 200): array
+    /** @return array[] rows of {seq, envelope(base64)|null}: null for a frame past $maxFrameBytes */
+    private function fetchFrames(string $requestId, string $direction, int $since, int $limit = 200, ?int $maxFrameBytes = null): array
     {
         $limit = max(1, min(500, $limit));
+        // An int, safe to interpolate: a frame past it is named by its seq and never read.
+        $envelope = $maxFrameBytes === null ? 'envelope' : 'CASE WHEN LENGTH(envelope) <= ' . max(1, $maxFrameBytes) . ' THEN envelope END AS envelope';
         $stmt = $this->mysql->prepare("
-            SELECT seq, envelope FROM desktop_ai_frames
+            SELECT seq, {$envelope} FROM desktop_ai_frames
             WHERE request_id = :id AND direction = :dir AND seq > :since
             ORDER BY seq ASC LIMIT {$limit}
         ");
@@ -955,7 +1069,7 @@ class DesktopAiRelayService
         foreach ($stmt->fetchAll() as $row) {
             $frames[] = [
                 'seq' => (int) $row['seq'],
-                'envelope' => base64_encode((string) $row['envelope']),
+                'envelope' => $row['envelope'] === null ? null : base64_encode((string) $row['envelope']),
             ];
         }
         return $frames;

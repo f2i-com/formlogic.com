@@ -83,21 +83,21 @@ test('An administrator sets up AI for apps on their own computer, using only the
   await confirmIfAsked(page);
   await expect(step(page, 3)).toHaveAttribute('data-done', 'yes');
 
-  // 4. The picture model, from the computer's own list: FLUX 3 Klein is suggested, though not listed first.
+  // 4. The picture model, from the computer's own list: the first picture model it lists is suggested.
   const model = step(page, 4).getByLabel(/picture/i);
-  await expect(model).toHaveValue('flux-3-image-klein', { timeout: 30_000 });
+  await expect(model).toHaveValue('stub-image-xl', { timeout: 30_000 });
   await expect(model.locator('option')).toHaveText(['None: no pictures', 'Stub XL (stub-image-xl)', 'FLUX 3 Klein (flux-3-image-klein)']);
   await step(page, 4).getByRole('button', { name: 'Use this model' }).click();
   await confirmIfAsked(page);
   await expect(step(page, 4)).toHaveAttribute('data-done', 'yes');
-  await expect(summary).toHaveText(`Ready: apps can make pictures with flux-3-image-klein on ${COMPUTER}.`);
+  await expect(summary).toHaveText(`Ready: apps can make pictures with stub-image-xl on ${COMPUTER}.`);
 
   // 5. A real test picture, through the worker and the computer, then a test chat.
   await step(page, 5).getByRole('button', { name: 'Make a test picture' }).click();
   await confirmIfAsked(page);
   const result = step(page, 5).getByTestId('ai-test');
   await expect(result).toContainText('Test picture: It works', { timeout: 90_000 });
-  await expect(result).toContainText(/Made in \d+\.\d s · with flux-3-image-klein/);
+  await expect(result).toContainText(/Made in \d+\.\d s · with stub-image-xl/);
   const picture = result.getByRole('img', { name: 'The test picture' });
   await expect(picture).toBeVisible();
   expect(await picture.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
@@ -107,9 +107,9 @@ test('An administrator sets up AI for apps on their own computer, using only the
   await expect(result).toContainText('Hello from the stub computer.');
   // Opened again, the checklist still says the test worked.
   await page.reload();
-  await expect(summary).toHaveText(`Ready: apps can make pictures with flux-3-image-klein on ${COMPUTER}.`);
+  await expect(summary).toHaveText(`Ready: apps can make pictures with stub-image-xl on ${COMPUTER}.`);
   await expect(step(page, 5)).toHaveAttribute('data-done', 'yes');
-  await expect(page.getByTestId('ai-setup-last-test')).toContainText(/The last test worked at .+, made in \d+\.\d s with flux-3-image-klein\./);
+  await expect(page.getByTestId('ai-setup-last-test')).toContainText(/The last test worked at .+, made in \d+\.\d s with stub-image-xl\./);
 
   // An app that asks for AI, and has it off: its owner is told once, and led to its settings.
   const slug = `logo-maker-${Date.now()}`;

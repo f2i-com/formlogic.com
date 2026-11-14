@@ -7,7 +7,8 @@ import { Button } from '../ui/Button';
  * Connect an OAIY server (App AI contract §2): an always-on OAIY with no browser of its own links with
  * a one-time code. The person chooses what it may do (AI only, the default, or everything a linked
  * desktop can do), gets a code shown this once, runs one command on the server, and sees it linked.
- * From then on it is an ordinary linked computer.
+ * From then on it is an ordinary linked computer. Until a server uses the code, Cancel withdraws it,
+ * so nobody can link with it afterwards.
  */
 export function ConnectOaiyServer({ onLinked, compact = false }: { onLinked?: (connectionId: string) => void; compact?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -17,6 +18,7 @@ export function ConnectOaiyServer({ onLinked, compact = false }: { onLinked?: (c
   const [status, setStatus] = useState<DesktopLinkStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const linkedRef = useRef(onLinked);
@@ -53,6 +55,17 @@ export function ConnectOaiyServer({ onLinked, compact = false }: { onLinked?: (c
   const copy = async () => {
     if (!code) return;
     try { await navigator.clipboard.writeText(code.command); setCopied(true); } catch { setCopied(false); }
+  };
+  // Cancel while the code waits: withdrawn on the server, so it links nothing from now on.
+  const withdraw = async () => {
+    if (!code) return;
+    setWithdrawing(true); setError(null);
+    const result = await api.withdrawDesktopLinkCode(code.id);
+    setWithdrawing(false);
+    // Withdrawn now, or gone already (it ran out and was cleared): either way it links nothing.
+    if (result.data || result.status === 404) { setCode(null); setStatus(null); setOpen(false); return; }
+    // A server used it a moment ago: what it is doing is followed as before.
+    setError(result.error ?? 'The code could not be withdrawn.');
   };
 
   if (!open) {
@@ -105,7 +118,8 @@ export function ConnectOaiyServer({ onLinked, compact = false }: { onLinked?: (c
           <p className="select-all font-mono text-2xl tracking-widest" data-testid="oaiy-link-code">{code.code}</p>
           <p>On the server, run:</p>
           <div className="flex items-start gap-2">
-            <code className="block flex-1 select-all break-all rounded-lg bg-gray-100 px-3 py-2 dark:bg-slate-800">{code.command}</code>
+            {/* Broken between words where it can (the code stays whole on its line), anywhere only where a word cannot fit. */}
+            <code className="block min-w-0 flex-1 select-all rounded-lg bg-gray-100 px-3 py-2 [overflow-wrap:anywhere] dark:bg-slate-800">{code.command}</code>
             <Button size="sm" variant="outline" onClick={() => void copy()} aria-label="Copy the command">
               {copied ? <Check className="h-4 w-4" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
             </Button>
@@ -114,6 +128,7 @@ export function ConnectOaiyServer({ onLinked, compact = false }: { onLinked?: (c
             Waiting for the server… {left > 0 ? `The code is good for ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} more.` : ''}
             {' '}{code.scope === 'ai' ? 'It may answer AI requests only.' : 'It may do everything a linked desktop can.'}
           </p>
+          <Button size="sm" variant="outline" isLoading={withdrawing} onClick={() => void withdraw()}>Cancel</Button>
         </div>
       )}
       {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p>}

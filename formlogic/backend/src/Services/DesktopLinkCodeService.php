@@ -13,7 +13,7 @@ use FormLogic\Database\MySQLConnection;
  *
  * 1. A signed-in person chooses **Connect an OAIY server** and gets a code: twelve characters from an
  *    alphabet without look-alikes (about 59 bits), shown once, good for ten minutes and one use. Only
- *    its keyed hash is kept.
+ *    its keyed hash is kept. Until it is used they can withdraw it (withdraw).
  * 2. On the server: `oaiy-server link --code <code> --base-url <this site> [--name <device>]`.
  * 3. OAIY redeems it at POST /api/oauth/oaiy-link, which answers exactly what the browser link's
  *    token exchange answers (DesktopLinkIssuer), so OAIY writes the same link/account.json; from
@@ -26,6 +26,13 @@ use FormLogic\Database\MySQLConnection;
 final class DesktopLinkCodeService
 {
     public const CODE_SECONDS = 600;
+    /**
+     * How long a spent code may stay without its computer's key: making one takes a moment. A
+     * redeem that died in between (its PHP worker stopped) never finishes, and its page would wait
+     * for ever; past this the code reads as failed instead.
+     */
+    public const REDEEM_SECONDS = 60;
+    public const REDEEM_FAILED = 'FormLogic could not finish linking that server. Make a new code and try again.';
     /** Codes an account may have waiting at once. */
     public const MAX_OPEN = 3;
     public const SCOPES = ['ai' => ['connector:relay'], 'all' => McpOAuthService::DESKTOP_SCOPES];
@@ -91,10 +98,30 @@ final class DesktopLinkCodeService
             return $base + ['status' => 'linked', 'connectionId' => $row['connection_id'], 'deviceName' => (string) $linked['device_name']];
         }
         if ($row['failure'] !== null) return $base + ['status' => 'failed', 'message' => (string) $row['failure']];
-        // Spent, and the key being made this moment.
-        if ($row['redeemed_at'] !== null) return $base + ['status' => 'waiting'];
+        if ($row['redeemed_at'] !== null) {
+            // Spent, and the key being made this moment; or spent by a redeem that never finished.
+            $stalled = (int) strtotime($row['redeemed_at'] . ' UTC') < time() - self::REDEEM_SECONDS;
+            return $base + ($stalled ? ['status' => 'failed', 'message' => self::REDEEM_FAILED] : ['status' => 'waiting']);
+        }
         if ((string) $row['expires_at'] <= gmdate('Y-m-d H:i:s')) return $base + ['status' => 'expired', 'message' => 'That code has run out. Make a new one.'];
         return $base + ['status' => 'waiting'];
+    }
+
+    /**
+     * Withdraw $userId's code $id before it is used: the page's Cancel. Answers `withdrawn`; `used`
+     * when a server has spent it already (its link goes on, and is undone by unlinking the computer);
+     * or null for a code that is not $userId's or does not exist, answered alike.
+     */
+    public function withdraw(string $userId, string $id): ?string
+    {
+        $pdo = $this->mysql->getConnection();
+        // Whoever changes the row first has it, as in redeem: a withdrawn code cannot be spent after.
+        $delete = $pdo->prepare('DELETE FROM desktop_link_codes WHERE id = ? AND user_id = ? AND redeemed_at IS NULL');
+        $delete->execute([$id, $userId]);
+        if ($delete->rowCount() === 1) return 'withdrawn';
+        $found = $pdo->prepare('SELECT 1 FROM desktop_link_codes WHERE id = ? AND user_id = ?');
+        $found->execute([$id, $userId]);
+        return $found->fetchColumn() !== false ? 'used' : null;
     }
 
     /**
@@ -125,7 +152,7 @@ final class DesktopLinkCodeService
             $issued = $this->issuer->issue((string) $row['user_id'], $device ?? $row['device_name'], $scopes, self::RUNTIME, null, $row['scope'] !== 'all');
         } catch (\Throwable $e) {
             $full = str_starts_with($e->getMessage(), 'Maximum number of API keys');
-            $pdo->prepare('UPDATE desktop_link_codes SET failure = ? WHERE id = ?')->execute([$full ? self::NO_ROOM : 'FormLogic could not finish linking that server. Make a new code and try again.', $row['id']]);
+            $pdo->prepare('UPDATE desktop_link_codes SET failure = ? WHERE id = ?')->execute([$full ? self::NO_ROOM : self::REDEEM_FAILED, $row['id']]);
             throw $full ? new \RuntimeException('desktop_link_no_room', 0, $e) : $e;
         }
         $pdo->prepare('UPDATE desktop_link_codes SET connection_id = ? WHERE id = ?')->execute([$issued['connection']['id'], $row['id']]);

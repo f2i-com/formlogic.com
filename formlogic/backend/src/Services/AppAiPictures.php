@@ -22,9 +22,15 @@ final class AppAiPictures
 {
     public const MAX_DATA_URL = 1500000;
     public const MAX_SIDE = 1024;
-    /** What a picture may be before it is decoded: a side and a pixel count, so a decompression bomb is refused unopened. */
+    /**
+     * What a picture may be before it is decoded: a side and a pixel count, so a decompression bomb is
+     * refused unopened. 16 megapixels, as a photo an app's upload route takes (PhotoSanitizer): GD
+     * holds a decoded picture in memory at four bytes or more a pixel whatever its file weighs, so a
+     * flat 6,000 px square PNG of 117 KB needs about 144 MB, and past PHP's memory_limit the worker
+     * that opens it ends with a fatal error nothing can catch.
+     */
     public const MAX_SOURCE_SIDE = 8192;
-    public const MAX_SOURCE_PIXELS = 40000000;
+    public const MAX_SOURCE_PIXELS = 16000000;
     /** An edit's reference on the lane: OAIY takes 256 KiB decoded, and the whole sealed request 256 KiB. */
     public const MAX_REFERENCE_BYTES = 170000;
 
@@ -85,18 +91,35 @@ final class AppAiPictures
     }
 
     /**
+     * Why these bytes would be refused before anything is decoded, from their header alone: `not_a_picture`
+     * when they are not a PNG, JPEG or WebP, `too_large` past MAX_SOURCE_SIDE a side or MAX_SOURCE_PIXELS
+     * in all, else null. Needs no GD, so an edit's picture is checked as its job is taken.
+     */
+    public static function refusal(string $bytes): ?string
+    {
+        $info = @getimagesizefromstring($bytes);
+        if (!is_array($info) || !in_array($info[2] ?? null, [IMAGETYPE_PNG, IMAGETYPE_JPEG, IMAGETYPE_WEBP], true)) return 'not_a_picture';
+        [$width, $height] = [(int) $info[0], (int) $info[1]];
+        if ($width < 1 || $height < 1 || $width > self::MAX_SOURCE_SIDE || $height > self::MAX_SOURCE_SIDE || $width * $height > self::MAX_SOURCE_PIXELS) return 'too_large';
+        return null;
+    }
+
+    /**
      * Decode bytes into a GD image, refused unopened when they are not a PNG, JPEG or WebP of a sane
-     * size. Answers [image, IMAGETYPE_*].
+     * size (refusal), or when PHP will not make room to hold it decoded (`memory`). Answers
+     * [image, IMAGETYPE_*].
      *
      * @return array{0: \GdImage, 1: int}
      */
     private static function open(string $bytes): array
     {
         if (!self::available()) throw new \RuntimeException('no_gd');
-        $info = @getimagesizefromstring($bytes);
-        if (!is_array($info) || !in_array($info[2] ?? null, [IMAGETYPE_PNG, IMAGETYPE_JPEG, IMAGETYPE_WEBP], true)) throw new \RuntimeException('not_a_picture');
-        [$width, $height] = [(int) $info[0], (int) $info[1]];
-        if ($width < 1 || $height < 1 || $width > self::MAX_SOURCE_SIDE || $height > self::MAX_SOURCE_SIDE || $width * $height > self::MAX_SOURCE_PIXELS) throw new \RuntimeException('too_large');
+        if (($refused = self::refusal($bytes)) !== null) throw new \RuntimeException($refused);
+        $info = (array) getimagesizefromstring($bytes);
+        // GD counts the decoded pixels against memory_limit, and past it PHP ends the worker with a
+        // fatal error nothing catches. Room is asked for first, as PhotoSanitizer does, and a picture
+        // the server will not make room for is refused like any other it cannot read.
+        if (!NativeAppService::raiseMemoryFor((int) $info[0] * (int) $info[1] * 2)) throw new \RuntimeException('memory');
         $image = @imagecreatefromstring($bytes);
         if (!$image instanceof \GdImage) throw new \RuntimeException('not_a_picture');
         // EXIF orientation is a camera's; an AI's picture is drawn upright, so it is not read.

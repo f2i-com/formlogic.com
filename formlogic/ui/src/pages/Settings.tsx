@@ -247,6 +247,8 @@ export function Settings() {
   const [isRevokingDesktop, setIsRevokingDesktop] = useState(false);
   // "Online now" is a freshness window on when a computer was last heard from.
   const isDesktopOnline = (conn: DesktopConnection) => conn.lastSeenAt !== null && now - parseServerDate(conn.lastSeenAt).getTime() < 90_000;
+  // And whether it asked its AI lane for work as recently: what App AI calls online.
+  const isAnsweringAi = (conn: DesktopConnection) => !!conn.aiPolledAt && now - parseServerDate(conn.aiPolledAt).getTime() < 90_000;
 
   // Update form when user changes
   const [profileUser, setProfileUser] = useState(user);
@@ -815,6 +817,7 @@ export function Settings() {
                   <LinkedDesktopsList
                     connections={desktopConnections}
                     isOnline={isDesktopOnline}
+                    isAnsweringAi={isAnsweringAi}
                     onUnlink={(conn) => setRevokeDesktopTarget({ id: conn.id, name: conn.deviceName })}
                   />
                 )}

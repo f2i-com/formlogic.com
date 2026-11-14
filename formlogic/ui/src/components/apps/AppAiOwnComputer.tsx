@@ -30,7 +30,8 @@ export function AppAiOwnComputer({ appId, computers, current, wantsPictures, onC
   // The only computer there is needs no choosing.
   const connectionId = picked !== '' && computers.some((computer) => computer.connectionId === picked) ? picked : computers.length === 1 ? computers[0].connectionId : picked;
   const computer = computers.find((candidate) => candidate.connectionId === connectionId) ?? null;
-  const list = useModelList(computer?.online && wantsPictures ? connectionId : null, () => api.getAppAiModels(appId, connectionId, ENGINE));
+  // (the signal is aborted once the list is not wanted: another computer, a retry, the panel closed)
+  const list = useModelList(computer?.online && wantsPictures ? connectionId : null, (signal) => api.getAppAiModels(appId, connectionId, ENGINE, signal));
   const models = list.models ? list.models.filter((model) => model.type === 'image') : null;
   const saved = current && current.connectionId === connectionId ? current.pictureModel : null;
   const suggestion = models ? suggestedPictureModel(models) : null;

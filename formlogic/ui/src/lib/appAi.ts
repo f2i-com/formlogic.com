@@ -168,10 +168,12 @@ export interface AppAiAdminView { settings: AppAiSiteSettings; setup?: AppAiSetu
 /** A model as a computer lists it; `type` is `image` for a picture model, absent for a language model. */
 export interface AiModel { id: string; name: string; type?: string }
 
-/** The picture model to suggest from a computer's list: FLUX 3 Image Klein where it has it, else its first picture model. */
+/**
+ * The picture model to suggest from a computer's list: the first it lists as a picture model. No
+ * model is named here: the computer's own list, in its own order, decides.
+ */
 export function suggestedPictureModel(models: AiModel[]): string | null {
-  const pictures = models.filter((model) => model.type === 'image');
-  return (pictures.find((model) => model.id === 'flux-3-image-klein') ?? pictures[0])?.id ?? null;
+  return models.find((model) => model.type === 'image')?.id ?? null;
 }
 
 /** A time the server gave in UTC (`YYYY-MM-DD HH:MM:SS`), as a Date. */

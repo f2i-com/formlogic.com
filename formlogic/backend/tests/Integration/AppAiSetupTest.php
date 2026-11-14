@@ -126,7 +126,8 @@ final class AppAiSetupTest extends TestCase
     private function computer(string $name = 'Studio PC', bool $online = true): string
     {
         $id = bin2hex(random_bytes(16));
-        self::$pdo->prepare('INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, ?, ?, ' . ($online ? 'NOW()' : 'NOW() - INTERVAL 10 MINUTE') . ', ?)')
+        $when = $online ? 'NOW()' : 'NOW() - INTERVAL 10 MINUTE';
+        self::$pdo->prepare('INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, ai_polled_at, e2e_public_key) VALUES (?, ?, ?, ?, ' . $when . ', ' . $when . ', ?)')
             ->execute([$id, $this->adminId, $name, 'inst-' . bin2hex(random_bytes(4)), base64_encode(random_bytes(32))]);
         return $id;
     }
@@ -174,7 +175,13 @@ final class AppAiSetupTest extends TestCase
         $chosen = $this->checklist();
         $this->assertSame(['computer', $connection, 'Studio PC', 'oaiy-engine', true, ['picture', 'chat'], true],
             [$chosen['source'], $chosen['computer']['connectionId'], $chosen['computer']['deviceName'], $chosen['computer']['providerId'], $chosen['computer']['online'], $chosen['kinds'], $chosen['ready']]);
-        self::$pdo->prepare('UPDATE desktop_connections SET last_seen_at = NOW() - INTERVAL 10 MINUTE WHERE id = ?')->execute([$connection]);
+        // Linked and heartbeating, its AI lane unasked for ten minutes (OAIY closed there, or too old for the lane):
+        // not online for the site's AI. Its heartbeat alone was what "online" read before.
+        self::$pdo->prepare('UPDATE desktop_connections SET last_seen_at = NOW(), ai_polled_at = NOW() - INTERVAL 10 MINUTE WHERE id = ?')->execute([$connection]);
+        $quiet = $this->checklist();
+        $this->assertSame(['computer', false], [$quiet['source'], $quiet['computer']['online']], 'its heartbeat alone is not online');
+        $this->assertEqualsWithDelta(time() - 600, strtotime($quiet['computer']['lastSeenAt'] . ' UTC'), 5, 'when it last asked its lane');
+        self::$pdo->prepare('UPDATE desktop_connections SET last_seen_at = NOW() - INTERVAL 10 MINUTE, ai_polled_at = NOW() - INTERVAL 10 MINUTE WHERE id = ?')->execute([$connection]);
         $offline = $this->checklist();
         $this->assertSame(['computer', false, true], [$offline['source'], $offline['computer']['online'], $offline['ready']], 'offline: still where the site\'s AI runs');
         $this->assertEqualsWithDelta(time() - 600, strtotime($offline['computer']['lastSeenAt'] . ' UTC'), 5);

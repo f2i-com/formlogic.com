@@ -113,6 +113,71 @@ class DesktopAiRelayTest extends TestCase
         )->execute(['dc-' . bin2hex(random_bytes(8)), $this->ownerId, $instanceId]);
     }
 
+    /**
+     * A computer is online for AI (App AI, the site's AI, camera checks) only while it asks its AI lane for work: a
+     * fresh heartbeat alone (OAIY closed there, or too old for the lane) is not. A poll notes it for the computer that
+     * polled and no other, at most every POLLED_EVERY_SECONDS.
+     */
+    public function testAComputerIsOnlineForAiOnlyWhileItAsksItsLaneForWork(): void
+    {
+        $this->addConnection('inst-lane');
+        $this->addConnection('inst-other');
+        self::$pdo->prepare('UPDATE desktop_connections SET e2e_public_key = ? WHERE owner_user_id = ?')->execute([base64_encode(random_bytes(32)), $this->ownerId]);
+        $id = fn (string $instance): string => (string) self::$pdo->query("SELECT id FROM desktop_connections WHERE desktop_instance_id = '{$instance}' AND owner_user_id = '{$this->ownerId}'")->fetchColumn();
+        $polledAt = fn (string $instance): ?string => (fn ($v) => $v === false || $v === null ? null : (string) $v)(self::$pdo->query("SELECT ai_polled_at FROM desktop_connections WHERE desktop_instance_id = '{$instance}' AND owner_user_id = '{$this->ownerId}'")->fetchColumn());
+        $settings = new \FormLogic\Services\SiteAiDesktopSettings(self::$mysql, sys_get_temp_dir() . '/unused-site-ai-' . bin2hex(random_bytes(4)) . '.json');
+        $site = ['connectionId' => $id('inst-lane'), 'ownerUserId' => $this->ownerId];
+
+        // Heartbeating, its lane never asked.
+        $this->assertFalse($settings->online($site));
+        $this->assertSame([false, false], array_column($settings->candidates($this->ownerId), 'online'));
+
+        // It asks: online, and only it.
+        self::$relay->pollPending($this->ownerId, null, 0, 50, 'inst-lane');
+        $this->assertTrue($settings->online($site));
+        $this->assertNull($polledAt('inst-other'));
+        $listed = array_column($settings->candidates($this->ownerId), 'online', 'instanceId');
+        $this->assertSame(['inst-lane' => true, 'inst-other' => false], $listed);
+
+        // Asked again within the interval: not written again. Past it: written.
+        self::$pdo->prepare("UPDATE desktop_connections SET ai_polled_at = NOW() - INTERVAL 10 SECOND WHERE desktop_instance_id = 'inst-lane' AND owner_user_id = ?")->execute([$this->ownerId]);
+        $kept = $polledAt('inst-lane');
+        self::$relay->pollPending($this->ownerId, null, 0, 50, 'inst-lane');
+        $this->assertSame($kept, $polledAt('inst-lane'));
+        self::$pdo->prepare('UPDATE desktop_connections SET ai_polled_at = NOW() - INTERVAL ' . (DesktopAiRelayService::POLLED_EVERY_SECONDS + 5) . " SECOND WHERE desktop_instance_id = 'inst-lane' AND owner_user_id = ?")->execute([$this->ownerId]);
+        $stale = $polledAt('inst-lane');
+        self::$relay->pollPending($this->ownerId, null, 0, 50, 'inst-lane');
+        $this->assertNotSame($stale, $polledAt('inst-lane'));
+
+        // Quiet for longer than the window (its heartbeat still fresh): offline again.
+        self::$pdo->prepare("UPDATE desktop_connections SET last_seen_at = NOW(), ai_polled_at = NOW() - INTERVAL 10 MINUTE WHERE desktop_instance_id = 'inst-lane' AND owner_user_id = ?")->execute([$this->ownerId]);
+        $this->assertFalse($settings->online($site));
+
+        // A poll that names no computer (an old desktop's fan-out) notes nothing.
+        self::$relay->pollPending($this->ownerId, null, 0, 50, null);
+        $this->assertFalse($settings->online($site));
+    }
+
+    /**
+     * A computer at work on its lane is online too, not only one that polls: taking a turn and writing its answer note
+     * it. OAIY before 0.1.14 answered inside its poll loop and did not poll through a long answer.
+     */
+    public function testAComputerAtWorkOnItsLaneStaysOnlineThroughALongAnswer(): void
+    {
+        $this->addConnection('inst-busy');
+        $polledAt = fn (): ?string => (fn ($v) => $v === false || $v === null ? null : (string) $v)(self::$pdo->query("SELECT ai_polled_at FROM desktop_connections WHERE desktop_instance_id = 'inst-busy' AND owner_user_id = '{$this->ownerId}'")->fetchColumn());
+        $quiet = fn () => self::$pdo->prepare("UPDATE desktop_connections SET ai_polled_at = NOW() - INTERVAL 10 MINUTE WHERE desktop_instance_id = 'inst-busy' AND owner_user_id = ?")->execute([$this->ownerId]);
+        $id = self::$relay->enqueue($this->ownerId, $this->ownerId, $this->sealedBody(['targetInstanceId' => 'inst-busy']))['request']['requestId'];
+        $quiet();
+        $stale = $polledAt();
+        self::$relay->claim($id, $this->ownerId, ['instanceId' => 'inst-busy']);
+        $this->assertNotSame($stale, $polledAt(), 'taking the turn');
+        $quiet();
+        $stale = $polledAt();
+        self::$relay->appendFrame($id, $this->ownerId, base64_encode(random_bytes(64)), 'inst-busy');
+        $this->assertNotSame($stale, $polledAt(), 'writing its answer');
+    }
+
     /** A valid sealed-request body (the backend never interprets the opaque bytes). */
     private function sealedBody(array $extra = []): array
     {
@@ -940,5 +1005,119 @@ class DesktopAiRelayTest extends TestCase
         $this->assertSame(3, self::$relay->inFlightForTarget($this->ownerId, 'desk-1'));
         $this->assertSame(1, self::$relay->inFlightForTarget($this->ownerId, 'desk-1', true));
         $this->assertSame(2, self::$relay->inFlightForTarget($this->ownerId, 'desk-1', false));
+    }
+
+    // ── what the server's own readers need of the lane (SiteDesktopAi) ──
+
+    /** A caller's own, smaller cap for a lane is counted as the turn is queued, under the lane's lock: two at once cannot both take its last place. */
+    public function testALanesOwnCapIsCountedAsTheTurnIsQueued(): void
+    {
+        $this->addConnection('desk-1');
+        $picture = $this->sealedBody(['kind' => DesktopAiRelayService::PICTURE_KIND, 'providerId' => 'oaiy-engine', 'targetInstanceId' => 'desk-1']);
+        self::$relay->enqueue($this->ownerId, $this->ownerId, $picture, DesktopAiRelayService::SOURCE_APP_AI, 1);
+        try {
+            self::$relay->enqueue($this->ownerId, $this->ownerId, $picture, DesktopAiRelayService::SOURCE_APP_AI, 1);
+            $this->fail('a second picture past its lane\'s cap');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('queue_full_lane', $e->getMessage());
+        }
+        // The other lane is counted apart, and no cap is the lane's own eight.
+        self::$relay->enqueue($this->ownerId, $this->ownerId, $this->sealedBody(['providerId' => 'oaiy-engine', 'targetInstanceId' => 'desk-1']), DesktopAiRelayService::SOURCE_APP_AI, 1);
+        self::$relay->enqueue($this->ownerId, $this->ownerId, $picture, DesktopAiRelayService::SOURCE_APP_AI);
+        $this->assertSame([3, 2], [self::$relay->inFlightForTarget($this->ownerId, 'desk-1'), self::$relay->inFlightForTarget($this->ownerId, 'desk-1', true)]);
+    }
+
+    /** A reader that does not wait is told whether its request was ever taken, and its age by the database's clock. */
+    public function testAReaderIsToldWhetherItsRequestWasTakenAndHowOldItIs(): void
+    {
+        $id = $this->enqueuePicture();
+        self::$pdo->prepare('UPDATE desktop_ai_requests SET created_at = DATE_SUB(NOW(), INTERVAL 30 SECOND) WHERE id = ?')->execute([$id]);
+        $before = self::$relay->progress($id, $this->ownerId);
+        $this->assertSame(['pending', false], [$before['status'], $before['taken']]);
+        $this->assertEqualsWithDelta(30, $before['age'], 3);
+        $this->assertSame(200, $this->v1Claim($id, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $this->assertSame(['claimed', true], array_values(array_intersect_key((array) self::$relay->progress($id, $this->ownerId), ['status' => 1, 'taken' => 1])));
+        self::$relay->cancel($id, $this->ownerId);
+        $this->assertSame(['expired', true], array_values(array_intersect_key((array) self::$relay->progress($id, $this->ownerId), ['status' => 1, 'taken' => 1])), 'taken, then let go');
+        $this->assertNull(self::$relay->progress($id, $this->otherId), 'another account reads nothing of it');
+    }
+
+    /** The lane keeps frames of up to 4 MiB for browsers; a server-side reader that takes less is handed the larger ones' place, never their bytes. */
+    public function testAServerSideReaderIsNotHandedAFrameLargerThanItTakes(): void
+    {
+        $id = $this->enqueuePicture();
+        $this->assertSame(200, $this->v1Claim($id, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        self::$relay->appendFrame($id, $this->ownerId, base64_encode(str_repeat('a', 100)), 'desk-1');
+        self::$relay->appendFrame($id, $this->ownerId, base64_encode(str_repeat('b', 300000)), 'desk-1');
+        $capped = self::$relay->fetchOutput($id, $this->ownerId, 0, 32, 262184);
+        $this->assertSame([base64_encode(str_repeat('a', 100)), null], array_column($capped, 'envelope'));
+        $this->assertCount(2, $capped, 'the large one is still named, by its place');
+        $whole = self::$relay->fetchOutput($id, $this->ownerId, 0);
+        $this->assertSame(300000, strlen((string) base64_decode((string) $whole[1]['envelope'], true)), 'a browser is handed what the lane keeps');
+    }
+
+    /**
+     * A poll holds while all it could hand out waits for a lane its computer is busy in, rather than
+     * answering at once with what would only be refused (lane_busy), and answers the moment the lane
+     * is free. A turn this computer left silent long enough to be let go as it claims does not hold it.
+     */
+    public function testAPollWaitsForABusyLaneRatherThanHandingOutWhatCannotBeClaimed(): void
+    {
+        $ids = static fn (array $rows): array => array_column($rows, 'requestId');
+        $first = $this->enqueuePicture();
+        $this->assertSame(200, $this->v1Claim($first, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $second = $this->enqueuePicture();
+
+        $started = microtime(true);
+        $this->assertSame([$second], $ids(self::$relay->pollPending($this->ownerId, null, 1200, 50, 'desk-1')), 'at its end it says what waits, as before');
+        $this->assertGreaterThanOrEqual(1.1, microtime(true) - $started, 'held while the picture lane is busy');
+        $chat = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $started = microtime(true);
+        $this->assertSame([$second, $chat], $ids(self::$relay->pollPending($this->ownerId, null, 5000, 50, 'desk-1')));
+        $this->assertLessThan(0.45, microtime(true) - $started, 'a chat\'s lane is free: answered at once');
+        self::$relay->cancel($chat, $this->ownerId);
+
+        $this->assertSame(200, $this->v1Complete($first, ['ai:relay'], ['instanceId' => 'desk-1', 'status' => 'done'])['status']);
+        $started = microtime(true);
+        $this->assertSame([$second], $ids(self::$relay->pollPending($this->ownerId, null, 5000, 50, 'desk-1')));
+        $this->assertLessThan(0.45, microtime(true) - $started, 'the lane is free: answered at once');
+
+        // A chat this computer has left silent for over ABANDONED_SECONDS (short of the sweep's
+        // CLAIMED_STALE_SECONDS) holds no poll: claiming the next lets it go.
+        $this->assertSame(200, $this->v1Claim($second, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $held = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($held, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $quiet = DesktopAiRelayService::ABANDONED_SECONDS + 5;
+        self::$pdo->prepare("UPDATE desktop_ai_requests SET claimed_at = DATE_SUB(NOW(), INTERVAL {$quiet} SECOND) WHERE id = ?")->execute([$held]);
+        $next = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $started = microtime(true);
+        $this->assertSame([$next], $ids(self::$relay->pollPending($this->ownerId, null, 5000, 50, 'desk-1')));
+        $this->assertLessThan(0.45, microtime(true) - $started, 'its own silent chat holds nothing');
+        $this->assertSame(200, $this->v1Claim($next, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $this->assertSame('expired', $this->rawRequestRow($held)['status']);
+        // One it has not left silent still holds the poll.
+        $after = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $started = microtime(true);
+        $this->assertSame([$after], $ids(self::$relay->pollPending($this->ownerId, null, 800, 50, 'desk-1')));
+        $this->assertGreaterThanOrEqual(0.7, microtime(true) - $started);
+    }
+
+    /** POST /api/desktop/ai/requests/{id}/cancel: the requester's own, on the real lane; anyone else's reads as none. */
+    public function testTheRequesterCancelsTheirTurnOnTheirComputer(): void
+    {
+        $id = $this->webEnqueue($this->ownerId, $this->sealedBody())['body']['requestId'];
+        $this->assertSame(200, $this->v1Claim($id, ['ai:relay'], ['instanceId' => 'desk-1'])['status']);
+        $cancel = function (string $userId, string $requestId): array {
+            $req = (new ServerRequestFactory())->createServerRequest('POST', self::BASE . '/api/desktop/ai/requests/' . $requestId . '/cancel')->withAttribute('userId', $userId);
+            $resp = self::$ctrl->cancelRequest($req, (new ResponseFactory())->createResponse(), ['id' => $requestId]);
+            return ['status' => $resp->getStatusCode(), 'body' => self::decode($resp)];
+        };
+        $stranger = $cancel($this->otherId, $id);
+        $this->assertSame([404, 'Request not found'], [$stranger['status'], $stranger['body']['message']]);
+        $this->assertSame($stranger, $cancel($this->otherId, 'no-such-request'), 'as one that does not exist');
+        $this->assertSame('claimed', $this->rawRequestRow($id)['status']);
+        $this->assertSame([200, ['cancelled' => true]], array_values($cancel($this->ownerId, $id)));
+        $frame = $this->v1Frame($id, ['ai:relay'], ['instanceId' => 'desk-1', 'envelope' => base64_encode('delta')]);
+        $this->assertSame([409, self::CANCELLED], [$frame['status'], $frame['body']], 'the computer stops there');
     }
 }

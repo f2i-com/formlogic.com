@@ -222,13 +222,20 @@ final class AppAiControllerTest extends TestCase
     public function testAnOfflineComputerIsToldSinceWhen(): void
     {
         $mine = bin2hex(random_bytes(16));
-        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Studio', ?, NOW() - INTERVAL 10 MINUTE, ?)")
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, ai_polled_at, e2e_public_key) VALUES (?, ?, 'Studio', ?, NOW() - INTERVAL 10 MINUTE, NOW() - INTERVAL 10 MINUTE, ?)")
             ->execute([$mine, $this->ownerId, 'inst-' . bin2hex(random_bytes(4)), base64_encode(random_bytes(32))]);
         $this->ai->saveSettings($this->app, ['mode' => 'own', 'own' => ['connectionId' => $mine, 'pictureModel' => 'flux-3-image-klein']], $this->ownerId);
         $status = $this->ai->ownerView($this->app)['status'];
         $this->assertSame('offline', $status['state']);
         $this->assertEqualsWithDelta(time() - 600, strtotime($status['offlineSince'] . ' UTC'), 5);
+        // Its heartbeat back, its AI lane still unasked (OAIY closed there, or too old for the lane): still offline for
+        // its AI, since when it last asked; it is the lane that answers the app's requests.
         self::$pdo->prepare('UPDATE desktop_connections SET last_seen_at = NOW() WHERE id = ?')->execute([$mine]);
+        $status = $this->ai->ownerView($this->app)['status'];
+        $this->assertSame('offline', $status['state'], 'a heartbeat alone is not online');
+        $this->assertStringContainsString('not taking AI requests', $status['message']);
+        $this->assertEqualsWithDelta(time() - 600, strtotime($status['offlineSince'] . ' UTC'), 5);
+        self::$pdo->prepare('UPDATE desktop_connections SET ai_polled_at = NOW() WHERE id = ?')->execute([$mine]);
         $status = $this->ai->ownerView($this->app)['status'];
         $this->assertSame(['idle', null], [$status['state'], $status['offlineSince']]);
     }
@@ -285,13 +292,13 @@ final class AppAiControllerTest extends TestCase
     public function testTheOwnerChoosesTheirOwnComputerPinnedToItsKey(): void
     {
         $mine = bin2hex(random_bytes(16));
-        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Studio', ?, NOW(), ?)")
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, ai_polled_at, e2e_public_key) VALUES (?, ?, 'Studio', ?, NOW(), NOW(), ?)")
             ->execute([$mine, $this->ownerId, 'inst-' . bin2hex(random_bytes(4)), base64_encode(random_bytes(32))]);
         $theirs = bin2hex(random_bytes(16));
-        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Theirs', ?, NOW(), ?)")
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, ai_polled_at, e2e_public_key) VALUES (?, ?, 'Theirs', ?, NOW(), NOW(), ?)")
             ->execute([$theirs, $this->otherId, 'inst-' . bin2hex(random_bytes(4)), base64_encode(random_bytes(32))]);
         $keyless = bin2hex(random_bytes(16));
-        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at) VALUES (?, ?, 'New box', ?, NOW())")
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, ai_polled_at) VALUES (?, ?, 'New box', ?, NOW(), NOW())")
             ->execute([$keyless, $this->ownerId, 'inst-' . bin2hex(random_bytes(4))]);
 
         $view = self::read($this->controller->ownerGet($this->request('GET', $this->ownerId), new Response(), ['id' => $this->app['id']]))['body']['data'];
@@ -338,7 +345,7 @@ final class AppAiControllerTest extends TestCase
     public function testTheListingsAskOnlyTheOwnersOwnComputer(): void
     {
         $theirs = bin2hex(random_bytes(16));
-        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, e2e_public_key) VALUES (?, ?, 'Theirs', ?, NOW(), ?)")
+        self::$pdo->prepare("INSERT INTO desktop_connections (id, owner_user_id, device_name, desktop_instance_id, last_seen_at, ai_polled_at, e2e_public_key) VALUES (?, ?, 'Theirs', ?, NOW(), NOW(), ?)")
             ->execute([$theirs, $this->otherId, 'inst-' . bin2hex(random_bytes(4)), base64_encode(random_bytes(32))]);
         $args = ['id' => $this->app['id']];
         $query = ['connectionId' => $theirs, 'providerId' => 'oaiy-engine'];

@@ -19,10 +19,11 @@ use Psr\Log\LoggerInterface;
  * 2. **Catch up.** The record events of apps with AI on are dispatched. A job that a request's own
  *    dispatch left behind (another process held the app's events lock) is picked up within seconds.
  * 3. **Send, fairly.** On each computer (or the .env upstream), the app served least recently goes
- *    first, then within it the requester served least recently, then the oldest job. A computer
- *    takes one picture at a time and one App AI chat beside it (DesktopAiRelayService's lanes), so a
- *    picture never holds up a chat. A computer that is offline, or busy with members' chats, keeps
- *    its jobs waiting.
+ *    first, then within it the requester served least recently, then the oldest job. Each pass looks
+ *    at each app's oldest few jobs, so no app's backlog hides another's. A computer takes one picture
+ *    at a time and one App AI chat beside it (DesktopAiRelayService's lanes), so a picture never
+ *    holds up a chat. A computer that is offline, or busy with members' chats, keeps its jobs
+ *    waiting, and is asked again a few seconds later.
  * 4. **Collect, without waiting.** The worker reads OAIY's frames (SiteDesktopAi::collect, the path
  *    camera checks use) or the .env upstream's answers (AppAiUpstream). The turn's key is kept in the
  *    job's row, sealed with the site's data key where one is set, so a restarted worker carries on
@@ -32,8 +33,9 @@ use Psr\Log\LoggerInterface;
  *    again later, for about half an hour.
  *
  * A job that never reached the AI, or whose result was lost, is sent once more. A job that failed after
- * the AI took it is not resent, and its use is given back. Five failures in a row rest an app's AI for
- * ten minutes. A test (AppAiService::queueTest) runs like any job, but its result is kept for the owner
+ * the AI took it is not resent, and its use is given back; so is one a worker died while sending,
+ * which is failed rather than sent again. Five failures of the AI in a row rest an app's AI for ten
+ * minutes. A test (AppAiService::queueTest) runs like any job, but its result is kept for the owner
  * and never delivered to the app.
  */
 final class AppAiWorker
@@ -57,6 +59,18 @@ final class AppAiWorker
     public const ENV_CHATS = 2;
     /** An OAIY computer takes one App AI chat beside its one picture. */
     public const COMPUTER_CHATS = 1;
+    /** How many of each app's waiting jobs of one kind a pass looks at: its oldest (send). */
+    public const PER_APP_KIND = 3;
+    /** How long a job waits before its computer is asked again, after it said it was busy, or was offline. */
+    public const BUSY_RETRY = 5;
+    public const OFFLINE_RETRY = 15;
+    /**
+     * How long a job may stay claimed for sending before it is taken to be a dead worker's: a send
+     * takes seconds (an edit's picture is redrawn, at most 16 megapixels, then queued).
+     */
+    public const SENDING_STALE = 120;
+    /** The most text read of a picture's turn, which has none (SiteDesktopAi::collect): past it, the turn is no picture. */
+    public const PICTURE_TEXT_LIMIT = 65536;
     /** An edit's picture is never squeezed below this to fit the lane: the request is refused instead. */
     private const MIN_REFERENCE_BYTES = 16000;
     private const CATCH_UP_SECONDS = 5;
@@ -71,6 +85,8 @@ final class AppAiWorker
 
     private float $lastCatchUp = 0.0;
     private int $passes = 0;
+    /** The log has been told this run that the site's data key is set and cannot be used (once, not for every job). */
+    private bool $keyUnusableSaid = false;
     /** @var array{fingerprint: string, mode: string, startedAt: int}|null what this worker says of itself (identify) */
     private ?array $identity = null;
 
@@ -220,9 +236,24 @@ final class AppAiWorker
             $this->fail((string) $id, 'expired', 'The AI was too busy to get to this in time. Try again.');
             $count++;
         }
-        // A job claimed for sending by a pass that ended before it was sent goes back to waiting: a
-        // pass sends what it claims before it ends, and only one worker runs at a time (CronLock).
-        if ($this->passes === 1) $pdo->exec("UPDATE app_ai_jobs SET status = 'queued' WHERE status = 'sending'");
+        // A pass sends what it claims within seconds, so a job claimed for sending longer ago than
+        // SENDING_STALE was being sent when its worker died. It may be what killed it (a picture it
+        // could not hold), and sent again it would kill this worker too, and every one after: it fails
+        // instead, as FormLogic's own failure, and its use is given back. It does not count against its
+        // app's AI, which never saw it. Only one so old: a second worker running beside this one (a
+        // cron run and a `--watch` worker whose lock fell back to another folder) is sending its own.
+        $stale = AppAiService::stamp(microtime(true) - self::SENDING_STALE);
+        $left = $pdo->prepare("SELECT id FROM app_ai_jobs WHERE status = 'sending' AND (next_attempt_at IS NULL OR next_attempt_at < ?)");
+        $left->execute([$stale]);
+        foreach ($left->fetchAll(PDO::FETCH_COLUMN) as $id) {
+            $this->logger?->warning('App AI: job ' . $id . ' was being sent when its worker stopped; it fails rather than being sent again');
+            $this->fail((string) $id, 'engine_failed', 'FormLogic stopped while it was sending this, so it was not sent. Try again.');
+            $count++;
+        }
+        // One the app cancelled while a worker that then died was sending it never reached the AI either.
+        $gone = $pdo->prepare('SELECT id FROM app_ai_jobs WHERE status = ? AND code = ? AND started_at IS NULL AND refunded = 0 AND finished_at < ?');
+        $gone->execute(['cancelled', AppAiService::CANCELLED_SENT, $stale]);
+        foreach ($gone->fetchAll(PDO::FETCH_COLUMN) as $id) $this->ai->unsent((string) $id);
         // What is kept no longer than it is needed, about once an hour whoever runs the worker (the
         // nightly bin/privacy-sweep.php does the same).
         $marker = $this->results . '/.swept';
@@ -255,7 +286,10 @@ final class AppAiWorker
         $rows = $this->pdo()->query("SELECT * FROM app_ai_jobs WHERE status = 'cancelled' AND (relay_id IS NOT NULL OR result_path IS NOT NULL OR channel IS NOT NULL)")->fetchAll(PDO::FETCH_ASSOC);
         foreach ($rows as $job) {
             // Whatever the computer is doing for it: one drawing it is told so on its next frame, and stops.
-            if ($job['relay_id'] !== null) $this->desktop?->cancel((string) $job['relay_id'], (string) $job['relay_owner']);
+            // One no computer had taken yet (it waited on the lane) asked the AI nothing: its use is given back.
+            if ($job['relay_id'] !== null && $this->desktop?->cancelTurn((string) $job['relay_id'], (string) $job['relay_owner']) === 'pending' && $job['code'] === AppAiService::CANCELLED_SENT) {
+                $this->ai->untaken((string) $job['id']);
+            }
             $this->removeResult($job);
             $this->pdo()->prepare('UPDATE app_ai_jobs SET relay_id = NULL, relay_owner = NULL, channel = NULL, result_path = NULL WHERE id = ?')->execute([$job['id']]);
             $count++;
@@ -291,10 +325,24 @@ final class AppAiWorker
 
     private function send(): int
     {
+        // What routes and orders the jobs, never their prompts or pictures (an edit's is up to 2 MB,
+        // and sendOne reads it for the one job it sends). The oldest few of each app's kind, not the
+        // oldest of the whole site: jobs waiting on one owner's computer that is off can fill any
+        // window by age, and every other app would wait behind them. A requester holds at most
+        // MAX_OPEN_PER_REQUESTER jobs, so PER_APP_KIND of them always include another requester's
+        // when there is one, for the fair turns below.
+        $perKind = self::PER_APP_KIND;
         $rows = $this->pdo()->query(
-            "SELECT j.*, s.last_served_at FROM app_ai_jobs j LEFT JOIN app_ai_settings s ON s.app_id = j.app_id
-             WHERE j.status = 'queued' AND (j.next_attempt_at IS NULL OR j.next_attempt_at <= UTC_TIMESTAMP(3))
-             ORDER BY j.created_at LIMIT 500"
+            "SELECT j.id, j.app_id, j.kind, j.requester_kind, j.requester_id, j.size, j.seed, j.max_output, j.attempts, j.created_at, s.last_served_at
+             FROM (
+                 SELECT id, app_id, kind, requester_kind, requester_id, size, seed, max_output, attempts, created_at,
+                        ROW_NUMBER() OVER (PARTITION BY app_id, kind ORDER BY created_at, id) AS queue_place
+                 FROM app_ai_jobs
+                 WHERE status = 'queued' AND (next_attempt_at IS NULL OR next_attempt_at <= UTC_TIMESTAMP(3))
+             ) j
+             LEFT JOIN app_ai_settings s ON s.app_id = j.app_id
+             WHERE j.queue_place <= {$perKind}
+             ORDER BY j.created_at LIMIT 2000"
         )->fetchAll(PDO::FETCH_ASSOC);
         if ($rows === []) return 0;
 
@@ -443,9 +491,17 @@ final class AppAiWorker
     {
         $pdo = $this->pdo();
         $id = (string) $job['id'];
-        $claim = $pdo->prepare("UPDATE app_ai_jobs SET status = 'sending' WHERE id = ? AND status = 'queued'");
-        $claim->execute([$id]);
+        // Claimed with the time it was (in next_attempt_at, which a job being sent has no other use for):
+        // what tells a job a dead worker left from one another worker is sending now (sweepSending).
+        $claim = $pdo->prepare("UPDATE app_ai_jobs SET status = 'sending', next_attempt_at = ? WHERE id = ? AND status = 'queued'");
+        $claim->execute([AppAiService::stamp(microtime(true)), $id]);
         if ($claim->rowCount() !== 1) return 'skip';
+        // What the job asks, read for this one job alone: send() reads no prompt and no picture.
+        $asked = $pdo->prepare('SELECT prompt, reference FROM app_ai_jobs WHERE id = ?');
+        $asked->execute([$id]);
+        $asked = $asked->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($asked)) return 'skip';
+        $job += $asked;
         $picture = $job['kind'] !== 'chat';
         $model = $picture ? $route['pictureModel'] : $route['chatModel'];
         $seed = $job['seed'] === null ? null : (int) $job['seed'];
@@ -455,15 +511,19 @@ final class AppAiWorker
         // A chat's answer may be this long, in tokens: what the app asked for, within the site's ceiling.
         $tokens = $this->answerTokens($job);
         $waitAgain = function (int $seconds) use ($pdo, $id): string {
-            $pdo->prepare("UPDATE app_ai_jobs SET status = 'queued', next_attempt_at = ? WHERE id = ?")->execute([AppAiService::stamp(time() + $seconds), $id]);
+            // Back in the queue only while it is still this worker's to send: one the app cancelled
+            // meanwhile stays cancelled (it was put back and sent before), and, never sent, has its use back.
+            $back = $pdo->prepare("UPDATE app_ai_jobs SET status = 'queued', next_attempt_at = ? WHERE id = ? AND status = 'sending'");
+            $back->execute([AppAiService::stamp(time() + $seconds), $id]);
+            if ($back->rowCount() === 0) $this->ai->unsent($id);
             return 'wait';
         };
 
         if ($route['kind'] === 'env') {
             try {
                 $reference = $job['kind'] === 'edit' ? AppAiPictures::reference((string) $job['reference']) : null;
-            } catch (\RuntimeException) {
-                $this->fail($id, 'bad_request', 'The picture to edit could not be read.');
+            } catch (\RuntimeException $e) {
+                $this->unreadablePicture($id, $e->getMessage(), unsent: true);
                 return 'skip';
             }
             try {
@@ -480,6 +540,15 @@ final class AppAiWorker
         }
 
         if ($this->desktop === null) return $waitAgain(30);
+        // A data key that is set and cannot be used: the turn's key could only be kept in the clear, which is never done
+        // once encryption is asked for (DataEncryption). Nothing is sent; the job waits for the key to be put right.
+        if ($this->encryption !== null && !$this->encryption->usable()) {
+            if (!$this->keyUnusableSaid) {
+                $this->logger?->warning('App AI: DATA_ENCRYPTION_KEY is set but is not a valid key, so no job is sent to a computer until it is put right');
+                $this->keyUnusableSaid = true;
+            }
+            return $waitAgain(60);
+        }
         $computer = $route['target'];
         if ($picture) {
             // A picture is made by the computer's own engines, whatever provider its chat uses.
@@ -492,13 +561,13 @@ final class AppAiWorker
                 $room = SiteDesktopAi::room($computer, ['reference' => ''] + $body) - 64;
                 $maxBytes = min(AppAiPictures::MAX_REFERENCE_BYTES, (int) floor(($room - 23) * 3 / 4));
                 if ($maxBytes < self::MIN_REFERENCE_BYTES) {
-                    $this->fail($id, 'too_large', 'The prompt is too long to send with a picture to edit. Use a shorter one.');
+                    $this->fail($id, 'too_large', 'The prompt is too long to send with a picture to edit. Use a shorter one.', unsent: true);
                     return 'skip';
                 }
                 try {
                     $body['reference'] = AppAiPictures::reference((string) $job['reference'], $maxBytes);
-                } catch (\RuntimeException) {
-                    $this->fail($id, 'bad_request', 'The picture to edit could not be read.');
+                } catch (\RuntimeException $e) {
+                    $this->unreadablePicture($id, $e->getMessage(), unsent: true);
                     return 'skip';
                 }
             }
@@ -514,12 +583,13 @@ final class AppAiWorker
             // (the site's), or always when it is the owner's own (DesktopAiRelayService::SERVED_SQL).
             [$relayId, $pair] = $this->desktop->send($computer, $body, $route['ownerId'], DesktopAiRelayService::SOURCE_APP_AI);
         } catch (SiteAiTooLargeException) {
-            $this->fail($id, 'too_large', 'The picture to edit is too large to send.');
+            $this->fail($id, 'too_large', 'The picture to edit is too large to send.', unsent: true);
             return 'skip';
-        } catch (SiteAiBusyException) {
-            // Offline, or its places are taken: the job waits, and is told so in the app's context.
-            $pdo->prepare("UPDATE app_ai_jobs SET status = 'queued' WHERE id = ?")->execute([$id]);
-            return 'wait';
+        } catch (SiteAiBusyException $busy) {
+            // Offline, or its places are taken: the job waits, and is told so in the app's context. It
+            // is asked again in a moment, not on every pass, so the jobs of a computer that is off or
+            // full are not what each pass looks at first.
+            return $waitAgain($busy->reason === 'site_ai_offline' ? self::OFFLINE_RETRY : self::BUSY_RETRY);
         } catch (\Throwable $e) {
             $this->logger?->warning('App AI: a job could not be sent: ' . $e->getMessage());
             return $waitAgain(30);
@@ -538,9 +608,11 @@ final class AppAiWorker
         $running = $this->pdo()->prepare("UPDATE app_ai_jobs SET status = 'running', target = ?, source = ?, model = ?, relay_id = ?, relay_owner = ?, channel = ?, started_at = ?, attempts = attempts + 1, next_attempt_at = NULL WHERE id = ? AND status = 'sending'");
         $running->execute([$target, $source, $model !== '' ? $model : null, $relayId, $relayOwner, $channel, $now, $job['id']]);
         if ($running->rowCount() === 0) {
-            // Cancelled by the app while it was being sent: what was just asked for is let go.
+            // Cancelled by the app while it was being sent: what was just asked for is let go at once,
+            // before the AI has started on it, so the job's use is given back.
             if ($relayId !== null) $this->desktop?->cancel($relayId, (string) $relayOwner);
             else $this->env->abandon((string) $job['id']);
+            $this->ai->unsent((string) $job['id']);
             return;
         }
         $this->pdo()->prepare('UPDATE app_ai_settings SET last_served_at = ? WHERE app_id = ?')->execute([$now, $job['app_id']]);
@@ -562,7 +634,7 @@ final class AppAiWorker
             $age = microtime(true) - (float) strtotime(substr((string) $job['started_at'], 0, 19) . ' UTC');
             if ($job['relay_id'] === null) {
                 // On the .env upstream, but not in this process: the worker that asked has gone.
-                if (!$this->env->has((string) $job['id'])) { $this->lost($job); $count++; }
+                if (!$this->env->has((string) $job['id'])) { $this->lost($job, false); $count++; }
                 elseif ($age > self::RUNNING_BACKSTOP) {
                     $this->env->abandon((string) $job['id']);
                     $this->finish($job, ['ok' => false, 'code' => 'timeout', 'message' => 'The AI did not answer in time.']);
@@ -572,9 +644,14 @@ final class AppAiWorker
             }
             if ($this->desktop === null) continue;
             $pair = $this->open($job);
-            if ($pair === null) { $this->lost($job); $count++; continue; }
+            if ($pair === null) { $this->lost($job, false); $count++; continue; }
             try {
-                $seen = $this->desktop->collect((string) $job['relay_id'], (string) $job['relay_owner'], $pair);
+                // A chat's answer is read no further than what is kept of it (four bytes a character at
+                // most), so an answer that runs on is never held whole in this worker. A picture's turn
+                // has no text in it (its picture comes whole in its final frame, after progress frames):
+                // little is read of any it sends, and one that sends that much is no picture (below).
+                $enough = $job['kind'] === 'chat' ? 4 * AppAiService::answerCharacters($this->answerTokens($job)) : self::PICTURE_TEXT_LIMIT;
+                $seen = $this->desktop->collect((string) $job['relay_id'], (string) $job['relay_owner'], $pair, $enough);
             } catch (\Throwable $e) {
                 $this->desktop->cancel((string) $job['relay_id'], (string) $job['relay_owner']);
                 $this->finish($job, ['ok' => false, 'code' => 'engine_failed', 'message' => 'OAIY sent an answer that could not be read.']);
@@ -594,6 +671,11 @@ final class AppAiWorker
                 $this->finish($job, ['ok' => false, 'code' => (string) ($final['error']['code'] ?? 'engine_failed'), 'message' => mb_substr((string) ($final['error']['message'] ?? 'OAIY could not do it.'), 0, 300)]);
             } elseif ($seen['error'] !== null) {
                 $this->finish($job, ['ok' => false, 'code' => 'engine_failed', 'message' => mb_substr($seen['error'], 0, 300)]);
+            } elseif ($job['kind'] !== 'chat' && strlen($seen['content']) >= self::PICTURE_TEXT_LIMIT) {
+                // Words where a picture was asked for, as many as are read: no picture OAIY draws. The
+                // turn ends now, and its computer is told to stop, rather than read again every pass.
+                $this->desktop->cancel((string) $job['relay_id'], (string) $job['relay_owner']);
+                $this->finish($job, ['ok' => false, 'code' => 'engine_failed', 'message' => 'OAIY sent text where a picture was asked for.']);
             } elseif ($job['kind'] === 'chat' && ($final !== null || ($seen['status'] === 'done' && $seen['content'] !== ''))) {
                 // A chat's reply, streamed or whole in its final frame: as much of it as is read.
                 $this->finish($job, ['ok' => true, 'text' => mb_substr($seen['content'], 0, AppAiService::answerCharacters($this->answerTokens($job))), 'model' => $job['model']]);
@@ -605,7 +687,7 @@ final class AppAiWorker
                 $this->finish($job, ['ok' => true, 'text' => mb_substr($seen['content'], 0, AppAiService::answerCharacters($this->answerTokens($job))), 'model' => $job['model']]);
             } elseif (in_array($seen['status'], ['failed', 'expired', 'done', null], true)) {
                 // Gone without an answer: never taken in time, given up on as silent, or its frames gone.
-                $this->lost($job);
+                $this->lost($job, $seen['taken']);
             } elseif ($age > self::RUNNING_BACKSTOP) {
                 // Out of time: the computer is told to stop, on its next frame.
                 $this->desktop->cancel((string) $job['relay_id'], (string) $job['relay_owner']);
@@ -668,15 +750,20 @@ final class AppAiWorker
         $this->breaker((string) $job['app_id'], false);
     }
 
-    /** A job whose answer is gone (never taken, its frames purged, or its worker gone): sent once more, else failed. */
-    private function lost(array $job): void
+    /**
+     * A job whose answer is gone (never taken, its frames purged, or its worker gone): sent once more,
+     * else failed. It counts against its app's AI only when the AI took it ($taken) and then gave no
+     * answer: a computer too busy or too long off to take it in time, or a worker that stopped, is
+     * not the AI failing, and five such jobs in a row would otherwise rest an app's AI that never ran.
+     */
+    private function lost(array $job, bool $taken): void
     {
         if ((int) $job['attempts'] < self::MAX_ATTEMPTS) {
             $this->pdo()->prepare("UPDATE app_ai_jobs SET status = 'queued', relay_id = NULL, relay_owner = NULL, channel = NULL, started_at = NULL WHERE id = ? AND status = 'running'")->execute([$job['id']]);
             return;
         }
         $this->fail((string) $job['id'], 'timeout', 'The AI did not answer. Try again.');
-        $this->breaker((string) $job['app_id'], true);
+        if ($taken) $this->breaker((string) $job['app_id'], true);
     }
 
     /** Count an app's failure in a row (or end the run of them); five rest its AI for ten minutes. */
@@ -693,12 +780,33 @@ final class AppAiWorker
         if ($rested->rowCount() > 0) $this->logger?->warning('App AI: app ' . $appId . ' failed ' . self::BREAKER_FAILURES . ' times in a row; its AI rests for ' . (self::BREAKER_PAUSE / 60) . ' minutes');
     }
 
-    /** Fail a job: the app is told as the delivery next runs, and its use is given back. */
-    private function fail(string $id, string $code, string $message): void
+    /**
+     * Fail a job: the app is told as the delivery next runs, and its use is given back. A job that
+     * ended meanwhile (the app cancelled it, say) keeps the end it has, and whether its use was
+     * given back is that end's to say.
+     */
+    private function fail(string $id, string $code, string $message, bool $unsent = false): void
     {
-        $this->pdo()->prepare("UPDATE app_ai_jobs SET status = 'failed', code = ?, message = ?, channel = NULL, reference = NULL, finished_at = ?, next_attempt_at = ? WHERE id = ? AND status NOT IN ('done', 'failed', 'refused', 'cancelled')")
-            ->execute([$code, mb_substr($message, 0, 300), AppAiService::stamp(microtime(true)), self::due(), $id]);
-        $this->ai->refund($id);
+        $failed = $this->pdo()->prepare("UPDATE app_ai_jobs SET status = 'failed', code = ?, message = ?, channel = NULL, reference = NULL, finished_at = ?, next_attempt_at = ? WHERE id = ? AND status NOT IN ('done', 'failed', 'refused', 'cancelled')");
+        $failed->execute([$code, mb_substr($message, 0, 300), AppAiService::stamp(microtime(true)), self::due(), $id]);
+        if ($failed->rowCount() === 1) $this->ai->refund($id);
+        // ($unsent: it failed before it was sent. Cancelled by the app meanwhile, it never reached the AI, so its use is given back.)
+        elseif ($unsent) $this->ai->unsent($id);
+    }
+
+    /**
+     * Fail an edit whose picture could not be made ready for the AI, by why ($reason, as
+     * AppAiPictures says it): too large (by its header, or past what the lane takes at any quality),
+     * this server unable to hold or draw it, or not a picture it can read.
+     */
+    private function unreadablePicture(string $id, string $reason, bool $unsent = false): void
+    {
+        match ($reason) {
+            'too_large' => $this->fail($id, 'too_large', 'The picture to edit is too large to send.', $unsent),
+            'memory' => $this->fail($id, 'engine_failed', 'This server could not make room to read the picture to edit.', $unsent),
+            'no_gd' => $this->fail($id, 'engine_failed', 'This server cannot prepare pictures: it needs PHP\'s GD extension.', $unsent),
+            default => $this->fail($id, 'bad_request', 'The picture to edit could not be read.', $unsent),
+        };
     }
 
     // ------------------------------------------------------------------ 5. deliver

@@ -26,12 +26,26 @@ function Online() {
   );
 }
 
-export function LinkedDesktopsList({ connections, isOnline, onUnlink }: {
+/** Linked and heard from, but not taking AI requests: what App AI then calls offline. */
+function AiQuiet() {
+  return (
+    <span className="inline-flex flex-none items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+      title="Its link is alive, but it has not asked for AI requests in the last minute and a half: OAIY may be closed there, or need updating. App AI calls it offline until it does.">
+      AI not answering
+    </span>
+  );
+}
+
+export function LinkedDesktopsList({ connections, isOnline, isAnsweringAi = () => true, onUnlink }: {
   connections: DesktopConnection[];
   /** Whether a computer was heard from just now; the page decides, and goes on deciding while it stays open. */
   isOnline: (connection: DesktopConnection) => boolean;
+  /** Whether a computer that takes AI requests asked for one just now (aiPolledAt); every one does without it. */
+  isAnsweringAi?: (connection: DesktopConnection) => boolean;
   onUnlink: (connection: DesktopConnection) => void;
 }) {
+  // (a computer that takes AI requests, online by its link, but not asking for them: the two places agree on why)
+  const aiQuiet = (connection: DesktopConnection) => connection.aiKey === true && !isAnsweringAi(connection);
   const lastSeen = (connection: DesktopConnection) => (connection.lastSeenAt ? `Last seen ${formatRelativeTime(connection.lastSeenAt)}` : 'Never connected');
 
   return (
@@ -47,8 +61,9 @@ export function LinkedDesktopsList({ connections, isOnline, onUnlink }: {
                   <span className="min-w-0 break-words">{connection.deviceName}</span>
                   {connection.aiOnly && <AiOnly />}
                 </p>
-                <p className="mt-0.5 flex flex-wrap gap-x-2 text-xs leading-5 text-gray-500 dark:text-slate-400">
+                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-5 text-gray-500 dark:text-slate-400">
                   {online ? <Online /> : <span className="whitespace-nowrap">{lastSeen(connection)}</span>}
+                  {online && aiQuiet(connection) && <AiQuiet />}
                   <span className="whitespace-nowrap">Linked {formatRelativeTime(connection.createdAt)}</span>
                 </p>
               </div>
@@ -83,8 +98,11 @@ export function LinkedDesktopsList({ connections, isOnline, onUnlink }: {
                       {connection.aiOnly && <AiOnly />}
                     </span>
                   </th>
-                  <td className="truncate px-2 text-gray-600 dark:text-slate-300">
-                    {online ? <Online /> : connection.lastSeenAt ? formatRelativeTime(connection.lastSeenAt) : 'Never connected'}
+                  <td className="px-2 text-gray-600 dark:text-slate-300">
+                    <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                      {online ? <Online /> : <span className="truncate">{connection.lastSeenAt ? formatRelativeTime(connection.lastSeenAt) : 'Never connected'}</span>}
+                      {online && aiQuiet(connection) && <AiQuiet />}
+                    </span>
                   </td>
                   <td className="truncate px-2 text-gray-500 dark:text-slate-400">{formatRelativeTime(connection.createdAt)}</td>
                   <td className="py-0.5 pl-2 pr-1.5 text-right">

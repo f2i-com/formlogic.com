@@ -459,6 +459,13 @@ administrator acting as the owner may look but not change it.
 - **How it is doing** is said at the top, and again beside **Save**: ready, busy ("1 being made, 3
   waiting"), offline since when, paused, stopped, or off. `GET /api/apps/{id}/ai` gives it as `status`
   (`state`, `running`, `waiting`, and `offlineSince` while the computer has not been heard from).
+  A computer is online for AI (App AI, the site's AI, camera checks) while it is at work on its AI
+  lane: it asked the lane for work, took a turn or wrote an answer in the last 90 seconds
+  (`desktop_connections.ai_polled_at`, noted at most every 20 seconds). Its heartbeat alone says only
+  that it is linked: one whose OAIY is closed, or too old for the lane, is offline here, and the
+  linked computers in Settings say "AI not answering" beside "Online now" for it.
+- A job the app cancels once it was sent is spent, unless no computer had taken its turn yet (it
+  waited on the lane): the AI was asked nothing, and its use is given back.
 - **Why "Use this site's AI" is not there** is said in plain words: the site does not let apps use its
   AI yet, has no AI set up, lost the computer it ran on, has paused AI for apps, or has no picture
   model chosen (chat only, for now). The same answer has it as `site`: `{offered, working, reason,
@@ -560,7 +567,8 @@ supervisor with `--watch`:
   also how soon a cancel is heard); one silent
   for 5 minutes is let go. A job that never reached the AI, or whose answer was lost (a restarted
   worker carries on from the job's row: the turn's key is kept there, sealed with
-  `DATA_ENCRYPTION_KEY` where one is set), is sent once more. OAIY's `busy` (Studio's own queue full)
+  `DATA_ENCRYPTION_KEY` where one is set; while one is set but cannot be used, no job is sent to a
+  computer, and they wait, the log says why), is sent once more. OAIY's `busy` (Studio's own queue full)
   is tried again up to four times, 30 seconds apart. Five failures of the AI in a row rest the app's AI
   for 10 minutes (`ai.reason: "ai_resting"`).
 

@@ -15,8 +15,8 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  * E2E AI relay channel (docs/SITE_AI_CHAT_DESKTOP_TUNNEL_PLAN.md Phase 1). Two surfaces:
  *   - Web (session-authed, /api/desktop/ai/*): a member ENQUEUES a sealed AI request for their
  *     own linked desktop, reads its status + live queue position, streams the sealed reply
- *     frames over SSE, and posts sealed input frames (confirm mode). Every {id} route is
- *     restricted to the REQUESTING user — account members can't read each other's requests.
+ *     frames over SSE, posts sealed input frames (confirm mode), and cancels it. Every {id}
+ *     route is restricted to the REQUESTING user — account members can't read each other's requests.
  *   - Desktop (flk_ API key, /api/v1/desktop-ai/*): publishes its X25519 public key, long-polls
  *     the lane, claims single-flight, appends sealed reply frames, polls input, completes
  *     (which purges all sealed content). Scope: `ai:relay`, with legacy `connector:relay`
@@ -177,6 +177,27 @@ class DesktopAiRelayController
             return $this->jsonError($response, 'This request is not waiting for input', 409, 'not_claimed');
         }
         return $this->jsonResponse($response, ['accepted' => true, 'seq' => $result['seq']], 201);
+    }
+
+    /**
+     * POST /api/desktop/ai/requests/{id}/cancel — the requester no longer wants the answer (the
+     * browser stopped, or its page closed): a request not yet taken is never handed out, and a
+     * computer working on one is answered `cancelled` on its next frame and stops (contract §0.13).
+     * Requesting-user only, and a request that is not theirs is refused exactly as one that does
+     * not exist, so the route tells nobody which ids are real. `{cancelled}` says whether it was
+     * still open.
+     */
+    public function cancelRequest(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonError($response, 'Authentication required', 401);
+        }
+        $row = $this->relay->getForAccess((string) ($args['id'] ?? ''), (string) $userId);
+        if ($row === null || !hash_equals((string) $userId, (string) $row['requestingUserId'])) {
+            return $this->jsonError($response, 'Request not found', 404);
+        }
+        return $this->jsonResponse($response, ['cancelled' => $this->relay->cancel($row['requestId'], (string) $row['ownerUserId'])]);
     }
 
     /**

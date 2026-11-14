@@ -870,10 +870,17 @@ async function streamTunnelResponses(
   const onExternalAbort = () => {
     if (abortKind !== null) return;
     abortKind = 'external';
+    // The person stopped it: the desktop is told to stop too (it is answered `cancelled` on its next
+    // frame), rather than finish a turn nobody reads and hold its lane meanwhile.
+    void api.cancelDesktopAiRequest(requestId).catch(() => undefined);
     controller.abort();
   };
   if (params.signal?.aborted) onExternalAbort();
   else params.signal?.addEventListener('abort', onExternalAbort, { once: true });
+  // The page closing or reloading aborts nothing by itself: the turn is stopped then too (its cancel is sent with
+  // keepalive, which outlives the page), rather than run on for nobody and hold the computer's lane.
+  const onLeaving = () => onExternalAbort();
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', onLeaving);
   const giveUp = () => {
     if (abortKind !== null) return;
     abortKind = 'timeout';
@@ -893,7 +900,7 @@ async function streamTunnelResponses(
   let drainPasses = 0;
 
   const cancelled = (): Terminal => {
-    if (abortKind === 'external') return { kind: 'uncertain', message: 'The stream was cancelled; the desktop may still complete the request.' };
+    if (abortKind === 'external') return { kind: 'uncertain', message: 'The stream was cancelled, and the desktop was asked to stop the request.' };
     return relayDone ? { kind: 'done' } : { kind: 'uncertain', message: 'Timed out waiting for the desktop; the request may still complete.' };
   };
 
@@ -1115,6 +1122,7 @@ async function streamTunnelResponses(
     clearTimeout(timeout);
     clearTimeout(ceiling);
     params.signal?.removeEventListener('abort', onExternalAbort);
+    if (typeof window !== 'undefined') window.removeEventListener('pagehide', onLeaving);
   }
 }
 

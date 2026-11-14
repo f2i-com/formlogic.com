@@ -824,6 +824,74 @@ describe('chatViaTunnel state machine', () => {
 
     expect(res).toMatchObject({ ok: false, error: { code: 'stopped' } });
     expect(backend.fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/desktop/ai/requests'))).toBe(false);
+    expect(backend.fetchMock.mock.calls.some(([url]) => String(url).endsWith('/cancel')), 'nothing to cancel').toBe(false);
+  });
+
+  it('tells the desktop to stop a turn the browser stops while it is being written', async () => {
+    const abort = new AbortController();
+    const calls: Array<{ url: string; method: string }> = [];
+    setFetch(
+      vi.fn((...args: unknown[]) => {
+        const url = String(args[0]);
+        const init = (args[1] ?? {}) as RequestInit;
+        calls.push({ url, method: String(init.method ?? 'GET') });
+        if (url.includes('/api/desktop/ai/pubkey')) return jsonResponse({ instanceId: INSTANCE, publicKey: DESKTOP.publicKeyB64, deviceName: 'Test Box' });
+        if (url.endsWith('/api/desktop/ai/requests') && init.method === 'POST') return jsonResponse({ requestId: 'req-1', status: 'pending', queuePos: 0 }, 201);
+        if (url.includes('/stream')) {
+          // The desktop is writing: the stream stays open until the browser stops it.
+          return Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+              init.signal?.addEventListener('abort', () => controller.error(new Error('aborted')));
+              queueMicrotask(() => abort.abort());
+            },
+          }), { status: 200 }));
+        }
+        if (url.endsWith('/cancel')) return jsonResponse({ cancelled: true });
+        return jsonResponse({ request: { requestId: 'req-1', status: 'streaming' } });
+      })
+    );
+
+    const res = await chatViaTunnel({ instanceId: INSTANCE, providerId: 'openai-codex-agent', messages: [{ role: 'user', content: 'hi' }], signal: abort.signal });
+
+    expect(res).toMatchObject({ ok: false, error: { code: 'uncertain', message: 'The stream was cancelled, and the desktop was asked to stop the request.' } });
+    const cancels = calls.filter((call) => call.url.endsWith('/cancel'));
+    expect(cancels).toEqual([{ url: expect.stringMatching(/\/api\/desktop\/ai\/requests\/req-1\/cancel$/), method: 'POST' }]);
+  });
+
+  it('tells the desktop to stop a turn when the page closes while it is being written (nothing aborts it otherwise)', async () => {
+    // (this file runs without a browser: a window to close, for this test only)
+    const win = new EventTarget();
+    (globalThis as { window?: unknown }).window = win;
+    const calls: Array<{ url: string; method: string; keepalive?: boolean }> = [];
+    setFetch(
+      vi.fn((...args: unknown[]) => {
+        const url = String(args[0]);
+        const init = (args[1] ?? {}) as RequestInit;
+        calls.push({ url, method: String(init.method ?? 'GET'), keepalive: init.keepalive });
+        if (url.includes('/api/desktop/ai/pubkey')) return jsonResponse({ instanceId: INSTANCE, publicKey: DESKTOP.publicKeyB64, deviceName: 'Test Box' });
+        if (url.endsWith('/api/desktop/ai/requests') && init.method === 'POST') return jsonResponse({ requestId: 'req-1', status: 'pending', queuePos: 0 }, 201);
+        if (url.includes('/stream')) {
+          // The desktop is writing; the person closes the tab (no signal of the caller's is aborted).
+          return Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+              init.signal?.addEventListener('abort', () => controller.error(new Error('aborted')));
+              queueMicrotask(() => win.dispatchEvent(new Event('pagehide')));
+            },
+          }), { status: 200 }));
+        }
+        if (url.endsWith('/cancel')) return jsonResponse({ cancelled: true });
+        return jsonResponse({ request: { requestId: 'req-1', status: 'streaming' } });
+      })
+    );
+
+    try {
+      await chatViaTunnel({ instanceId: INSTANCE, providerId: 'openai-codex-agent', messages: [{ role: 'user', content: 'hi' }] });
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
+
+    const cancels = calls.filter((call) => call.url.endsWith('/cancel'));
+    expect(cancels).toEqual([{ url: expect.stringMatching(/\/api\/desktop\/ai\/requests\/req-1\/cancel$/), method: 'POST', keepalive: true }]);
   });
 
   it('keeps reading a backlog until a pass adds nothing, however many passes it takes', async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 
 /** A choice of where something runs on the administrator's OAIY: the computer, the provider on it, and its model. */
@@ -39,6 +39,24 @@ export function OaiyTargetPicker({ candidates, name, onChange, disabled, engineH
     onChange(complete ? { connectionId, providerId, model: providerId === engine ? null : model } : null);
   }, [connectionId, providerId, model, engine, onChange]);
 
+  // The listing asked for now, let go when another is asked, the picker goes, or the page closes (followListing sends
+  // its letGo with keepalive): a computer is not kept listing, and an owner's place held, for nobody.
+  const asking = useRef<AbortController | null>(null);
+  const ask = () => {
+    asking.current?.abort();
+    const next = new AbortController();
+    asking.current = next;
+    return next.signal;
+  };
+  useEffect(() => {
+    const leaving = () => asking.current?.abort();
+    window.addEventListener('pagehide', leaving);
+    return () => {
+      window.removeEventListener('pagehide', leaving);
+      asking.current?.abort();
+    };
+  }, []);
+
   const pickComputer = async (id: string) => {
     setConnectionId(id);
     setProviders(null);
@@ -47,7 +65,9 @@ export function OaiyTargetPicker({ candidates, name, onChange, disabled, engineH
     setModel('');
     setError(null);
     setBusy('providers');
-    const result = await api.adminOaiyProviders(id);
+    const signal = ask();
+    const result = await api.adminOaiyProviders(id, signal);
+    if (signal.aborted) return;
     setBusy(null);
     if (result.error || !result.data) { setError(result.error ?? 'That computer did not answer.'); return; }
     setEngine(result.data.engineProvider);
@@ -60,7 +80,9 @@ export function OaiyTargetPicker({ candidates, name, onChange, disabled, engineH
     setError(null);
     if (id === '' || id === engine) return;
     setBusy('models');
-    const result = await api.adminOaiyModels(connectionId, id);
+    const signal = ask();
+    const result = await api.adminOaiyModels(connectionId, id, signal);
+    if (signal.aborted) return;
     setBusy(null);
     if (result.error || !result.data) { setError(result.error ?? 'That provider did not list its models.'); return; }
     // Chat and reading pictures need a language model: a picture or video model cannot answer.

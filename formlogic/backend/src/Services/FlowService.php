@@ -3878,6 +3878,10 @@ class FlowService
             'createdAt' => $row['created_at'],
             'updatedAt' => $row['updated_at'],
             'aiOnly' => (bool) ($row['ai_only'] ?? false),
+            // Whether it takes AI requests at all (it published its sealing key), and when it last asked its AI lane
+            // for one (DesktopAiRelayService::notePolled): what App AI calls online, beside the heartbeat above.
+            'aiKey' => !empty($row['e2e_public_key']),
+            'aiPolledAt' => $row['ai_polled_at'] ?? null,
         ];
     }
 
