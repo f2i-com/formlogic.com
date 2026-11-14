@@ -12,6 +12,8 @@ import { NATIVE_IN_FLIGHT_RETRY_SECONDS, nativeRefusal, nativeTooManyRequests } 
 import { toast } from "../../stores/toastStore";
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from "../../lib/sessionGeneration";
 import { copyHostedActor, HOSTED_ACTOR_ERROR, isHostedAdmissionCurrent, sameHostedActor, type HostedAdmission } from '../../lib/hostedActor';
+import { outsideLinkOf, type OutsideLink } from "../../lib/outsideLink";
+import { OutsideLinkBar } from "./OutsideLinkBar";
 
 const navigate = (path: string) => window.location.assign(path);
 /** The largest request a page sends its app's backend: a photo upload (SoftN takes 5.6 MB) and its envelope. */
@@ -185,7 +187,9 @@ export function HostedAppFrame({
     (!mountNative && !workspaceOnly && !isHostedAdmissionCurrent(hosted, slug));
   const engineId = current?.id ?? "";
   const engineRevision = current?.revision ?? "";
-  const frameKey = `${decided}/${mountVersion}/${clientIdentity(mountClient)}/${mountNative ? clientIdentity(mountNative) : 0}/${storageEpoch}/${engineId}/${engineRevision}`;
+  // The app opened again where it was stopped (the frame went to another address): a new frame for the same mount.
+  const [reopened, setReopened] = useState(0);
+  const frameKey = `${decided}/${mountVersion}/${clientIdentity(mountClient)}/${mountNative ? clientIdentity(mountNative) : 0}/${storageEpoch}/${engineId}/${engineRevision}/${reopened}`;
   // The same mount whatever its storage epoch: what a version taken in place belongs to (`taken`).
   const mountBase = `${decided}/${mountVersion}/${clientIdentity(mountClient)}/${mountNative ? clientIdentity(mountNative) : 0}/${engineId}/${engineRevision}`;
   // A version the running frame took in place (`update`). The props still name the version the app
@@ -208,6 +212,9 @@ export function HostedAppFrame({
   // here can prevent that, so it is detected after the fact and the frame is taken away.
   const [tripped, setTripped] = useState("");
   const navigated = tripped === frameKey;
+  // A link in the app to another site, a mail address or a phone number, which the frame cannot open
+  // (SoftN's `links: 1`): shown over the app, and opened when the person says so. Its frame's alone.
+  const [outside, setOutside] = useState<{ key: string; link: OutsideLink } | null>(null);
   const loads = useRef({ key: "", count: 0 });
   const port = useRef<MessagePort | null>(null);
   const invalidateMount = useRef<(() => void) | null>(null);
@@ -493,6 +500,19 @@ export function HostedAppFrame({
         if (event.data?.type === "place") {
           const place: unknown = event.data.place;
           if (typeof place === "string" && place.length <= 2000 && /^\/(?!\/)/.test(place)) placeRef.current.onPlace?.(place);
+          return;
+        }
+        // A link the person clicked to another site, a mail address or a phone number (SoftN's
+        // `links: 1`): read again here, it is the frame's word, and shown over the app until the
+        // person opens it or puts it away. A newer one takes its place. Only right after a press of
+        // the person's: a press in the frame is this page's too (a frame's user activation reaches
+        // its parents), and an app whose code runs in the frame's own scripts can hand a link on
+        // with no click, at a moment of its choosing. A browser that cannot say shows it.
+        if (event.data?.type === "link") {
+          const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
+          if (activation && !activation.isActive) return;
+          const link = outsideLinkOf(event.data.href);
+          if (link) setOutside({ key: frameKey, link });
           return;
         }
         if (event.data?.type === "error") {
@@ -781,6 +801,10 @@ export function HostedAppFrame({
       {blocked ? <p role="alert" className="p-4 text-sm">{mountNative ? "This app's browser storage access could not be verified. Please reload or sign in again." : HOSTED_ACTOR_ERROR}</p> : actorRefused ? null : navigated ? (
         <div role="alert" className="bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
           <p>This app tried to navigate away and was stopped</p>
+          {/* A new frame for the same app: what it saved in this browser is still there. */}
+          <button type="button" className="mt-3 min-h-11 rounded-lg border border-amber-300 px-3 font-medium dark:border-amber-700" onClick={() => setReopened((count) => count + 1)}>
+            Open the app again
+          </button>
         </div>
       ) : (
         <div className={`relative flex min-h-0 w-full flex-1 flex-col ${bare ? "" : "min-h-[420px]"}`}>
@@ -805,6 +829,7 @@ export function HostedAppFrame({
           onLoad={countLoad}
         />
         {mountNative && !error && shownKey !== frameKey && <AppSplash look={mountNative.look} className="absolute inset-0" />}
+        {outside?.key === frameKey && <OutsideLinkBar link={outside.link} onClose={() => setOutside(null)} />}
         </div>
       )}
     </div>

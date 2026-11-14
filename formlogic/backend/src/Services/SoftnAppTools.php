@@ -258,16 +258,21 @@ class SoftnAppTools
 
     /**
      * What an install went through with that will not work as written, in words to act on:
-     * links that stop the app. The app's frame shows a link to one of the app's own page files
+     * links that go nowhere. The app's frame shows a link to one of the app's own page files
      * in place (from SoftN v0.0.40; before it, every such link took the frame away, and this
-     * warned of each), and a link to a place on the same page (`#top`) is harmless. Any other
-     * link without a `target` is the browser's to follow: it takes the frame off the app, and
-     * this site stops the app there ("This app tried to navigate away and was stopped"). Each
-     * kind named here was followed in a browser: a page file the app does not have, an address
-     * that names no page file (`about`, `/`, `docs/`, a stylesheet, one of the app's pictures),
-     * and another site or a mail address. With a `target` a link opens nothing (the frame may
-     * open no window) and the app stays, and the page's own code going to a page that is not
-     * there does nothing: neither stops the app.
+     * warned of each), and a link to a place on the same page (`#top`) is harmless.
+     *
+     * What any other link does depends on the frame installed. One that keeps every link on the
+     * app (`$framesKeepLinks`: the installed runtime advertises SoftN's `links/1`) does nothing
+     * for a link that names no page of the app, and hands a link to another site, a mail address
+     * or a phone number to this page, which shows the address and opens it when the person says
+     * so: those are not warned of. One before it leaves every other link without a `target` to
+     * the browser, which takes the frame off the app, and this site stops the app there ("This
+     * app tried to navigate away and was stopped"). Each kind named here was followed in a
+     * browser, with both frames: a page file the app does not have, an address that names no
+     * page file (`about`, `/`, `docs/`, a stylesheet, one of the app's pictures), and another
+     * site or a mail address. The page's own code going to a page that is not there does nothing
+     * with either.
      *
      * A link is read from the page that shows it, as SoftN reads one (core's bundlePageAt): a
      * part brought in with `<import>` is shown by the pages that import it, and its links are
@@ -277,7 +282,7 @@ class SoftnAppTools
      * @param array<string, string> $files
      * @return list<string>
      */
-    public static function warnings(array $files): array
+    public static function warnings(array $files, bool $framesKeepLinks = false): array
     {
         // What the frame is sent: a link is held to these, never to the backend's files.
         $client = array_filter(NativeAppService::clientFiles(['files' => $files]), 'is_string');
@@ -393,19 +398,127 @@ class SoftnAppTools
             }
         }
         $list = static fn (array $found): string => implode('; ', array_slice(array_keys($found), 0, 8)) . (count($found) > 8 ? '; and ' . (count($found) - 8) . ' more' : '');
+        // What following such a link does: nothing, where the installed frame keeps every link on the
+        // app (SoftN's `links/1`); before it, it stopped the app until it was opened again.
+        $happens = $framesKeepLinks ? 'does nothing when it is followed' : 'stops the app until it is reopened';
         $warnings = [];
-        if ($missing !== []) $warnings[] = 'A link names a page file this app does not have, and following it stops the app until it is reopened (' . $list($missing) . '). Add that page to the app, or correct the link to a page it has: a link to one of the app\'s own page files opens it in place, read from the page that shows the link. Change that before telling the person it is done.';
-        if ($notPages !== []) $warnings[] = 'A link that names no page file stops the app when it is followed (' . $list($notPages) . '). A link here opens a page file of the app, named in full with its ending and read from the page that shows the link ("about.html", "docs/guide.html": not "about", "/" or a folder, and never above the app\'s own folder), or a place on the same page ("#top"). It opens no stylesheet, picture or other file. Change that before telling the person it is done.';
-        if ($outside !== []) $warnings[] = 'A link to another site or to a mail address does not open from an app hosted here: followed, it stops the app until it is reopened (' . $list($outside) . '). Show the address as text the person can copy, not as a link. Change that before telling the person it is done.';
+        if ($missing !== []) $warnings[] = 'A link names a page file this app does not have, and following it ' . ($framesKeepLinks ? 'does nothing' : 'stops the app until it is reopened') . ' (' . $list($missing) . '). Add that page to the app, or correct the link to a page it has: a link to one of the app\'s own page files opens it in place, read from the page that shows the link. Change that before telling the person it is done.';
+        if ($notPages !== []) $warnings[] = 'A link that names no page file ' . $happens . ' (' . $list($notPages) . '). A link here opens a page file of the app, named in full with its ending and read from the page that shows the link ("about.html", "docs/guide.html": not "about", "/" or a folder, and never above the app\'s own folder), or a place on the same page ("#top"). It opens no stylesheet, picture or other file. Change that before telling the person it is done.';
+        // A frame that keeps its links hands one to another site to this page, which shows the address
+        // and opens it when the person says so: such a link is fine as written.
+        if ($outside !== [] && !$framesKeepLinks) $warnings[] = 'A link to another site or to a mail address does not open from an app hosted here: followed, it stops the app until it is reopened (' . $list($outside) . '). Show the address as text the person can copy, not as a link. Change that before telling the person it is done.';
         if ($byCode !== []) $warnings[] = 'The page\'s code goes to a page file this app does not have, which does nothing (' . $list($byCode) . '). Add that page, or correct the name.';
         return $warnings;
+    }
+
+    // ── History of versions (NativeAppVersions) ─────────────────────────────────────────────
+
+    /**
+     * The app's versions, newest first, as its owner's History section lists them: the current one,
+     * then each earlier one kept. Who made one is said only as whether it was the person asking:
+     * an id names no one to an AI, and a name is the page's to show.
+     *
+     * @return array<string, mixed>
+     */
+    public function versions(array $app, string $userId): array
+    {
+        $list = (new NativeAppVersions($this->native))->list((string) $app['id']);
+        $rows = array_map(static fn (array $row): array => self::versionRow($row, $userId), $list['versions']);
+        $out = ['current' => $list['current'], 'versions' => $rows, 'kept' => count($rows) - 1, 'limits' => $list['limits']];
+        if ($list['unreadable']) $out['note'] = 'The app’s history is there and could not be read, so only the current version is listed. The next version installed starts it again.';
+        elseif (count($rows) <= 1) $out['note'] = 'Nothing has been replaced yet: the next version installed keeps this one here.';
+        return $out;
+    }
+
+    /**
+     * One version compared with the app as it is now, or (`file`) that version's text of one source
+     * file, read in parts as a project's file is read when it is longer than an answer carries.
+     *
+     * @return array<string, mixed>
+     */
+    public function version(array $app, array $args, string $userId): array
+    {
+        $number = self::versionNumber($args['version'] ?? null);
+        $versions = new NativeAppVersions($this->native);
+        if (isset($args['file'])) {
+            $found = $versions->file((string) $app['id'], $number, $args['file']);
+            $text = $found['text'];
+            $bytes = strlen($text);
+            // In parts, as a project's own file is read (`offset`, in bytes): reading a file of an earlier version
+            // never needs the app to go back to it.
+            $offset = isset($args['offset']) && is_int($args['offset']) ? max(0, min($bytes, $args['offset'])) : 0;
+            $part = mb_strcut($text, $offset, self::READ_CHARS_FULL, 'UTF-8');
+            $next = $offset + strlen($part);
+            $out = ['current' => $found['current'], 'version' => $found['version'], 'file' => $found['path'], 'bytes' => $bytes, 'offset' => $offset, 'source' => $part, 'whole' => $offset === 0 && $next >= $bytes];
+            if ($next < $bytes) {
+                $out['note'] = 'This is PART of ' . $found['path'] . ' as version ' . $number . ' had it: bytes ' . number_format($offset) . ' to ' . number_format($next) . ' of ' . number_format($bytes) . '. Read on with offset: ' . $next . '.';
+            } elseif ($offset > 0) {
+                $out['note'] = 'This is the last part of ' . $found['path'] . ' as version ' . $number . ' had it (from byte ' . number_format($offset) . ').';
+            }
+            return $out;
+        }
+        $found = $versions->get((string) $app['id'], $number);
+        return ['current' => $found['current'], 'version' => self::versionRow($found['version'], $userId), 'differs' => $found['differs'],
+            'databaseAhead' => $found['databaseAhead'], 'outside' => $found['outside']];
+    }
+
+    /**
+     * Go back to a version: its files and media installed as the next version, recorded as a going
+     * back by the person asking, held to the engine's rules as a publish is (a version that uses
+     * torch where it is off is refused, and says why). Who may enter and where it opens stay.
+     *
+     * @return array{version: int, restored: int, databaseAhead: list<string>, note?: string}
+     */
+    public function restore(array $app, array $args, string $userId): array
+    {
+        $number = self::versionNumber($args['version'] ?? null);
+        if (!is_int($args['expectedVersion'] ?? null) || $args['expectedVersion'] < 1) throw new \InvalidArgumentException('Provide expectedVersion, the app’s current version as list_native_app_versions gave it.');
+        $check = function (array $project) use ($app): void {
+            $torch = $this->engines?->torchRefusal($app, NativeAppService::clientFiles($project));
+            if ($torch !== null) throw new \InvalidArgumentException($torch);
+        };
+        try {
+            $done = (new NativeAppVersions($this->native))->restore((string) $app['id'], $number, $args['expectedVersion'], $userId, $check);
+        } catch (\RuntimeException $e) {
+            // The page's wording ("Reload and look again") said as an AI acts on it, as an update's is.
+            if ($e->getCode() === 409 && preg_match('/^The app is now at version (\d+)\./', $e->getMessage(), $now) === 1) {
+                throw new \InvalidArgumentException('The app is at version ' . $now[1] . ', not ' . $args['expectedVersion'] . ': it changed since you read it. Read list_native_app_versions again and go back from there. Nothing was installed.');
+            }
+            throw $e;
+        }
+        if ($done['databaseAhead'] !== []) {
+            $done['note'] = 'The database changes made since version ' . $number . ' stay applied, and the app now lists them (' . implode(', ', $done['databaseAhead']) . '): a database does not go back. Check that the app works with the tables as they are.';
+        }
+        return $done;
+    }
+
+    /** A version's number, as a tool is given it. */
+    private static function versionNumber(mixed $value): int
+    {
+        if (!is_int($value) || $value < 1) throw new \InvalidArgumentException('Provide version, a version number from list_native_app_versions.');
+        return $value;
+    }
+
+    /**
+     * A version as an AI is told of it: `byYou` for who made it, and nothing of anyone else.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function versionRow(array $row, string $userId): array
+    {
+        $row['byYou'] = ($row['by'] ?? null) === $userId;
+        unset($row['by']);
+        return $row;
     }
 
     /** What an install answers: the new version, what the project now holds, and where to see it. */
     public function installed(array $app, array $saved, ChatToolsContext $ctx): array
     {
         $id = (string) $app['id'];
-        $warnings = self::warnings(is_array($saved['files'] ?? null) ? $saved['files'] : []);
+        // What a link will do is the installed frame's to say: read before any frame is open.
+        $keepsLinks = in_array(RuntimeEngineService::LINKS_FEATURE, $this->engines?->installedFeatures() ?? [], true);
+        $warnings = self::warnings(is_array($saved['files'] ?? null) ? $saved['files'] : [], $keepsLinks);
         return ($warnings === [] ? [] : ['warnings' => $warnings]) + [
             'appId' => $id,
             // A SoftN app is managed on its own page; a forms app that hosts a project, in App Studio.

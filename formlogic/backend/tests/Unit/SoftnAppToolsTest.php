@@ -2,7 +2,7 @@
 declare(strict_types=1);
 namespace FormLogic\Tests\Unit;
 
-use FormLogic\Services\{AppService, AppUserService, ChatToolDeniedException, ChatToolsContext, ChatToolsService, FormService, NativeAppService, ResponseService, SoftnAppTools, SoftnKnowledge};
+use FormLogic\Services\{AppService, AppUserService, ChatToolDeniedException, ChatToolsContext, ChatToolsService, FormService, NativeAppService, ResponseService, RuntimeEngineService, SoftnAppTools, SoftnKnowledge};
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -26,7 +26,7 @@ final class SoftnAppToolsTest extends TestCase
     }
 
     /** @return array{0: ChatToolsService, 1: NativeAppService&\PHPUnit\Framework\MockObject\MockObject} */
-    private function tools(array|false|null $project = null, array $app = self::APP, ?AppUserService $users = null): array
+    private function tools(array|false|null $project = null, array $app = self::APP, ?AppUserService $users = null, ?RuntimeEngineService $engines = null): array
     {
         // null: the usual project; false: nothing installed.
         $project = $project === false ? null : ($project ?? $this->project());
@@ -46,7 +46,7 @@ final class SoftnAppToolsTest extends TestCase
             $this->recordCalls[] = $input;
             return $input['action'] === 'read' ? ['record' => ['values' => ['title' => 'x'], 'revision' => 'r1', 'fields' => []]] : ['saved' => true];
         });
-        $service = new ChatToolsService($this->createMock(FormService::class), $apps, $this->createMock(ResponseService::class), appUsers: $users, native: $native, softnKnowledge: new SoftnKnowledge(null, ['softn' => 'v1', 'components' => ['Button' => "## Button — A button.\nTag: <Button> (group: essentials)"], 'docs' => []], ['javascript' => "# How to build a SoftN app\n\nIntro.\n\n## Files\nmanifest.json\n", 'python' => "# How\n\n## Python logic (.py)\nx\n"]));
+        $service = new ChatToolsService($this->createMock(FormService::class), $apps, $this->createMock(ResponseService::class), appUsers: $users, native: $native, engines: $engines, softnKnowledge: new SoftnKnowledge(null, ['softn' => 'v1', 'components' => ['Button' => "## Button — A button.\nTag: <Button> (group: essentials)"], 'docs' => []], ['javascript' => "# How to build a SoftN app\n\nIntro.\n\n## Files\nmanifest.json\n", 'python' => "# How\n\n## Python logic (.py)\nx\n"]));
         return [$service, $native];
     }
 
@@ -283,6 +283,43 @@ final class SoftnAppToolsTest extends TestCase
         ));
         // A target that is this frame is no target.
         $this->assertCount(1, $with('<a href="missing.html" target="_self">1</a>'));
+    }
+
+    /**
+     * A frame that keeps every link on the app (the installed runtime advertises SoftN's
+     * `links/1`) does nothing for a link that names no page of the app, and hands a link to
+     * another site or a mail address to the page, which shows it and opens it when the person
+     * says so. So the same links are warned of as going nowhere, and a link to the outside is not
+     * warned of at all. (Each was clicked in a browser with that frame installed.)
+     */
+    public function testAFrameThatKeepsItsLinksIsWarnedOfLinksThatGoNowhereAndNotOfLinksOut(): void
+    {
+        $files = ['manifest.json' => '{"main":"index.html"}', 'about.html' => '<App/>',
+            'index.html' => '<App><a href="missing.html">1</a><a href="about">2</a><a href="https://example.com/">3</a><a href="mailto:someone@example.com">4</a><a href="about.html">5</a></App>'];
+        $kept = SoftnAppTools::warnings($files, true);
+        $this->assertCount(2, $kept, implode("\n", $kept));
+        $this->assertStringContainsString('following it does nothing (index.html → missing.html)', $kept[0]);
+        $this->assertStringContainsString('A link that names no page file does nothing when it is followed (index.html: "about")', $kept[1]);
+        $this->assertStringNotContainsString('stops the app', implode(' ', $kept));
+        // Without it, as before: each stops the app, and so does the link to the outside.
+        $before = SoftnAppTools::warnings($files);
+        $this->assertCount(3, $before);
+        $this->assertStringContainsString('stops the app until it is reopened (index.html → missing.html)', $before[0]);
+        $this->assertStringContainsString('(index.html: https://example.com/; index.html: mailto:someone@example.com)', $before[2]);
+
+        // An install reads it from the runtime installed.
+        $engines = $this->createMock(RuntimeEngineService::class);
+        $engines->method('installedFeatures')->willReturn(['host-zipp/1', 'python-logic/1', RuntimeEngineService::LINKS_FEATURE]);
+        [$tools] = $this->tools(engines: $engines);
+        $saved = $tools->call('update_native_app_files', ['appId' => 'app-1', 'expectedVersion' => 3, 'files' => ['ui/main.ui' => '<App><a href="gone.ui">Gone</a> <a href="https://example.com/">Out</a></App>']], self::mcp());
+        $this->assertCount(1, $saved['warnings']);
+        $this->assertStringContainsString('following it does nothing (ui/main.ui → ui/gone.ui)', $saved['warnings'][0]);
+        $older = $this->createMock(RuntimeEngineService::class);
+        $older->method('installedFeatures')->willReturn(['host-zipp/1', 'python-logic/1']);
+        [$tools] = $this->tools(engines: $older);
+        $saved = $tools->call('update_native_app_files', ['appId' => 'app-1', 'expectedVersion' => 3, 'files' => ['ui/main.ui' => '<App><a href="gone.ui">Gone</a> <a href="https://example.com/">Out</a></App>']], self::mcp());
+        $this->assertCount(2, $saved['warnings']);
+        $this->assertStringContainsString('stops the app', $saved['warnings'][0]);
     }
 
     /**

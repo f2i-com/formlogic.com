@@ -808,6 +808,13 @@ fwrite(STDOUT, "completed");
         $this->versions->remove(self::APP, 2);
         $this->assertSame([5, 4, 3, 1], $this->numbers());
         $this->assertFileExists($blob(2), 'nothing names it now, and it is kept all the same');
+        // …and the size the owner is shown is what is there: every kept media file, 1's and 2's
+        // among them (counting only what the readable maps name would say 3's and 4's alone). 5's
+        // is the app's own, not the history's.
+        $onDisk = array_sum(array_map(fn (int $n): int => (int) filesize($blob($n)), [1, 2, 3, 4]));
+        $this->assertSame(4 * 2000, $onDisk);
+        $this->assertFileDoesNotExist($blob(5));
+        $this->assertGreaterThanOrEqual($onDisk, $this->versions->list(self::APP)['bytes']);
         // Its owner takes it out, and what nothing names goes: its own file, and the one left before.
         $this->assertSame(['version' => 1, 'removed' => true], $this->versions->remove(self::APP, 1));
         $this->assertSame([5, 4, 3], $this->numbers());

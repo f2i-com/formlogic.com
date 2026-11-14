@@ -347,6 +347,9 @@ the SoftN the site runs. A server without them says so and still serves FormLogi
 | `update_native_app_files` | `apps:write`, `screens:write` | Writes files whole (`files`), removes files (`remove`), adds or replaces media as base64 (`media`), removes media (`removeMedia`), and changes `access` or `home`. Everything else stays, the database included. `expectedVersion` is the version read. |
 | `publish_native_app_project` | `apps:write`, `screens:write` | Installs a complete project (`expectedVersion: 0` for the first). Media are kept when `assets` is left out; `assets: {}` is none. |
 | `get_native_app_template` | `apps:read` | The starter, to read. |
+| `list_native_app_versions` | `apps:read` | The app's history, newest first: the current version and each earlier one kept (the newest 30 and any pinned), with when and how each was made, `byYou`, its `summary`, and what it changed. Who else made one is not named. |
+| `get_native_app_version` | `apps:read` | One version against the app now: the files and media that differ (`added` are in the app now only, `removed` in that version only, `changed`), `databaseAhead` (database changes applied since, which stay if it comes back) and the outside sites its pages may reach against the app's. With `file`, that version's text of one source file; a long one comes in parts, each saying the `offset` to read on from. |
+| `restore_native_app_version` | `apps:write`, `screens:write` | Goes back to a version: its files and media are installed as the next version, its backend started first as for an update, recorded as a going back. `expectedVersion` is the current version. Who may enter, where it opens and the database stay as they are; database changes made since stay applied and are named. |
 
 An install validates the project and **starts its backend on the new version before keeping it**: a
 version whose backend does not start, whose route names a function that is not there, or that

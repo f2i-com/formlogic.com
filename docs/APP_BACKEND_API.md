@@ -86,7 +86,8 @@ The owner's routes are under `/api/apps/{id}/native/versions` (list, one version
 Removing a version deletes its record and whatever of its content no other kept version names. It is refused for the current version, and for a pinned one until it is unpinned. A version one of whose kept files is gone is listed as `damaged`: it cannot be gone back to, and can be removed.
 Going back is a new version recorded as `rollback` and never touches the database: database changes applied since stay listed in the version that comes back, and the answer names them (`databaseAhead`).
 Going back brings the version's own manifest back, and with it what the app asks this server for and, for a JavaScript app, the outside sites its pages may reach (`site.outside`). Who can use the app and its address stay as they are. A version's record says when it changed either (`changes.outside`, `changes.asks`), one version against the app now lists the outside sites of each (`outside`), and the page's confirmation names them.
-Not built: putting the data back too, a route-by-route comparison, the MCP tools for versions, and versions in a backup (a backup carries the current version only).
+Over MCP (2026-11-14): `list_native_app_versions`, `get_native_app_version` (one version against the app now, or one of its source files) and `restore_native_app_version` (going back, which asks for screen editing too). Removing a version stays the owner's, on the page.
+Not built: putting the data back too, a route-by-route comparison, and versions in a backup (a backup carries the current version only).
 
 ### 4. Editing it
 
@@ -102,7 +103,8 @@ Not built: putting the data back too, a route-by-route comparison, the MCP tools
 **Over MCP: small tools**, each one change to the draft, each naming the version it is a change to.
 
 `app_api_get`, `app_api_set_route`, `app_api_remove_route`, `app_api_set_logic` (one function),
-`app_db_add_change`, `app_api_test`, `app_versions_list`, `app_version_diff`, `app_rollback`.
+`app_db_add_change`, `app_api_test`. (The versions' three are built, under the names the other app
+tools have: `list_native_app_versions`, `get_native_app_version`, `restore_native_app_version`.)
 
 ### 5. A real address
 

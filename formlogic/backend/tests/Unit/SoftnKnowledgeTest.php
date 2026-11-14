@@ -171,12 +171,12 @@ final class SoftnKnowledgeTest extends TestCase
     {
         $page = (string) file_get_contents(self::RESOURCES . '/softn-on-formlogic.md');
         $tools = array_column(ChatToolsService::toolDefinitions(), 'name');
-        preg_match_all('/`((?:get|list|create|update|change|remove|lookup|publish|edit)_[a-z_]+)\b/', $page, $named);
+        preg_match_all('/`((?:get|list|create|update|change|remove|lookup|publish|edit|restore)_[a-z_]+)\b/', $page, $named);
         $named = array_values(array_unique($named[1]));
         $this->assertGreaterThan(10, count($named));
         $this->assertSame([], array_values(array_diff($named, $tools)), 'softn-on-formlogic.md names tools that do not exist');
         // …and every tool for a SoftN app is in it, so none is left for an AI to stumble on.
-        foreach (['create_softn_app', 'get_softn_app', 'get_softn_guide', 'lookup_softn_components', 'get_native_app_project', 'update_native_app_files', 'list_native_app_records', 'get_native_app_record', 'change_native_app_record', 'list_app_members', 'update_app_member', 'remove_app_member', 'edit_softn_app'] as $tool) {
+        foreach (['create_softn_app', 'get_softn_app', 'get_softn_guide', 'lookup_softn_components', 'get_native_app_project', 'update_native_app_files', 'list_native_app_records', 'get_native_app_record', 'change_native_app_record', 'list_app_members', 'update_app_member', 'remove_app_member', 'edit_softn_app', 'list_native_app_versions', 'get_native_app_version', 'restore_native_app_version'] as $tool) {
             $this->assertContains($tool, $named, $tool . ' is not explained in softn-on-formlogic.md');
         }
         // The page is short enough that the first answer, with the list of guides after it, fits a chat turn.

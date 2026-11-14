@@ -572,6 +572,7 @@ FormLogic hosts two kinds of app, and this MCP server creates, edits and looks a
 A SoftN app (when the person wants something built for them rather than forms, or names an app that list_apps marks kind "softn"):
 - New: create_softn_app { name, request }. Then read get_softn_guide (no topic: FormLogic's rules and the tools) and get_softn_guide { topic: "language" } (how pages, logic and a backend are written) BEFORE writing a file; lookup_softn_components { names } gives a component's props. SoftN is its own language: do not write React, Vue or plain web pages from habit.
 - Read and change: get_native_app_project { appId } (files and version; files: [paths] reads them), update_native_app_files { appId, expectedVersion, files, remove?, media?, removeMedia? } (installs the next version; its backend is started first and a version that does not start is refused with what to fix).
+- Undo: list_native_app_versions { appId } lists the versions kept, get_native_app_version { appId, version, file?, offset? } shows what one differs by (or one of its files, a long one in parts from offset), and restore_native_app_version { appId, version, expectedVersion } goes back to it as the next version (the database stays as it is).
 - Look after: get_softn_app { appId } (how it stands, where it runs), list_native_app_records / get_native_app_record / change_native_app_record (its data: search, filter, sort; needs the records permissions), list_app_members / update_app_member / remove_app_member (its people), update_app { status } to publish or unpublish.
 
 Build an app from scratch:
@@ -600,7 +601,7 @@ FormLogic apps = an APP (container) + one or more FORMS (each a set of fields, b
 ## SoftN apps: a website, tool or web app of its own
 The other kind of app has no forms: it is a SoftN project, with its own pages and logic, a private backend and a SQLite database. Use it when the person wants something built for them (a booking page, a tracker, a game, a small site) rather than forms and a dashboard. This guide is about forms apps; a SoftN app has its own:
 - get_softn_guide (no topic) — FormLogic's rules for a hosted SoftN app, the tools in the order a build uses them, and a complete worked app. Then get_softn_guide { topic: "language" } — how pages, logic and a backend are written. Read both before writing a file.
-- create_softn_app { name, request } makes one with a working starter; get_native_app_project and update_native_app_files read and change it; get_softn_app says how one stands; list_native_app_records, get_native_app_record and change_native_app_record are its data; list_app_members and update_app_member its people.
+- create_softn_app { name, request } makes one with a working starter; get_native_app_project and update_native_app_files read and change it; list_native_app_versions, get_native_app_version and restore_native_app_version go back to an earlier version; get_softn_app says how one stands; list_native_app_records, get_native_app_record and change_native_app_record are its data; list_app_members and update_app_member its people.
 - list_apps marks each app kind "softn" or "forms". The form, dashboard and screen tools below do not apply to a SoftN app.
 
 ## Recommended workflow

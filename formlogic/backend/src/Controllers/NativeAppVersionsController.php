@@ -25,6 +25,13 @@ class NativeAppVersionsController
     /** NativeAppService's recovery-required refusals, as NativeAppController names them to an owner. */
     private const RECOVERY_REQUIRED = '/^(?:The app (?:database )?needs operator recovery|Restore the app database before installing another update)/';
     private const BUSY_RETRY_SECONDS = 2;
+    /**
+     * What an owner is told when reading or changing the history fails in a way nothing above names
+     * (its folder could not be read or written). Not the host's configuration: the app runs, and
+     * its history is files beside it. Going back is an install, and keeps the install's wording.
+     */
+    private const NOT_READ = 'The app’s history could not be read just now. Try again shortly; if it keeps happening, the server’s log says why.';
+    private const NOT_CHANGED = 'The app’s history could not be changed just now. Try again shortly; if it keeps happening, the server’s log says why.';
 
     // Every dependency is required: this controller is autowired, and PHP-DI's reflection
     // autowiring skips optional parameters (see NativeAppController).
@@ -37,7 +44,7 @@ class NativeAppVersionsController
             $list = $this->versions->list((string) $app['id']);
             $list['versions'] = $this->named($list['versions'], $user);
             return $list;
-        });
+        }, self::NOT_READ);
     }
 
     /** GET /api/apps/{id}/native/versions/{n} */
@@ -47,13 +54,13 @@ class NativeAppVersionsController
             $found = $this->versions->get((string) $app['id'], self::number($args));
             $found['version'] = $this->named([$found['version']], $user)[0];
             return $found;
-        });
+        }, self::NOT_READ);
     }
 
     /** GET /api/apps/{id}/native/versions/{n}/file?path=… */
     public function file(Request $request, Response $response, array $args): Response
     {
-        return $this->owned($request, $response, $args, fn (array $app): array => $this->versions->file((string) $app['id'], self::number($args), $request->getQueryParams()['path'] ?? null));
+        return $this->owned($request, $response, $args, fn (array $app): array => $this->versions->file((string) $app['id'], self::number($args), $request->getQueryParams()['path'] ?? null), self::NOT_READ);
     }
 
     /** POST /api/apps/{id}/native/versions/{n}/restore {expectedVersion} */
@@ -78,7 +85,7 @@ class NativeAppVersionsController
             $body = $request->getParsedBody();
             if (!is_array($body) || !is_bool($body['pinned'] ?? null)) throw new \InvalidArgumentException('Provide pinned: true or false.');
             return $this->versions->pin((string) $app['id'], self::number($args), $body['pinned']);
-        });
+        }, self::NOT_CHANGED);
     }
 
     /**
@@ -90,7 +97,7 @@ class NativeAppVersionsController
      */
     public function remove(Request $request, Response $response, array $args): Response
     {
-        return $this->owned($request, $response, $args, fn (array $app): array => $this->versions->remove((string) $app['id'], self::number($args)));
+        return $this->owned($request, $response, $args, fn (array $app): array => $this->versions->remove((string) $app['id'], self::number($args)), self::NOT_CHANGED);
     }
 
     private static function number(array $args): int
@@ -125,11 +132,12 @@ class NativeAppVersionsController
 
     /**
      * Admit the app's owner and answer with what $operation returns, as NativeAppController's
-     * manage() and respond() do for the project itself.
+     * manage() and respond() do for the project itself. $unexpected is what the owner is told of a
+     * failure no refusal names (null: the install's own wording, for going back).
      *
      * @param callable(array<string, mixed>, string): array<string, mixed> $operation
      */
-    private function owned(Request $request, Response $response, array $args, callable $operation): Response
+    private function owned(Request $request, Response $response, array $args, callable $operation, ?string $unexpected = null): Response
     {
         $app = $this->apps->getApp((string) ($args['id'] ?? ''));
         $user = $request->getAttribute('userId');
@@ -149,6 +157,7 @@ class NativeAppVersionsController
             if (in_array($e->getCode(), [402, 403, 404, 409, 413, 422, 501], true)) return $this->jsonError($response, $e->getMessage(), $e->getCode());
             error_log('Native app versions error: ' . $e->getMessage());
             if ($e->getCode() === 0 && preg_match(self::RECOVERY_REQUIRED, $e->getMessage())) return $this->jsonError($response, $e->getMessage(), 503, 'recovery_required');
+            if ($unexpected !== null) return $this->jsonError($response, $unexpected, 503, 'history_unavailable');
             return $this->jsonError($response, 'The native app host is unavailable. Check its runtime configuration.', 503);
         }
     }

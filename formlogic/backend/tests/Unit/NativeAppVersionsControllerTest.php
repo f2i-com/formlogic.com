@@ -185,6 +185,40 @@ final class NativeAppVersionsControllerTest extends TestCase
         }
     }
 
+    /**
+     * A failure no refusal names (the history's folder could not be read or written) is said as
+     * what it is: the history could not be read, or changed, just now. Not the host's runtime
+     * configuration, which is the install's to blame when going back fails; and never the
+     * server's own message, which goes to its log.
+     */
+    public function testAnUnexpectedFailureOfTheHistoryIsSaidAsOneAndNotAsTheHosts(): void
+    {
+        $broken = $this->createMock(NativeAppService::class);
+        $broken->method('withHistory')->willThrowException(new \RuntimeException('Short write to the app\'s history: 3 of 9 bytes'));
+        $auth = $this->createMock(AuthService::class);
+        $controller = new NativeAppVersionsController($this->apps(), new NativeAppVersions($broken), $this->engines(), $auth);
+        $said = [];
+        $log = ini_set('error_log', $this->storage . '/php-errors.log');
+        try {
+            foreach ([['GET', 'index', [], null, []], ['GET', 'show', ['n' => '1'], null, []], ['GET', 'file', ['n' => '1'], null, ['path' => 'index.html']],
+                ['PUT', 'pin', ['n' => '1'], ['pinned' => true], []], ['DELETE', 'remove', ['n' => '1'], null, []], ['POST', 'restore', ['n' => '1'], ['expectedVersion' => 2], []]] as [$method, $action, $args, $body, $query]) {
+                $request = (new ServerRequestFactory())->createServerRequest($method, '/api/apps/notes-id/native/versions')->withQueryParams($query)->withAttribute('userId', 'owner');
+                if ($body !== null) $request = $request->withParsedBody($body);
+                $response = $controller->{$action}($request, new Response(), $args + ['id' => self::APP['id']]);
+                $this->assertSame(503, $response->getStatusCode(), $action);
+                $this->assertStringNotContainsString('Short write', (string) $response->getBody(), $action);
+                $said[$action] = [self::body($response)['code'] ?? null, self::body($response)['message']];
+            }
+        } finally {
+            ini_set('error_log', $log === false ? '' : $log);
+        }
+        $read = ['history_unavailable', 'The app’s history could not be read just now. Try again shortly; if it keeps happening, the server’s log says why.'];
+        $changed = ['history_unavailable', 'The app’s history could not be changed just now. Try again shortly; if it keeps happening, the server’s log says why.'];
+        $this->assertSame(['index' => $read, 'show' => $read, 'file' => $read, 'pin' => $changed, 'remove' => $changed,
+            'restore' => [null, 'The native app host is unavailable. Check its runtime configuration.']], $said);
+        $this->assertStringContainsString('Short write to the app\'s history', (string) file_get_contents($this->storage . '/php-errors.log'), 'the reason is in the server\'s log');
+    }
+
     public function testTheFileRouteShowsASourceFileAndRefusesAPathOutsideTheProjectAndABinary(): void
     {
         $response = $this->call('GET', 'file', 'owner', ['n' => '1'], null, ['path' => 'index.html']);

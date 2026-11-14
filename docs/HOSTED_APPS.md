@@ -1229,26 +1229,45 @@ workspace follows the links too and keeps the workspace's own address.
 `ui/e2e/softn-app-page-links.spec.ts` runs all of it in a browser.
 
 A link is read from the page that shows it (one written in an imported part, from the page that
-imports it), and it opens a page file of the app or a place on the same page (`#top`). Any other
-link without a `target` is still the browser's to follow, takes the frame off the app, and the app
-is stopped ("This app tried to navigate away and was stopped"): a page file that is not there, an
-address that names no page file (`about`, `/`, a folder, a stylesheet, one of the app's pictures),
-another site, a mail address. The frame's sandbox is `allow-scripts` alone, so a link with a
-`target` opens nothing, and the app stays; the page's own code going to a page that is not there
-does nothing. Each was followed in a browser. An install through the AI tools warns of the ones
-it can read (`SoftnAppTools::warnings`), and the guide served to AIs says how a link is written.
+imports it), and it opens a page file of the app or a place on the same page (`#top`).
+
+**Links out of the app.** The frame's sandbox is `allow-scripts` alone: it may open no window, and
+an address it goes to in place of the app is a page of this site, which refuses to be framed. A
+frame that keeps its links (the runtime's `features` name `links/1`, and `ready` says `links: 1`;
+after SoftN v0.0.40) never leaves the app for a link the person clicks. A link to another site, a
+mail address or a phone number comes to this page as `{ type: 'link', href }` on the app's port:
+`HostedAppFrame` reads it again (`lib/outsideLink.ts`: http, https, mailto and tel only, at most
+2,000 characters, printable, no name or password before a host) and shows it over the app
+(`OutsideLinkBar`): "This app links to example.com", the whole address under it, and Open link,
+which opens it in a tab of its own (`noopener noreferrer`), or Stay here. Nothing opens until the
+person presses Open: the app is anyone's code, and the bar names the host as the browser reads it,
+so an address dressed as another site's is seen for what it is. Open is a button, not a link (a link
+is followed by a middle click, a drag or its menu too), and does nothing until the address has been
+on screen 600 ms, timed from before it is painted and again for each newer address; a press begun
+sooner starts that over, so a run of taps meant for the app never reaches it. The bar is shown only
+right after a press of the person's (a press in the frame is this page's user activation too): an
+app whose code runs in the frame's own scripts could post a link with no click. A mail address or a
+number opens in a tab of its own too, so a web mail handler never takes this page. Any other link (a page file that is not there, `about`, `/`, a
+folder, a stylesheet, one of the app's pictures, a `data:` address) does nothing and is said in the
+frame's console. A frame before that left every such link to the browser, which took the frame off
+the app, and the app was stopped ("This app tried to navigate away and was stopped"); the notice now
+has "Open the app again", which opens it in a new frame. Each case was followed in a browser with
+each frame. An install through the AI tools warns of the links it can read that go nowhere, in the
+words of the frame installed (`SoftnAppTools::warnings`, `RuntimeEngineService::LINKS_FEATURE`), and
+the guide served to AIs says how a link is written.
 
 **3D scenes.** `Scene3D` runs in the frame with what SoftN v0.0.40 added: a scene made in Blender
 played from one `.glb` through the file's own cameras, light from a panorama (an `.hdr` one was
 run; an `.exr` is kept as media too and read by a piece of its own), depth of field and occlusion,
 each from a piece of the runtime the frame fetches only when a scene asks for it. A media file
 may be 32 MB for that (one `.glb` of a one-minute film was 23.7 MB).
-Two things the frame does not do yet, both in SoftN's frame and so for a later SoftN release: the
-pictures inside a `.glb` are refused by the frame's own content policy (three.js reads them from
-`blob:` addresses, and the policy's `connect-src` names the runtime, the site's ZIPP and `data:`
-only), so a model is drawn in its materials' plain colours; and a page's `fetch()` of a `.json`
-among its files answers 404 (a `.txt` or `.md` under `assets/` is read). Both were measured on a
-real browser with the release installed.
+The pictures inside a `.glb` are drawn from the frame after SoftN v0.0.40, whose own content policy
+names `blob:` in `connect-src` (three.js reads them from `blob:` addresses the frame made; no
+network), and a page reads a `.json` among its files with `fetch()` (`fetch("data/levels.json")`),
+as it does in SoftN Web. With v0.0.40's frame a model was drawn in its materials' plain colours and
+such a fetch answered 404 (a `.txt` or `.md` under `assets/` was read). `ui/scripts/check-zipp-sharing.mjs`
+takes `blob:` beside `data:` in the frame's policy, and nothing else. A whole film made in Blender,
+its data in `.json` and its model textured, was played through on the local site with that frame.
 
 **A throttled call, as the app's page sees it.** FormLogic refuses a call before the app's backend
 runs in three cases, and the page's `softn.net.fetch` is answered the same way for each:
@@ -1548,6 +1567,11 @@ customize its `project` and call `publish_native_app_project` with `expectedVers
 Read `get_native_app_project` before updates (use `file` for one source file), then use
 `update_native_app_files` with the current version. `list_native_app_records` lists tables
 or a paginated table. Owner/app scope and apps/screens write permissions still apply.
+Over MCP, `list_native_app_versions` and `get_native_app_version` read the app's history of
+versions (what one differs by from the app now, or one of its files), and
+`restore_native_app_version` goes back to one as the next version, as the History section
+does: who may enter, where it opens and the database stay as they are. FormLogic's chat does
+not have these three; the person goes back on the History section.
 Installing a project does not publish the parent app to visitors; use the publish step.
 
 The editor assets come with the Softn release `node scripts/fetch-softn-release.mjs`

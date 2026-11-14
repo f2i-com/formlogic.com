@@ -145,14 +145,16 @@ try {
       // data: URLs it was handed): that is no network at all. From v0.0.36 it names the site's ZIPP
       // folder beside its own (`/zipp/`, this site's static ZIPP install, whose glue it imports and
       // whose torch package it fetches, each checked against its digest), and in script-src too.
-      // Nothing else may join them.
+      // After v0.0.40 it names `blob:` as well, no network either: an address the frame made from
+      // bytes it holds, which an opaque origin alone can read (three.js reads a `.glb`'s pictures
+      // that way). Nothing else may join them.
       const runtimeDirectory = `${origin}/hosted-runtime/`;
       const zippFolder = `${origin}/zipp/`;
       for (const [document, policy] of [['index.html', index], ['host.html', host]]) {
         const sources = Object.fromEntries(policy.split(';').map(d => d.trim()).filter(Boolean).map(d => { const [name, ...rest] = d.split(/\s+/); return [name, rest]; }));
         assert.deepEqual(sources['default-src'], ["'none'"], `${document} must write default-src 'none': ${policy}`);
         assert.equal(sources['connect-src']?.[0], runtimeDirectory, `${document} must write connect-src as its runtime directory ${runtimeDirectory} first: ${policy}`);
-        assert.ok([[runtimeDirectory], [runtimeDirectory, 'data:'], [runtimeDirectory, zippFolder, 'data:']].some(allowed => JSON.stringify(allowed) === JSON.stringify(sources['connect-src'])), `${document} must write connect-src as exactly its runtime directory ${runtimeDirectory}, the site's ZIPP folder and data: at most, with no other source: ${policy}`);
+        assert.ok([[runtimeDirectory], [runtimeDirectory, 'data:'], [runtimeDirectory, zippFolder, 'data:'], [runtimeDirectory, zippFolder, 'data:', 'blob:']].some(allowed => JSON.stringify(allowed) === JSON.stringify(sources['connect-src'])), `${document} must write connect-src as exactly its runtime directory ${runtimeDirectory}, the site's ZIPP folder, data: and blob: at most, with no other source: ${policy}`);
         // script-src likewise: the runtime directory, the ZIPP folder from v0.0.36, and the WebAssembly (and, in host.html, eval) tokens.
         assert.ok(sources['script-src']?.filter(source => !source.startsWith("'")).every(source => source === runtimeDirectory || source === zippFolder), `${document} must load scripts from its runtime directory and the site's ZIPP folder alone: ${policy}`);
         assert.deepEqual(sources['form-action'], ["'none'"], `${document} must write form-action 'none': ${policy}`);

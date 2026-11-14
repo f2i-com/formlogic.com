@@ -15,7 +15,7 @@ const html = (title: string, body: string) => `<!doctype html>\n<html lang="en">
 
 const project = { home: true, access: 'members', assets: {}, files: {
   'manifest.json': JSON.stringify({ id: 'com.formlogic.e2e.page-links', name: 'Page links', version: '1.0.0', main: 'index.html' }),
-  'index.html': html('Home', '<h1>Home page</h1>\n<p><a href="about.html">About this app</a></p>\n<p><a href="docs/guide.html">The guide</a></p>\n<p><button id="go" type="button">Guide by code</button></p>\n<p><a href="missing.html">A page that is not there</a></p>\n<script>\n  document.getElementById("go").addEventListener("click", function () { location.href = "docs/guide.html"; });\n</script>'),
+  'index.html': html('Home', '<h1>Home page</h1>\n<p><a href="about.html">About this app</a></p>\n<p><a href="docs/guide.html">The guide</a></p>\n<p><button id="go" type="button">Guide by code</button></p>\n<p><a href="missing.html">A page that is not there</a></p>\n<p><a href="https://example.com/">Another site</a></p>\n<script>\n  document.getElementById("go").addEventListener("click", function () { location.href = "docs/guide.html"; });\n</script>'),
   'about.html': html('About', '<h1>About page</h1>\n<p><a href="index.html">Back to the start</a></p>'),
   'docs/guide.html': html('Guide', '<import Links from="../parts/links.html" />\n<h1>Guide page</h1>\n<p><a href="../about.html">About from the guide</a></p>\n<p><a href="/index.html">The start, from the app’s root</a></p>\n<Links />'),
   // A part two pages bring in: its link is read from the page that shows it, so it is written for the
@@ -86,12 +86,45 @@ test('a link between a SoftN app’s page files opens the page in place, and the
   await shows(page, 'About page');
   await place(page, '#/about.html');
 
-  // A link that is to no page of the app is the browser's, and the app is stopped: said, not a blank frame.
+  // A link to no page of the app, and one to another site. What becomes of them is the installed
+  // frame's: one that keeps its links (`links/1`) stays on the app and shows the outside address over
+  // it; one before that left them to the browser, and the app was stopped, said, with a way back.
+  const runtime = await page.request.get('/hosted-runtime/runtime-manifest.json');
+  const keepsLinks = runtime.ok() && ((await runtime.json()) as { features?: string[] }).features?.includes('links/1') === true;
   await page.goto('about:blank');
   await page.goto(`/app/${slug}`);
   await shows(page, 'Home page');
   await app(page).getByRole('link', { name: 'A page that is not there' }).click();
-  await expect(page.getByText('This app tried to navigate away and was stopped')).toBeVisible({ timeout: 30_000 });
+  if (keepsLinks) {
+    await page.waitForTimeout(800);
+    await shows(page, 'Home page');
+    await expect(page.getByText('This app tried to navigate away and was stopped')).toHaveCount(0);
+    await app(page).getByRole('link', { name: 'Another site' }).click();
+    const bar = page.getByRole('dialog', { name: 'A link out of the app' });
+    await expect(bar).toContainText('This app links to example.com');
+    // Nothing opened by itself: the address is the person's to open, in a tab of its own. (The bar
+    // came at all: the press in the app's frame was this page's too, as the bar asks of a link.)
+    expect(context.pages()).toHaveLength(1);
+    await bar.getByRole('button', { name: 'Stay here' }).click();
+    await expect(bar).toHaveCount(0);
+    await shows(page, 'Home page');
+    // Asked again and opened, once the address has been on screen a moment: a tab of its own, and
+    // this page stays on the app. (The other site is answered here: nothing leaves the machine.)
+    await context.route('https://example.com/**', (route) => route.fulfill({ contentType: 'text/html', body: '<title>Another site</title>' }));
+    await app(page).getByRole('link', { name: 'Another site' }).click();
+    await expect(bar).toContainText('This app links to example.com');
+    await page.waitForTimeout(800);
+    const [opened] = await Promise.all([context.waitForEvent('page'), bar.getByRole('button', { name: 'Open link' }).click()]);
+    await opened.waitForLoadState();
+    expect(opened.url()).toBe('https://example.com/');
+    await expect(bar).toHaveCount(0);
+    await opened.close();
+    await shows(page, 'Home page');
+  } else {
+    await expect(page.getByText('This app tried to navigate away and was stopped')).toBeVisible({ timeout: 30_000 });
+    await page.getByRole('button', { name: 'Open the app again' }).click();
+    await shows(page, 'Home page');
+  }
 
   // An address that names no page of the app, or is no place at all, opens its main page.
   for (const hash of ['#/no-such-page.html', '#//elsewhere.example/x']) {

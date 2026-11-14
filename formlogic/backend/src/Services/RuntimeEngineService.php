@@ -70,6 +70,14 @@ class RuntimeEngineService
      * is refused by name. `hosted-runtime/runtime-manifest.json` features -> provenance.
      */
     public const PYTHON_LOGIC_FEATURE = 'python-logic/1';
+    /**
+     * The hosted runtime keeps every link the person clicks on the app (SoftN's `links/1`, after
+     * v0.0.40): a link to another site, a mail address or a phone number is handed to the page,
+     * which shows it and opens it when the person says so, and a link that names no page of the
+     * app does nothing. Before it, both stopped the app. Read by what tells an app's author what a
+     * link will do (SoftnAppTools::warnings); nothing is refused for its absence.
+     */
+    public const LINKS_FEATURE = 'links/1';
 
     /** Why the effective engine is not the requested one. */
     public const REASON_POLICY = 'policy';

@@ -308,7 +308,7 @@ final class NativeAppVersions
             $rows = [self::row(self::currentRecord($index, $project), $current)];
             $kept = array_values(array_filter($index['versions'], static fn (array $record): bool => $record['version'] < $current));
             $maps = [];
-            $bytes = self::bytesOf($dir, $kept, $maps);
+            $bytes = self::bytesOf($dir, $kept, $maps, onDisk: true);
             $held = self::held($dir);
             foreach ($kept as $position => $record) {
                 // An unpinned version past the newest KEEP is one a pin was holding: it goes at the next publish.
@@ -905,20 +905,34 @@ final class NativeAppVersions
     /**
      * What a set of versions takes on disk, each piece of content counted once.
      *
+     * A map that cannot be read names media this cannot see. For the size limit (pruned) it counts
+     * for nothing: while its version is kept nothing is removed from the media (sweep), so dropping
+     * other versions would free nothing, and the list says its version is damaged (isDamaged) for
+     * its owner to remove. For what the owner is shown ($onDisk), the media are every kept file
+     * there, as none of them goes until then.
+     *
      * @param list<array<string, mixed>> $versions
      * @param array<string, array<string, array{0: string, 1: int}>|null> $maps maps read so far, by key; null for one that cannot be read
      */
-    private static function bytesOf(string $dir, array $versions, array &$maps): int
+    private static function bytesOf(string $dir, array $versions, array &$maps, bool $onDisk = false): int
     {
         $texts = $mapFiles = $blobs = [];
+        $unread = false;
         foreach ($versions as $record) {
             $texts[$record['text']] = (int) ($record['textBytes'] ?? 0);
             $key = $record['map'] ?? null;
             if (!is_string($key)) continue;
             $mapFiles[$key] = (int) ($record['mapBytes'] ?? 0);
-            // One that cannot be read counts for nothing here; the list says its version is
-            // damaged (isDamaged), and its owner can remove it.
-            foreach (self::mapRead($dir, $key, $maps) ?? [] as [$hash, $size]) $blobs[$hash] = $size;
+            $map = self::mapRead($dir, $key, $maps);
+            if ($map === null) { $unread = true; continue; }
+            foreach ($map as [$hash, $size]) $blobs[$hash] = $size;
+        }
+        if ($unread && $onDisk && is_dir($dir . '/blobs')) {
+            foreach (scandir($dir . '/blobs') ?: [] as $name) {
+                if ($name === '.' || $name === '..' || isset($blobs[$name])) continue;
+                $size = @filesize($dir . '/blobs/' . $name);
+                if (is_int($size)) $blobs[$name] = $size;
+            }
         }
         return array_sum($texts) + array_sum($mapFiles) + array_sum($blobs);
     }
