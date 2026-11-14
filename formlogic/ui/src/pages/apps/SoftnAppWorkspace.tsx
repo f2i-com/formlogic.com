@@ -35,6 +35,9 @@ import { SoftnApi } from '../../components/apps/SoftnApi';
 import { AppPaymentsPanel } from '../../components/apps/AppPaymentsPanel';
 import { BringDataPanel } from '../../components/apps/BringDataPanel';
 import { AddBackendPanel } from '../../components/apps/AddBackendPanel';
+import { DatabaseDesigner } from '../../components/design/DatabaseDesigner';
+import { designedBackend, designRoutes, type DatabaseDesign } from '../../lib/databaseDesign';
+import { withBackend } from '../../lib/softnBackend';
 import { RequirementsSetting } from '../../components/apps/RequirementsSetting';
 import { AppEditorDialog, type AppEditorKind } from '../../components/studio/AppEditorDialog';
 import type { EditorBrief } from '../../components/studio/editorAgent';
@@ -318,17 +321,29 @@ function Workspace({ app }: { app: App }) {
     await draft.save({ project: next, confirmConflict: false, notice });
   };
 
-  // An API backend added to an app with none (AddBackendPanel): installed at once while the app is
-  // a draft, kept in the draft for the owner to publish once it is live, as an uploaded version is.
-  // Installed from `next` without editing the draft first: the draft having a backend is what
-  // swaps the panel for the records, so a refused install would take the panel, and the reason
-  // it shows, away with it.
-  const addBackend = async (next: NativeProject, from: 'starter' | 'file') => {
-    const said = from === 'starter'
-      ? 'Backend added: an items table, and GET and POST /api/items. Change it in the source code, or ask AI Studio.'
-      : 'Its backend is added: this page as it was, with the routes and database of the file you chose.';
+  // An API backend added to an app with none (AddBackendPanel, the database designer): installed at
+  // once while the app is a draft, kept in the draft for the owner to publish once it is live, as an
+  // uploaded version is. Installed from `next` without editing the draft first: the draft having a
+  // backend is what swaps the panel for the records, so a refused install would take the panel, and
+  // the reason it shows, away with it.
+  const addBackend = async (next: NativeProject, said: string) => {
     if (published) { draft.edit(next); draft.setNotice(`${said} Publish to make it live.`); return; }
     await draft.save({ project: next, confirmConflict: false, notice: said, raise: true });
+  };
+  // The database designer is open over the Data section of an app with no backend: ?design=diagram or
+  // ?design=mermaid, so Back closes it and a reload comes back to it.
+  const designAsked = section === 'data' && !backend && isOwner && !readOnly ? new URLSearchParams(location.search).get('design') : null;
+  const designing = designAsked === null ? null : designAsked === 'mermaid' ? 'mermaid' as const : 'diagram' as const;
+  const dataPath = softnWorkspacePath(app.id, 'data');
+  // True once installed; false when it went into the draft of a live app, to publish (DatabaseDesigner keeps the design then).
+  const createDesigned = async (design: DatabaseDesign): Promise<boolean> => {
+    if (!project) throw new Error('The app is still loading.');
+    const routes = designRoutes(design).length;
+    const tables = design.tables.length;
+    await addBackend(withBackend(project, designedBackend(design)),
+      `Backend made: ${tables} ${tables === 1 ? 'table' : 'tables'} and ${routes} ${routes === 1 ? 'route' : 'routes'} for its page. Its rows are in this tab; AI Studio can connect the page to its API.`);
+    navigate(dataPath, { replace: true });
+    return !published;
   };
 
   const uploadVersion = async (file: File | undefined) => {
@@ -612,9 +627,14 @@ function Workspace({ app }: { app: App }) {
               <p><span className="font-semibold text-slate-900 dark:text-white">This app has no database on the server.</span> It has no backend of its own, so what it saves stays in each visitor&apos;s browser. To keep data here and see it in this tab, give the app a backend: add one below, or ask AI Studio to.</p>
               {project && app.ownerId === userId && !readOnly && <AddBackendPanel project={project} disabled={busy}
                 waiting={dirty ? 'Publish or discard your unpublished changes first: adding a backend makes a new version.' : null}
-                onAdd={addBackend} />}
+                onDesign={() => navigate(`${dataPath}?design=diagram`)}
+                onAdd={next => addBackend(next, 'Its backend is added: this page as it was, with the routes and database of the file you chose.')} />}
             </div>
           </div></section>)}
+        {designing && project && <DatabaseDesigner appId={app.id} appName={app.name} access={project.access} mode={designing}
+          onMode={mode => navigate(`${dataPath}?design=${mode}`, { replace: true })} onClose={() => navigate(dataPath)}
+          waiting={dirty ? 'Publish or discard your unpublished changes first: making the backend makes a new version.' : null}
+          onCreate={createDesigned} />}
 
         {/* Wide: the address beside the domains. Narrow: one under the other. */}
         {section === 'domains' && <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">

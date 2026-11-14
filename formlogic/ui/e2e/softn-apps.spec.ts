@@ -259,15 +259,28 @@ test.describe('hosted SoftN apps', () => {
     const saved = join(tmpdir(), `softn-client-download-${Date.now()}.softn`);
     await (await download).saveAs(saved);
     expect(Object.fromEntries(Object.entries(unzipSync(readFileSync(saved))).map(([p, bytes]) => [p, strFromU8(bytes)]))).toEqual(files);
-    // Its Data section gives it a backend: the starter's, installed as its next version, the page kept.
+    // Its Data section gives it a backend designed in the database designer, an empty diagram to
+    // start: one table with one detail, installed as its next version, the page kept.
     await section(page, 'Data').click();
-    await page.getByRole('button', { name: 'Add a backend', exact: true }).click();
-    await expect(page.getByText('Backend added', { exact: false }).first()).toBeVisible({ timeout: 60000 });
+    await page.getByRole('button', { name: 'Design its database', exact: true }).click();
+    const designer = page.getByRole('dialog', { name: 'Design the database', exact: true });
+    await designer.getByRole('button', { name: 'Add a table', exact: true }).first().click();
+    // The new table's name is ready to type over.
+    await expect(designer.getByLabel('Name of the table', { exact: true })).toBeFocused();
+    await page.keyboard.type('Notes');
+    await page.keyboard.press('Enter');
+    await designer.getByLabel('Name of the new detail', { exact: true }).fill('title');
+    await designer.getByRole('button', { name: 'Add', exact: true }).click();
+    await designer.getByRole('button', { name: 'Review and create', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Review and create', exact: true }).getByRole('button', { name: 'Create the backend', exact: true }).click();
+    await expect(page.getByText('Backend made', { exact: false }).first()).toBeVisible({ timeout: 60000 });
+    await expect(designer).toBeHidden();
     const added = (await nativeProject(context, appId))!;
-    expect(JSON.parse(added.files['manifest.json']).server.routes.map((route: { method: string; path: string }) => `${route.method} ${route.path}`)).toEqual(['POST /api/items', 'GET /api/items']);
+    expect(JSON.parse(added.files['manifest.json']).server.routes.map((route: { method: string; path: string }) => `${route.method} ${route.path}`))
+      .toEqual(['GET /api/notes', 'POST /api/notes', 'PUT /api/notes', 'DELETE /api/notes']);
     expect(added.files['ui/main.ui']).toBe(files['ui/main.ui']);
     await expect.poll(async () => ((await (await context.request.get(`/api/apps/${appId}/native/records?offset=0`)).json()).tables ?? [])
-      .map((table: string | { name: string }) => typeof table === 'string' ? table : table.name), { timeout: 30000 }).toContain('items');
+      .map((table: string | { name: string }) => typeof table === 'string' ? table : table.name), { timeout: 30000 }).toContain('notes');
   });
 
 

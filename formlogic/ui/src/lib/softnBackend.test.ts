@@ -1,10 +1,17 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { backendOf, backendOrigin, STARTER_BACKEND, withBackend } from './softnBackend';
+import { backendOf, backendOrigin, withBackend } from './softnBackend';
 import type { NativeProject } from './nativeHosting';
 
 const project = (files: Record<string, string>): NativeProject => ({ version: 1, files, assets: { 'assets/icon.svg': 'PHN2Zy8+' }, access: 'application' });
+/** A backend to add: the one a new app starts with (backend/resources/native-app-starter.json), an items table and two routes. */
+const STARTER_BACKEND = (() => {
+  const starter = JSON.parse(readFileSync(resolve(__dirname, '../../../backend/resources/native-app-starter.json'), 'utf8')) as { files: Record<string, string> };
+  const backend = backendOf(project(starter.files))!;
+  delete backend.id;
+  return backend;
+})();
 const pageOnly = () => project({
   'manifest.json': JSON.stringify({ id: 'com.example.coffee', name: 'Coffee', version: '1.0.0', main: 'ui/main.ui', config: { theme: { mode: 'light' } } }),
   'ui/main.ui': '<Text>Page, newer</Text>',
@@ -21,14 +28,6 @@ const fullApp = () => project({
 });
 
 describe('adding an API backend to a SoftN app that has none', () => {
-  it("gives the starter's backend, the one a new app starts with", () => {
-    const starter = JSON.parse(readFileSync(resolve(__dirname, '../../../backend/resources/native-app-starter.json'), 'utf8'));
-    const manifest = JSON.parse(starter.files['manifest.json']);
-    expect(STARTER_BACKEND.server).toEqual(manifest.server);
-    expect(STARTER_BACKEND.config.server).toEqual(manifest.config.server);
-    for (const [path, source] of Object.entries(STARTER_BACKEND.files)) expect(source, path).toBe(starter.files[path]);
-  });
-
   it('adds it to the page as it is, with the address the page calls it at', () => {
     const next = withBackend(pageOnly(), STARTER_BACKEND);
     const manifest = JSON.parse(next.files['manifest.json']);

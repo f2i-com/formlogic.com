@@ -1,0 +1,6 @@
+/* The diagram's zoom buttons, a finger's size on a phone (React Flow draws them 26px). A class
+   name in Tailwind's arbitrary variants would lose its double underscore, so they are here. */
+@media (max-width: 639px) {
+  .fl-design-canvas .react-flow__controls-button { width: 44px; height: 44px; }
+  .fl-design-canvas .react-flow__controls-button svg { max-width: 16px; max-height: 16px; }
+}

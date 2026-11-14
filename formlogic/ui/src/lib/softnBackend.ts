@@ -1,11 +1,10 @@
 // An API backend for a hosted SoftN app that has none: its own routes and database on this server,
 // which its page calls with softn.net.fetch. Two ways to add one:
-//  - the starter's backend (one table, a GET and a POST route), the one a new app starts with
-//    (backend/resources/native-app-starter.json; softnBackend.test.ts holds them equal);
+//  - one designed in the database designer (lib/databaseDesign: designedBackend), from nothing;
 //  - the backend of another file of the same app: an app built in two halves (Coffee.Dating's
 //    public page and its private backend) is put back together, its page kept as it is.
 // Either is merged into the app's project and installed as its next version, as any change is.
-import { backendProblem, NATIVE_LIMITS, type NativeProject } from './nativeHosting';
+import { backendProblem, mediaSize, NATIVE_LIMITS, type NativeProject } from './nativeHosting';
 
 /** What makes a backend: the manifest's server block, the configuration it reads, its files, and the app it belongs to. */
 export interface SoftnBackend {
@@ -18,25 +17,11 @@ export interface SoftnBackend {
   id?: string;
 }
 
-/** Where the starter's page calls its backend: an address the host routes to the app's own backend. */
+/**
+ * Where an added backend's page calls it: an address the host routes to the app's own backend, as
+ * the new app's starter does (backend/resources/native-app-starter.json).
+ */
 export const STARTER_ORIGIN = 'https://app.example';
-
-export const STARTER_BACKEND: SoftnBackend = Object.freeze({
-  server: {
-    entry: 'server/main.logic',
-    requires: { apiVersion: 1, capabilities: ['sql'] },
-    database: { kind: 'private-sqlite', migrations: ['server/migrations/001.sql'] },
-    routes: [
-      { path: '/api/items', method: 'POST', handler: 'createItem', transaction: 'write', authorization: 'anonymous' },
-      { path: '/api/items', method: 'GET', handler: 'listItems', transaction: 'read', authorization: 'anonymous' },
-    ],
-  },
-  config: { server: { allowedOrigins: [STARTER_ORIGIN] } },
-  files: {
-    'server/main.logic': 'function createItem(req) {\n  let title = req.body.title;\n  if (typeof title != "string" || title.length == 0 || title.length > 200) return {status:422,body:{error:"Provide a title of 1 to 200 characters"}};\n  softn.sql.execute("INSERT INTO items(title) VALUES(?)",[title]);\n  return {status:201,body:softn.sql.first("SELECT id,title FROM items ORDER BY id DESC LIMIT 1",[])};\n}\nfunction listItems(req) {\n  return {status:200,body:{items:softn.sql.query("SELECT id,title FROM items ORDER BY id DESC LIMIT 50",[])}};\n}',
-    'server/migrations/001.sql': 'CREATE TABLE items(id INTEGER PRIMARY KEY, title TEXT NOT NULL);',
-  },
-});
 
 const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
@@ -63,12 +48,12 @@ export function backendOf(project: NativeProject): SoftnBackend | null {
   };
 }
 
-/** The bytes a project keeps: its sources as UTF-8, its media decoded from base64. */
+/** The bytes a project keeps: its sources as UTF-8, its media as their size (named, or decoded from base64). */
 function projectBytes(project: NativeProject, files: Record<string, string>): number {
   const encoder = new TextEncoder();
   let total = 0;
   for (const source of Object.values(files)) total += encoder.encode(source).length;
-  for (const media of Object.values(project.assets ?? {})) total += Math.floor(media.length * 3 / 4);
+  for (const media of Object.values(project.assets ?? {})) total += mediaSize(media);
   return total;
 }
 

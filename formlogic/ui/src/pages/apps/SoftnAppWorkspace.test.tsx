@@ -31,6 +31,17 @@ const mocks = vi.hoisted(() => ({
   editor: null as null | { kind: string; brief?: unknown; applyLabel?: string; onApply(bytes: Uint8Array): Promise<void>; onClose(): void },
   history: null as null | { app: { name: string }; version: number; open?: number; file?: string; backend: boolean; readOnly: boolean; waiting: string | null; onRestored(result: { version: number; restored: number; databaseAhead: string[] }): void },
   appApi: null as null | { app: { name: string }; access?: string; manifest?: string; version: number; dirty: boolean; readOnly: boolean },
+  designer: null as null | { mode: string; access?: string; waiting?: string | null; onCreate(design: unknown): Promise<boolean>; onMode(mode: string): void; onClose(): void },
+}));
+vi.mock('../../components/design/DatabaseDesigner', () => ({
+  DatabaseDesigner: (props: NonNullable<typeof mocks.designer>) => { mocks.designer = props; return <p data-testid="designer">designer {props.mode}, {props.access}</p>; },
+}));
+// lib/nativeHosting is stood in for below, so the backend is added to the page as withBackend would, without its checks.
+vi.mock('../../lib/softnBackend', () => ({
+  STARTER_ORIGIN: 'https://app.example',
+  backendOf: () => null,
+  withBackend: (project: NativeProject, backend: { server: unknown; files: Record<string, string> }) =>
+    ({ ...project, files: { ...project.files, ...backend.files, 'manifest.json': JSON.stringify({ id: 'a', server: backend.server }) } }),
 }));
 vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({ api: {
@@ -185,6 +196,31 @@ describe('SoftnAppWorkspace', () => {
       mocks.getAppForms.mockClear();
       await render('published', withBackend(1), '/edit');
       expect(mocks.getAppForms).not.toHaveBeenCalled();
+    });
+
+    it('opens the database designer over the Data section of an app with no backend, and installs the backend it makes', async () => {
+      await render('draft', installed(1), '/data?design=diagram');
+      expect(container.querySelector('[data-testid="designer"]')!.textContent).toBe('designer diagram, members');
+      const { importSql } = await import('../../lib/sqlSchema');
+      const { TASKS_SQLITE } = await import('../../lib/__fixtures__/schemas');
+      let madeHere = false;
+      await act(async () => { madeHere = await mocks.designer!.onCreate(importSql(TASKS_SQLITE, 'members').design); });
+      // A draft app's backend is installed at once: the designer may forget the design.
+      expect(madeHere).toBe(true);
+      const saved = mocks.saveNativeProject.mock.calls.at(-1)![1] as NativeProject;
+      expect(JSON.parse(saved.files['manifest.json']).server.routes.map((route: { method: string; path: string }) => `${route.method} ${route.path}`))
+        .toEqual(['GET /api/projects', 'POST /api/projects', 'PUT /api/projects', 'DELETE /api/projects', 'GET /api/tasks', 'POST /api/tasks', 'PUT /api/tasks', 'DELETE /api/tasks']);
+      expect(saved.files['server/migrations/001.sql']).toContain('CREATE TABLE tasks');
+      expect(saved.files['ui/main.ui']).toBe('<Text>Hi</Text>');
+      expect(container.textContent).toContain('Backend made: 2 tables and 8 routes for its page.');
+      expect(container.querySelector('[data-testid="designer"]')).toBeNull();
+      await act(async () => root.unmount());
+      // An app that has a backend gets no designer at that address; an older address still opens it.
+      await render('draft', withBackend(1), '/data?design=diagram');
+      expect(container.querySelector('[data-testid="designer"]')).toBeNull();
+      await act(async () => root.unmount());
+      await render('draft', installed(1), '/data?design=steps');
+      expect(container.querySelector('[data-testid="designer"]')!.textContent).toBe('designer diagram, members');
     });
 
     it('shows the phone sign-in codes, and links to them, only for an app whose manifest names a provider for its codes', async () => {

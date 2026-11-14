@@ -180,10 +180,54 @@ page of the domain that isn't the app's (the legal pages, a form) gets FormLogic
 from its Data section (AddBackendPanel, lib/softnBackend), installed as its next version, or kept in the
 draft for the owner to publish once the app is live:
 
-- **Add a backend**: the starter's (backend/resources/native-app-starter.json): an `items` table,
-  `GET` and `POST /api/items`, and the address its page calls them at (`https://app.example`,
-  added to `config.server.allowedOrigins`, which this host routes to the app's own backend). The
-  owner changes it in the source editor, or asks AI Studio to.
+- **Design its database**: the database designer (components/design, lib/databaseDesign), full
+  screen at `…/softn/data?design=diagram` (or `=mermaid`; the older `=steps` opens the diagram).
+  It is an entity-relationship diagram maker that starts empty: nothing is predetermined and no
+  example is offered. On the diagram (React Flow, laid out by Dagre: a crow's foot at the table
+  with many rows, a bar at the one each belongs to, a ring for one that is optional; top to bottom
+  on a phone, and a list view at any width) the owner adds tables (a new one opens with its name
+  ready to type over), the details of each (in the table's panel, a sheet on a phone, or straight
+  on a selected card: a column each, text, long text, whole number, number, yes or no, date, date
+  and time, email address, web address, one of a list; required, no two the same, a default), how
+  they are connected (drawn from one card to another, or said in the panel: each order belongs to
+  one customer; or two tables with many of each other, which adds a table that joins them, each
+  pair once), and what the app's page may do with each (read, add, change, remove).
+  - **Paste SQL** (lib/sqlSchema) reads a schema made elsewhere, pasted or from a `.sql` file: the
+    CREATE TABLE statements of MySQL and MariaDB (mysqldump, with its `/*!…*/` lines), SQL Server
+    (Management Studio's scripts: `[brackets]`, `dbo.`, `IDENTITY`, `GO`, defaults and keys added
+    by `ALTER TABLE … ADD CONSTRAINT`) and SQLite, with the `CREATE UNIQUE INDEX` that follow them.
+    A table's whole-number key becomes its id, each single-column foreign key a connection (its ON
+    DELETE kept), each column a detail of the kind its type is (`TINYINT(1)`, `BIT` and a SQLite
+    `CHECK (x IN (0, 1))` are yes or no; `ENUM` and `CHECK (x IN ('a', 'b'))` one of a list; a
+    created-at column with a clock default is the table's `created_at`). What a design cannot hold
+    is said, never dropped without a word: binary columns, computed columns, defaults the database
+    works out, keys or connections of several columns, and every statement passed over. It is
+    added to the design (a name taken is renamed) or takes its place.
+  - **Mermaid** (lib/mermaidErd) shows the same design as Mermaid's `erDiagram`, to copy, and reads
+    one written there or pasted (from Mermaid's own editor, or an AI) as the design, at each edit;
+    one that cannot be read is said by line and changes nothing. Types are the designer's kinds or
+    SQL's; `PK` is the id, `UK` no two the same, `FK` a connection's column, and a comment says
+    what Mermaid cannot (`"required; default: new; one of: new, paid"`). A relationship with many
+    at one end is a connection from that end; many at both adds a table that joins them. What
+    removing a row does, and each pair kept once, are kept from the design it was written from.
+  - **Review and create** lists what is left to fix (each opening its table), what the page may do
+    with each table, the routes and what is written, then makes it. The design is kept in the
+    browser (`formlogic:database-design:<appId>`) until the backend is installed: one that only
+    went into a live app's draft stays, so discarding the draft loses nothing. What is made:
+  `server/migrations/001.sql` (CREATE TABLE and CREATE INDEX only; checks for yes/no, lists, email,
+  web addresses and dates that call only `like` and `glob`; `created_at` with
+  `DEFAULT (datetime('now'))`; each connection a REFERENCES with ON DELETE CASCADE, SET NULL or
+  RESTRICT as the owner chose, and an index), `server/main.logic` (per table, `GET /api/<table>` —
+  newest first, `?limit=`/`?offset=` with a page no longer than one answer of the runner can carry
+  (2 MiB, so fewer rows for a table of long texts), `?id=` for one, `?<connection>=` for those of
+  one row — and POST, PUT and DELETE at the same path, each checking what it is sent (numbers
+  within what SQLite keeps exactly), every row a write names, every value that must be unique, and
+  anything a removal would break, there or down the connections it removes with it, before it
+  writes, since a statement that fails answers 500), and the routes in the manifest, called at
+  `https://app.example` (added to `config.server.allowedOrigins`, which this host routes to the
+  app's own backend). A new table's API is everything in an app only invited members open, reading
+  and adding in one anyone may. Later changes are the source editor's or AI Studio's: the designer
+  makes a backend once, and does not read one back.
 - **Add its backend from a file**: for an app built in two halves, as Coffee.Dating's hosting was (a
   public `app.softn` with the page alone, and a private bundle with its `server/` folder): the
   other file's server block, its `server/` folder (never the old host's `private/`, which may hold
