@@ -1,11 +1,12 @@
 // A page's sections, as one row of links under its header: the SoftN app page, Settings, the
 // App Studio and the admin area all move between their sections with it.
 // Links, not tabs: each section is an address, so it opens in a new tab, a copied link lands on
-// it and the back button returns to it. The row scrolls sideways before it wraps, and on a phone
-// the names stand without their icons at a finger's height.
-// A row longer than the screen says so: the end it runs off fades out under an arrow, which also
-// moves it along. Without that, a phone showed three sections and half a word, and nothing said
-// there were three more.
+// it and the back button returns to it.
+// On a phone every section is in view: the links wrap onto as many lines as they need, each a
+// button of its own at a finger's height, the open one filled in, the names without their icons.
+// A row a person had to swipe sideways along was hard to find their way in.
+// On a wider screen they are one underlined row. One longer than the screen says so: the end it
+// runs off fades out under an arrow, which also moves it along.
 import { useEffect, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react';
 import { Link, type To } from 'react-router-dom';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
@@ -88,9 +89,9 @@ export function SectionNav({ label, items, current, end, className }: {
 
   return (
     <div className={cn('flex flex-wrap items-end justify-between gap-x-4 border-b border-gray-200 dark:border-slate-700', className)}>
-      <div className="relative -mb-px flex min-w-0 max-w-full">
+      <div className="relative -mb-px flex min-w-0 max-w-full max-sm:mb-0 max-sm:w-full max-sm:pb-2">
         <nav ref={row} aria-label={label} style={faded} // A link brought into view by the keyboard stops clear of the fade and the arrow, so its focus ring is whole.
-          className="scrollbar-hide flex min-w-0 max-w-full gap-1 overflow-x-auto scroll-px-8">
+          className="scrollbar-hide flex min-w-0 max-w-full gap-1 overflow-x-auto scroll-px-8 max-sm:flex-wrap max-sm:gap-1.5 max-sm:overflow-visible">
           {items.map(({ value, label: name, to, icon: Icon, mark, replace, state }) => (
             <Link
               key={value}
@@ -100,10 +101,13 @@ export function SectionNav({ label, items, current, end, className }: {
               aria-current={current === value ? 'page' : undefined}
               className={cn(
                 'inline-flex min-h-11 flex-none items-center gap-1.5 whitespace-nowrap border-b-2 px-2 text-[13px] font-medium sm:min-h-10 sm:px-3 sm:text-sm',
+                // On a phone, a button of its own on a line that wraps: no underline, a fill. (A fill
+                // and not a ring: the keyboard's focus is the ring, and a phone's would have won.)
+                'max-sm:rounded-lg max-sm:border-b-0 max-sm:px-3',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500',
                 current === value
-                  ? 'border-primary-600 text-primary-700 dark:border-primary-400 dark:text-primary-300'
-                  : 'border-transparent text-gray-600 hover:text-gray-900 dark:text-slate-300 dark:hover:text-white',
+                  ? 'border-primary-600 text-primary-700 dark:border-primary-400 dark:text-primary-300 max-sm:bg-primary-100 max-sm:text-primary-800 dark:max-sm:bg-primary-500/20 dark:max-sm:text-primary-200'
+                  : 'border-transparent text-gray-600 hover:text-gray-900 dark:text-slate-300 dark:hover:text-white max-sm:bg-gray-100 max-sm:text-gray-700 dark:max-sm:bg-white/5 dark:max-sm:text-slate-200',
               )}
             >
               {Icon && <Icon className="hidden h-4 w-4 sm:block" aria-hidden="true" />}

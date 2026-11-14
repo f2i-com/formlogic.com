@@ -41,9 +41,10 @@ import { SectionNav } from '../components/ui/SectionNav';
 
 They are links, not tabs. Each section is an address (a part of the path, or the `#hash` on a
 page that already used one), so it opens in a new tab, a copied link lands on it, a reload stays
-on it and Back returns to it. On a phone the names stand without their icons at a finger's
-height, and the row scrolls sideways before it wraps. `mark` is a count beside a name; `end` is
-what the page says at the row's right, such as an app's state.
+on it and Back returns to it. On a phone every section is in view: the names wrap onto as many
+lines as they need, each a button of its own at a finger's height, without its icon, the open one
+filled in. `mark` is a count beside a name; `end` is what the page says at the row's right, such
+as an app's state.
 
 There is no banner over a section: no eyebrow line, no title repeating the section's name, no
 "step 2 of 6". Where a sentence of help is needed it is one muted line.
@@ -123,10 +124,25 @@ address of the studio that names one lands on the matching section of the app's 
 
 ## A row of sections on a phone
 
-`components/ui/SectionNav.tsx` is one line at every width. When it is longer than the screen it
-scrolls sideways, keeps the open section in view, and says there is more: the end it runs off
-fades out under an arrow that moves it along. The arrows are for a finger or a mouse (not in the
-tab order, hidden from a screen reader): the links are the navigation.
+`components/ui/SectionNav.tsx` wraps on a phone (under 640 px): every section is in view, each a
+button of its own (44 px high, a fill and no underline, the open one in the accent), on as many
+lines as the names need. The SoftN app page's nine take two lines at 390 px and three at 360; the
+App Studio's six, with their counts, three. A row a person had to swipe sideways along was hard to
+find their way in on a phone (the owner, 2026-11-14).
+
+From 640 px it is one underlined line. Where that is longer than the screen it scrolls sideways,
+keeps the open section in view, and says there is more: the end it runs off fades out under an
+arrow that moves it along. The arrows are for a finger or a mouse (not in the tab order, hidden
+from a screen reader): the links are the navigation.
+
+A builder dialog's sections (`components/builder/builderDialog.ts`: form settings, the script
+editor, sharing) wrap the same way on a phone.
+
+The bar at the foot of a phone's screen (`components/layout/MobileNav.tsx`, the "Workspace"
+navigation, as the sidebar is on a wider screen) is Home, Forms, Create app, Apps and Automations.
+Apps is the apps page itself (`/apps`: every app, its search and Create app), lit on any app's own
+page too; it opened a side menu of the apps, a second list of the same apps with the page one tap
+further in (the owner, 2026-11-14).
 
 `components/ui/DataTable.tsx` is the table a running forms app shows its members (a form's
 records) and the App Studio shows for an app's users. It fits as many columns as its width

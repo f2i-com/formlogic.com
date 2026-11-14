@@ -1,23 +1,15 @@
 // @vitest-environment jsdom
+// The bar at the foot of a phone's screen. Apps is the apps page itself, as on a wider screen: it
+// opened a side menu of the apps on a phone, a second list of the same apps with the page one tap
+// further in.
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MobileNav } from './MobileNav';
-import { useAppStore } from '../../stores/appStore';
 import { useAuthStore } from '../../stores/authStore';
-import type { AppListItem } from '../../types/app';
 
 type AuthUser = NonNullable<ReturnType<typeof useAuthStore.getState>['user']>;
-const fixtures = vi.hoisted(() => ({ apps: [] as unknown[] }));
-
-vi.mock('../../lib/api', () => ({
-  api: {
-    getApps: vi.fn(async () => ({ data: { apps: fixtures.apps, count: fixtures.apps.length } })),
-    isAdminActing: () => false,
-    isDemoMode: () => false,
-  },
-}));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,27 +25,9 @@ function PathProbe() {
   return null;
 }
 
-const makeApp = (overrides: Partial<AppListItem>): AppListItem =>
-  ({
-    id: 'app-1',
-    name: 'Plumbing Operations',
-    slug: 'plumbing',
-    ownerId: 'u1',
-    status: 'published',
-    settings: {},
-    theme: {},
-    navConfig: [],
-    createdAt: '2026-07-24 00:00:00',
-    updatedAt: '2026-07-24 00:00:00',
-    canManage: true,
-    ...overrides,
-  }) as AppListItem;
-
 beforeEach(() => {
-  fixtures.apps = [];
   pathRef.current = '/';
   useAuthStore.setState({ user: { id: 'u1', email: 'owner@example.com', name: 'Owner' } as unknown as AuthUser });
-  useAppStore.setState({ apps: [], activeAppId: null });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -62,14 +36,13 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
-  useAppStore.setState({ apps: [], activeAppId: null });
   useAuthStore.setState({ user: null });
 });
 
-async function renderNav() {
+async function renderNav(at = '/') {
   await act(async () => {
     root.render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[at]}>
         <PathProbe />
         <Routes>
           <Route path="*" element={<MobileNav />} />
@@ -79,41 +52,36 @@ async function renderNav() {
   });
 }
 
-describe('MobileNav apps drawer', () => {
-  it('opens a searchable apps sidebar and routes an owner to the Studio', async () => {
-    fixtures.apps = [
-      makeApp({ id: 'plumbing', name: 'Plumbing Operations' }),
-      makeApp({ id: 'portal', name: 'Customer Portal', slug: 'customer-portal' }),
-    ];
-    await renderNav();
+const item = (label: string) => Array.from(container.querySelectorAll<HTMLElement>('nav a, nav button')).find((el) => el.textContent === label || el.getAttribute('aria-label') === label);
 
-    const appsButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open your apps"]')!;
-    await act(async () => { appsButton.click(); });
-    expect(appsButton.getAttribute('aria-expanded')).toBe('true');
-    expect(container.querySelector('[role="dialog"][aria-label="Your apps"]')).not.toBeNull();
-
-    const search = container.querySelector<HTMLInputElement>('input[aria-label="Search your apps"]')!;
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-    await act(async () => {
-      setter.call(search, 'plumb');
-      search.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    expect(container.textContent).toContain('Plumbing Operations');
-    expect(container.textContent).not.toContain('Customer Portal');
-
-    const plumbing = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Plumbing Operations'))!;
-    await act(async () => { plumbing.click(); });
-    expect(pathRef.current).toBe('/apps/plumbing/studio');
-    expect(container.querySelector('[role="dialog"][aria-label="Your apps"]')).toBeNull();
+describe('the bar at the foot of a phone’s screen', () => {
+  it('takes Apps to the apps page itself, with no side menu', async () => {
+    await renderNav('/forms');
+    const apps = item('Apps') as HTMLAnchorElement;
+    expect(apps.tagName).toBe('A');
+    expect(apps.getAttribute('href')).toBe('/apps');
+    await act(async () => { apps.click(); });
+    expect(pathRef.current).toBe('/apps');
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(apps.getAttribute('aria-current')).toBe('page');
   });
 
-  it('offers a direct route to the complete apps page', async () => {
-    await renderNav();
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="Open your apps"]')!.click();
-    });
-    const viewAll = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('View all apps'))!;
-    await act(async () => { viewAll.click(); });
-    expect(pathRef.current).toBe('/apps');
+  it('lights Apps on an app’s own page too, and Home only at its own address', async () => {
+    await renderNav('/apps/plumbing/softn/data');
+    expect(item('Apps')!.className).toContain('bg-primary-50');
+    expect(item('Home')!.className).not.toContain('bg-primary-50');
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await renderNav('/');
+    expect(item('Home')!.className).toContain('bg-primary-50');
+    expect(item('Apps')!.className).not.toContain('bg-primary-50');
+  });
+
+  it('goes to Create app from its button, and names itself as the sidebar it stands in for', async () => {
+    await renderNav('/');
+    await act(async () => { (item('Create app') as HTMLButtonElement).click(); });
+    expect(pathRef.current).toBe('/apps/new');
+    expect(container.querySelector('nav')!.getAttribute('aria-label')).toBe('Workspace');
+    expect(Array.from(container.querySelectorAll('nav a')).map((a) => a.textContent)).toEqual(['Home', 'Forms', 'Apps', 'Automations']);
   });
 });

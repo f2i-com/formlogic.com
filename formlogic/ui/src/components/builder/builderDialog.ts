@@ -24,17 +24,20 @@ export const DIALOG_DESCRIPTION = 'mt-1 text-sm text-gray-500 dark:text-slate-40
 export const DIALOG_CLOSE = '-m-1 inline-flex min-h-11 min-w-11 flex-shrink-0 cursor-pointer items-center justify-center rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white';
 export const DIALOG_FOOTER = 'shrink-0 border-t border-gray-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-6';
 
-/** A dialog's sections: one underlined row, as a page's are (ui/SectionNav). It scrolls sideways
- *  before it wraps, and on a phone the names stand without their icons at a finger's height. */
-export const DIALOG_TABS = 'flex shrink-0 overflow-x-auto border-b border-gray-200 px-2 scrollbar-hide dark:border-slate-800 sm:px-4';
+/** A dialog's sections, as a page's are (ui/SectionNav): one underlined row, which scrolls sideways
+ *  where it is longer than the dialog; on a phone every one in view, wrapped onto as many lines as
+ *  they need, each a button of its own at a finger's height without its icon. */
+export const DIALOG_TABS = 'flex shrink-0 overflow-x-auto border-b border-gray-200 px-2 scrollbar-hide dark:border-slate-800 sm:px-4 max-sm:flex-wrap max-sm:gap-1.5 max-sm:overflow-visible max-sm:px-4 max-sm:py-2';
 
 export function dialogTab(active: boolean): string {
   return cn(
     '-mb-px flex min-h-11 flex-none cursor-pointer items-center gap-2 whitespace-nowrap border-b-2 px-3 text-sm font-medium motion-safe:transition-colors',
     'rounded-t-md focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 max-sm:[&>svg]:hidden',
+    // On a phone, a button of its own on a line that wraps: no underline, a fill (as SectionNav's).
+    'max-sm:mb-0 max-sm:rounded-lg max-sm:border-b-0',
     active
-      ? 'border-primary-600 text-primary-700 dark:border-primary-500 dark:text-primary-400'
-      : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-slate-400 dark:hover:border-slate-700 dark:hover:text-slate-200',
+      ? 'border-primary-600 text-primary-700 dark:border-primary-500 dark:text-primary-400 max-sm:bg-primary-100 max-sm:text-primary-800 dark:max-sm:bg-primary-500/20 dark:max-sm:text-primary-200'
+      : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-slate-400 dark:hover:border-slate-700 dark:hover:text-slate-200 max-sm:bg-gray-100 max-sm:text-gray-700 dark:max-sm:bg-white/5 dark:max-sm:text-slate-200',
   );
 }
 

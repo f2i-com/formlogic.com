@@ -51,6 +51,19 @@ describe('a page’s sections', () => {
     expect(container.querySelector('[data-testid="where"]')?.textContent).toBe('/app/data#domains');
   });
 
+  it('wraps on a phone, every section a button of its own, and is one underlined row on a wider screen', async () => {
+    // (jsdom lays nothing out: the classes are what a browser reads; the layout is checked at a phone's width in a browser)
+    await show('data');
+    const nav = container.querySelector('nav')!;
+    expect(nav.className).toContain('max-sm:flex-wrap');
+    expect(nav.className).toContain('max-sm:overflow-visible');
+    expect(nav.className).toContain('overflow-x-auto');
+    expect(link('Data').className).toContain('max-sm:bg-primary-100');
+    expect(link('Overview').className).toContain('max-sm:bg-gray-100');
+    expect(link('Data').className).toContain('border-b-2');
+    expect(link('Data').className).toContain('max-sm:border-b-0');
+  });
+
   it('puts what the page gives it at the end of the row, outside the navigation', async () => {
     await show('overview', <span data-testid="state">Live, version 3</span>);
     const state = container.querySelector('[data-testid="state"]')!;

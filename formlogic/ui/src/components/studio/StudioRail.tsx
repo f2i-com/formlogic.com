@@ -36,7 +36,7 @@ export function StudioSectionNav({ appId, activeStep, badges, end }: {
       ) : undefined,
     };
   });
-  // Six names are longer than a phone is wide: the row scrolls sideways, and SectionNav keeps
-  // the open section in its view.
+  // Six names are longer than a phone is wide: there SectionNav wraps them onto a second line, so
+  // every section is in view.
   return <SectionNav label="App Studio sections" current={activeStep} items={items} end={end} />;
 }
