@@ -23,6 +23,7 @@ import { NigoDashboard } from '../components/builder/NigoDashboard';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import type { FormField } from '../types/form';
 import { publicUnfillableFieldLabels } from '../lib/publicForm';
+import { formPageColors } from '../lib/formPageColors';
 
 // Main Preview Component
 export default function FormPreview() {
@@ -222,6 +223,13 @@ export default function FormPreview() {
     setAnswers((prev) => ({ ...prev, [fieldId]: value }));
   };
 
+  // The form is shown in its own colours, whatever the site's light or dark mode: its theme's, with
+  // what the theme leaves out filled in to read against the rest, and a form with none in the
+  // default light ones (formPageColors). The page around it keeps the site's mode; the form keeps
+  // its own (fl-light turns the dark variant off within it, `dark` on), so a light form's labels
+  // and answers are never drawn in dark mode's light text on its light page.
+  const page = formPageColors(form.theme, false);
+
   return (
     <div className={cn('min-h-[calc(100vh-var(--fl-demo-banner-h,0px))] bg-gray-50 dark:bg-slate-950 flex flex-col transition-colors duration-300', chatDockOffset && 'mr-96')}>
       <SiteChatWidget />
@@ -349,13 +357,14 @@ export default function FormPreview() {
       <div className="flex-1 flex items-center justify-center p-4 sm:p-8 relative overflow-hidden">
         <div
           className={cn(
-            'bg-white rounded-2xl shadow-2xl overflow-hidden transition-all duration-300 bg-cover bg-center',
+            'rounded-2xl shadow-2xl overflow-hidden transition-all duration-300 bg-cover bg-center',
+            page.dark ? 'dark' : 'fl-light',
             previewDevice === 'mobile' ? 'w-full max-w-[375px] h-[667px] max-h-[calc(100vh-8rem)]' : 'w-full max-w-4xl h-[600px] max-h-[calc(100vh-8rem)]'
           )}
           style={{
-            backgroundColor: form.theme.backgroundColor,
+            backgroundColor: page.backgroundColor,
             backgroundImage: form.theme.backgroundImage ? `url(${form.theme.backgroundImage})` : undefined,
-            color: form.theme.textColor,
+            color: page.textColor,
             fontFamily: form.theme.fontFamily,
           }}
         >
@@ -392,7 +401,7 @@ export default function FormPreview() {
                       onChange={(val) => handleAnswerChange(currentField.id, val)}
                       isRequired={getFieldRequired(currentField)}
                       primaryColor={form.theme.primaryColor}
-                      textColor={form.theme.textColor}
+                      textColor={page.textColor}
                       allAnswers={allFormData}
                       allFieldIds={form.fields.map(f => f.id)}
                       onCalculated={handleCalculated}
@@ -445,7 +454,7 @@ export default function FormPreview() {
                       onChange={(val) => handleAnswerChange(field.id, val)}
                       isRequired={getFieldRequired(field)}
                       primaryColor={form.theme.primaryColor}
-                      textColor={form.theme.textColor}
+                      textColor={page.textColor}
                       allAnswers={allFormData}
                       allFieldIds={form.fields.map(f => f.id)}
                       onCalculated={handleCalculated}

@@ -1,5 +1,9 @@
 @import "tailwindcss";
-@variant dark (&:where(.dark, .dark *));
+/* Dark mode is the .dark class (on the root, or on a part of a page drawn dark whatever the site's
+   mode), and stops within .fl-light: a part of a dark page drawn in its own light colours, such as
+   a light form in its preview, whose labels and answers must not take dark mode's light text.
+   (Not .light: React Flow puts that class on every canvas, dark or not.) */
+@variant dark (&:where(.dark, .dark *):not(:where(.fl-light, .fl-light *)));
 
 @layer base {
   :root {
@@ -120,6 +124,37 @@
      its own. Chromium and Firefox follow it; Safari keeps its own overlay bars. */
   :root.dark {
     scrollbar-color: rgb(148 163 184 / 0.4) transparent;
+  }
+  /* A part of the page drawn in its own colours whatever the site's mode (a form in its preview):
+     its native controls, lists and scrollbars are drawn as that part is, light within .fl-light on
+     a dark page, dark within .dark on a light one. */
+  :root.dark .fl-light {
+    color-scheme: light;
+    scrollbar-color: auto;
+  }
+  :root.dark .fl-light select,
+  :root.dark .fl-light input[type='date'],
+  :root.dark .fl-light input[type='time'],
+  :root.dark .fl-light input[type='datetime-local'],
+  :root.dark .fl-light input[type='month'] {
+    color-scheme: light;
+  }
+  :root.dark .fl-light select option,
+  :root.dark .fl-light select optgroup {
+    background-color: #ffffff;
+    color: #1f2937;
+  }
+  :root:not(.dark) .dark select,
+  :root:not(.dark) .dark input[type='date'],
+  :root:not(.dark) .dark input[type='time'],
+  :root:not(.dark) .dark input[type='datetime-local'],
+  :root:not(.dark) .dark input[type='month'] {
+    color-scheme: dark;
+  }
+  :root:not(.dark) .dark select option,
+  :root:not(.dark) .dark select optgroup {
+    background-color: #0f172a;
+    color: #e2e8f0;
   }
 
   /* Heading font */

@@ -23,6 +23,14 @@
   background: rgb(99 102 241 / 0.12);
 }
 
+/* What a line says, on the dark canvas: React Flow draws it on a white label. */
+:root.dark .sketch-canvas .react-flow__edge-textbg {
+  fill: #0f172a;
+}
+:root.dark .sketch-canvas .react-flow__edge-text {
+  fill: #cbd5e1;
+}
+
 /* A finger's dots: big enough to start a line from. */
 @media (pointer: coarse) {
   .sketch-canvas .react-flow__handle:not(.sketch-card-target) {

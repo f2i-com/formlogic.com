@@ -9,6 +9,7 @@ import { useResponseStore } from '../stores/responseStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
 import { cn, generateId } from '../lib/utils';
 import { readableForegroundColor, parseHex, luminance } from '../lib/color';
+import { formPageColors } from '../lib/formPageColors';
 import { useUIStore } from '../stores/uiStore';
 import { useAuthStore } from '../stores/authStore';
 import { api, type LinkedRecord } from '../lib/api';
@@ -1070,7 +1071,9 @@ function FormResponseContent() {
   const appTheme = useUIStore((s) => s.theme);
   // A form the creator never themed should follow the viewer's light/dark mode rather
   // than rendering with no background/text (which showed as white-on-white in dark mode).
-  // Explicitly-themed forms keep their own colours in both modes.
+  // Explicitly-themed forms keep their own colours in both modes, and a theme with one of
+  // the two gets the other that reads against it (formPageColors): a white background
+  // alone was given dark mode's light text.
   const form = useMemo(() => {
     if (!rawForm) return rawForm;
     // E2EE (blocker 2): a private form renders EXCLUSIVELY from the manifest's
@@ -1080,14 +1083,14 @@ function FormResponseContent() {
       : rawForm;
     const th = (base.theme || {}) as unknown as { backgroundColor?: string; textColor?: string; [k: string]: unknown };
     if (th.backgroundColor && th.textColor) return base;
-    const dark = appTheme === 'dark';
+    const colors = formPageColors(th, appTheme === 'dark');
     return {
       ...base,
       theme: {
         ...DEFAULT_FORM_THEME,
         ...th,
-        backgroundColor: th.backgroundColor || (dark ? '#0b1220' : '#ffffff'),
-        textColor: th.textColor || (dark ? '#e8edf5' : '#1f2937'),
+        backgroundColor: colors.backgroundColor,
+        textColor: colors.textColor,
       },
     };
   }, [rawForm, appTheme, privateSchema]);
