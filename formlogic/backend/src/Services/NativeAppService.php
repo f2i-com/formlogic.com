@@ -68,10 +68,11 @@ class NativeAppService
     public const RECORD_EVENTS_PROTOCOL = 1;
 
     /**
-     * An app's media, by path: the kinds the SoftN frame serves its page (Softn v0.0.28's
-     * apps/formlogic-host/src/media.ts; the UI's HOSTED_MEDIA is the same list).
+     * An app's media, by path: the kinds the SoftN frame serves its page (SoftN's
+     * apps/formlogic-host/src/media.ts; the UI's HOSTED_MEDIA is the same list). From SoftN
+     * v0.0.41 that includes WebAssembly modules, which the page runs in workers of their own.
      */
-    public const MEDIA_PATH = '~^assets/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx|bin|wgsl|txt|md)$~Di';
+    public const MEDIA_PATH = '~^assets/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx|bin|wgsl|txt|md|wasm)$~Di';
     /**
      * A JavaScript app's built files, by path: someone's compiled front end (the dist or build
      * folder of their project), kept whole under site/ whatever its layout. Unlike everything
@@ -2107,7 +2108,8 @@ class NativeAppService
         $decoded = [];
         foreach ($assets as $path => $encoded) {
             // The media the SoftN frame serves an app's page (from Softn v0.0.28): pictures, sound,
-            // video, fonts, 3D models, and WGSL, text and Markdown files. Nothing that runs.
+            // video, fonts, 3D models, and WGSL, text and Markdown files. Nothing that runs in the
+            // page: a WebAssembly module (SoftN v0.0.41) runs only in a worker of its own.
             // A built site's files (SITE_PATH) are kept beside the media and are never the frame's:
             // SiteAppController serves them, each under a sandbox.
             $media = is_string($path) && preg_match(self::MEDIA_PATH, $path) && !str_contains($path, '..');

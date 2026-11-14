@@ -57,10 +57,17 @@ describe('importNativeProject', () => {
   it('says where media goes when it is outside assets/, as an icon beside the manifest is', async () => {
     // A .softn packed with its icon at the top (manifest.json's "icon": "icon.png"): the picture is
     // one this host keeps, only not there.
-    await expect(importNativeProject(softn({ ...client, 'icon.png': 'PNG' }))).rejects.toThrow('icon.png is a kind of file this host cannot keep with an app where it is: an app\'s pictures, sound, video, fonts and models go under assets/. Move it to assets/icon.png');
+    await expect(importNativeProject(softn({ ...client, 'icon.png': 'PNG' }))).rejects.toThrow('icon.png is a kind of file this host cannot keep with an app where it is: an app\'s pictures, sound, video, fonts, models and WebAssembly modules go under assets/. Move it to assets/icon.png');
     await expect(importNativeProject(softn({ ...client, 'models/scene.glb': 'glTF' }))).rejects.toThrow('Move it to assets/models/scene.glb');
+    await expect(importNativeProject(softn({ ...client, 'wasm/game.wasm': '\0asm' }))).rejects.toThrow('Move it to assets/wasm/game.wasm');
     // Under assets/ it is taken.
     expect(Object.keys((await importNativeProject(softn({ ...client, 'assets/icon.png': 'PNG' }))).assets ?? {})).toEqual(['assets/icon.png']);
+  });
+
+  it('keeps a WebAssembly module under assets/ as media, which SoftN v0.0.41 runs in a worker of its own', async () => {
+    const imported = await importNativeProject(softn({ ...client, 'assets/game.wasm': '\0asm\u0001\0\0\0' }));
+    expect(Object.keys(imported.assets ?? {})).toEqual(['assets/game.wasm']);
+    expect(atob(imported.assets?.['assets/game.wasm'] ?? '')).toBe('\0asm\u0001\0\0\0');
   });
 
   it('never advises a file into assets/ that may not be media, or that is the backend\'s', async () => {
