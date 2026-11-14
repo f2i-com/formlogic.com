@@ -13,6 +13,7 @@ import { toast } from "../../stores/toastStore";
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from "../../lib/sessionGeneration";
 import { copyHostedActor, HOSTED_ACTOR_ERROR, isHostedAdmissionCurrent, sameHostedActor, type HostedAdmission } from '../../lib/hostedActor';
 import { outsideLinkOf, type OutsideLink } from "../../lib/outsideLink";
+import { bytesToBase64, type NativeMediaFiles } from "../../lib/nativeHosting";
 import { OutsideLinkBar } from "./OutsideLinkBar";
 
 const navigate = (path: string) => window.location.assign(path);
@@ -25,9 +26,18 @@ type FrameEngine = { id: string; revision: string };
 // `visitor`: the app asks for FormLogic's visitors (NativeFormlogic), so its requests carry the marker;
 // `wallet`: it takes payments, so it may open FormLogic's wallet.
 // `media`: the digest that names `assets` (the server's, of the app's media pack), where there is one.
-type NativeFrame = { assets: Record<string, string>; media?: string; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope; files?: boolean; look?: NativeLook | null; visitor?: boolean; wallet?: boolean };
+type NativeFrame = { assets: NativeMediaFiles; media?: string; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope; files?: boolean; look?: NativeLook | null; visitor?: boolean; wallet?: boolean };
 /** A newer version of a running app's files, to hand to its frame (the `update` prop). */
-type FrameUpdate = { version: number; client: Record<string, string>; assets?: Record<string, string>; media?: string; engine?: { id: string; revision: string } };
+type FrameUpdate = { version: number; client: Record<string, string>; assets?: NativeMediaFiles; media?: string; engine?: { id: string; revision: string } };
+/**
+ * An app's media as a frame takes them: each file's bytes as they are, for a frame that takes bytes
+ * (SoftN's ready `mediaBytes: 1`, from v0.0.41), and base64 for one before it. The page keeps them as
+ * the media pack gave them, bytes, so neither side turns tens of megabytes into text and back.
+ */
+function mediaForFrame(assets: NativeMediaFiles | undefined, takesBytes: boolean): NativeMediaFiles | undefined {
+  if (!assets || takesBytes || Object.values(assets).every(value => typeof value === "string")) return assets;
+  return Object.fromEntries(Object.entries(assets).map(([path, value]) => [path, typeof value === "string" ? value : bytesToBase64(value)]));
+}
 const scopeAllowed = (native: NativeFrame) => isNativeStorageScope(native.storageScope) &&
   native.access === native.storageScope.access &&
   (native.storageScope.access === 'application' || native.storageScope.userId === currentSessionOwner());
@@ -195,7 +205,7 @@ export function HostedAppFrame({
   // A version the running frame took in place (`update`). The props still name the version the app
   // was opened with, so a frame opened again for these same props (another tab saved: a new storage
   // epoch) starts from what was on screen, not from the older files. New props drop it.
-  const taken = useRef<{ base: string; version: number; client: Record<string, string>; assets?: Record<string, string>; media?: string } | null>(null);
+  const taken = useRef<{ base: string; version: number; client: Record<string, string>; assets?: NativeMediaFiles; media?: string } | null>(null);
   // Hands a version to the mounted frame's port; false where this frame cannot be handed one.
   const handUpdate = useRef<((next: FrameUpdate) => boolean) | null>(null);
   const handed = useRef<{ key: string; version: number } | null>(null);
@@ -254,7 +264,7 @@ export function HostedAppFrame({
     const openAssets = opening?.assets ?? mountNative?.assets;
     // Versions handed to this frame and not answered yet, by the id each went with: each with the
     // files and the media that are its own, so two waiting at once never lend each other's.
-    const handing = new Map<string, { version: number; client: Record<string, string>; assets?: Record<string, string>; media?: string; timer: number }>();
+    const handing = new Map<string, { version: number; client: Record<string, string>; assets?: NativeMediaFiles; media?: string; timer: number }>();
     let handedCount = 0;
     // The media THIS frame holds, by digest: what it opened with, then whatever it was last sent. A
     // frame keeps the media of a version it kept back, for the next version that leaves its media out;
@@ -263,6 +273,8 @@ export function HostedAppFrame({
     let heldAssets = openAssets;
     let heldMedia = opening ? opening.media : mountNative?.media;
     let takesUpdates = false;
+    // The frame takes each media file's bytes as they are (ready's `mediaBytes: 1`, SoftN v0.0.41 on).
+    let takesBytes = false;
     let frameShown = false;
     const settleUpdate = (id: unknown, outcome: unknown) => {
       const waiting = typeof id === "string" ? handing.get(id) : undefined;
@@ -287,7 +299,7 @@ export function HostedAppFrame({
       // (what a later frame of this mount opens with, should this version be taken: its media as
       // this frame has them now)
       handing.set(id, { version: next.version, client: next.client, assets: heldAssets, media: heldMedia, timer });
-      try { channel.port1.postMessage({ type: "formlogic:update", id, client: next.client, ...(send ? { assets: next.assets } : {}) }); }
+      try { channel.port1.postMessage({ type: "formlogic:update", id, client: next.client, ...(send ? { assets: mediaForFrame(next.assets, takesBytes) } : {}) }); }
       catch { settleUpdate(id, "reopen"); }
       return true;
     };
@@ -442,6 +454,7 @@ export function HostedAppFrame({
         return;
       }
       initializing = true;
+      takesBytes = event.data.mediaBytes === 1;
       // Host JavaScript is the runtime document's own engine: nothing is fetched, nothing is
       // hashed and no bytes are put in `init`. The frame never asks for bytes it would then have
       // to decide what to do with.
@@ -665,7 +678,8 @@ export function HostedAppFrame({
           client: openClient,
           appId: mountNative ? nativeFrameAppId(mountNative.storageScope?.appId ?? slug) : `hosted-${slug}-${mountVersion}`,
           native: !!mountNative,
-          assets: openAssets,
+          // Each file's bytes for a frame that takes them (mediaForFrame); base64 for one before it.
+          assets: mediaForFrame(openAssets, takesBytes),
           storage: savedStorage,
           ...(acknowledgedStorage ? { storageProtocol: 1 } : {}),
           // Saves are not counted against the four calls above, so the frame (SoftN v0.0.28 on)

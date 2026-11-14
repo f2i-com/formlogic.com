@@ -21,7 +21,8 @@ export async function downloadPackProjects(slug: string) {
     const native = (app as typeof app & { nativeProject?: NativeProject }).nativeProject;
     if (native) {
       const files = Object.fromEntries(Object.entries(native.files).map(([path, source]) => [path, strToU8(source)]));
-      for (const [path, encoded] of Object.entries(native.assets ?? {})) files[path] = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
+      // A pack's export carries every file's bytes; it never names one (lib/nativeMedia).
+      for (const [path, encoded] of Object.entries(native.assets ?? {})) if (typeof encoded === 'string') files[path] = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
       files['formlogic.json'] = strToU8(JSON.stringify({ formatVersion: 1, hosting: 'native', access: native.access, files: Object.keys(native.files), assets: Object.keys(native.assets ?? {}) }, null, 2));
       addProject(String(app.packAppId), files);
       continue;

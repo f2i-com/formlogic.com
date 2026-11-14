@@ -1419,6 +1419,309 @@ class NativeAppService
     }
 
     /**
+     * The installed project as its owner's page reads it (GET …/native?media=refs): its source and
+     * settings, and in place of each media file's base64 what names it, `{kept, size}`: the SHA-256 of
+     * its bytes and how many there are. The page shows media by name and size, and reads a file's
+     * bytes only to download the app or open it in an editor (ownerMediaFile). It was sent every
+     * file in base64 on every visit: a game's tens of megabytes, for a list of names. Read as
+     * runtimeProject() reads, from the runtime cache. Null when nothing is installed.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function ownerProject(string $appId): ?array
+    {
+        try { [$root, $lock] = $this->openShared($appId, null, false); }
+        catch (RuntimeException $missing) { if ($missing->getCode() === 404) return null; throw $missing; }
+        if ($lock === null) return null;
+        try {
+            $runtime = $this->runtimeCache($root);
+            return $runtime['project'] + ['assets' => (object) $runtime['kept']];
+        }
+        finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /** Whether a project names any media file rather than sending it (withKeptMedia has something to do). */
+    public static function namesKeptMedia(array $project): bool
+    {
+        foreach (is_array($project['assets'] ?? null) ? $project['assets'] : [] as $value) if (is_array($value)) return true;
+        return false;
+    }
+
+    /**
+     * A project its owner's page sends with media it left as they were: `{kept: <SHA-256>}` in place
+     * of a file's base64, as ownerProject() named it. Each is given its bytes back, found by that
+     * SHA-256 under the lock: in the project installed at `$expectedVersion` (the file of that name, or
+     * another with the same bytes: a file renamed), or else in the app's history (a draft made before
+     * the app was changed elsewhere, whose files the version installed since no longer has). A file
+     * neither has is refused by name, and a project that is no longer at that version is refused as
+     * install() refuses it (409). The cheap checks come first: how many files, their names, and what
+     * the project would hold (a few names can stand for one large file many times over, which a body
+     * of base64 never could), before project.json is read or a file decoded. Files sent as base64
+     * are left as they came, and a project that names none is returned untouched, unread.
+     *
+     * Also returned: what names each media file of the project returned, for an answer that sends
+     * names rather than bytes (mediaRefs). Null where none was named.
+     *
+     * @return array{0: array<string, mixed>, 1: array<string, array{kept: string, size: int}>|null}
+     */
+    public function withKeptMedia(string $appId, array $project, int $expectedVersion): array
+    {
+        $assets = $project['assets'] ?? null;
+        if (!is_array($assets)) return [$project, null];
+        $wanted = [];
+        foreach ($assets as $path => $value) {
+            if (!is_array($value)) continue;
+            $plain = is_string($path) && preg_match('~^[\w./@+\~-]{1,240}$~', $path) === 1;
+            if (!is_string($path) || !is_string($value['kept'] ?? null) || preg_match('/^[a-f0-9]{64}$/D', $value['kept']) !== 1) throw new InvalidArgumentException('The content of ' . ($plain ? $path : 'a media file') . ' is neither base64 nor a file this app already has.');
+            // Held to validateProject's rules for a name now, before anything is read for it.
+            if (!(preg_match(self::MEDIA_PATH, $path) && !str_contains($path, '..')) && !self::isSitePath($path)) throw new InvalidArgumentException($plain ? "Invalid media file: {$path}" : 'Invalid media file');
+            $wanted[$path] = $value['kept'];
+        }
+        if ($wanted === []) return [$project, null];
+        if (count($assets) > self::MAX_MEDIA_FILES) throw new InvalidArgumentException('Include at most ' . self::MAX_MEDIA_FILES . ' media files');
+        // Nothing installed: nothing was kept, and the page saw a project that has since gone.
+        try { [$root, $lock] = $this->openShared($appId, null, false); }
+        catch (RuntimeException $missing) { if ($missing->getCode() === 404) throw new RuntimeException('The project changed. Reload before importing.', 409); throw $missing; }
+        if ($lock === null) throw new RuntimeException('The project changed. Reload before importing.', 409);
+        try {
+            $runtime = $this->runtimeCache($root);
+            if ((int) ($runtime['project']['version'] ?? 0) !== $expectedVersion) throw new RuntimeException('The project changed. Reload before importing.', 409);
+            $byHash = [];
+            foreach ($runtime['kept'] as $path => $ref) $byHash[$ref['kept']] ??= $path;
+            // Where each file's bytes are, and what the project would hold, before any is read.
+            $total = 0;
+            foreach ($assets as $value) if (is_string($value)) $total += self::decodedLength($value) ?? 0;
+            $from = [];
+            $known = [];
+            foreach ($wanted as $path => $hash) {
+                $installedPath = ($runtime['kept'][$path]['kept'] ?? null) === $hash ? $path : ($byHash[$hash] ?? null);
+                $size = $installedPath !== null ? $runtime['kept'][$installedPath]['size'] : NativeAppVersions::keptFileSize($root, $hash);
+                if ($size === null) {
+                    $shown = preg_match('~^[\w./@+\~-]{1,240}$~', $path) === 1 ? $path : 'A media file';
+                    throw new InvalidArgumentException("{$shown} is no longer on the server as this page had it. Add the file again, or reload the page.");
+                }
+                $total += $size;
+                if ($total > self::MAX_PROJECT_BYTES) throw new InvalidArgumentException('Native project exceeds ' . intdiv(self::MAX_PROJECT_BYTES, 1024 * 1024) . ' MB');
+                $from[$path] = $installedPath;
+                $known[$path] = ['kept' => $hash, 'size' => $size];
+            }
+            // The installed project's own text where it has the file (the same base64 is kept), else the history's bytes.
+            $installed = array_filter($from, static fn (?string $at): bool => $at !== null) !== [] ? $this->get($appId) : null;
+            foreach ($from as $path => $installedPath) {
+                $encoded = $installedPath !== null ? ($installed['assets'][$installedPath] ?? null) : null;
+                if (!is_string($encoded)) {
+                    $bytes = NativeAppVersions::keptFile($root, $wanted[$path]);
+                    if ($bytes === null) throw new InvalidArgumentException((preg_match('~^[\w./@+\~-]{1,240}$~', $path) === 1 ? $path : 'A media file') . ' is no longer on the server as this page had it. Add the file again, or reload the page.');
+                    $encoded = base64_encode($bytes);
+                }
+                $project['assets'][$path] = $encoded;
+            }
+            return [$project, $known];
+        }
+        finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /**
+     * An installed project as ownerProject() sends it: each media file named by `{kept, size}` in place
+     * of its base64. `$known` names files already read (withKeptMedia); every other is decoded once
+     * for its SHA-256.
+     *
+     * @param array<string, array{kept: string, size: int}> $known
+     * @return array<string, mixed>
+     */
+    public static function mediaRefs(array $project, array $known = []): array
+    {
+        $refs = [];
+        foreach (is_array($project['assets'] ?? null) ? $project['assets'] : [] as $path => $encoded) {
+            if (isset($known[$path])) { $refs[$path] = $known[$path]; continue; }
+            $bytes = is_string($encoded) ? base64_decode($encoded, true) : false;
+            if ($bytes === false) continue;
+            $refs[$path] = ['kept' => hash('sha256', $bytes), 'size' => strlen($bytes)];
+        }
+        return ['assets' => (object) $refs] + $project;
+    }
+
+    /**
+     * One media file, for its owner's page (a picture it shows): the bytes `$kept` names, the SHA-256
+     * the page was given (ownerProject). They are found as a save finds them (withKeptMedia): the
+     * installed file named `$path`, another of the project's files with those bytes (a file renamed
+     * in a draft), or an earlier version's in the app's history; `$path` is only what the page calls
+     * it. Each is checked against `$kept` as it is read, so a page is never given other bytes for it.
+     * Where the page has them already (`$have`), or asks only how many there are (`$body` false),
+     * nothing is read. The caller sends the stream and closes it. Null where nothing has those bytes.
+     *
+     * @return array{stream: resource, size: int, kept: string}|array{unchanged: true, size: int, kept: string}|array{size: int, kept: string}|null
+     */
+    public function ownerMediaFile(string $appId, string $path, string $kept, ?string $have = null, bool $body = true): ?array
+    {
+        if (preg_match('/^[a-f0-9]{64}$/D', $kept) !== 1) return null;
+        try { [$root, $lock] = $this->openShared($appId, null, false); }
+        catch (RuntimeException $missing) { if ($missing->getCode() === 404) return null; throw $missing; }
+        if ($lock === null) return null;
+        try {
+            $runtime = $this->runtimeCache($root);
+            $from = ($runtime['kept'][$path]['kept'] ?? null) === $kept ? $path : null;
+            if ($from === null) foreach ($runtime['kept'] as $other => $ref) if ($ref['kept'] === $kept) { $from = $other; break; }
+            $size = $from !== null ? $runtime['kept'][$from]['size'] : NativeAppVersions::keptFileSize($root, $kept);
+            if ($size === null) return null;
+            if ($have !== null && hash_equals($kept, $have)) return ['unchanged' => true, 'size' => $size, 'kept' => $kept];
+            if (!$body) return ['size' => $size, 'kept' => $kept];
+            $pack = $packIndex = $project = null;
+            try {
+                $bytes = $from !== null ? $this->installedFile($appId, $root, $runtime, $from, $pack, $packIndex, $project) : NativeAppVersions::keptFile($root, $kept);
+            } catch (\Throwable $unread) {
+                error_log('Native app media file not read: ' . $unread->getMessage());
+                return null;
+            } finally { if (is_resource($pack)) fclose($pack); }
+            if ($bytes === null) return null;
+            $out = self::temporaryStream();
+            if (fwrite($out, $bytes) !== strlen($bytes)) { fclose($out); return null; }
+            rewind($out);
+            return ['stream' => $out, 'size' => strlen($bytes), 'kept' => $kept];
+        }
+        finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /** What the owner's page is told when the app's media cannot be read whole (ownerMediaPack). */
+    public const MEDIA_UNREADABLE = 'The app\'s media could not be read. Try again in a moment.';
+
+    /**
+     * Every media file of the installed project in one pack, for its owner's page to download the
+     * app or open it in an editor: one request, where a file at a time would be hundreds for a game.
+     * Laid out as the runtime's media pack (MEDIA_PACK_MAGIC), a built site's files included, and
+     * each file's entry in its index names its SHA-256 (`kept`): how the page finds the files it was
+     * given names for (ownerProject). Made once for the project as it is (`owner-<key>.pack` in the
+     * runtime cache, gone with it when the project changes), every file checked against its SHA-256
+     * as it is written, and read from then on: a request costs a file opened, not the app's media
+     * copied again. `etag` names the project; where it is `$have`, or only its size is asked
+     * (`$body` false), nothing is made or read. The caller sends the stream and closes it. Throws
+     * MEDIA_UNREADABLE (503) where a file cannot be read whole as the bytes it is named by.
+     *
+     * @return array{stream: resource, size: int, etag: string}|array{unchanged: true, etag: string}|array{size: int, etag: string}|null
+     */
+    public function ownerMediaPack(string $appId, ?string $have = null, bool $body = true): ?array
+    {
+        try { [$root, $lock] = $this->openShared($appId, null, false); }
+        catch (RuntimeException $missing) { if ($missing->getCode() === 404) return null; throw $missing; }
+        if ($lock === null) return null;
+        try {
+            $runtime = $this->runtimeCache($root);
+            $key = (string) $this->runtimeKey($root);
+            if ($have !== null && $key !== '' && hash_equals($key, $have)) return ['unchanged' => true, 'etag' => $key];
+            [$head, $size] = self::ownerPackHead($runtime['kept']);
+            if (!$body) return ['size' => $size, 'etag' => $key];
+            $dir = $root . self::RUNTIME_CACHE;
+            $file = $dir . '/owner-' . $key . '.pack';
+            clearstatcache(true, $file);
+            if (!is_file($file) || filesize($file) !== $size) {
+                $building = @fopen($dir . '/build.lock', 'c');
+                if ($building !== false) flock($building, LOCK_EX);
+                try {
+                    clearstatcache(true, $file);
+                    if (!is_file($file) || filesize($file) !== $size) $this->buildOwnerPack($appId, $root, $runtime, $head, $file);
+                } finally {
+                    if ($building !== false) { flock($building, LOCK_UN); fclose($building); }
+                }
+            }
+            // Opened while the lock is held, as the runtime's pack is: an update cannot replace it before it is being read.
+            $stream = @fopen($file, 'rb');
+            if ($stream === false) throw new RuntimeException(self::MEDIA_UNREADABLE, 503);
+            return ['stream' => $stream, 'size' => $size, 'etag' => $key];
+        }
+        finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /**
+     * The owner's pack's head (magic, the index's length, the index) for the files named, in their
+     * order, and the whole pack's size.
+     *
+     * @param array<string, array{kept: string, size: int}> $kept
+     * @return array{0: string, 1: int}
+     */
+    private static function ownerPackHead(array $kept): array
+    {
+        $index = [];
+        $offset = 0;
+        foreach ($kept as $path => $ref) {
+            $index[] = ['path' => $path, 'offset' => $offset, 'size' => $ref['size'], 'kept' => $ref['kept']];
+            $offset += $ref['size'];
+        }
+        $header = json_encode(['files' => $index], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        $head = self::MEDIA_PACK_MAGIC . pack('N', strlen($header)) . $header;
+        return [$head, strlen($head) + $offset];
+    }
+
+    /** Writes the owner's pack (ownerMediaPack) by way of a pending file renamed into place, so a reader sees a whole file or none. */
+    private function buildOwnerPack(string $appId, string $root, array $runtime, string $head, string $file): void
+    {
+        $pending = $file . '.pending-' . bin2hex(random_bytes(6));
+        $pack = $packIndex = $project = null;
+        try {
+            $out = @fopen($pending, 'xb');
+            if ($out === false) throw new RuntimeException('Could not write the owner\'s media pack');
+            try {
+                if ($this->writeStream($pending, $out, $head) !== strlen($head)) throw new RuntimeException('Short write to the owner\'s media pack');
+                foreach (array_keys($runtime['kept']) as $path) {
+                    $bytes = $this->installedFile($appId, $root, $runtime, (string) $path, $pack, $packIndex, $project);
+                    if ($this->writeStream($pending, $out, $bytes) !== strlen($bytes)) throw new RuntimeException('Short write to the owner\'s media pack');
+                }
+                if (!fflush($out)) throw new RuntimeException('Could not flush the owner\'s media pack');
+            } finally { fclose($out); }
+            @chmod($pending, 0600);
+            if (!@rename($pending, $file) && !(is_file($file) && filesize($file) === filesize($pending))) throw new RuntimeException('Could not place the owner\'s media pack');
+        } catch (\Throwable $unread) {
+            error_log('Native app owner media pack not made: ' . $unread->getMessage());
+            throw new RuntimeException(self::MEDIA_UNREADABLE, 503);
+        } finally {
+            if (is_resource($pack)) fclose($pack);
+            if (is_file($pending)) @unlink($pending);
+        }
+    }
+
+    /** A stream for what is sent: held in memory up to 4 MB, then in a temporary file. */
+    private static function temporaryStream()
+    {
+        $stream = fopen('php://temp/maxmemory:' . (4 * 1024 * 1024), 'w+b');
+        if ($stream === false) throw new RuntimeException('Could not prepare the app\'s media');
+        return $stream;
+    }
+
+    /**
+     * One of the installed project's media or built files, as the bytes its SHA-256 (the runtime
+     * cache's `kept`) names: read where the cache keeps it (a media file from the media pack, a built
+     * site's file from the copy install() placed in the app's folder), else from project.json itself,
+     * where that copy is not those bytes (two of a site's files whose names differ only in case are
+     * one file on a disk that does not tell them apart; a damaged pack). Throws where neither is.
+     * The caller holds the lock, and closes `$pack` once it is done with every file.
+     *
+     * @param array{media: array{file: string}, kept: array<string, array{kept: string, size: int}>} $runtime
+     * @param resource|null $pack the media pack, opened on the first media file asked for ($packIndex its index)
+     * @param array<string, mixed>|null $project project.json, read on the first file that needs it
+     */
+    private function installedFile(string $appId, string $root, array $runtime, string $path, &$pack, ?array &$packIndex, ?array &$project): string
+    {
+        $ref = $runtime['kept'][$path] ?? throw new RuntimeException('Not a file of the app: ' . $path);
+        $bytes = null;
+        if (str_starts_with($path, 'site/')) {
+            $copy = $root . '/app/' . $path;
+            if (is_file($copy) && !is_link($copy) && filesize($copy) === $ref['size']) $bytes = @file_get_contents($copy);
+        } else {
+            if ($pack === null) {
+                $opened = @fopen($runtime['media']['file'], 'rb');
+                if ($opened !== false) { $pack = $opened; $packIndex = self::packIndex($pack); }
+            }
+            [$at, $size] = $packIndex['files'][$path] ?? [-1, -1];
+            if (is_resource($pack) && $at >= 0 && $size === $ref['size'] && fseek($pack, $packIndex['base'] + $at) === 0) $bytes = $size === 0 ? '' : stream_get_contents($pack, $size);
+        }
+        if (is_string($bytes) && strlen($bytes) === $ref['size'] && hash_equals($ref['kept'], hash('sha256', $bytes))) return $bytes;
+        $project ??= $this->get($appId) ?? [];
+        $encoded = $project['assets'][$path] ?? null;
+        $bytes = is_string($encoded) ? base64_decode($encoded, true) : false;
+        if (is_string($bytes) && strlen($bytes) === $ref['size'] && hash_equals($ref['kept'], hash('sha256', $bytes))) return $bytes;
+        throw new RuntimeException('Not the bytes named: ' . $path);
+    }
+
+    /**
      * The installed project without its media, for what reads only its source or settings on the
      * way to a page (entry, the engine's choice): the runtime cache when there is one for the
      * project as it is, otherwise project.json itself. Unlocked, like get().
@@ -1475,14 +1778,15 @@ class NativeAppService
         return $this->runtimeKey($this->root($appId));
     }
 
-    /** @return array{project: array<string, mixed>, media: array{file: string, sha256: string, size: int, count: int}} */
+    /** @return array{project: array<string, mixed>, media: array{file: string, sha256: string, size: int, count: int}, kept: array<string, array{kept: string, size: int}>} */
     private function runtimeCache(string $root): array
     {
         $key = $this->runtimeKey($root) ?? throw new RuntimeException('Native app not found', 404);
         $dir = $root . self::RUNTIME_CACHE;
         $clientFile = $dir . '/client-' . $key . '.json';
         $packFile = $dir . '/media-' . $key . '.pack';
-        if (!is_file($clientFile) || !is_file($packFile)) {
+        $client = self::readRuntimeSummary($clientFile, $packFile);
+        if ($client === null) {
             // One build at a time: right after an update every visitor's request found no cache, and
             // each decoded the whole project (raising PHP's memory for it) to write the same files.
             // A request that waited finds them written.
@@ -1490,14 +1794,31 @@ class NativeAppService
             $building = @fopen($dir . '/build.lock', 'c');
             if ($building !== false) flock($building, LOCK_EX);
             try {
-                if (!is_file($clientFile) || !is_file($packFile)) $this->buildRuntimeCache($root, $dir, $key);
+                $client = self::readRuntimeSummary($clientFile, $packFile);
+                if ($client === null) {
+                    $this->buildRuntimeCache($root, $dir, $key);
+                    $client = self::readRuntimeSummary($clientFile, $packFile) ?? throw new RuntimeException('The app\'s media could not be read');
+                }
             } finally {
                 if ($building !== false) { flock($building, LOCK_UN); fclose($building); }
             }
         }
-        $client = json_decode((string) file_get_contents($clientFile), true, 64, JSON_THROW_ON_ERROR);
-        if (!is_array($client['project'] ?? null) || !is_array($client['media'] ?? null)) throw new RuntimeException('The app\'s media could not be read');
-        return ['project' => $client['project'], 'media' => $client['media'] + ['file' => $packFile]];
+        return ['project' => $client['project'], 'media' => $client['media'] + ['file' => $packFile], 'kept' => $client['kept']];
+    }
+
+    /**
+     * The runtime cache's summary of the project (buildRuntimeCache), or null where there is none for
+     * it, it cannot be read, or it was written before it named each media file (`kept`): that one is
+     * made again, once.
+     *
+     * @return array{project: array<string, mixed>, media: array<string, mixed>, kept: array<string, array{kept: string, size: int}>}|null
+     */
+    private static function readRuntimeSummary(string $clientFile, string $packFile): ?array
+    {
+        if (!is_file($clientFile) || !is_file($packFile)) return null;
+        $client = json_decode((string) @file_get_contents($clientFile), true, 64);
+        if (!is_array($client) || !is_array($client['project'] ?? null) || !is_array($client['media'] ?? null) || !is_array($client['kept'] ?? null)) return null;
+        return $client;
     }
 
     /**
@@ -1515,9 +1836,14 @@ class NativeAppService
         if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) throw new RuntimeException('Could not prepare the app\'s media');
         $assets = is_array($project['assets'] ?? null) ? $project['assets'] : [];
         $index = [];
+        // Each media file's SHA-256 and size, a built site's files too, in the project's order: what its
+        // owner's page is given in place of the bytes (ownerProject), and what a save that leaves a file
+        // as it was names it by (withKeptMedia).
+        $kept = [];
         $offset = 0;
         foreach ($assets as $path => $encoded) {
             if (!is_string($path) || !is_string($encoded)) continue;
+            $kept[$path] = null;
             // A built site's files are served one by one from their own address (siteFile): they
             // are not media the frame is handed, and a page would otherwise download the whole
             // site a second time as a pack it never opens.
@@ -1541,6 +1867,7 @@ class NativeAppService
                 foreach ($index as $file) {
                     $bytes = base64_decode($assets[$file['path']], true);
                     if ($bytes === false || strlen($bytes) !== $file['size']) throw new RuntimeException('The app\'s media could not be read: ' . $file['path']);
+                    $kept[$file['path']] = ['kept' => hash('sha256', $bytes), 'size' => strlen($bytes)];
                     $write($bytes);
                 }
                 if (!fflush($stream)) throw new RuntimeException('Could not flush the app\'s media');
@@ -1550,15 +1877,24 @@ class NativeAppService
             // where the other's is in place and cannot be replaced (Windows, while it is being sent), it stands.
             if (!@rename($pending, $packFile) && !(is_file($packFile) && filesize($packFile) === filesize($pending))) throw new RuntimeException('Could not place the app\'s media');
         } finally { if (is_file($pending)) @unlink($pending); }
-        unset($assets);
+        // A built site's files are not in the pack: decoded here, one at a time, for their SHA-256 alone.
+        foreach ($assets as $path => $encoded) {
+            if (!is_string($path) || !is_string($encoded) || !str_starts_with($path, 'site/')) continue;
+            $bytes = base64_decode($encoded, true);
+            if ($bytes === false) throw new RuntimeException('The app\'s files could not be read: ' . $path);
+            $kept[$path] = ['kept' => hash('sha256', $bytes), 'size' => strlen($bytes)];
+        }
+        unset($assets, $bytes);
+        $kept = array_filter($kept, static fn (?array $ref): bool => $ref !== null);
         $summary = ['files' => is_array($project['files'] ?? null) ? $project['files'] : []];
         foreach (['version', 'home', 'access', 'updatedAt'] as $field) if (array_key_exists($field, $project)) $summary[$field] = $project[$field];
         $media = ['sha256' => (string) hash_file('sha256', $packFile), 'size' => (int) filesize($packFile), 'count' => count($index)];
-        $this->writeExact($dir . '/client-' . $key . '.json', json_encode(['project' => $summary, 'media' => $media], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES), 0600);
+        $this->writeExact($dir . '/client-' . $key . '.json', json_encode(['project' => $summary, 'media' => $media, 'kept' => (object) $kept], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES), 0600);
         // Another project's cache is of no use now: what this folder holds is for project.json as it is.
         foreach (scandir($dir) ?: [] as $name) {
             // What was drawn from it (derived(): look-<key>-...) goes with it.
-            if (preg_match('/^(?:(?:client|media)-([a-f0-9]+)\.(?:json|pack)|look-([a-f0-9]+)-[a-f0-9]+\.bin)(?:\.pending-[a-f0-9]+)?$/D', $name, $match) && (($match[1] ?? '') !== '' ? $match[1] : ($match[2] ?? '')) !== $key) @unlink($dir . '/' . $name);
+            // The owner's pack of every file (ownerMediaPack: owner-<key>.pack) goes too.
+            if (preg_match('/^(?:(?:client|media|owner)-([a-f0-9]+)\.(?:json|pack)|look-([a-f0-9]+)-[a-f0-9]+\.bin)(?:\.pending-[a-f0-9]+)?$/D', $name, $match) && (($match[1] ?? '') !== '' ? $match[1] : ($match[2] ?? '')) !== $key) @unlink($dir . '/' . $name);
         }
     }
 
@@ -1796,6 +2132,9 @@ class NativeAppService
             if ($value === false) throw new InvalidArgumentException('Invalid media data: the content of ' . ($plain ? $path : "a {$kind}") . ' is not base64.');
             if (strlen($value) > self::MAX_MEDIA_FILE_BYTES) throw new InvalidArgumentException(($plain ? $path : "A {$kind}") . ' is larger than this host keeps (' . intdiv(self::MAX_MEDIA_FILE_BYTES, 1024 * 1024) . " MB per {$kind}).");
             $bytes += strlen($value);
+            // Refused as soon as it is over, not after every file is decoded: one held too many
+            // times over is not held in memory to be refused.
+            if ($bytes > self::MAX_PROJECT_BYTES) throw new InvalidArgumentException('Native project exceeds ' . intdiv(self::MAX_PROJECT_BYTES, 1024 * 1024) . ' MB');
             $decoded[$path] = $value;
         }
         if ($bytes > self::MAX_PROJECT_BYTES) throw new InvalidArgumentException('Native project exceeds ' . intdiv(self::MAX_PROJECT_BYTES, 1024 * 1024) . ' MB');

@@ -133,7 +133,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   // Never more often than every ten seconds nor less than every ten minutes, whatever is sent.
   const sent = current?.updatesEvery;
   const every = typeof sent === 'number' && Number.isFinite(sent) ? Math.min(600, Math.max(10, Math.round(sent))) : 20;
-  const [newer, setNewer] = useState<{ of: NativeRuntimeProject; version: number; client: Record<string, string>; assets: Record<string, string>; media?: string; engine?: { id: string; revision: string } } | null>(null);
+  const [newer, setNewer] = useState<{ of: NativeRuntimeProject; version: number; client: Record<string, string>; assets: NativeRuntimeProject['assets']; media?: string; engine?: { id: string; revision: string } } | null>(null);
   // The newest version this page holds of the app it opened (`of`): the opening's, then each newer
   // one as it is fetched, whole, with the media that are its own. (What a frame runs, and which
   // media it holds, is the frame's to know: HostedAppFrame.)

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, type AppEngine, type NativeRuntimePreflight, type OwnerEnginePolicy } from '../../lib/api';
 import { importNativeProject, type NativeProject } from '../../lib/nativeHosting';
+import { keepUnchanged } from '../../lib/nativeMedia';
 import { nativeDraftStore, type NativeDraftCheckpoint, type NativeDraftWrite } from '../../lib/nativeDraft';
 import { useAuthStore } from '../../stores/authStore';
 
@@ -127,7 +128,8 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
   useLayoutEffect(() => { dirtyNow.current = dirty; }, [dirty]);
   useEffect(() => {
     let cancelled = false; alive.current = true;
-    void api.getNativeProject(app.id).then(result => {
+    // Its media named, not sent (lib/nativeMedia): read only for a download or an editor.
+    void api.getNativeProject(app.id, { media: 'refs' }).then(result => {
       if (cancelled) return;
       setReady(!result.error); setAvailable(!!result.data?.available && result.data?.ready !== false); setPreflight(result.data?.preflight ?? null);
       if (typeof result.data?.readOnly === 'boolean') setServerReadOnly(result.data.readOnly);
@@ -201,7 +203,7 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
   // shown from the PUT's answer: the PUT answers for the whole column (hosted and native
   // bundles merged), while this is about the native project alone.
   const refreshEngine = async () => {
-    const result = await api.getNativeProject(app.id);
+    const result = await api.getNativeProject(app.id, { media: 'refs' });
     if (!alive.current || result.error || !result.data) return;
     takeEngine(result.data);
   };
@@ -247,8 +249,13 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
     if (confirmConflict && conflict && !window.confirm(`Publish this draft? It is based on version ${base}, so publishing replaces version ${version}, which was published after it.`)) return null;
     lock.current = true; setBusy(true); setError(''); setNotice('');
     try {
+      // Media the installed version already has go by name, not again in base64 (lib/nativeMedia).
+      // Where they cannot be compared, the project goes whole, as it always did.
+      let sending = project;
+      try { sending = await keepUnchanged(project, installed.current); } catch { /* sent whole */ }
+      if (!alive.current) return null;
       // Said only of an upload: a publish from the page is what the server takes it for otherwise.
-      const result = uploaded.current ? await api.saveNativeProject(app.id, project, version, { how: 'upload' }) : await api.saveNativeProject(app.id, project, version);
+      const result = uploaded.current ? await api.saveNativeProject(app.id, sending, version, { how: 'upload' }) : await api.saveNativeProject(app.id, sending, version);
       if (!alive.current) return null;
       if (result.error || !result.data) {
         const reason = result.error || 'Installation failed. Your draft is still here.';

@@ -187,6 +187,33 @@ it('opens a later frame of the same app with the version that was taken, not the
   expect((await ready()).init?.client).toEqual(second);
 });
 
+it('hands each media file\'s bytes as they are to a frame that takes bytes, and base64 to one before it', async () => {
+  // As the media pack gives them: views into one buffer.
+  const pack = Uint8Array.from([0, 1, 2, 3, 250, 251, 252]);
+  const media = { 'logo.png': pack.subarray(1, 4), 'sound.mp3': pack.subarray(4) };
+  const later = { 'logo.png': Uint8Array.from([9, 9]) };
+  const opened = { ...native, assets: media };
+
+  const takes = await mount({ native: opened }, { shown: 1, update: 1, mediaBytes: 1 });
+  expect(takes.init?.assets).toEqual(media);
+  expect((takes.init?.assets as Record<string, unknown>)['logo.png'], 'the same bytes, not a copy made here').toBe(media['logo.png']);
+  await says(takes.channel, { type: 'shown' });
+  await render({ native: opened, update: { version: 2, client: second, assets: later } });
+  expect(updates(takes.channel)[0].assets).toEqual(later);
+  await act(async () => root?.unmount());
+
+  root = createRoot(container);
+  await render({ native: opened });
+  const before = await ready({ shown: 1, update: 1 });
+  expect(before.init?.assets, 'a frame from before SoftN v0.0.41').toEqual({ 'logo.png': 'AQID', 'sound.mp3': '+vv8' });
+  await says(before.channel, { type: 'shown' });
+  await render({ native: opened, update: { version: 2, client: second, assets: later } });
+  expect(updates(before.channel)[0].assets).toEqual({ 'logo.png': 'CQk=' });
+  await act(async () => root?.unmount());
+  // Text, as a server before the media pack sends it, goes as it came.
+  expect((await mount({}, { shown: 1, update: 1, mediaBytes: 1 }).then(opened => opened.init))?.assets).toEqual({ 'logo.png': 'AAAA' });
+});
+
 const A = 'a'.repeat(64);
 const B = 'b'.repeat(64);
 const withMedia = { ...native, media: A };

@@ -2,13 +2,39 @@ import { reviewAppArchive } from './appImportReview';
 import { strFromU8, strToU8, zipSync } from 'fflate';
 import type { NativeStorageScope } from './nativeAppStorage';
 
-export interface NativeProject { home?: boolean; version: number; updatedAt?: string; files: Record<string,string>; assets: Record<string,string>; access: 'application' | 'members' }
+/**
+ * A media file its owner's page was given by name, not in base64 (GET …/native?media=refs): the
+ * SHA-256 of its bytes (`kept`) and how many there are. A save that sends it back as it is keeps the
+ * server's copy, so an app's pictures and models are not uploaded again with every change; its bytes
+ * are read only for a download or an editor (lib/nativeMedia's withMediaBytes).
+ */
+export interface NativeKeptMedia { kept: string; size: number }
+/** One of a project's media files: its bytes in base64, or (on its owner's page) named. */
+export type NativeMedia = string | NativeKeptMedia;
+export interface NativeProject { home?: boolean; version: number; updatedAt?: string; files: Record<string,string>; assets: Record<string, NativeMedia>; access: 'application' | 'members' }
+/** A project with every media file's bytes: as a .softn file is read, and as a download or an editor takes it. */
+export type NativeProjectBytes = Omit<NativeProject, 'assets'> & { assets: Record<string, string> };
+
+/** Whether a media file is named (NativeKeptMedia) rather than held in base64. */
+export function isKeptMedia(value: unknown): value is NativeKeptMedia {
+  const named = value as Partial<NativeKeptMedia> | null;
+  return typeof named === 'object' && named !== null && typeof named.kept === 'string' && /^[a-f0-9]{64}$/.test(named.kept) && Number.isSafeInteger(named.size) && (named.size as number) >= 0;
+}
+
+/** How many bytes a media file is: as named, or as its base64 decodes. */
+export function mediaSize(value: NativeMedia): number {
+  if (typeof value !== 'string') return value.size;
+  const text = value.replace(/\s+/g, '');
+  return Math.max(0, Math.floor(text.length * 3 / 4) - (text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0));
+}
 /**
  * What a member's page runs. `media`, from FormLogic v0.1.24, names the app's media pack, fetched
- * whole and unpacked into `assets` before the frame is given them (readMediaPack); a server before
- * it sends `assets` in the JSON itself.
+ * whole and unpacked into `assets` before the frame is given them (readMediaPackBytes: each file's
+ * bytes, views into the pack); a server before it sends `assets` in the JSON itself, in base64.
  */
-export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: Record<string,string>; media?: { url: string; sha256: string; size: number; count: number }; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[]; files?: 'ask' | 'allow'; formlogic?: NativeFormlogic; site?: { url: string; entry: string; proof: string } }
+export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: NativeMediaFiles; media?: { url: string; sha256: string; size: number; count: number }; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[]; files?: 'ask' | 'allow'; formlogic?: NativeFormlogic; site?: { url: string; entry: string; proof: string } }
+/** An app's media as its page runs it: each file's bytes, or (from a server before the media pack) its base64. */
+export type NativeMediaFiles = Record<string, string | Uint8Array>;
 
 /**
  * What an app asks of FormLogic itself (its manifest's formlogicAi and formlogicPayments), as the
@@ -74,11 +100,13 @@ export const NATIVE_LIMITS = Object.freeze({
 const MEDIA_PACK_MAGIC = 'FLMEDIA1';
 
 /**
- * An app's media pack as the frame takes its media: each file's path to its bytes in base64.
- * Refused whole when it is not a pack, when a file runs past its end, or when a path is not one
- * the frame serves; the server wrote it from a project it had checked, so either is a damaged copy.
+ * An app's media pack as the frame takes its media: each file's path to its bytes, views into
+ * `buffer` (not copies). A frame from SoftN v0.0.41 takes them so (its ready's `mediaBytes: 1`);
+ * HostedAppFrame turns them into base64 for one before it. Refused whole when it is not a pack, when
+ * a file runs past its end, or when a path is not one the frame serves; the server wrote it from a
+ * project it had checked, so either is a damaged copy.
  */
-export function readMediaPack(buffer: ArrayBuffer): Record<string, string> {
+export function readMediaPackBytes(buffer: ArrayBuffer): Record<string, Uint8Array> {
   const bytes = new Uint8Array(buffer);
   const bad = (why: string) => new Error(`The app's media could not be read (${why}).`);
   if (bytes.length < 12 || strFromU8(bytes.subarray(0, 8)) !== MEDIA_PACK_MAGIC) throw bad('not a media pack');
@@ -89,18 +117,57 @@ export function readMediaPack(buffer: ArrayBuffer): Record<string, string> {
   const files = (record(header)?.files);
   if (!Array.isArray(files)) throw bad('it has no index of files');
   const body = 12 + headerLength;
-  const assets: Record<string, string> = {};
+  const assets: Record<string, Uint8Array> = {};
   for (const entry of files) {
     const file = record(entry);
     const path = file?.path, offset = file?.offset, size = file?.size;
     if (typeof path !== 'string' || !HOSTED_MEDIA.test(path) || path.includes('..') || !Number.isSafeInteger(offset) || !Number.isSafeInteger(size) || (offset as number) < 0 || (size as number) < 0) throw bad('a file in it is not one an app may have');
     const start = body + (offset as number), end = start + (size as number);
     if (end > bytes.length) throw bad(`${path} runs past its end`);
-    let binary = '';
-    for (let at = start; at < end; at += 8192) binary += String.fromCharCode(...bytes.subarray(at, Math.min(at + 8192, end)));
-    assets[path] = btoa(binary);
+    assets[path] = bytes.subarray(start, end);
   }
   return assets;
+}
+
+/** An app's media pack with each file's bytes in base64, as a frame before SoftN v0.0.41 takes them. */
+export function readMediaPack(buffer: ArrayBuffer): Record<string, string> {
+  return Object.fromEntries(Object.entries(readMediaPackBytes(buffer)).map(([path, bytes]) => [path, bytesToBase64(bytes)]));
+}
+
+/** base64 of bytes, a chunk at a time (String.fromCharCode takes only so many at once). */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let at = 0; at < bytes.length; at += 8192) binary += String.fromCharCode(...bytes.subarray(at, Math.min(at + 8192, bytes.length)));
+  return btoa(binary);
+}
+
+/**
+ * The pack of every media file its owner's page reads for a download or an editor (GET
+ * …/native/media, NativeAppService::ownerMediaPack): each file's bytes by the SHA-256 its index
+ * names, which is how the page's project names them (NativeKeptMedia). The bytes are views into
+ * `buffer`, not copies. Refused whole when it is not a pack or a file runs past its end.
+ */
+export function readOwnerMediaPack(buffer: ArrayBuffer): Map<string, Uint8Array> {
+  const bytes = new Uint8Array(buffer);
+  const bad = (why: string) => new Error(`The app's media could not be read (${why}). Try again in a moment.`);
+  if (bytes.length < 12 || strFromU8(bytes.subarray(0, 8)) !== MEDIA_PACK_MAGIC) throw bad('not a media pack');
+  const headerLength = new DataView(buffer, 8, 4).getUint32(0, false);
+  if (12 + headerLength > bytes.length) throw bad('its index runs past its end');
+  let header: unknown;
+  try { header = JSON.parse(strFromU8(bytes.subarray(12, 12 + headerLength))); } catch { throw bad('its index is not JSON'); }
+  const files = record(header)?.files;
+  if (!Array.isArray(files)) throw bad('it has no index of files');
+  const body = 12 + headerLength;
+  const found = new Map<string, Uint8Array>();
+  for (const entry of files) {
+    const file = record(entry);
+    const offset = file?.offset, size = file?.size, kept = file?.kept;
+    if (typeof kept !== 'string' || !/^[a-f0-9]{64}$/.test(kept) || !Number.isSafeInteger(offset) || !Number.isSafeInteger(size) || (offset as number) < 0 || (size as number) < 0) throw bad('a file in it is not named');
+    const start = body + (offset as number), end = start + (size as number);
+    if (end > bytes.length) throw bad('a file runs past its end');
+    found.set(kept, bytes.subarray(start, end));
+  }
+  return found;
 }
 export interface NativeRecordField { name: string; type: string; primary: boolean; required: boolean; defaultValue: string | null; auto: boolean; readOnly: boolean }
 export interface NativeRecordDetail { values: Record<string, string | null>; revision: string; fields: NativeRecordField[] }
@@ -199,7 +266,7 @@ export function backendProblem(manifest: Record<string, unknown>, files: Record<
  * A .softn file as a project this host installs: a SoftN app with a backend of its own, or one
  * with none (all client, run in the member's page). Every refusal names the file it is about.
  */
-export async function importNativeProject(file: File): Promise<NativeProject> {
+export async function importNativeProject(file: File): Promise<NativeProjectBytes> {
   const { files, review } = reviewAppArchive(new Uint8Array(await file.arrayBuffer()));
   // FormLogic's own named backend actions belong to a Forms app's App Studio.
   if (review.backend === 'actions') throw new Error('This file is a FormLogic app project with backend actions, not a SoftN app. Add it to a Forms app instead: open its App Studio, then Screens → Hosting & app tools.');
@@ -249,8 +316,11 @@ export async function importNativeProject(file: File): Promise<NativeProject> {
   return { version: 0, files: source, assets, access: 'application' };
 }
 
-/** Owner project export: source and media, without databases or host credentials. */
-export function exportNativeProject(project: NativeProject): Uint8Array {
+/**
+ * Owner project export: source and media, without databases or host credentials. Every media
+ * file's bytes are needed: a project from its owner's page has them read first (withMediaBytes).
+ */
+export function exportNativeProject(project: NativeProjectBytes): Uint8Array {
   const files: Record<string, Uint8Array> = Object.fromEntries(Object.entries(project.files).map(([path, source]) => [path, strToU8(source)]));
   for (const [path, encoded] of Object.entries(project.assets)) files[path] = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
   return zipSync(files);

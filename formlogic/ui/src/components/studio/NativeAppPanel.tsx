@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, Database, Download, ExternalLink, Package, Upload } from 'lucide-react';
 import { ToolRow } from './ToolRow';
 import { AppEngineSelect } from './AppEngineSelect';
 import { AppTorchSwitch } from './AppTorchSwitch';
-import { importNativeProject, exportNativeProject, type NativeProject } from '../../lib/nativeHosting';
+import { importNativeProject, exportNativeProject, type NativeProject, type NativeProjectBytes } from '../../lib/nativeHosting';
+import { withMediaBytes } from '../../lib/nativeMedia';
 import { projectHasBackend } from '../../lib/softnApps';
 import { useAiReady } from '../../hooks/useAiReady';
 import { AiConnectNotice } from '../ai/AiConnectNotice';
@@ -72,6 +73,29 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
     if (recovered) setSourceFile(current => recovered.files[current] !== undefined ? current : '');
   };
   const discardDraft = draft.discardDraft;
+  // The dialog holds the project's media by name (lib/nativeMedia): an editor and a download are
+  // given their bytes first, read from the server once, and nothing else starts on them meanwhile.
+  const [preparing, setPreparing] = useState<'editor' | 'download' | null>(null);
+  const preparingNow = useRef(false);
+  // The project as it is now, and whether the dialog is still open: read once the media have come.
+  const projectNow = useRef(project);
+  useLayoutEffect(() => { projectNow.current = project; }, [project]);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  async function withBytes(what: 'editor' | 'download', then: (project: NativeProjectBytes) => void, failed: string) {
+    const from = project;
+    if (!from || preparingNow.current) return;
+    preparingNow.current = true; setPreparing(what);
+    try {
+      const bytes = await withMediaBytes(app.id, from);
+      if (!mounted.current) return;
+      // An editor opened on the draft as it was, once it changed meanwhile, would put those changes back.
+      if (what === 'editor' && projectNow.current !== from) { draft.setNotice('The project changed while it was being opened for the editor. Open the editor again.'); return; }
+      then(bytes);
+    }
+    catch (reason) { if (mounted.current) draft.setError(reason instanceof Error && reason.message ? reason.message : failed); }
+    finally { preparingNow.current = false; if (mounted.current) setPreparing(null); }
+  }
   async function importFile(file: File | undefined) {
     const imported = await draft.importFile(file);
     if (imported) setSourceFile('');
@@ -155,7 +179,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
           {/* Where it runs and where its data is, in a line: what an owner asks first of an app they brought in. */}
           <p className="mt-0.5 text-xs leading-5 text-slate-500 dark:text-slate-400">{needsRuntime ? 'Its backend runs on this server, and its records are kept in a database of its own.' : 'It has no backend: it runs in each visitor’s browser and keeps its data there.'}</p>
         </div>
-        {!readOnly && <div className="flex flex-wrap gap-2">{(['builder', 'studio'] as const).map(kind => <Button key={kind} variant="secondary" disabled={busy || (kind === 'studio' && aiReady === false)} title={kind === 'studio' && aiReady === false ? 'Connect an AI in Settings → AI to edit with AI Studio.' : undefined} onClick={() => { try { setEditor({ kind, bundle: exportNativeProject(project) }); } catch { draft.setError('Could not prepare this project for the editor.'); } }}>{kind === 'builder' ? 'Open Visual Builder' : 'Open AI Studio'}</Button>)}</div>}
+        {!readOnly && <div className="flex flex-wrap gap-2">{(['builder', 'studio'] as const).map(kind => <Button key={kind} variant="secondary" disabled={busy || !!preparing || (kind === 'studio' && aiReady === false)} title={kind === 'studio' && aiReady === false ? 'Connect an AI in Settings → AI to edit with AI Studio.' : undefined} onClick={() => void withBytes('editor', bytes => setEditor({ kind, bundle: exportNativeProject(bytes) }), 'Could not prepare this project for the editor.')}>{kind === 'builder' ? 'Open Visual Builder' : 'Open AI Studio'}</Button>)}</div>}
       </section>}
       {!sourceOnly && project && !readOnly && aiReady === false && <AiConnectNotice className="text-xs leading-5 text-slate-500 dark:text-slate-400" lead="AI Studio needs an AI connection; the Visual Builder works without one" reason={ai.reason} onConnected={ai.recheck} />}
 
@@ -192,15 +216,12 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
           <section aria-label="Files" className={card}>
             <h3 className={cardTitle}>Files</h3>
             <div className="mt-3 flex flex-wrap gap-2">
-              {!readOnly && <Button variant="secondary" disabled={!ready || busy} leftIcon={<Upload className="h-4 w-4" />} onClick={() => input.current?.click()}>Import .softn project</Button>}
-              <Button variant="secondary" leftIcon={<Download className="h-4 w-4" />} onClick={() => {
-                try {
-                  const bytes = exportNativeProject(project);
-                  const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' }));
-                  const link = document.createElement('a'); link.href = url; link.download = `${app.slug}.softn`; link.click();
-                  setTimeout(() => URL.revokeObjectURL(url), 1000);
-                } catch { draft.setError('The project copy could not be prepared. Your draft is still here.'); }
-              }}>Download editable project</Button>
+              {!readOnly && <Button variant="secondary" disabled={!ready || busy || !!preparing} leftIcon={<Upload className="h-4 w-4" />} onClick={() => input.current?.click()}>Import .softn project</Button>}
+              <Button variant="secondary" disabled={!!preparing} isLoading={preparing === 'download'} leftIcon={<Download className="h-4 w-4" />} onClick={() => void withBytes('download', project => {
+                const url = URL.createObjectURL(new Blob([new Uint8Array(exportNativeProject(project))], { type: 'application/octet-stream' }));
+                const link = document.createElement('a'); link.href = url; link.download = `${app.slug}.softn`; link.click();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+              }, 'The project copy could not be prepared. Your draft is still here.')}>Download editable project</Button>
             </div>
             <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{readOnly ? 'The download includes this project’s interface, private backend and migrations. It excludes records and server credentials.' : 'The download includes this draft’s interface, private backend and migrations. It excludes records and server credentials. Open it in your app editor and import the updated project here.'}</p>
           </section>

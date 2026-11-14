@@ -1172,8 +1172,8 @@ that domain's storage goes into the app's map the first time it opens in a brows
 The parent supplies the same verified ZIPP bytes used by the hosted client; the server's
 separate VM process does not cause another browser WASM download.
 
-Owner APIs are `GET/PUT /api/apps/{id}/native` and
-`GET /api/apps/{id}/native/records?table=...&offset=...`. PUT includes `project` and
+Owner APIs are `GET/PUT /api/apps/{id}/native`, `GET /api/apps/{id}/native/media` (the app's media, below)
+and `GET /api/apps/{id}/native/records?table=...&offset=...`. PUT includes `project` and
 `expectedVersion`. Runtime APIs are `GET /api/app/{slug}/entry`,
 `GET /api/app/{slug}/native`, and `POST /api/app/{slug}/native/request`.
 The last accepts `{method,path,query,headers,body}` and returns `{result:{status,body}}`.
@@ -1189,7 +1189,45 @@ app changes; a members-only app's is checked with the server each time it is use
 unchanged), so only someone still admitted reads the browser's copy. The server makes the pack and a
 copy of the project without its media from `project.json` the first time the app is opened after an
 install (`runtime-cache/` beside it), and reads them from then on; app requests read that copy too.
-A page from before v0.1.24 gets the media inside the project, as it did. PHP holds a project several
+A page from before v0.1.24 gets the media inside the project, as it did. The page keeps each file of
+the pack as its bytes and hands them to the app's frame as they are where the frame takes bytes
+(SoftN v0.0.41's frame on: its `ready` says `mediaBytes: 1`), which serves each as a `blob:` address;
+a frame before it is handed base64, as it always was, and served each as a `data:` address. A
+`data:` address carries the file as text: First Drive's 24 MB model was a 32 MB string, put
+wherever the app named it and decoded again each time it was read.
+
+**The app's media on its owner's page.** The app's page (and App Studio's hosting dialog) asks for the
+project with each media file named rather than sent (`GET /api/apps/{id}/native?media=refs`): in
+`assets`, each path is `{kept, size}`, the SHA-256 of the file's bytes and how many there are. A game's
+media came to that page in base64 on every visit, tens of megabytes for a list of names (First Drive's
+24 MB model alone was a 32 MB string). Its bytes are read only for what needs them, a download of the
+app or an editor: `GET /api/apps/{id}/native/media` is every media file of the installed version in one
+pack, laid out as the runtime's, each file's entry naming its SHA-256 (`kept`), with a built site's files
+too. It is made once for each version (`owner-<key>.pack` beside the runtime cache, gone with it) and
+read from then on, so a request costs a file opened, not the app's media copied again; a HEAD says its
+size without making it. `?path=…&kept=…` is one file, for a picture the page shows: the bytes `kept`
+names, wherever the app has them (the file of that name, another with those bytes where it was renamed
+in a draft, or an earlier version's, kept in the app's history); `path` gives it its type and name.
+Both are the owner's alone, checked with the server each time they are used (`private, no-cache`,
+answered 304 before anything is read while the server still has those bytes), sent under the sandbox
+policy and as a download, so an SVG opened at its address runs nothing. Every file is checked against
+its SHA-256 as it is read; a copy the runtime cache keeps that is not those bytes (a damaged pack, or a
+built site's two files whose names differ only in case, one file on a disk that does not tell case
+apart) is read past, from `project.json` itself. A pack that cannot be read whole is answered `503
+media_unreadable`, in its own words. A save names each media file the server already has (`{kept}` in
+place of its base64; the page compares the bytes of any file the size of one it was given names for),
+and the server takes those files' bytes as the single file finds them: from the version at
+`expectedVersion` by name or by bytes, or from the app's history, so a draft made before the app was
+changed elsewhere can still be published over it. The cheap checks come first (how many files, their
+names, what the project would hold, since a few names can stand for one large file many times over).
+One the server has nowhere is refused by name ("… is no longer on the server as this page had it. Add
+the file again, or reload the page."), and nothing is installed. So a change to one page uploads that
+page, not every picture and model again. `PUT …?media=refs` answers with the media named the same way,
+and so does a data import (`POST …/native/import?media=refs`). Anything that asks without
+`media=refs` is sent and may send every file in base64, as before. The names are kept with the
+runtime cache (`kept` in its summary); one written before them is made again the first time it is read.
+
+PHP holds a project several
 times over while it is installed or first opened, so FormLogic raises `memory_limit` to 96 MB plus
 four times the project's size (at most 1.5 GB) where the host allows it, and refuses an upload it
 cannot make room for with `413` (`memory_limit`) before reading it. A host that forbids raising it

@@ -3568,6 +3568,10 @@ $app->get('/api/apps/{id}/native', function ($request, $response) use ($containe
 $app->put('/api/apps/{id}/native', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+// One media file of the installed app, for its owner's page: a download, an editor, a picture shown.
+$app->get('/api/apps/{id}/native/{operation:media}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
 // A new SoftN app's first version: the starter project, installed only when nothing is.
 $app->post('/api/apps/{id}/native/{operation:starter}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));

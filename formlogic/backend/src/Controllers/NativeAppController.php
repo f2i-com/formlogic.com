@@ -151,6 +151,17 @@ class NativeAppController
                     throw $missing;
                 }
             }
+            // The installed project's media for its owner's page: all of them in one pack, for a
+            // download of the app or an editor (NativeAppService::ownerMediaPack), or one file named,
+            // for a picture the page shows (ownerMediaFile).
+            if (($args['operation'] ?? '') === 'media') {
+                $query = $request->getQueryParams();
+                if (!array_key_exists('path', $query) && !array_key_exists('kept', $query)) return $this->ownerMediaPack($request, $response, (string) $app['id']);
+                $path = is_string($query['path'] ?? null) ? $query['path'] : '';
+                $kept = is_string($query['kept'] ?? null) ? $query['kept'] : '';
+                if ($path === '' || preg_match('/^[a-f0-9]{64}$/D', $kept) !== 1) throw new \InvalidArgumentException('Name the file and the copy of it the page has: ?path=…&kept=…');
+                return $this->ownerMedia($request, $response, (string) $app['id'], $path, $kept);
+            }
             if ($request->getMethod() === 'GET') {
                 // available = artifacts prepared; preflight = the runtime actually starts here
                 // (audit FL-03). Owner-only endpoint; preflight messages carry no paths or secrets.
@@ -159,7 +170,9 @@ class NativeAppController
                 // Read under the management lock, so an update left unfinished is settled before it is shown.
                 // The engine block is the owner's settings view: choice, outcome, reason, and what
                 // this site allows them to choose between.
-                $project = $this->native->project($app['id']);
+                // `media=refs`: each media file named and sized, not sent (ownerProject). The app's page
+                // asks for that; anything else is sent every file in base64, as it always was.
+                $project = ($request->getQueryParams()['media'] ?? null) === 'refs' ? $this->native->ownerProject($app['id']) : $this->native->project($app['id']);
                 // Derived from the same client files a member's frame receives, so the owner is
                 // shown the engine (and the reason) their members actually get.
                 $languages = RuntimeEngineService::languagesOf(NativeAppService::clientFiles($project ?? []));
@@ -176,9 +189,83 @@ class NativeAppController
             // For the app's history of versions (NativeAppVersions): its owner made this one, on the
             // app's page or (`how: "upload"`) from a file, and may say in a line what it is for.
             $origin = ['by' => (string) $app['ownerId'], 'how' => ($body['how'] ?? null) === 'upload' ? 'upload' : 'page', 'summary' => $body['summary'] ?? null];
-            $installed = $this->native->install($app['id'], $body['project'], $body['expectedVersion'], null, $origin);
-            return ['project' => $installed] + $this->engineAfterInstall($app['id'], RuntimeEngineService::languagesOf(NativeAppService::clientFiles($installed)));
+            // Media the page left as they were come by name (`{kept}`) and are taken from the version
+            // installed now, so a change to one page does not send the app's every picture and model again.
+            $expected = $body['expectedVersion'];
+            [$project, $known] = NativeAppService::namesKeptMedia($body['project']) ? $this->native->withKeptMedia($app['id'], $body['project'], $expected) : [$body['project'], null];
+            unset($body);
+            $installed = $this->native->install($app['id'], $project, $expected, null, $origin);
+            unset($project);
+            $answer = ($request->getQueryParams()['media'] ?? null) === 'refs' ? NativeAppService::mediaRefs($installed, $known ?? []) : $installed;
+            return ['project' => $answer] + $this->engineAfterInstall($app['id'], RuntimeEngineService::languagesOf(NativeAppService::clientFiles($installed)));
         }, !$readOnly);
+    }
+
+    /** The image types a media file is sent as, so the owner's page can show it; any other file is sent as bytes. */
+    private const OWNER_MEDIA_TYPES = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif', 'webp' => 'image/webp', 'avif' => 'image/avif', 'svg' => 'image/svg+xml', 'ico' => 'image/x-icon', 'bmp' => 'image/bmp'];
+
+    /** The SHA-256 a request's If-None-Match names, where it names one as this API's ETags are written ("<hex>"). */
+    private static function etagAsked(Request $request): ?string
+    {
+        return preg_match('/^"([a-f0-9]{1,64})"$/D', trim($request->getHeaderLine('If-None-Match')), $match) === 1 ? $match[1] : null;
+    }
+
+    /**
+     * One media file for the app's owner (GET /api/apps/{id}/native/media?path=…&kept=…): the bytes
+     * `kept` names, the SHA-256 the page was given for them, wherever the app has them
+     * (NativeAppService::ownerMediaFile); `path` is what the page calls it, for its type and name.
+     * Checked with the server each time it is used (`no-cache`, answered 304 while the server still
+     * has them, before anything is read), so a browser's copy is read only by its owner while signed
+     * in. Whatever it is, it runs nothing where it is opened on its own: an SVG's scripts included
+     * (SANDBOXED_IMAGE), and it is saved rather than shown.
+     */
+    private function ownerMedia(Request $request, Response $response, string $appId, string $path, string $kept): Response
+    {
+        $head = $request->getMethod() === 'HEAD';
+        $file = $this->native->ownerMediaFile($appId, $path, $kept, self::etagAsked($request), !$head);
+        if ($file === null) throw new \RuntimeException('This file is not on the server any more. Reload the page and try again.', 404);
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $name = trim((string) preg_replace('/[^A-Za-z0-9_.-]+/', '-', basename($path)), '-.');
+        $response = $response
+            ->withHeader('ETag', '"' . $file['kept'] . '"')
+            ->withHeader('Cache-Control', 'private, no-cache')
+            ->withHeader('X-Content-Type-Options', 'nosniff')
+            ->withHeader('Content-Security-Policy', \FormLogic\Middleware\SecurityHeadersMiddleware::SANDBOXED_IMAGE)
+            ->withHeader('Content-Disposition', 'attachment; filename="' . ($name === '' ? 'file' : $name) . '"');
+        if (isset($file['unchanged'])) return $response->withStatus(304);
+        $response = $response
+            ->withHeader('Content-Type', self::OWNER_MEDIA_TYPES[$extension] ?? 'application/octet-stream')
+            ->withHeader('Content-Length', (string) $file['size']);
+        return isset($file['stream']) ? $response->withBody(new \Slim\Psr7\Stream($file['stream'])) : $response;
+    }
+
+    /**
+     * Every media file of the installed app in one pack, for its owner's page (GET
+     * /api/apps/{id}/native/media): what a download of the app or an editor reads. Checked with the
+     * server each time it is used, answered 304 while the project is the one the browser's copy is of.
+     * A pack that cannot be read whole says so in its own words (503).
+     */
+    private function ownerMediaPack(Request $request, Response $response, string $appId): Response
+    {
+        $head = $request->getMethod() === 'HEAD';
+        try {
+            $pack = $this->native->ownerMediaPack($appId, self::etagAsked($request), !$head);
+        } catch (\RuntimeException $unread) {
+            if ($unread->getCode() === 503 && $unread->getMessage() === NativeAppService::MEDIA_UNREADABLE) return $this->jsonError($response->withHeader('Cache-Control', 'no-store'), $unread->getMessage(), 503, 'media_unreadable');
+            throw $unread;
+        }
+        if ($pack === null) throw new \RuntimeException('Native app not found', 404);
+        $response = $response
+            ->withHeader('ETag', '"' . $pack['etag'] . '"')
+            ->withHeader('Cache-Control', 'private, no-cache')
+            ->withHeader('X-Content-Type-Options', 'nosniff')
+            ->withHeader('Content-Security-Policy', \FormLogic\Middleware\SecurityHeadersMiddleware::SANDBOXED_IMAGE)
+            ->withHeader('Content-Disposition', 'attachment; filename="media.pack"');
+        if (isset($pack['unchanged'])) return $response->withStatus(304);
+        $response = $response
+            ->withHeader('Content-Type', 'application/octet-stream')
+            ->withHeader('Content-Length', (string) $pack['size']);
+        return isset($pack['stream']) ? $response->withBody(new \Slim\Psr7\Stream($pack['stream'])) : $response;
     }
 
     /**

@@ -385,14 +385,16 @@ const brief = (found: string) => found.length > 80 ? `${found.slice(0, 79)}…` 
  */
 export function siteBuildWarnings(project: Pick<NativeProject, 'files' | 'assets'>): string[] {
   const entry = `site/${siteOf(project)?.entry ?? 'index.html'}`;
-  const paths = Object.keys(project.assets).filter(path => path.startsWith('site/') && SCANNED.test(path) && path !== entry).sort();
-  if (typeof project.assets[entry] === 'string') paths.unshift(entry);
+  // A file the page holds by name alone (lib/nativeMedia) is one an earlier build had: it was read when that was uploaded.
+  const texts = Object.fromEntries(Object.entries(project.assets).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  const paths = Object.keys(texts).filter(path => path.startsWith('site/') && SCANNED.test(path) && path !== entry).sort();
+  if (typeof texts[entry] === 'string') paths.unshift(entry);
   let outside = '', history = '', worker = '';
   for (const path of paths) {
     if (history && worker && path !== entry) break;
     const shown = path.slice('site/'.length);
     const page = /\.html?$/.test(path), script = /\.m?js$/.test(path);
-    const text = page ? withoutComments(scanText(project.assets[path])) : scanText(project.assets[path]);
+    const text = page ? withoutComments(scanText(texts[path])) : scanText(texts[path]);
     if (path === entry) {
       const address = outsideLoad(text);
       if (address) outside = `${shown} loads ${brief(address)} from another site. A hosted app reaches another site only when you name it: put the file in your build, or allow the site in Settings, Outside sites.`;

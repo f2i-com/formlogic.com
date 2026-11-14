@@ -1235,6 +1235,31 @@ final class NativeAppVersions
         return is_file($file) && filesize($file) === $size;
     }
 
+    /**
+     * How many bytes the history keeps under one media or built file's SHA-256, or null where no kept
+     * version has them (never kept, or gone with the versions that named them). For a page that still
+     * names a file an earlier version had (NativeAppService::withKeptMedia, ownerMediaFile): a draft
+     * made before the app was changed elsewhere. The caller holds the installation's management lock.
+     */
+    public static function keptFileSize(string $root, string $hash): ?int
+    {
+        if (!self::isKey($hash)) return null;
+        $file = $root . self::FOLDER . '/blobs/' . $hash;
+        clearstatcache(true, $file);
+        if (!is_file($file) || is_link($file)) return null;
+        $size = @filesize($file);
+        return is_int($size) && $size <= NativeAppService::MAX_MEDIA_FILE_BYTES ? $size : null;
+    }
+
+    /** Those bytes (keptFileSize), checked against the SHA-256 they are kept under; null where they are not there whole. */
+    public static function keptFile(string $root, string $hash): ?string
+    {
+        $size = self::keptFileSize($root, $hash);
+        if ($size === null) return null;
+        $bytes = @file_get_contents($root . self::FOLDER . '/blobs/' . $hash);
+        return is_string($bytes) && strlen($bytes) === $size && hash_equals($hash, hash('sha256', $bytes)) ? $bytes : null;
+    }
+
     /** One kept file's bytes, checked against the name they are kept under. */
     private static function blob(string $dir, string $hash, int $size): string
     {

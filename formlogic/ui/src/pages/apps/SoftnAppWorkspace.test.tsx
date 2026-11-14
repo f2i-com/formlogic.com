@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   getAppUsers: vi.fn(),
   listFlows: vi.fn(),
   getAppForms: vi.fn(),
+  withMediaBytes: vi.fn(),
+  keepUnchanged: vi.fn(),
   dataManager: null as null | { table?: string; view?: string; query?: string; onNavigate(table: string | undefined, view: string, query?: string, options?: { replace?: boolean }): void },
   editor: null as null | { kind: string; brief?: unknown; applyLabel?: string; onApply(bytes: Uint8Array): Promise<void>; onClose(): void },
   history: null as null | { app: { name: string }; version: number; open?: number; file?: string; backend: boolean; readOnly: boolean; waiting: string | null; onRestored(result: { version: number; restored: number; databaseAhead: string[] }): void },
@@ -45,6 +47,8 @@ vi.mock('../../lib/nativeHosting', () => ({
   declaresFormlogicAi: (project: { files: Record<string, string> }) => 'formlogicAi' in JSON.parse(project.files['manifest.json'] ?? '{}'),
   declaresFormlogicPayments: () => false,
 }));
+// The page holds the app's media by name: their bytes are read for a download or an editor, and a save names what the server has.
+vi.mock('../../lib/nativeMedia', () => ({ withMediaBytes: mocks.withMediaBytes, keepUnchanged: mocks.keepUnchanged, pictureUrl: () => '' }));
 // The settings of an app with a backend, which read the server themselves.
 vi.mock('../../components/apps/PhoneSignInPanel', () => ({ PhoneSignInPanel: () => <p>phone sign-in</p> }));
 vi.mock('../../components/apps/AppAiPanel', () => ({ AppAiPanel: () => <p>ai settings</p> }));
@@ -87,6 +91,8 @@ const app = (status: 'draft' | 'published') => ({ id: 'app-1', name: 'Recipes', 
 
 beforeEach(() => {
   for (const mock of [mocks.getNativeProject, mocks.saveNativeProject, mocks.installNativeStarter, mocks.publishApp]) mock.mockReset();
+  mocks.withMediaBytes.mockReset().mockImplementation(async (_id: string, project: NativeProject) => project);
+  mocks.keepUnchanged.mockReset().mockImplementation(async (project: NativeProject) => project);
   mocks.editor = null;
   mocks.saveNativeProject.mockImplementation(async (_id: string, project: NativeProject, expected: number) => ({ data: { project: { ...project, version: expected + 1 } } }));
   mocks.publishApp.mockResolvedValue({ data: { app: app('published'), version: 1 } });
@@ -499,5 +505,74 @@ describe('SoftnAppWorkspace', () => {
     expect(container.textContent).toContain('Draft, version 1');
     await act(async () => button(/^Publish$/)!.click());
     expect(mocks.publishApp).toHaveBeenCalledWith('app-1');
+  });
+
+  describe('the app’s media', () => {
+    const named = (): NativeProject => ({ ...installed(2), assets: { 'assets/model.glb': { kept: 'a'.repeat(64), size: 24_000_000 } } });
+    const created = vi.fn(() => 'blob:download');
+    beforeEach(() => {
+      created.mockClear();
+      Object.assign(URL, { createObjectURL: created, revokeObjectURL: vi.fn() });
+    });
+
+    it('are read by name, and their bytes only for a download', async () => {
+      const project = named();
+      await render('draft', project, '/edit');
+      expect(mocks.getNativeProject).toHaveBeenCalledWith('app-1', { media: 'refs' });
+      expect(mocks.withMediaBytes).not.toHaveBeenCalled();
+      await act(async () => button(/Download as \.softn/)!.click());
+      expect(mocks.withMediaBytes).toHaveBeenCalledWith('app-1', project);
+      expect(created).toHaveBeenCalledTimes(1);
+    });
+
+    it('says why a download could not be had, and downloads nothing', async () => {
+      mocks.withMediaBytes.mockRejectedValue(new Error('assets/model.glb is no longer on the server as this page has it: the app was changed since the page was opened. Reload the page and try again.'));
+      await render('draft', named(), '/edit');
+      await act(async () => button(/Download as \.softn/)!.click());
+      expect(container.textContent).toContain('assets/model.glb is no longer on the server');
+      expect(created).not.toHaveBeenCalled();
+    });
+
+    it('are read before an editor opens on the app', async () => {
+      useUIStore.getState().setSoftnOpen({ appId: 'app-1', editor: 'builder' });
+      const project = named();
+      await render('draft', project);
+      expect(mocks.withMediaBytes).toHaveBeenCalledWith('app-1', project);
+      expect(mocks.editor?.kind).toBe('builder');
+    });
+
+    it('hold back uploads while they are read for an editor, which then opens', async () => {
+      let arrive: (project: NativeProject) => void = () => {};
+      mocks.withMediaBytes.mockImplementation(() => new Promise<NativeProject>(resolve => { arrive = resolve; }));
+      const project = named();
+      await render('draft', project, '/edit');
+      await act(async () => button(/Edit visually/)!.click());
+      expect(button(/Upload a new version/)!.disabled, 'no new version comes in under the editor').toBe(true);
+      expect(button(/Edit visually/)!.disabled).toBe(true);
+      await act(async () => arrive(project));
+      expect(mocks.editor?.kind).toBe('builder');
+    });
+
+    it('keep what was typed for AI Studio where the editor could not be opened', async () => {
+      mocks.withMediaBytes.mockRejectedValue(new Error('The app’s media could not be downloaded. Check your connection and try again.'));
+      await render('draft', named(), '/edit');
+      const area = container.querySelector('#softn-change') as HTMLTextAreaElement;
+      const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      await act(async () => { setValue.call(area, 'Add a search box'); area.dispatchEvent(new Event('input', { bubbles: true })); });
+      await act(async () => button(/Make this change/)!.click());
+      expect(container.textContent).toContain('Check your connection');
+      expect((container.querySelector('#softn-change') as HTMLTextAreaElement).value).toBe('Add a search box');
+      expect(mocks.editor).toBeNull();
+    });
+
+    it('go back to the server by name where it has them, as keepUnchanged makes the draft', async () => {
+      const kept = { 'assets/model.glb': { kept: 'b'.repeat(64), size: 24_000_000 } };
+      mocks.keepUnchanged.mockImplementation(async (project: NativeProject) => ({ ...project, assets: kept }));
+      useUIStore.getState().setSoftnOpen({ appId: 'app-1', editor: 'builder' });
+      await render('draft', installed(1));
+      await act(async () => { await mocks.editor!.onApply(new Uint8Array([2])); });
+      expect(mocks.keepUnchanged).toHaveBeenCalledWith(expect.objectContaining({ files: expect.objectContaining({ 'ui/main.ui': '<Text>Changed</Text>' }) }), installed(1));
+      expect(mocks.saveNativeProject).toHaveBeenCalledWith('app-1', expect.objectContaining({ assets: kept }), 1);
+    });
   });
 });

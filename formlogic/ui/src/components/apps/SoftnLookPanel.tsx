@@ -2,17 +2,15 @@ import { useMemo, useState } from 'react';
 import { Button } from '../ui/Button';
 import { AppSplash } from '../studio/AppSplash';
 import type { NativeProject } from '../../lib/nativeHosting';
+import { pictureUrl } from '../../lib/nativeMedia';
 import type { SoftnLook } from '../../types/app';
 
 /** The images an app may use for its look: a raster one anywhere, and SVG for its icon. */
 const RASTER = /^assets\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.(?:png|jpe?g|gif|webp)$/i;
 const SVG = /^assets\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.svg$/i;
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' };
-const preview = (project: NativeProject | null, path: string | undefined) => {
-  if (!project || !path || !project.assets[path]) return '';
-  return `data:${MIME[path.split('.').pop()!.toLowerCase()] ?? 'image/png'};base64,${project.assets[path]}`;
-};
+/** A picture of the project as the page shows it: from the draft, or (named, as the page holds the app's media) from the server. */
+const preview = (appId: string, project: NativeProject | null, path: string | undefined) => path && project ? pictureUrl(appId, path, project.assets[path]) : '';
 const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100';
 const label = 'block text-sm font-medium text-slate-800 dark:text-slate-200';
 const hint = 'mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400';
@@ -23,7 +21,8 @@ const hint = 'mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400';
  * loading screen's background and wheel. The icon and description start as the app's own manifest
  * says. Saved together, with the browser bar colour (settings.pwaThemeColor).
  */
-export function SoftnLookPanel({ project, look, themeColor, disabled, onSave }: {
+export function SoftnLookPanel({ appId, project, look, themeColor, disabled, onSave }: {
+  appId: string;
   project: NativeProject | null;
   look: SoftnLook | undefined;
   themeColor: string | undefined;
@@ -72,7 +71,7 @@ export function SoftnLookPanel({ project, look, themeColor, disabled, onSave }: 
         <label htmlFor="softn-look-icon" className={label}>Icon</label>
         <div className="mt-1.5 flex items-center gap-3">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
-            {icon ? <img src={preview(project, icon)} alt="" className="h-full w-full object-contain" /> : <span className="text-xs text-slate-400">None</span>}
+            {icon ? <img src={preview(appId, project, icon)} alt="" className="h-full w-full object-contain" /> : <span className="text-xs text-slate-400">None</span>}
           </span>
           <select id="softn-look-icon" className={field} value={draft.icon ?? ''} onChange={event => set({ icon: event.target.value || undefined })}>
             <option value="">{ownIcon ? `The app's own (${ownIcon})` : 'None (FormLogic’s)'}</option>
@@ -85,7 +84,7 @@ export function SoftnLookPanel({ project, look, themeColor, disabled, onSave }: 
         <label htmlFor="softn-look-share" className={label}>Share image</label>
         <div className="mt-1.5 flex items-center gap-3">
           <span className="flex h-12 w-[5.75rem] shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
-            {shareImage ? <img src={preview(project, shareImage)} alt="" className="h-full w-full object-contain" /> : <span className="text-xs text-slate-400">None</span>}
+            {shareImage ? <img src={preview(appId, project, shareImage)} alt="" className="h-full w-full object-contain" /> : <span className="text-xs text-slate-400">None</span>}
           </span>
           <select id="softn-look-share" className={field} value={draft.shareImage ?? ''} onChange={event => set({ shareImage: event.target.value || undefined })}>
             <option value="">{icon && RASTER.test(icon) ? 'The icon' : 'None'}</option>

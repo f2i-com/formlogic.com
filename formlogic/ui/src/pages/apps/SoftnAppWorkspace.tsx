@@ -11,7 +11,7 @@
 //   …/settings         who can use it, what it may do, how it looks
 // One page for everything a SoftN app's owner does: the App Studio is for forms apps, and an
 // address of it that names a SoftN app comes here (lib/softnApps: softnPathForStudio).
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Braces, Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, History as HistoryIcon, LayoutDashboard, Lock, MessageSquare, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wallet, Wand2, Workflow } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
@@ -52,7 +52,8 @@ import { useAiReady } from '../../hooks/useAiReady';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { api } from '../../lib/api';
 import { apiOf } from '../../lib/appApi';
-import { declaresFormlogicAi, declaresFormlogicPayments, exportNativeProject, importNativeProject, type NativeProject } from '../../lib/nativeHosting';
+import { declaresFormlogicAi, declaresFormlogicPayments, exportNativeProject, importNativeProject, type NativeProject, type NativeProjectBytes } from '../../lib/nativeHosting';
+import { withMediaBytes } from '../../lib/nativeMedia';
 import { isSoftnApp, projectFromUpload, projectHasBackend, SOFTN_SECTIONS, softnWorkspacePath, type SoftnSection } from '../../lib/softnApps';
 import { cn, copyToClipboard } from '../../lib/utils';
 import { useAppStore } from '../../stores/appStore';
@@ -181,23 +182,50 @@ function Workspace({ app }: { app: App }) {
   // section is there while the live app or the draft has one, and shows the live app's.
   const liveBackend = useMemo(() => apiOf(draft.installedFiles?.['manifest.json']) !== null, [draft.installedFiles]);
 
-  const openEditor = (kind: AppEditorKind, brief?: EditorBrief, from: NativeProject | null = project) => {
+  // The page holds the app's media by name (lib/nativeMedia): an editor and a download are given
+  // their bytes first, read from the server once. Nothing else starts on them while they are read.
+  const [preparing, setPreparing] = useState<'editor' | 'download' | null>(null);
+  const preparingNow = useRef(false);
+  // The project as it is now, and whether the page is still here: read once the media have come.
+  const projectNow = useRef(project);
+  useLayoutEffect(() => { projectNow.current = project; }, [project]);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const withBytes = async <T,>(what: 'editor' | 'download', from: NativeProject, then: (project: NativeProjectBytes) => T, failed: string): Promise<T | null> => {
+    if (preparingNow.current) return null;
+    preparingNow.current = true; setPreparing(what);
+    try {
+      const bytes = await withMediaBytes(app.id, from);
+      if (!mounted.current) return null;
+      // An editor opened on the project as it was, once it changed meanwhile (an upload, a setting), would put those changes back on Apply.
+      if (what === 'editor' && projectNow.current !== from) { draft.setNotice('The app changed while it was being opened for the editor. Open the editor again.'); return null; }
+      return then(bytes);
+    }
+    catch (reason) { if (mounted.current) draft.setError(reason instanceof Error && reason.message ? reason.message : failed); return null; }
+    finally { preparingNow.current = false; if (mounted.current) setPreparing(null); }
+  };
+  /** Opens the editor once the app's media are read; true when it opened. */
+  const prepareEditor = (kind: AppEditorKind, from: NativeProject, brief?: EditorBrief) =>
+    withBytes('editor', from, bytes => { setEditor({ kind, bundle: exportNativeProject(bytes), brief }); return true; }, 'Could not prepare this app for the editor.');
+  const openEditor = (kind: AppEditorKind, brief?: EditorBrief, from: NativeProject | null = project): Promise<boolean | null> | undefined => {
     if (!from) return;
     if (kind === 'studio' && ai.ready !== true) { toast.info('Connect an AI first', 'AI Studio uses your AI connection. Choose one in Settings → AI, or edit visually instead.'); return; }
-    try { setEditor({ kind, bundle: exportNativeProject(from), brief }); }
-    catch { draft.setError('Could not prepare this app for the editor.'); }
+    return prepareEditor(kind, from, brief);
   };
 
   // Arriving from "Create app" or from the chat: open the editor it asked for, once. The
   // setup choices come first for an app with nothing installed; the request waits for them.
-  const [taken, setTaken] = useState<SoftnOpen | null>(null);
+  // The editor opens once the app's media are read (prepareEditor), so the request is taken here.
+  const taken = useRef<SoftnOpen | null>(null);
   const seed = softnOpen && softnOpen.appId === app.id && ready && project && !editor ? softnOpen : null;
-  if (seed && seed !== taken) {
-    setTaken(seed);
-    try { setEditor({ kind: seed.editor, bundle: exportNativeProject(project!), brief: seed.brief }); }
-    catch { draft.setError('Could not prepare this app for the editor.'); }
-  }
-  useEffect(() => { if (taken && softnOpen === taken) setSoftnOpen(null); }, [taken, softnOpen, setSoftnOpen]);
+  useEffect(() => {
+    if (!seed || seed === taken.current || !project) return;
+    taken.current = seed;
+    setSoftnOpen(null);
+    void prepareEditor(seed.editor, project, seed.brief);
+    // Once for each request; prepareEditor is the page's own and reads what it is given.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed, project, setSoftnOpen]);
 
   // The editor's changes. While the app is not published nobody else can see it, so they are
   // installed at once and the preview shows them; a published app keeps them as a draft to publish.
@@ -315,12 +343,12 @@ function Workspace({ app }: { app: App }) {
 
   const download = () => {
     if (!project) return;
-    try {
-      const url = URL.createObjectURL(new Blob([new Uint8Array(exportNativeProject(project))], { type: 'application/octet-stream' }));
+    void withBytes('download', project, bytes => {
+      const url = URL.createObjectURL(new Blob([new Uint8Array(exportNativeProject(bytes))], { type: 'application/octet-stream' }));
       // A JavaScript app's download is the zip its upload takes back; a SoftN app's is a .softn file.
       const link = document.createElement('a'); link.href = url; link.download = `${app.slug}.${isSite ? 'zip' : 'softn'}`; link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch { draft.setError('The download could not be prepared.'); }
+    }, 'The download could not be prepared.');
   };
 
   const copyLink = async () => {
@@ -484,7 +512,7 @@ function Workspace({ app }: { app: App }) {
           {!readOnly && isSite && <aside className="space-y-4">
             <Panel title="Update your app" icon={<Upload className="h-4 w-4" />}>
               <input ref={buildUpload} type="file" accept=".zip,application/zip" className="hidden" aria-label="Upload a new build" onChange={event => { void uploadBuild(event.target.files?.[0]); event.target.value = ''; }} />
-              <Button className="w-full justify-start" disabled={busy} leftIcon={<Upload className="h-4 w-4" />} onClick={() => buildUpload.current?.click()}>Upload a new build (.zip)</Button>
+              <Button className="w-full justify-start" disabled={busy || !!preparing} leftIcon={<Upload className="h-4 w-4" />} onClick={() => buildUpload.current?.click()}>Upload a new build (.zip)</Button>
               <p className="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">Build your app, zip the folder the build made (dist or build) and upload it. {backend ? 'Its backend and its records stay as they are.' : 'What visitors saved in their browsers stays.'}</p>
               <div className="mt-4 border-t border-slate-100 pt-4 dark:border-white/5">
                 <Button variant="secondary" className="w-full justify-start" leftIcon={<Code2 className="h-4 w-4" />} onClick={() => setAdvanced(true)}>{backend ? 'Edit the backend code' : 'Edit the app’s manifest'}</Button>
@@ -494,7 +522,7 @@ function Workspace({ app }: { app: App }) {
               </div>
             </Panel>
             <Panel title="Files" icon={<FolderOpen className="h-4 w-4" />}>
-              <Button size="sm" variant="secondary" className="w-full justify-start max-sm:min-h-11" leftIcon={<Download className="h-4 w-4" />} onClick={download}>Download as .zip</Button>
+              <Button size="sm" variant="secondary" className="w-full justify-start max-sm:min-h-11" disabled={!!preparing} isLoading={preparing === 'download'} leftIcon={<Download className="h-4 w-4" />} onClick={download}>Download as .zip</Button>
               <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">The build as it is hosted{backend ? ', with its backend code' : ''}. Upload it again here or as a new app. Records are not in it.</p>
             </Panel>
             <Panel title="How it is hosted" icon={<Lock className="h-4 w-4" />}>
@@ -513,16 +541,20 @@ function Workspace({ app }: { app: App }) {
               <Textarea id="softn-change" rows={4} value={change} onChange={event => setChange(event.target.value)} disabled={ai.ready !== true}
                 placeholder={ai.ready === false ? 'Connect an AI to describe changes.' : 'e.g. Add a page for favourites, and a search box on the list.'} className="mt-1.5 min-h-24 resize-none" />
               <div className="mt-2 flex flex-wrap gap-2">
-                <Button size="sm" disabled={ai.ready !== true || busy || !change.trim()} leftIcon={<Sparkles className="h-4 w-4" />}
-                  onClick={() => { openEditor('studio', { prompt: change.trim(), kind: 'edit' }); setChange(''); }}>Make this change</Button>
-                <Button size="sm" variant="secondary" disabled={ai.ready !== true || busy} onClick={() => openEditor('studio')}>Open AI Studio</Button>
+                <Button size="sm" disabled={ai.ready !== true || busy || !!preparing || !change.trim()} leftIcon={<Sparkles className="h-4 w-4" />}
+                  onClick={() => {
+                    // What was typed stays until AI Studio has it: a failed opening keeps it to try again.
+                    const asked = change.trim();
+                    void openEditor('studio', { prompt: asked, kind: 'edit' })?.then(opened => { if (opened) setChange(current => current.trim() === asked ? '' : current); });
+                  }}>Make this change</Button>
+                <Button size="sm" variant="secondary" disabled={ai.ready !== true || busy || !!preparing} onClick={() => openEditor('studio')}>Open AI Studio</Button>
               </div>
               {ai.ready === false && <AiConnectNotice lead="AI Studio needs an AI connection" reason={ai.reason} onConnected={ai.recheck} />}
               {/* The two ways that need no AI, as equals: by hand on the page, or in the files. The code
                   editor used to sit third under "Files", as a quiet link below Upload and Download. */}
               <div className="mt-4 space-y-3 border-t border-slate-100 pt-4 dark:border-white/5">
                 <div>
-                  <Button variant="secondary" className="w-full justify-start" disabled={busy} leftIcon={<PencilRuler className="h-4 w-4" />} onClick={() => openEditor('builder')}>Edit visually</Button>
+                  <Button variant="secondary" className="w-full justify-start" disabled={busy || !!preparing} leftIcon={<PencilRuler className="h-4 w-4" />} onClick={() => openEditor('builder')}>Edit visually</Button>
                   <p className="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">Drag in components and change text and styles in the Visual Builder. No AI needed.</p>
                 </div>
                 <div>
@@ -534,8 +566,8 @@ function Workspace({ app }: { app: App }) {
             <Panel title="Files" icon={<FolderOpen className="h-4 w-4" />}>
               <input ref={upload} type="file" accept=".softn,.zip" className="hidden" aria-label="Upload a new version" onChange={event => { void uploadVersion(event.target.files?.[0]); event.target.value = ''; }} />
               <div className="flex flex-col gap-2">
-                <Button size="sm" variant="secondary" className="justify-start max-sm:min-h-11" disabled={busy} leftIcon={<Upload className="h-4 w-4" />} onClick={() => upload.current?.click()}>Upload a new version (.softn)</Button>
-                <Button size="sm" variant="secondary" className="justify-start max-sm:min-h-11" leftIcon={<Download className="h-4 w-4" />} onClick={download}>Download as .softn</Button>
+                <Button size="sm" variant="secondary" className="justify-start max-sm:min-h-11" disabled={busy || !!preparing} leftIcon={<Upload className="h-4 w-4" />} onClick={() => upload.current?.click()}>Upload a new version (.softn)</Button>
+                <Button size="sm" variant="secondary" className="justify-start max-sm:min-h-11" disabled={!!preparing} isLoading={preparing === 'download'} leftIcon={<Download className="h-4 w-4" />} onClick={download}>Download as .softn</Button>
               </div>
               <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{backend
                 ? <>Records stay in the app&apos;s database when you upload a new version. Downloads hold the source only.</>
@@ -643,7 +675,7 @@ function Workspace({ app }: { app: App }) {
           </Panel>}
           {app.ownerId === userId && <Panel id="settings-look" title="Look and sharing" icon={<Palette className="h-4 w-4" />}>
 
-            <SoftnLookPanel project={project} look={app.settings?.softnLook} themeColor={app.settings?.pwaThemeColor} disabled={readOnly} onSave={changeLook} />
+            <SoftnLookPanel appId={app.id} project={project} look={app.settings?.softnLook} themeColor={app.settings?.pwaThemeColor} disabled={readOnly} onSave={changeLook} />
           </Panel>}
           {!isSite && draft.engine && draft.enginePolicy && <Panel id="settings-engine" title="Engine" icon={<SettingsIcon className="h-4 w-4" />}>
             <AppEngineSelect appId={app.id} engine={draft.engine} policy={draft.enginePolicy} disabled={busy || readOnly} onChanged={() => void draft.refreshEngine()} />

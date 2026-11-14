@@ -2293,16 +2293,73 @@ class ApiClient {
   async getNativeEntry(slug: string): Promise<ApiResponse<{ home: boolean; access: 'application' | 'members'; native?: boolean }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/entry`);
   }
-  /** `readOnly`: the shared demo, which browses the project and records but cannot import, publish or edit them. */
-  async getNativeProject(id: string): Promise<ApiResponse<{ available: boolean; ready?: boolean; preflight?: NativeRuntimePreflight | null; project: import('./nativeHosting').NativeProject | null; readOnly?: boolean; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
-    return this.request(`/apps/${encodeURIComponent(id)}/native`);
+  /**
+   * `readOnly`: the shared demo, which browses the project and records but cannot import, publish or edit them.
+   * `media: 'refs'`: each media file named and sized (NativeKeptMedia), not sent: what the app's page asks
+   * for, where a game's media came in base64 on every visit. A server from before it sends the bytes.
+   */
+  async getNativeProject(id: string, options?: { media?: 'refs' }): Promise<ApiResponse<{ available: boolean; ready?: boolean; preflight?: NativeRuntimePreflight | null; project: import('./nativeHosting').NativeProject | null; readOnly?: boolean; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native${options?.media === 'refs' ? '?media=refs' : ''}`);
   }
   /**
    * `made`: what the app's history says of this version. `how: 'upload'` for a version that came
    * from a file (the server takes a publish from the page otherwise), and a line saying what it is for.
+   * A media file may be sent named as the page was given it (NativeKeptMedia): the server keeps its own
+   * copy. The answer names every media file the same way rather than sending them back.
    */
   async saveNativeProject(id: string, project: import('./nativeHosting').NativeProject, expectedVersion: number, made?: { how?: 'upload'; summary?: string }): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
-    return this.request(`/apps/${encodeURIComponent(id)}/native`, { method: 'PUT', body: JSON.stringify({ project, expectedVersion, ...made }) });
+    return this.request(`/apps/${encodeURIComponent(id)}/native?media=refs`, { method: 'PUT', body: JSON.stringify({ project, expectedVersion, ...made }) });
+  }
+  /**
+   * Every media file of the installed app in one pack (readOwnerMediaPack), for a download of it or
+   * an editor: its owner's page holds their names alone. The browser keeps a copy and asks whether it
+   * is still the app's each time. Throws, in the owner's words, when it cannot be had.
+   */
+  async getNativeMediaPack(id: string): Promise<ArrayBuffer> {
+    const routed = this.routeForAdminActing(`/apps/${encodeURIComponent(id)}/native/media`);
+    if (routed.blocked) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
+    const generation = currentSessionGeneration();
+    let response: Response;
+    try { response = await fetch(`${this.baseUrl}${routed.endpoint}`, { credentials: 'include' }); }
+    catch { throw new Error('The app’s media could not be downloaded. Check your connection and try again.'); }
+    if (response.status === 401) this.handleUnauthorized(generation);
+    if (!response.ok) {
+      let message = '';
+      try { message = String(((await response.json()) as { message?: unknown }).message ?? ''); } catch { /* not JSON */ }
+      throw new Error(message || 'The app’s media could not be read. Try again in a moment.');
+    }
+    return response.arrayBuffer();
+  }
+  /**
+   * One media file's bytes, the ones `kept` names, wherever the app has them (nativeMediaFileUrl):
+   * for a draft that names a file the installed version no longer has. Null where the server has
+   * them nowhere (404); throws, in the owner's words, when they cannot be had for another reason.
+   */
+  async getNativeMediaFile(id: string, path: string, kept: string): Promise<ArrayBuffer | null> {
+    const url = this.nativeMediaFileUrl(id, path, kept);
+    if (url === null) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
+    const generation = currentSessionGeneration();
+    let response: Response;
+    try { response = await fetch(url, { credentials: 'include' }); }
+    catch { throw new Error('The app’s media could not be downloaded. Check your connection and try again.'); }
+    if (response.status === 401) this.handleUnauthorized(generation);
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      let message = '';
+      try { message = String(((await response.json()) as { message?: unknown }).message ?? ''); } catch { /* not JSON */ }
+      throw new Error(message || 'The app’s media could not be read. Try again in a moment.');
+    }
+    return response.arrayBuffer();
+  }
+  /**
+   * Where the page reads one media file of the app, for a picture it shows: the bytes the page was
+   * given the name of (`kept`), wherever the app has them (a file renamed in a draft, an earlier
+   * version's); `path` gives it its type. Null while acting for another account: the admin mirror
+   * has no such route.
+   */
+  nativeMediaFileUrl(id: string, path: string, kept: string): string | null {
+    if (this._adminActing) return null;
+    return `${this.baseUrl}/apps/${encodeURIComponent(id)}/native/media?path=${encodeURIComponent(path)}&kept=${encodeURIComponent(kept)}`;
   }
   /** The app's versions, newest first: the current one, then every earlier one that is kept. Owner only. */
   async getNativeVersions(id: string): Promise<ApiResponse<NativeVersionList>> {
@@ -2363,7 +2420,8 @@ class ApiClient {
       const headers: Record<string, string> = {};
       const csrfToken = this.getCsrfToken();
       if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
-      const response = await fetch(`${this.baseUrl}/apps/${encodeURIComponent(id)}/native/import`, { method: 'POST', body: formData, headers, credentials: 'include' });
+      // `media=refs`: the project in the answer names its media rather than carrying them (the page reads none of it).
+      const response = await fetch(`${this.baseUrl}/apps/${encodeURIComponent(id)}/native/import?media=refs`, { method: 'POST', body: formData, headers, credentials: 'include' });
       noteServerRelease(response.headers?.get?.(RELEASE_HEADER));
       const data = await response.json().catch(() => null);
       if (!response.ok) {
@@ -2454,8 +2512,10 @@ class ApiClient {
         if (response.status === 401) this.handleUnauthorized(generation);
         return { error: 'The app’s pictures and sounds could not be loaded. Try again in a moment.', status: response.status };
       }
-      const { readMediaPack } = await import('./nativeHosting');
-      const assets = readMediaPack(await response.arrayBuffer());
+      // Each file's bytes, as views into the pack: a frame that takes bytes is handed them as they are
+      // (HostedAppFrame), where tens of megabytes were turned into base64 here and back in the frame.
+      const { readMediaPackBytes } = await import('./nativeHosting');
+      const assets = readMediaPackBytes(await response.arrayBuffer());
       return { ...result, data: { ...result.data, project: { ...result.data.project, assets } } };
     } catch {
       // The browser's own words ("Failed to fetch", "Load failed") say nothing to a player.
