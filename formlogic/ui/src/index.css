@@ -113,6 +113,14 @@
   :root.dark input[type='month'] {
     color-scheme: dark;
   }
+  /* And the scrollbars: a box that scrolls drew the browser's light bar in the dark theme (a white
+     track down the form builder's fields and canvas, on Windows), since the page is not told it is
+     dark, for the reason above. scrollbar-color is inherited, so this reaches every box of the page
+     that scrolls (not an embedded app, whose frame is a document of its own); .scrollbar-thin keeps
+     its own. Chromium and Firefox follow it; Safari keeps its own overlay bars. */
+  :root.dark {
+    scrollbar-color: rgb(148 163 184 / 0.4) transparent;
+  }
 
   /* Heading font */
   h1, h2, h3, h4, h5, h6 {
