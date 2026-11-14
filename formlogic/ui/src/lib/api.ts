@@ -2328,6 +2328,10 @@ class ApiClient {
   async removeNativeVersion(id: string, version: number): Promise<ApiResponse<{ version: number; removed: boolean }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native/versions/${seg(version)}`, { method: 'DELETE' });
   }
+  /** The app's latest calls to its backend, newest first (NativeAppCallsController): at most `limit`, of what is kept. Owner only. */
+  async getNativeCalls(id: string, limit = 50): Promise<ApiResponse<import('./appApi').NativeCallList>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/calls?limit=${encodeURIComponent(String(limit))}`);
+  }
   /** A new SoftN app's first version: the server's working starter, named after the app. Refused once anything is installed. */
   async installNativeStarter(id: string): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native/starter`, { method: 'POST', body: '{}' });

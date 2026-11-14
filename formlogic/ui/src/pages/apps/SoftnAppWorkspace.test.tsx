@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * The SoftN app's page: its sections are addresses (the overview at the page itself, then data,
- * members, edit, automations, history, domains and settings); an app with nothing installed starts from its setup choices; one
+ * api, members, edit, automations, history, domains and settings); an app with nothing installed starts from its setup choices; one
  * arriving from "Create app" or the chat opens straight into the editor it asked for, once;
  * editor changes are installed at once while the app is not published and kept as a draft to
  * publish once it is; Publish makes a draft app live.
@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   dataManager: null as null | { table?: string; view?: string; query?: string; onNavigate(table: string | undefined, view: string, query?: string, options?: { replace?: boolean }): void },
   editor: null as null | { kind: string; brief?: unknown; applyLabel?: string; onApply(bytes: Uint8Array): Promise<void>; onClose(): void },
   history: null as null | { app: { name: string }; version: number; open?: number; file?: string; backend: boolean; readOnly: boolean; waiting: string | null; onRestored(result: { version: number; restored: number; databaseAhead: string[] }): void },
+  appApi: null as null | { app: { name: string }; access?: string; manifest?: string; version: number; dirty: boolean; readOnly: boolean },
 }));
 vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({ api: {
@@ -66,6 +67,9 @@ vi.mock('../../components/apps/SoftnAutomations', () => ({
 vi.mock('../../components/apps/SoftnHistory', () => ({
   SoftnHistory: (props: NonNullable<typeof mocks.history>) => { mocks.history = props; return <p data-testid="softn-history">history of {props.app.name}, version {props.version}, open {String(props.open)}, file {String(props.file)}</p>; },
 }));
+vi.mock('../../components/apps/SoftnApi', () => ({
+  SoftnApi: (props: NonNullable<typeof mocks.appApi>) => { mocks.appApi = props; return <p data-testid="softn-api">api of {props.app.name}, version {props.version}</p>; },
+}));
 vi.mock('../../components/studio/NativeAppView', () => ({ NativeAppView: ({ slug }: { slug: string }) => <p>running {slug}</p> }));
 
 const { SoftnAppWorkspace } = await import('./SoftnAppWorkspace');
@@ -94,6 +98,7 @@ beforeEach(() => {
   mocks.getAppForms.mockReset().mockResolvedValue({ data: { forms: [] } });
   mocks.dataManager = null;
   mocks.history = null;
+  mocks.appApi = null;
   useAuthStore.setState({ user: { id: 'u1', email: 'owner@example.test' } as never });
   useUIStore.getState().setSoftnOpen(null);
   container = document.createElement('div');
@@ -214,7 +219,7 @@ describe('SoftnAppWorkspace', () => {
       expect(section()).toBe('Data');
       expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:bookings:structure');
       expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.getAttribute('href'))).toEqual([
-        '/apps/app-1/softn', '/apps/app-1/softn/data', '/apps/app-1/softn/members', '/apps/app-1/softn/edit', '/apps/app-1/softn/automations', '/apps/app-1/softn/history', '/apps/app-1/softn/domains', '/apps/app-1/softn/settings']);
+        '/apps/app-1/softn', '/apps/app-1/softn/data', '/apps/app-1/softn/api', '/apps/app-1/softn/members', '/apps/app-1/softn/edit', '/apps/app-1/softn/automations', '/apps/app-1/softn/history', '/apps/app-1/softn/domains', '/apps/app-1/softn/settings']);
       // The data manager asks for another table: the address follows, and the default view is left out of it.
       await act(async () => mocks.dataManager!.onNavigate('rooms', 'browse'));
       expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:rooms:browse');
@@ -290,6 +295,47 @@ describe('SoftnAppWorkspace', () => {
       expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent)).not.toContain('History');
       expect(container.querySelector('[data-testid="softn-history"]')).toBeNull();
       expect(container.textContent).toContain('Only the app’s owner sees its earlier versions and goes back to one.');
+    });
+  });
+
+  // The app's API (components/apps/SoftnApi): a section after Data, for the owner of an app with a backend.
+  describe('api', () => {
+    it('is a section after Data that shows the live app: its installed manifest, who can use it and its version', async () => {
+      await render('published', withBackend(5), '/api');
+      expect(section()).toBe('API');
+      const names = [...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent);
+      expect(names.slice(names.indexOf('Data'), names.indexOf('Data') + 2)).toEqual(['Data', 'API']);
+      expect(container.querySelector('[data-testid="softn-api"]')!.textContent).toBe('api of Recipes, version 5');
+      expect(mocks.appApi).toMatchObject({ access: 'members', manifest: '{"id":"a","server":{"entry":"server/main.logic"}}', dirty: false, readOnly: false });
+    });
+
+    it('is not offered for an app with no backend, and says why at its address', async () => {
+      await render('published', installed(1), '/api');
+      expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent)).not.toContain('API');
+      expect(container.querySelector('[data-testid="softn-api"]')).toBeNull();
+      expect(container.textContent).toContain('This app has no backend, so it has no API.');
+      expect(container.querySelector('a[href="/apps/app-1/softn/data"]:not(nav a)')!.textContent).toBe('Add a backend');
+    });
+
+    it('is the owner\'s alone: nobody else is offered it, or shown it at its address', async () => {
+      useAuthStore.setState({ user: { id: 'manager', email: 'manager@example.test' } as never });
+      await render('published', withBackend(3), '/api');
+      expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent)).not.toContain('API');
+      expect(container.querySelector('[data-testid="softn-api"]')).toBeNull();
+      expect(container.textContent).toContain('Only the app’s owner sees its API and the calls it has had.');
+    });
+
+    it('stays while the live app has a backend that an unpublished draft takes out: the live one still answers calls', async () => {
+      window.localStorage.clear();
+      // A draft kept in this browser, without the backend the installed version has, taken back.
+      window.localStorage.setItem('formlogic:native-draft:u1:app-1', JSON.stringify({ baseVersion: 2, savedAt: new Date().toISOString(), project: installed(2) }));
+      await render('published', withBackend(2), '/api');
+      await act(async () => button(/^Recover them$/)!.click());
+      await act(async () => {});
+      expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent)).toContain('API');
+      expect(container.querySelector('[data-testid="softn-api"]')).not.toBeNull();
+      expect(mocks.appApi).toMatchObject({ manifest: '{"id":"a","server":{"entry":"server/main.logic"}}', dirty: true });
+      window.localStorage.clear();
     });
   });
 

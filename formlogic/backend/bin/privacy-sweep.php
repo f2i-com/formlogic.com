@@ -108,23 +108,43 @@ try {
         $count,
         $days
     ));
-    // App AI keeps a job's prompt (and an edit's picture) 30 days, the job 90, and its day's counts
-    // three (docs/HOSTED_APPS.md, "App AI, visitors and payments"). Not on a dry run.
+    // Each sweep that follows runs on its own: one that fails is said and the run ends in error, but the
+    // others still run (a broken table of App AI's must not keep app calls past their 14 days). Not on a dry run.
+    $failed = 0;
+    $each = static function (string $what, callable $sweep) use (&$failed): void {
+        try {
+            $sweep();
+        } catch (\Throwable $e) {
+            $failed++;
+            fwrite(STDERR, sprintf("[%s] privacy sweep: %s failed: %s\n", date('c'), $what, $e->getMessage()));
+        }
+    };
     if (!$dryRun) {
-        $kept = \FormLogic\Services\AppAiService::standalone($mysql)->sweep(\FormLogic\Services\AppAiWorker::resultsPath());
-        fwrite(STDOUT, sprintf(
-            "[%s] App AI: cleared %d prompt(s), removed %d job(s), %d counter(s) and %d result file(s).\n",
-            date('c'),
-            $kept['promptsCleared'],
-            $kept['rowsRemoved'],
-            $kept['countersRemoved'],
-            $kept['filesRemoved']
-        ));
+        // App AI keeps a job's prompt (and an edit's picture) 30 days, the job 90, and its day's counts
+        // three (docs/HOSTED_APPS.md, "App AI, visitors and payments").
+        $each('App AI', static function () use ($mysql): void {
+            $kept = \FormLogic\Services\AppAiService::standalone($mysql)->sweep(\FormLogic\Services\AppAiWorker::resultsPath());
+            fwrite(STDOUT, sprintf(
+                "[%s] App AI: cleared %d prompt(s), removed %d job(s), %d counter(s) and %d result file(s).\n",
+                date('c'),
+                $kept['promptsCleared'],
+                $kept['rowsRemoved'],
+                $kept['countersRemoved'],
+                $kept['filesRemoved']
+            ));
+        });
         // App payments: charges a request never finished are given back (never run) or settled (run).
-        $swept = \FormLogic\Services\AppWalletService::standalone($mysql)->sweepStale();
-        fwrite(STDOUT, sprintf("[%s] App payments: gave back %d charge(s) never run, and settled %d whose run may have finished.\n", date('c'), $swept['refunded'], $swept['settled']));
+        $each('App payments', static function () use ($mysql): void {
+            $swept = \FormLogic\Services\AppWalletService::standalone($mysql)->sweepStale();
+            fwrite(STDOUT, sprintf("[%s] App payments: gave back %d charge(s) never run, and settled %d whose run may have finished.\n", date('c'), $swept['refunded'], $swept['settled']));
+        });
+        // The record of each app's calls (NativeAppCalls) keeps 14 days: what is older, of apps nobody calls now.
+        $each('App calls', static function () use ($mysql): void {
+            $removed = (new \FormLogic\Services\NativeAppCalls($mysql))->sweep();
+            fwrite(STDOUT, sprintf("[%s] App calls: removed %d call record(s) older than %d days.\n", date('c'), $removed, \FormLogic\Services\NativeAppCalls::DAYS));
+        });
     }
-    exit(0);
+    exit($failed > 0 ? 1 : 0);
 } catch (\Throwable $e) {
     fwrite(STDERR, sprintf("[%s] privacy sweep error: %s\n", date('c'), $e->getMessage()));
     exit(1);

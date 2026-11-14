@@ -4,7 +4,8 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
-use FormLogic\Services\{AccessGateService, AppAiService, AppFormlogicManifest, AppService, AppUserService, AppVisitors, AppWalletService, NativeAppCharges, NativeAppService, NativePhoneVerification, NativeRecordEventRouter, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService, WalletRefusal};
+use FormLogic\Services\{AccessGateService, AppAiService, AppFormlogicManifest, AppService, AppUserService, AppVisitors, AppWalletService, NativeAppCalls, NativeAppCharges, NativeAppService, NativePhoneVerification, NativeRecordEventRouter, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService, WalletRefusal};
+use FormLogic\Support\AfterResponse;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -28,7 +29,8 @@ class NativeAppController
     // $engines is required, not optional-with-a-default: this controller is autowired, and PHP-DI's
     // reflection autowiring SKIPS optional parameters (ReflectionBasedAutowiring), so an `= null`
     // here would silently hand production a controller that decides no app's engine.
-    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null, private ?AppLookService $look = null, private ?NativePhoneVerification $verification = null, private ?NativeRecordEventRouter $records = null, private ?AppVisitors $visitors = null, private ?AppAiService $ai = null, private ?AppWalletService $wallets = null, private ?NativeAppCharges $charges = null)
+    // $calls: the record of the app's calls (NativeAppCalls) its API section shows; none, and nothing is written down.
+    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null, private ?AppLookService $look = null, private ?NativePhoneVerification $verification = null, private ?NativeRecordEventRouter $records = null, private ?AppVisitors $visitors = null, private ?AppAiService $ai = null, private ?AppWalletService $wallets = null, private ?NativeAppCharges $charges = null, private ?NativeAppCalls $calls = null)
     {
         // Every dispatch goes through the one router, so App AI's jobs are never acknowledged unread.
         $this->records ??= new NativeRecordEventRouter($this->flows, $this->ai);
@@ -273,6 +275,9 @@ class NativeAppController
 
     public function runtime(Request $request, Response $response, array $args): Response
     {
+        $started = hrtime(true);
+        // When the call came, for its record (NativeAppCalls): written after its answer on some servers.
+        $arrived = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $app = $this->apps->getAppBySlug((string) $args['slug']);
         $user = $request->getAttribute('userId');
         $owner = $app && $user && $app['ownerId'] === $user;
@@ -291,7 +296,23 @@ class NativeAppController
         $probe = !$mediaRoute && $request->getMethod() === 'GET' && ($request->getQueryParams()['only'] ?? '') === 'version';
         // A visitor's cookie, set (or its age renewed) for an app that asks for visitors (AppVisitors).
         $setCookie = null;
-        $answer = $this->respond($response, function () use ($request, $response, $app, $user, $owner, $plugin, $mediaRoute, $packed, $probe, &$setCookie) {
+        // A call to the app's backend, once the request is one (its method and path, and who is
+        // calling), and the backend's answer to it: written down for the app's owner once the call
+        // is answered (recordCall).
+        $call = null;
+        $outcome = null;
+        // The installed manifest's text, for whether an address the backend did not have is one the app
+        // declares (recordCall); read only where that is asked.
+        $manifest = null;
+        // A call that dies in PHP itself (out of time or memory) ends the script: it is written down
+        // as one that was never answered, by the function PHP runs as it ends (unansweredAtShutdown).
+        $written = false;
+        if ($this->calls !== null && $request->getMethod() === 'POST') {
+            register_shutdown_function(function () use (&$call, &$written, &$manifest, $app, $started, $arrived): void {
+                if (!$written && $call !== null && $app) $this->unansweredAtShutdown((string) $app['id'], $call, $started, $arrived, $manifest);
+            });
+        }
+        $operation = function () use ($request, $response, $app, $user, $owner, $plugin, $mediaRoute, $packed, $probe, &$setCookie, &$call, &$outcome, &$manifest) {
             // Access is decided against the settled project (FL-S04), never an update's leftover project.json.
             // Read without its media where nothing here sends them: a game's are tens of megabytes. An
             // app's API call needs only its version and access, and decoded every picture and sound
@@ -412,6 +433,13 @@ class NativeAppController
             // /api/site/ routes are the site's own to call (App AI's deliveries, a plugin's camera
             // check: CameraCheckService), never a page's, for every app.
             if (str_starts_with(strtolower($input['path']), PluginService::SITE_ROUTE_PREFIX)) throw new \RuntimeException('Not found', 404);
+            // From here the request is a call to the app's backend, answered or refused, and its owner
+            // sees it among the app's calls: by its method and path and who made it, never what it carried.
+            // A plugin's app is the site's, and nobody's to look at.
+            if ($plugin === null) {
+                $call = ['method' => $input['method'], 'path' => $input['path'], 'caller' => $owner ? 'owner' : ($project['access'] === 'members' ? 'member' : 'visitor')];
+                $manifest = is_string($project['files']['manifest.json'] ?? null) ? $project['files']['manifest.json'] : null;
+            }
             // A plugin is the site's own, on no one's plan.
             if ($plugin === null && in_array($input['method'], ['POST', 'PUT'], true) && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) throw new \RuntimeException('The app owner’s cloud access has expired. Records remain available to read and export.', 402);
             $headers = is_array($input['headers'] ?? null) ? array_change_key_case($input['headers'], CASE_LOWER) : [];
@@ -457,6 +485,7 @@ class NativeAppController
                 if ($this->gate === null) throw new \RuntimeException('Plugins are not available', 503);
                 $result = $this->gate->recordFromPluginAnswer($plugin, (string) $user, $input['method'], $input['path'], $result);
             }
+            $outcome = is_array($result) ? $result : null;
             try {
                 $this->native->dispatchRecordEvents($app['id'], $this->records->for($app['id']));
             } catch (\Throwable $error) {
@@ -465,8 +494,126 @@ class NativeAppController
                 error_log('Native record automation delivery pending for app ' . $app['id']);
             }
             return ['result' => $result];
-        });
+        };
+        try {
+            $answer = $this->respond($response, $operation);
+        } catch (\Throwable $failed) {
+            // Failed in a way respond() does not answer (an Error in PHP itself): written down as the
+            // 500 the caller is given, then left to the site's error handler as before.
+            $written = true;
+            if ($call !== null && $app) $this->recordUnanswered((string) $app['id'], $call, 500, self::FAILED_HERE, $started, $arrived, $manifest, true);
+            throw $failed;
+        }
+        $written = true;
+        if ($call !== null && $app) $this->recordCall((string) $app['id'], $call, $outcome, $answer, $started, $arrived, $manifest);
         return $setCookie !== null ? $answer->withAddedHeader('Set-Cookie', $setCookie) : $answer;
+    }
+
+    /** What the owner's list says of a call FormLogic failed on while answering (recordUnanswered). */
+    private const FAILED_HERE = 'FormLogic failed while answering this call. The server’s log says why.';
+    /** And of one PHP stopped before it was answered. */
+    private const STOPPED_HERE = 'The call was stopped before it was answered: it took too long, or ran out of memory.';
+
+    /**
+     * A call PHP ended before it was answered (its time or its memory ran out): written down as one
+     * with no answer (status 0). Run by the shutdown function runtime() registers, and only for an
+     * error that ends a script; any other ending was written down already. ($last: the error PHP
+     * ended on, error_get_last()'s; given by the tests, which cannot end their own script.)
+     */
+    public function unansweredAtShutdown(string $appId, array $call, int $started, \DateTimeImmutable $arrived, ?string $manifest, ?array $last = null): void
+    {
+        $last ??= error_get_last();
+        if (!is_array($last) || !in_array($last['type'] ?? 0, [E_ERROR, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) return;
+        $this->recordUnanswered($appId, $call, 0, self::STOPPED_HERE, $started, $arrived, $manifest, false);
+    }
+
+    /**
+     * Write down a call FormLogic answered with no answer of the app's: never fails, as recordCall.
+     * $later: after the answer where the server can end one early, as recordCall does (not at
+     * shutdown, where the script is ending anyway).
+     */
+    private function recordUnanswered(string $appId, array $call, int $status, string $error, int $started, \DateTimeImmutable $arrived, ?string $manifest, bool $later): void
+    {
+        if ($this->calls === null) return;
+        try {
+            $calls = $this->calls;
+            $path = self::keptPath($call, $manifest);
+            $milliseconds = intdiv(max(0, hrtime(true) - $started), 1_000_000);
+            $write = static function () use ($calls, $appId, $call, $path, $status, $milliseconds, $error, $arrived): void {
+                $calls->record($appId, (string) $call['method'], $path, $status, $milliseconds, $error, (string) $call['caller'], $arrived);
+            };
+            if ($later && AfterResponse::serverCanFinish()) AfterResponse::run($write);
+            else $write();
+        } catch (\Throwable $e) {
+            error_log('App call not recorded for app ' . $appId . ': ' . get_class($e));
+        }
+    }
+
+    /**
+     * The address a call is written down with: its own, but for a call from anyone other than the
+     * owner to an address the app does not declare, whatever it was answered with (a 404, or a
+     * refusal before any route was looked for), which is written without one. Anyone can send any
+     * words there, and the owner's list is never to show them.
+     */
+    private static function keptPath(array $call, ?string $manifest): string
+    {
+        $path = (string) $call['path'];
+        return ($call['caller'] ?? null) !== 'owner' && !self::declaresPath($manifest, $path) ? '' : $path;
+    }
+
+    /**
+     * Whether the app's manifest declares a route at $path (for any method): an address the app has.
+     * One it does not, or a manifest that cannot be read, is an address the caller made up.
+     */
+    private static function declaresPath(?string $manifest, string $path): bool
+    {
+        $decoded = $manifest !== null ? json_decode($manifest, true) : null;
+        $routes = is_array($decoded) ? ($decoded['server']['routes'] ?? null) : null;
+        if (!is_array($routes)) return false;
+        foreach ($routes as $route) {
+            if (is_array($route) && ($route['path'] ?? null) === $path) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Write down one call to the app's backend (NativeAppCalls) now it is answered: the status the
+     * backend answered with, or the one FormLogic refused it with; how long the answer took, from
+     * the request's arrival; and, where it failed, the first words of why, as the caller was told
+     * them. Best effort: whatever happens here, the caller is answered as before.
+     *
+     * Where the server can end an answer early (PHP-FPM, LiteSpeed), the call is written once the
+     * caller has its answer (AfterResponse). Elsewhere it is written before, as one quick statement:
+     * there, waiting for later would close the connection and turn compression off for every call
+     * (AfterResponseMiddleware), which costs more than the write.
+     */
+    private function recordCall(string $appId, array $call, ?array $outcome, Response $answer, int $started, \DateTimeImmutable $arrived, ?string $manifest = null): void
+    {
+        if ($this->calls === null) return;
+        try {
+            if ($outcome !== null && $answer->getStatusCode() === 200) {
+                $status = is_numeric($outcome['status'] ?? null) ? (int) $outcome['status'] : 500;
+                $error = $status >= 400 ? NativeAppCalls::errorOf($outcome['body'] ?? null) : null;
+            } else {
+                // Refused here, or failed before the backend answered: what FormLogic answered is a
+                // short JSON error, whose message is what the caller read.
+                $status = $answer->getStatusCode();
+                $said = json_decode((string) $answer->getBody(), true);
+                $error = is_array($said) && is_string($said['message'] ?? null) ? $said['message'] : null;
+            }
+            // A call to an address the app does not have, from anyone but its owner, however it was
+            // answered: written without the address (keptPath). The owner's own calls keep theirs.
+            $path = self::keptPath($call, $manifest);
+            $calls = $this->calls;
+            $milliseconds = intdiv(max(0, hrtime(true) - $started), 1_000_000);
+            $write = static function () use ($calls, $appId, $call, $path, $status, $milliseconds, $error, $arrived): void {
+                $calls->record($appId, (string) $call['method'], $path, $status, $milliseconds, $error, (string) $call['caller'], $arrived);
+            };
+            if (AfterResponse::serverCanFinish()) AfterResponse::run($write);
+            else $write();
+        } catch (\Throwable $e) {
+            error_log('App call not recorded for app ' . $appId . ': ' . get_class($e));
+        }
     }
 
     /**

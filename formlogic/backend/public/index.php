@@ -923,7 +923,8 @@ $container->set(\FormLogic\Controllers\NativeAppController::class, function (Con
         $c->get(\FormLogic\Services\AppVisitors::class),
         $c->get(\FormLogic\Services\AppAiService::class),
         $c->get(\FormLogic\Services\AppWalletService::class),
-        $c->get(\FormLogic\Services\NativeAppCharges::class)
+        $c->get(\FormLogic\Services\NativeAppCharges::class),
+        $c->get(\FormLogic\Services\NativeAppCalls::class)
     );
 });
 // App AI, visitors and payments (docs/HOSTED_APPS.md, "App AI, visitors and payments").
@@ -3594,6 +3595,12 @@ $app->put('/api/apps/{id}/native/versions/{n:[0-9]{1,9}}', function ($request, $
 $app->delete('/api/apps/{id}/native/versions/{n:[0-9]{1,9}}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppVersionsController::class)->remove($request, $response, $getArgs($request));
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+// What the app's backend was asked lately, for its owner (NativeAppCallsController): the API
+// section's recent calls, which its page asks for again every ten seconds while it is looked at.
+// Read as the history is; not mirrored for an administrator (AdminActingAsRoutes).
+$app->get('/api/apps/{id}/native/calls', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppCallsController::class)->index($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
 // Record maintenance has its own bounded budget; browsing must not consume deployment capacity.
 // 180 a minute for each owner (it was 30): the data manager asks again for every sort, search,
 // filter and page, and reads then saves a record for each cell edited in place.

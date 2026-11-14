@@ -1,8 +1,9 @@
 # App backend API (proposal)
 
-**Status: a proposal, written 2026-11-13. Step 1 of the order of work, version history and going
-back, is built (section 3 says what was); nothing else in "The design" is.** "What exists" is
-what the code does today and was read from it.
+**Status: a proposal, written 2026-11-13. Steps 1 and 2 of the order of work are built: version
+history and going back (section 3 says what was), and the API section on what exists (section 4
+says what was). Nothing else in "The design" is.** "What exists" is what the code does today and
+was read from it.
 
 The aim: every hosted app, SoftN or JavaScript, has one backend API that is described in JSON,
 edited on a page or by an AI over MCP, runs its code in the ZIPP sandbox, can use flows, reads and
@@ -93,6 +94,8 @@ Not built: putting the data back too, a route-by-route comparison, and versions 
 
 **On the app's page: an API section**, for SoftN and JavaScript apps alike.
 
+**Built (step 2, 2026-11-14), on what exists:** the section (`…/softn/api`, `ui/src/components/apps/SoftnApi.tsx`, its words and checks in `lib/appApi.ts`) is its owner's, for an app with a backend. It reads the installed version's `manifest.json`, so it shows the app as it is live, and says so when there are unpublished changes. The routes are a table (method, address, the function it runs, who may call it in the words Settings uses for who can use the app, and whether it reads or changes the data; a route this server does not serve says why); the database changes are a list in the order they ran. Try it sends one call as the owner to the live app through `POST /api/app/{slug}/native/request`, the query and body checked as JSON first, and asks before a route that can change the data; it shows the status, the time and the answer. Recent calls come from a record the runtime writes as each call to the backend is answered (`NativeAppCalls`, table `native_app_calls`: method, path, status, milliseconds, the first 200 characters of a failed call's error, and whether the owner, a member or a visitor called; never a body, a query, a header or an address; the error is the app's own words, which can repeat what a call sent, and the page says so), read at `GET /api/apps/{id}/native/calls` and asked for again every ten seconds while the section is open (a refresh waits for a read still under way). Each app shows its newest 500 calls of the last 14 days, by when each came (a call keeps the time it came, written after its answer or not). A call is written alone, as one statement, after the answer where the server can end an answer early (PHP-FPM, LiteSpeed) and just before it elsewhere; one call in 25, by chance, then trims its app's record in a statement of its own, so the record holds about 25 more than it shows, and `bin/privacy-sweep.php` removes older ones. (Written and trimmed in one transaction, two calls of a quiet app at once deadlocked, and each call waited on the others' trims; a trim by the call's id never ran where a host's ids step by more than one, as ClearDB's do by 10.) The write and the trim wait at most 2 seconds for a lock (a call names its app, so it waits while anything holds the app's row). Writing one is best effort: a call is answered whether or not it was written down. A call from anyone but the owner to an address the app does not declare is written without the address, however it was answered (a 404, or a refusal before any route was looked for), and the page says "An address the app does not have": nobody can put words in the owner's list; the owner's own keep theirs. A call FormLogic fails on in PHP itself is written down as the 500 its caller is given, in FormLogic's words; one PHP stops before it is answered (out of time or memory) as one with no answer, by a shutdown function. Routes under `/api/site/` are listed as the site's own and are not offered to Try it. Not built: changing a route in a form, Try it against a draft, and history in this section (it has a section of its own).
+
 - The routes as a table: method, address, what it runs, who may call it.
 - Add or change a route in a form. Its function's code beside it, not the whole file.
 - Database changes as a list.
@@ -116,7 +119,7 @@ an API key (API keys exist). Other sites are admitted by the list the manifest a
 ## Order of work
 
 1. Version history and going back. Useful alone, and what makes every later kind of edit safe. **Built** (section 3).
-2. The API section on what exists today: the table, Try it, recent calls.
+2. The API section on what exists today: the table, Try it, recent calls. **Built** (section 4).
 3. `access`, `input`, `limit` and query routes.
 4. Flow routes and step lists; a flow step that calls the app's API.
 5. The small MCP tools.

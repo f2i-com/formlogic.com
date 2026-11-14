@@ -2,6 +2,7 @@
 // Its sections, each at its own address so a link or the back button lands where it was:
 //   (the page itself)  Overview: what the app is doing, at a glance; nothing is started
 //   …/data[/<table>[/<view>]]  its database, table by table (components/data)
+//   …/api              its backend's routes, trying one, and the calls it has had lately
 //   …/members          who can use it, and what each of them is
 //   …/edit             the app running, AI Studio, the Visual Builder and its files
 //   …/automations      the flows that run when its records change
@@ -10,9 +11,9 @@
 //   …/settings         who can use it, what it may do, how it looks
 // One page for everything a SoftN app's owner does: the App Studio is for forms apps, and an
 // address of it that names a SoftN app comes here (lib/softnApps: softnPathForStudio).
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, History as HistoryIcon, LayoutDashboard, Lock, MessageSquare, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wallet, Wand2, Workflow } from 'lucide-react';
+import { Braces, Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, History as HistoryIcon, LayoutDashboard, Lock, MessageSquare, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wallet, Wand2, Workflow } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Textarea } from '../../components/ui/Textarea';
@@ -30,6 +31,7 @@ import { AppTile } from '../../components/apps/AppTile';
 import { SoftnMembers } from '../../components/apps/SoftnMembers';
 import { SoftnAutomations } from '../../components/apps/SoftnAutomations';
 import { SoftnHistory } from '../../components/apps/SoftnHistory';
+import { SoftnApi } from '../../components/apps/SoftnApi';
 import { AppPaymentsPanel } from '../../components/apps/AppPaymentsPanel';
 import { BringDataPanel } from '../../components/apps/BringDataPanel';
 import { AddBackendPanel } from '../../components/apps/AddBackendPanel';
@@ -49,6 +51,7 @@ import { DRAFT_KEEPING, useNativeProjectDraft } from '../../components/studio/us
 import { useAiReady } from '../../hooks/useAiReady';
 import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { api } from '../../lib/api';
+import { apiOf } from '../../lib/appApi';
 import { declaresFormlogicAi, declaresFormlogicPayments, exportNativeProject, importNativeProject, type NativeProject } from '../../lib/nativeHosting';
 import { isSoftnApp, projectFromUpload, projectHasBackend, SOFTN_SECTIONS, softnWorkspacePath, type SoftnSection } from '../../lib/softnApps';
 import { cn, copyToClipboard } from '../../lib/utils';
@@ -59,7 +62,7 @@ import { useUIStore, type SoftnOpen } from '../../stores/uiStore';
 import type { App, AppRequirement, SoftnLook } from '../../types/app';
 
 const SECTIONS: readonly (readonly [SoftnSection, string, typeof Globe])[] = [
-  ['overview', 'Overview', LayoutDashboard], ['data', 'Data', Database], ['members', 'Members', Users], ['edit', 'Edit', PencilRuler],
+  ['overview', 'Overview', LayoutDashboard], ['data', 'Data', Database], ['api', 'API', Braces], ['members', 'Members', Users], ['edit', 'Edit', PencilRuler],
   ['automations', 'Automations', Workflow], ['history', 'History', HistoryIcon], ['domains', 'Domains', Globe], ['settings', 'Settings', SettingsIcon],
 ];
 const DATA_VIEWS: readonly DataView[] = ['browse', 'structure', 'export', 'import'];
@@ -173,6 +176,10 @@ function Workspace({ app }: { app: App }) {
   const liveUrl = `${window.location.origin}/app/${encodeURIComponent(app.slug)}${project?.home ? '' : '/native'}`;
   // An app without a backend of its own runs in the browser alone: it has no database here.
   const backend = project ? projectHasBackend(project) : true;
+
+  // The live app's backend (its installed manifest.json), which answers calls whatever the draft holds: the API
+  // section is there while the live app or the draft has one, and shows the live app's.
+  const liveBackend = useMemo(() => apiOf(draft.installedFiles?.['manifest.json']) !== null, [draft.installedFiles]);
 
   const openEditor = (kind: AppEditorKind, brief?: EditorBrief, from: NativeProject | null = project) => {
     if (!from) return;
@@ -390,7 +397,8 @@ function Workspace({ app }: { app: App }) {
           // Members are the owner's to manage: nobody else is shown the section. Automations start
           // from the app's own tables, so they are the owner's too, of an app that has a backend.
           // The app's earlier versions are its source: the owner's alone to see and to go back to.
-          items={SECTIONS.filter(([value]) => (value !== 'members' || managesMembers) && (value !== 'automations' || (managesMembers && backend)) && (value !== 'history' || isOwner))
+          // Its API is its backend's, and the owner's alone: an app with none has no API.
+          items={SECTIONS.filter(([value]) => (value !== 'members' || managesMembers) && (value !== 'automations' || (managesMembers && backend)) && (value !== 'history' || isOwner) && (value !== 'api' || (isOwner && (backend || liveBackend))))
             .map(([value, label, icon]) => ({ value, label, icon, to: softnWorkspacePath(app.id, value) }))}
           // On a phone the Data section keeps the screen for the rows: the status is on every other section.
           end={<div className={cn('py-0.5', section === 'data' && 'max-sm:hidden')}>{statusLine}</div>} />
@@ -419,6 +427,18 @@ function Workspace({ app }: { app: App }) {
             waiting={dirty ? 'Publish or discard your unpublished changes first: going back makes a new version.' : busy ? 'The app is being saved. Try again in a moment.' : null}
             onRestored={() => { setReloadKey(key => key + 1); reloadPreview(); }} />
           : <p className="mt-6 text-sm text-slate-600 dark:text-slate-400">Only the app&rsquo;s owner sees its earlier versions and goes back to one.</p>)}
+
+        {/* The app's API, for SoftN and JavaScript apps alike: the routes of the app as it is live
+            (the installed version's manifest, not an unpublished draft), trying one as its owner,
+            and the calls it has had lately. */}
+        {section === 'api' && (!isOwner
+          ? <p className="mt-6 text-sm text-slate-600 dark:text-slate-400">Only the app&rsquo;s owner sees its API and the calls it has had.</p>
+          : backend || liveBackend
+            ? <SoftnApi key={app.id} app={app} access={project.access} manifest={draft.installedFiles?.['manifest.json']} version={version} dirty={dirty} readOnly={readOnly} />
+            : <p className="mt-6 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-400">
+              <span className="font-semibold text-slate-900 dark:text-white">This app has no backend, so it has no API.</span> What its pages save stays in each visitor&rsquo;s browser.{' '}
+              <Link to={softnWorkspacePath(app.id, 'data')} className="font-medium text-primary-600 underline-offset-2 hover:underline dark:text-primary-300">Add a backend</Link>
+            </p>)}
 
         {/* Each column is as tall as what it holds: the preview's card does not stretch to the tools beside it. */}
         {section === 'edit' && <div className="mt-4 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">

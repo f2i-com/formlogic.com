@@ -1762,6 +1762,25 @@ CREATE TABLE `mfa_trusted_browsers` (
   CONSTRAINT `mfa_trusted_browsers_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+-- What each app's backend was asked lately (NativeAppCalls): method, path, status, time taken, an error's first words, who called. Never a body, a query, a header or an address. The newest 500 of the last 14 days per app.
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `native_app_calls` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `called_at` datetime(3) NOT NULL,
+  `method` varchar(6) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `path` varchar(200) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` smallint unsigned NOT NULL,
+  `ms` int unsigned NOT NULL,
+  `error` varchar(200) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `caller` varchar(8) COLLATE utf8mb4_unicode_ci NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_native_app_calls_app` (`app_id`,`id`),
+  KEY `idx_native_app_calls_at` (`called_at`),
+  CONSTRAINT `fk_native_app_calls_app` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `pack_catalog` (

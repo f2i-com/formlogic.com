@@ -49,9 +49,9 @@ There is no banner over a section: no eyebrow line, no title repeating the secti
 "step 2 of 6". Where a sentence of help is needed it is one muted line.
 
 An app's own page (`pages/apps/SoftnAppWorkspace.tsx`, a SoftN or a JavaScript app) has these
-sections, named in `SOFTN_SECTIONS` (`lib/softnApps.ts`): Overview, Data, Members, Edit,
+sections, named in `SOFTN_SECTIONS` (`lib/softnApps.ts`): Overview, Data, API, Members, Edit,
 Automations, History, Domains and Settings. Members and History are shown to the app's owner
-alone, and Automations to the owner of an app that has a backend.
+alone, and API and Automations to the owner of an app that has a backend.
 
 History (`components/apps/SoftnHistory.tsx`) lists every version a later one replaced, newest
 first, each with who made it, how and what it changed. A version opens at its own address
@@ -65,6 +65,20 @@ the version's files are deleted from the history, that the app as it is now is n
 that it cannot be undone; a pinned version is unpinned first. The list also says where a version
 was not kept (it could not be saved in the history when it was replaced), where one is damaged (it
 cannot be gone back to, and can be removed), and where the history could not be read.
+
+API (`components/apps/SoftnApi.tsx`) shows the app as it is live: its routes as a list table
+(method, address, the function each runs, who may call it, whether it reads or changes the data,
+and a "Try it" that chooses the route below), its database changes in the order they ran, Try it,
+and the recent calls. Try it checks the query and the body as JSON before anything is sent, asks
+first before a route that can change the data (it names the route and says the change is to the
+live app), and shows the status in words, the time and the answer. Recent calls are asked for
+again every ten seconds while the section is open and its tab is in view (a read still under way is
+waited for, not thrown away); a read that fails keeps the list it had and says so. They show 20,
+then 100 and then all that is kept, and say that a failed call keeps the first words of the app's
+own error, which can repeat what was sent. Routes under `/api/site/` are listed as the site's own,
+without Try it. The section is there while the live app or the draft has a backend: an unpublished
+draft that takes the backend out leaves the live one answering calls. The routes sit beside the
+database changes only from 1536 px (`2xl`); narrower, their table needs the width.
 
 A page that stays mounted across its sections must not be remounted by the route boundary:
 `lib/pagePlace.ts` gives every address of such a page one key (see `App.tsx`).

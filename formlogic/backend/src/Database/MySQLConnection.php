@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = '727c9ad1a3a48b55d763c52cdacd38a1';
+    public const SCHEMA_STAMP = '7a4123c55c975740dc4dba9ddf030fae';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -2526,6 +2526,27 @@ class MySQLConnection
                 INDEX idx_app_domains_status (status),
                 FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
                 FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // What each app's backend was asked lately (NativeAppCalls), for the API section of its page:
+        // a call's method, path, status, time taken, the first words of its error and who called.
+        // Never a body, a query, a header or an address. Each app keeps its newest 500 calls of the
+        // last 14 days, trimmed as they are written; the nightly sweep takes what is older.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS native_app_calls (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                called_at DATETIME(3) NOT NULL,
+                method VARCHAR(6) NOT NULL,
+                path VARCHAR(200) NOT NULL,
+                status SMALLINT UNSIGNED NOT NULL,
+                ms INT UNSIGNED NOT NULL,
+                error VARCHAR(200) NULL,
+                caller VARCHAR(8) NOT NULL,
+                KEY idx_native_app_calls_app (app_id, id),
+                KEY idx_native_app_calls_at (called_at),
+                CONSTRAINT fk_native_app_calls_app FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
