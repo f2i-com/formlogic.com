@@ -46,6 +46,15 @@ function printable(text: string): boolean {
   return true;
 }
 
+/** The host an origin names, as the browser reads it; '' for none (an opaque origin, `null`). */
+function hostOf(origin: string): string {
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    return '';
+  }
+}
+
 /**
  * The mail addresses a `mailto:` names, each domain as the browser reads a host (so a letter of
  * another alphabet that looks like a Latin one shows as the `xn--` it is), or null where one is
@@ -80,8 +89,14 @@ function mailNames(target: string): string | null {
  *
  * The bar shows the whole address besides the name (OutsideLinkBar), so what follows the name in
  * it (a mail's copies, `cc` and `bcc`, its words) is seen too.
+ *
+ * `ownOrigin`, the page's own site: an address on its host is no other site's, whatever its scheme
+ * or port (a session's cookies are the host's, and http is sent on to https), and is not offered. An
+ * app whose code runs in the frame's own scripts can post any address with no click (SoftN's frame
+ * keeps a clicked link to its own site to itself), and a person who opened one visited this site's
+ * own pages with their session.
  */
-export function outsideLinkOf(value: unknown): OutsideLink | null {
+export function outsideLinkOf(value: unknown, ownOrigin?: string): OutsideLink | null {
   if (typeof value !== 'string' || value === '' || value.length > OUTSIDE_LINK_LIMIT || !printable(value)) return null;
   let url: URL;
   try {
@@ -93,6 +108,7 @@ export function outsideLinkOf(value: unknown): OutsideLink | null {
   // what is shown decoded, a host, a mail address or a number, is read for what a person would see)
   if (url.protocol === 'http:' || url.protocol === 'https:') {
     if (url.username !== '' || url.password !== '' || url.hostname === '' || url.hostname.length > HOST_LIMIT) return null;
+    if (ownOrigin !== undefined && url.hostname === hostOf(ownOrigin)) return null;
     return { href: url.href, kind: 'web', name: url.host };
   }
   if (url.protocol === 'mailto:' || url.protocol === 'tel:') {

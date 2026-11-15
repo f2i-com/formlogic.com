@@ -520,11 +520,12 @@ export function HostedAppFrame({
         // person opens it or puts it away. A newer one takes its place. Only right after a press of
         // the person's: a press in the frame is this page's too (a frame's user activation reaches
         // its parents), and an app whose code runs in the frame's own scripts can hand a link on
-        // with no click, at a moment of its choosing. A browser that cannot say shows it.
+        // with no click, at a moment of its choosing. A browser that cannot say shows it. An address on
+        // this site is no other site's, and is not offered.
         if (event.data?.type === "link") {
           const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
           if (activation && !activation.isActive) return;
-          const link = outsideLinkOf(event.data.href);
+          const link = outsideLinkOf(event.data.href, window.location.origin);
           if (link) setOutside({ key: frameKey, link });
           return;
         }

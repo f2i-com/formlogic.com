@@ -41,4 +41,17 @@ describe('outsideLinkOf: what a hosted app hands its page when a link in it goes
       expect(outsideLinkOf(value), String(value).slice(0, 40)).toBeNull();
     }
   });
+
+  it('offers no address on the page\'s own site, whatever its scheme or port: an app could send the person to its pages with their session', () => {
+    const own = 'https://site.example';
+    for (const value of ['https://site.example/api/apps/1/delete', 'https://SITE.example:443/app/other', 'https://site.example', 'http://site.example/api/apps/1/delete', 'https://site.example:8443/x']) {
+      expect(outsideLinkOf(value, own), value).toBeNull();
+    }
+    // Another host, one of the same domain among them, and a mail address at the site are other places.
+    expect(outsideLinkOf('https://site.example.evil.example/', own)?.name).toBe('site.example.evil.example');
+    expect(outsideLinkOf('https://sub.site.example/', own)?.name).toBe('sub.site.example');
+    expect(outsideLinkOf('mailto:someone@site.example', own)?.kind).toBe('mail');
+    // A page with no host of its own keeps nothing for it.
+    expect(outsideLinkOf('https://site.example/x', 'null')?.name).toBe('site.example');
+  });
 });
