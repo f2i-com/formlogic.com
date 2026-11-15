@@ -112,19 +112,27 @@ export function outsideLinkOf(value: unknown, ownOrigin?: string): OutsideLink |
     return { href: url.href, kind: 'web', name: url.host };
   }
   if (url.protocol === 'mailto:' || url.protocol === 'tel:') {
-    let target: string;
+    // What a person is shown is every address it goes to: the path's, and a mail's query's `to`, `cc` and `bcc`, which a
+    // mail client sends to as well (the bar named the path's alone).
+    const parts: string[] = [];
     try {
-      target = decodeURIComponent(url.pathname);
+      parts.push(decodeURIComponent(url.pathname));
+      if (url.protocol === 'mailto:') {
+        for (const field of url.search.slice(1).split('&')) {
+          const at = field.indexOf('=');
+          if (at > 0 && /^(to|cc|bcc)$/i.test(field.slice(0, at))) parts.push(decodeURIComponent(field.slice(at + 1)));
+        }
+      }
     } catch {
       return null;
     }
-    // A line break written into the address (`%0A`) is a way to add to the mail's headers: refused, not trimmed away.
-    if (!printable(target)) return null;
-    target = target.trim();
-    if (target === '') return null;
-    if (url.protocol === 'tel:') return { href: url.href, kind: 'phone', name: target };
-    const names = mailNames(target);
-    return names === null ? null : { href: url.href, kind: 'mail', name: names };
+    // A line break written into an address (`%0A`) is a way to add to the mail's headers: refused, not trimmed away.
+    if (!parts.every(printable)) return null;
+    const given = parts.map((part) => part.trim()).filter((part) => part !== '');
+    if (!given.length) return null;
+    if (url.protocol === 'tel:') return { href: url.href, kind: 'phone', name: given[0] };
+    const names = given.map(mailNames);
+    return names.some((name) => name === null) ? null : { href: url.href, kind: 'mail', name: names.join(', ') };
   }
   return null;
 }

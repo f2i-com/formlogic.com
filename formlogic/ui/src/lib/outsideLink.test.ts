@@ -19,6 +19,15 @@ describe('outsideLinkOf: what a hosted app hands its page when a link in it goes
     expect(outsideLinkOf(`mailto:${many},hidden@evil.example`)?.name).toContain('hidden@evil.example');
   });
 
+  it("names every address a mail goes to: its query's to, cc and bcc as well as the path's", () => {
+    const mail = outsideLinkOf('mailto:support@bank.example?to=billing@evil.example&CC=a@evil.example&bcc=spy@evil.example&subject=Refund');
+    expect(mail?.name).toBe('support@bank.example, billing@evil.example, a@evil.example, spy@evil.example');
+    expect(outsideLinkOf('mailto:?to=someone%2Btag@example.com')?.name).toBe('someone+tag@example.com');
+    for (const value of ['mailto:a@example.com?cc=%0Ab@evil.example', 'mailto:a@example.com?bcc=not-an-address', 'mailto:?subject=Hi']) {
+      expect(outsideLinkOf(value), value).toBeNull();
+    }
+  });
+
   it('shows a long name by its end, which says where it goes', () => {
     const host = `${'a'.repeat(60)}.${'b'.repeat(60)}.example.com`;
     expect(shownName(host)).toMatch(/^….*\.example\.com$/);
