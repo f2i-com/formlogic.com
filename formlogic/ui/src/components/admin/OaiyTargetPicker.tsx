@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 
 /** A choice of where something runs on the administrator's OAIY: the computer, the provider on it, and its model. */
@@ -48,11 +48,19 @@ export function OaiyTargetPicker({ candidates, name, onChange, disabled, engineH
     asking.current = next;
     return next.signal;
   };
+  // A page the browser brings back from its back-forward cache runs no effect again: what was being asked as it was
+  // hidden (let go then) is asked again (askAgain, below), or the choices stayed disabled with "Asking…" for ever.
+  const askAgain = useRef<() => void>(() => {});
   useEffect(() => {
     const leaving = () => asking.current?.abort();
+    const back = (event: PageTransitionEvent) => {
+      if (event.persisted) askAgain.current();
+    };
     window.addEventListener('pagehide', leaving);
+    window.addEventListener('pageshow', back);
     return () => {
       window.removeEventListener('pagehide', leaving);
+      window.removeEventListener('pageshow', back);
       asking.current?.abort();
     };
   }, []);
@@ -88,6 +96,13 @@ export function OaiyTargetPicker({ candidates, name, onChange, disabled, engineH
     // Chat and reading pictures need a language model: a picture or video model cannot answer.
     setModels(result.data.models.filter((m) => m.type !== 'image' && m.type !== 'video'));
   };
+  // (what is asked again when the page comes back: the asking it was doing, with what it was doing it for)
+  useLayoutEffect(() => {
+    askAgain.current = () => {
+      if (busy === 'providers') void pickComputer(connectionId);
+      else if (busy === 'models') void pickProvider(providerId);
+    };
+  });
 
   const select = 'block min-h-10 rounded-lg border border-gray-300 bg-white px-2.5 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white';
   return (

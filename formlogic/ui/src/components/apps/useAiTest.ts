@@ -89,16 +89,25 @@ export function useModelList(key: string | null, list: (signal: AbortSignal) => 
   useEffect(() => {
     if (wanted === null) return;
     const unwanted = new AbortController();
+    let answered = false;
     void call.current(unwanted.signal).then((result) => {
       if (unwanted.signal.aborted) return;
+      answered = true;
       setListed({ key: wanted, models: result.data?.models ?? null, error: result.data ? null : result.error ?? 'The computer did not list its models.' });
     });
     // The page closing or reloading ends no effect: the listing is let go then too (its letGo is sent with keepalive,
     // which outlives the page), or it would hold one of the owner's places on the computer until its time ran out.
     const leaving = () => unwanted.abort();
+    // A page the browser brings back from its back-forward cache runs no effect again: a listing let go as it was
+    // hidden is asked again, or "Asking…" stayed for ever.
+    const back = (event: PageTransitionEvent) => {
+      if (event.persisted && !answered) setAttempt((n) => n + 1);
+    };
     window.addEventListener('pagehide', leaving);
+    window.addEventListener('pageshow', back);
     return () => {
       window.removeEventListener('pagehide', leaving);
+      window.removeEventListener('pageshow', back);
       unwanted.abort();
     };
   }, [wanted]);

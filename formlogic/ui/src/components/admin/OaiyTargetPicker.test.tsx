@@ -52,4 +52,21 @@ describe('the picker\'s listing of a computer', () => {
     await act(async () => { window.dispatchEvent(new Event('pagehide')); });
     expect(signal.aborted).toBe(true);
   });
+
+  it('is asked again when the page comes back from the back-forward cache, so the choices are not left waiting', async () => {
+    const first = await pickTheComputer();
+    await act(async () => { window.dispatchEvent(new Event('pagehide')); });
+    expect(first.aborted).toBe(true);
+    mocks.adminOaiyProviders.mockImplementation(async () => ({ data: { engineProvider: 'oaiy-engine', providers: [{ id: 'oaiy-engine', label: 'OAIY engine', model: null }] } }));
+    // (a page shown anew asks nothing again; one brought back from the cache does)
+    await act(async () => { window.dispatchEvent(new Event('pageshow')); });
+    expect(mocks.adminOaiyProviders).toHaveBeenCalledTimes(1);
+    const back = new Event('pageshow');
+    Object.defineProperty(back, 'persisted', { value: true });
+    await act(async () => { window.dispatchEvent(back); });
+    expect(mocks.adminOaiyProviders).toHaveBeenCalledTimes(2);
+    expect(mocks.adminOaiyProviders.mock.calls[1][0]).toBe('c1');
+    expect((container.querySelector('fieldset') as HTMLFieldSetElement).disabled).toBe(false);
+    expect(container.textContent).not.toContain('Asking the computer what it offers');
+  });
 });

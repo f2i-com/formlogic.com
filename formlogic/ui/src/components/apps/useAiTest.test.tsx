@@ -39,6 +39,21 @@ describe('a listing of a computer\'s models', () => {
     expect(signals[0].aborted).toBe(true);
   });
 
+  it('is asked again when the page comes back from the back-forward cache, where it was let go as the page was hidden', async () => {
+    await act(async () => root.render(<Listing listKey="pc:engine" />));
+    await act(async () => { window.dispatchEvent(new Event('pagehide')); });
+    expect(signals[0].aborted).toBe(true);
+    // (a page shown anew asks nothing again; one brought back from the cache does)
+    await act(async () => { window.dispatchEvent(new Event('pageshow')); });
+    expect(signals).toHaveLength(1);
+    const back = new Event('pageshow');
+    Object.defineProperty(back, 'persisted', { value: true });
+    await act(async () => { window.dispatchEvent(back); });
+    expect(signals).toHaveLength(2);
+    expect(signals[1].aborted).toBe(false);
+    expect(container.textContent).toBe('listing');
+  });
+
   it('is let go when another is asked for, and when the component goes', async () => {
     await act(async () => root.render(<Listing listKey="pc:engine" />));
     await act(async () => root.render(<Listing listKey="pc:other" />));
