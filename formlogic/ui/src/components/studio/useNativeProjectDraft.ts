@@ -37,6 +37,12 @@ export interface NativeProjectDraft {
   version: number;
   /** The installed version's files, to tell what a draft has changed; null when nothing is installed. */
   installedFiles: Readonly<Record<string, string>> | null;
+  /**
+   * Who the installed version lets open the app and call its routes: what the live app answers to, whatever an
+   * unpublished draft says (the API section told an app open to anyone as "only people you invite" once its draft was
+   * so); null when nothing is installed.
+   */
+  installedAccess: NativeProject['access'] | null;
   dirty: boolean;
   /** The version the open draft is based on (a recovered draft keeps its own). */
   base: number | null;
@@ -90,6 +96,7 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
   const [project, setProject] = useState<NativeProject | null>(null);
   const [version, setVersion] = useState(0);
   const [installedFiles, setInstalledFiles] = useState<Record<string, string> | null>(null);
+  const [installedAccess, setInstalledAccess] = useState<NativeProject['access'] | null>(null);
   const [ready, setReady] = useState(false);
   const [available, setAvailable] = useState(false);
   // Runtime preflight (audit FL-03): artifacts can be prepared while the runtime still cannot start.
@@ -136,7 +143,7 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
       setEngine(result.data?.engine); setEnginePolicy(result.data?.enginePolicy);
       if (result.error) setError(result.error);
       const keepDraft = dirtyNow.current;
-      if (result.data?.project) { if (!keepDraft) setProject(result.data.project); setVersion(result.data.project.version); installed.current = result.data.project; setInstalledFiles(result.data.project.files); }
+      if (result.data?.project) { if (!keepDraft) setProject(result.data.project); setVersion(result.data.project.version); installed.current = result.data.project; setInstalledFiles(result.data.project.files); setInstalledAccess(result.data.project.access); }
       // A read-only editor has no draft to offer back; an open draft's checkpoint is its own.
       if (!result.error && !keepDraft && !(result.data?.readOnly ?? isDemo)) setRecoverable(drafts.read());
     });
@@ -267,7 +274,7 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
       uploaded.current = false;
       if (!recoverable) drafts.clear();
       setProject(result.data.project); setVersion(result.data.project.version); setDirty(false); setBase(null); setKept(null);
-      installed.current = result.data.project; current.current = result.data.project; setInstalledFiles(result.data.project.files);
+      installed.current = result.data.project; current.current = result.data.project; setInstalledFiles(result.data.project.files); setInstalledAccess(result.data.project.access);
       // The server decided the engine again from the project just installed (a `.py` added or removed changes it).
       takeEngine(result.data);
       setNotice(message);
@@ -277,7 +284,7 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
   }
 
   return {
-    ready, available, preflight, readOnly, engine, enginePolicy, project, version, installedFiles, dirty, base, conflict,
+    ready, available, preflight, readOnly, engine, enginePolicy, project, version, installedFiles, installedAccess, dirty, base, conflict,
     keeping: recoverable ? 'waiting' : kept, recoverable, busy, error, notice, setError, setNotice,
     edit, recoverDraft, discardDraft, importFile, save, revert, refreshEngine, flush, leaveMessage,
     isLocked: () => lock.current,

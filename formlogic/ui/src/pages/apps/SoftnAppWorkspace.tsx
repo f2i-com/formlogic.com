@@ -489,7 +489,7 @@ function Workspace({ app }: { app: App }) {
         {section === 'api' && (!isOwner
           ? <p className="mt-6 text-sm text-slate-600 dark:text-slate-400">Only the app&rsquo;s owner sees its API and the calls it has had.</p>
           : backend || liveBackend
-            ? <SoftnApi key={app.id} app={app} access={project.access} manifest={draft.installedFiles?.['manifest.json']} version={version} dirty={dirty} readOnly={readOnly} />
+            ? <SoftnApi key={app.id} app={app} access={draft.installedAccess ?? project.access} manifest={draft.installedFiles?.['manifest.json']} version={version} dirty={dirty} readOnly={readOnly} />
             : <p className="mt-6 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-400">
               <span className="font-semibold text-slate-900 dark:text-white">This app has no backend, so it has no API.</span> What its pages save stays in each visitor&rsquo;s browser.{' '}
               <Link to={softnWorkspacePath(app.id, 'data')} className="font-medium text-primary-600 underline-offset-2 hover:underline dark:text-primary-300">Add a backend</Link>

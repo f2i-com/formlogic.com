@@ -408,6 +408,20 @@ describe('SoftnAppWorkspace', () => {
       expect(mocks.appApi).toMatchObject({ manifest: '{"id":"a","server":{"entry":"server/main.logic"}}', dirty: true });
       window.localStorage.clear();
     });
+
+    it('says who may call the live routes from the live app, not from an unpublished draft', async () => {
+      window.localStorage.clear();
+      // The live app is open to anyone with the link; a draft kept in this browser lets members alone in, and is taken
+      // back. The section said "Only people you invite" of routes anyone with the link could still call.
+      const live: NativeProject = { ...withBackend(2), access: 'application' };
+      const kept: NativeProject = { ...withBackend(2), access: 'members', files: { ...withBackend(2).files, 'ui/main.ui': '<Text>Draft</Text>' } };
+      window.localStorage.setItem('formlogic:native-draft:u1:app-1', JSON.stringify({ baseVersion: 2, savedAt: new Date().toISOString(), project: kept }));
+      await render('published', live, '/api');
+      await act(async () => button(/^Recover them$/)!.click());
+      await act(async () => {});
+      expect(mocks.appApi).toMatchObject({ dirty: true, version: 2, access: 'application' });
+      window.localStorage.clear();
+    });
   });
 
   // Who can use the app is a section of its own page: it used to send the owner into App Studio.
