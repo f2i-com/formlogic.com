@@ -1498,9 +1498,8 @@ $app->add(function ($request, $handler) {
         // in chunks says no length: room is asked for the largest the route takes, and the size limit counts it.
         if ($length <= 0 && $request->getHeaderLine('Transfer-Encoding') !== '') \FormLogic\Services\NativeAppService::raiseMemoryFor(96 * 1024 * 1024);
         if ($length > 8 * 1024 * 1024 && $length <= 96 * 1024 * 1024 && !\FormLogic\Services\NativeAppService::raiseMemoryFor($length)) {
-            $needed = (int) ceil((96 * 1024 * 1024 + 4 * $length) / 1048576);
             $response = new \Slim\Psr7\Response(413);
-            $response->getBody()->write(json_encode(['error' => true, 'code' => 'memory_limit', 'message' => sprintf('This server lets PHP use %s of memory, and an app this size needs about %d MB. Raise memory_limit in PHP\'s settings, or make the app smaller.', ini_get('memory_limit'), $needed)]));
+            $response->getBody()->write(json_encode(['error' => true, 'code' => 'memory_limit', 'message' => \FormLogic\Services\NativeAppService::memoryRefusal($length)]));
             return $response->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
         }
     }

@@ -211,6 +211,31 @@ final class NativeAppOwnerMediaTest extends TestCase
         $this->assertSame(base64_encode($this->sound), $installed['assets']['assets/sound/b.mp3']);
     }
 
+    public function testADraftWhoseMediaIsOnlyInTheHistoryIsGivenRoomForItBeforeItIsRead(): void
+    {
+        // Two files the version installed since no longer has (an AI over MCP removed them, or another tab), named by a
+        // draft made before: the save asks PHP for room for them, in base64, before reading them. It asked only where a
+        // file came from the installed version, and at PHP's default 128 MB, 2 x 20 MB from the history was a fatal error.
+        $media = ['assets/a.bin' => random_bytes(6 * 1024 * 1024), 'assets/b.bin' => random_bytes(6 * 1024 * 1024)];
+        $this->installNotes($media);
+        $refs = self::json($this->call('GET', ['media' => 'refs']))['project']['assets'];
+        $this->installNotes([], 1);
+        $need = 96 * 1024 * 1024 + 4 * (int) ceil(12 * 1024 * 1024 * 4 / 3);
+        $tight = max(128 * 1024 * 1024, memory_get_usage(true) + 48 * 1024 * 1024);
+        if ($tight >= $need) $this->markTestSkipped('this process already holds more than the save would ask for');
+        $limit = (string) ini_get('memory_limit');
+        try {
+            $this->assertNotFalse(ini_set('memory_limit', (string) $tight));
+            $response = $this->call('PUT', ['media' => 'refs'], ['expectedVersion' => 2, 'project' => ['access' => 'application', 'files' => self::NOTES, 'assets' => $refs]]);
+            $raised = NativeAppService::memoryBytes((string) ini_get('memory_limit'));
+        } finally {
+            ini_set('memory_limit', $limit);
+        }
+        $this->assertSame(200, $response->getStatusCode(), self::read($response));
+        $this->assertGreaterThanOrEqual($need, $raised, '96 MB and four times the project as it is held');
+        $this->assertSame(base64_encode($media['assets/b.bin']), $this->native->project(self::APP_ID)['assets']['assets/b.bin']);
+    }
+
     public function testABrowsersCopyIsConfirmedAndASizeAskedForWithoutSendingTheFile(): void
     {
         $this->installNotes($this->media());

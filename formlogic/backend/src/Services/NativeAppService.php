@@ -1506,6 +1506,11 @@ class NativeAppService
                 $from[$path] = $installedPath;
                 $known[$path] = ['kept' => $hash, 'size' => $size];
             }
+            // Room for the project as it will be held, its media as base64, before any of it is read. get() asks for room
+            // only where a file comes from the installed version, and by the installed project's size: a draft whose media
+            // came from the history (the app changed elsewhere since) ran out of PHP's memory in install(), a bare 500.
+            $held = (int) ceil($total * 4 / 3);
+            if (!self::raiseMemoryFor($held)) throw new RuntimeException(self::memoryRefusal($held), 413);
             // The installed project's own text where it has the file (the same base64 is kept), else the history's bytes.
             $installed = array_filter($from, static fn (?string $at): bool => $at !== null) !== [] ? $this->get($appId) : null;
             foreach ($from as $path => $installedPath) {
@@ -1755,6 +1760,13 @@ class NativeAppService
         if ($target > $limit) @ini_set('memory_limit', (string) $target);
         $now = self::memoryBytes((string) ini_get('memory_limit'));
         return $now < 0 || $now >= $need;
+    }
+
+    /** What a request is told where the host would not give raiseMemoryFor() room for a project of `$bytes` (a 413). */
+    public static function memoryRefusal(int $bytes): string
+    {
+        $needed = (int) ceil((96 * 1024 * 1024 + 4 * max(0, $bytes)) / 1048576);
+        return sprintf('This server lets PHP use %s of memory, and an app this size needs about %d MB. Raise memory_limit in PHP\'s settings, or make the app smaller.', ini_get('memory_limit'), $needed);
     }
 
     /** php.ini's shorthand (128M, 1G, -1) in bytes; -1 for no limit. */
