@@ -1372,7 +1372,12 @@ folder, a stylesheet, one of the app's pictures, a `data:` address) does nothing
 frame's console. A frame before that left every such link to the browser, which took the frame off
 the app, and the app was stopped ("This app tried to navigate away and was stopped"); the notice now
 has "Open the app again", which opens it in a new frame. Each case was followed in a browser with
-each frame. An install through the AI tools warns of the links it can read that go nowhere, in the
+each frame. From SoftN v0.0.42 the frame holds each click that may follow a link, from before any
+of the app's code runs, and decides it once the click is over, on the link as it is then: v0.0.41's
+frame decided it earlier, and an app that changed a link's address while it was being clicked
+(after `@click.stop`, in a microtask, from a window listener of its own) took the frame where it
+then pointed. An address on this site, by its host, is never handed over as a link from v0.0.42;
+this page refuses one from an older frame too. What this page is told is the same. An install through the AI tools warns of the links it can read that go nowhere, in the
 words of the frame installed (`SoftnAppTools::warnings`, `RuntimeEngineService::LINKS_FEATURE`), and
 the guide served to AIs says how a link is written.
 
