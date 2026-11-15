@@ -24,6 +24,7 @@ import { DynamicIcon } from '../components/ui/DynamicIcon';
 import type { FormField } from '../types/form';
 import { publicUnfillableFieldLabels } from '../lib/publicForm';
 import { formPageColors } from '../lib/formPageColors';
+import { readableForegroundColor } from '../lib/color';
 
 // Main Preview Component
 export default function FormPreview() {
@@ -229,6 +230,10 @@ export default function FormPreview() {
   // its own (fl-light turns the dark variant off within it, `dark` on), so a light form's labels
   // and answers are never drawn in dark mode's light text on its light page.
   const page = formPageColors(form.theme, false);
+  // The OK and Submit buttons in the form's accent with words that read on it, as the published
+  // page draws them. Left to the button's own text colour they took the site's theme: dark mode's
+  // navy on an indigo accent (3:1), and on a navy one hardly there at all.
+  const accentButton = { backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) };
 
   return (
     <div className={cn('min-h-[calc(100vh-var(--fl-demo-banner-h,0px))] bg-gray-50 dark:bg-slate-950 flex flex-col transition-colors duration-300', chatDockOffset && 'mr-96')}>
@@ -421,7 +426,7 @@ export default function FormPreview() {
                 >
                   <ChevronUp className="h-6 w-6" />
                 </button>
-                <Button onClick={handleNext} style={{ backgroundColor: form.theme.primaryColor }}>
+                <Button onClick={handleNext} style={accentButton}>
                   {isLastStep ? 'Submit' : 'OK'} ✓
                 </Button>
                 <button
@@ -468,7 +473,7 @@ export default function FormPreview() {
                     className="w-full"
                     size="lg"
                     onClick={() => toast.info('Preview only', "This is a preview — responses aren't saved. Publish your form and open its share link to collect real responses.")}
-                    style={{ backgroundColor: form.theme.primaryColor }}
+                    style={accentButton}
                   >
                     {form.settings.submitButtonText || 'Submit'}
                   </Button>

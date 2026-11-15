@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Map as MapIcon, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { toast } from '../../stores/toastStore';
 import { cn, parseServerDate } from '../../lib/utils';
 import { Header } from '../../components/layout/Header';
 import { PageBody } from '../../components/layout/PageBody';
@@ -100,7 +101,9 @@ export default function DiagramsIndex() {
     const target = pendingDelete;
     setPendingDelete(null);
     if (!target) return;
-    await api.deleteBlueprint(target.id);
+    const res = await api.deleteBlueprint(target.id);
+    // A refused delete is said: the dialog had closed and the row stayed, without a word.
+    if (res.error) toast.error(`Could not delete '${target.name}'`, typeof res.error === 'string' ? res.error : 'Please try again.');
     await refresh();
   }, [pendingDelete, refresh]);
 

@@ -5,6 +5,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useToastStore } from '../../stores/toastStore';
 import DiagramsIndex from './DiagramsIndex';
 
 const h = vi.hoisted(() => ({
@@ -37,6 +38,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  useToastStore.getState().clearToasts();
 });
 
 const bp = (id: string, name: string) => ({
@@ -124,5 +126,23 @@ describe('DiagramsIndex', () => {
     await renderIndex();
     expect(container.textContent).toContain('No diagrams yet');
     expect(pagerLabel()).toBeNull();
+  });
+
+  it('says so when the server refuses a delete (the row stays)', async () => {
+    h.listBlueprints.mockResolvedValue({ data: { blueprints: [bp('d1', 'Booking sketch')] } });
+    h.deleteBlueprint.mockResolvedValue({ error: 'Server error (500)', status: 500 });
+    await renderIndex();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Delete diagram Booking sketch"]')!.click();
+    });
+    const confirm = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((button) => button.textContent?.trim() === 'Delete');
+    expect(confirm, 'the dialog\'s Delete').toBeTruthy();
+    await act(async () => confirm!.click());
+
+    expect(h.deleteBlueprint).toHaveBeenCalledWith('d1');
+    const errors = useToastStore.getState().toasts.filter((toast) => toast.type === 'error');
+    expect(errors.map((toast) => `${toast.title} — ${toast.message}`)).toEqual(["Could not delete 'Booking sketch' — Server error (500)"]);
+    expect(rowNames()).toEqual(['Booking sketch']);
   });
 });

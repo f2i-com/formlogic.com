@@ -1,6 +1,6 @@
 // What a cell holds, as it is shown and as it is edited. The grid, a phone's cards and a row's
 // details all use these, so a value reads the same wherever it is.
-import { useEffect, useRef, useState, type FocusEvent, type InputHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ClipboardEvent, type FocusEvent, type InputHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react';
 import { Check, Minus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { cellKind, cellText } from './format';
@@ -23,14 +23,16 @@ export function Tick({ indeterminate = false, className, ...props }: Omit<InputH
  * Text as a value shows it. `mark`: what the rows were searched for, marked wherever the text holds
  * it, whatever its case, so a page of matches shows where each matched. `breaks`: the text is on one
  * line, where a line break would read as a space, so each is drawn as a muted ↵ (the break itself
- * stays in the text, for a screen reader and for a copy).
+ * stays in the text, for a screen reader). The ↵ is drawn, not written (generated content), so no
+ * selection or copy takes it, and a triple-click still takes the whole value (a ↵ that could not be
+ * selected cut the value in two for it); a copy of a value keeps its breaks (CellValue).
  */
 export function Marked({ text, mark = '', breaks = false }: { text: string; mark?: string; breaks?: boolean }) {
   const sought = mark.trim().toLowerCase();
   const lines = breaks ? text.split('\n') : [text];
   const out: ReactNode[] = [];
   lines.forEach((line, at) => {
-    if (at > 0) out.push(<span key={`break${at}`} data-break="" aria-hidden="true" className={cn('px-px', muted)}>↵</span>, '\n');
+    if (at > 0) out.push(<span key={`break${at}`} data-break="" aria-hidden="true" className={cn("px-px before:content-['↵']", muted)} />, '\n');
     const lower = line.toLowerCase();
     // Marked only where lower case keeps the text's length, so a place in one is a place in the other.
     if (!sought || lower.length !== line.length) { out.push(line); return; }
@@ -46,11 +48,44 @@ export function Marked({ text, mark = '', breaks = false }: { text: string; mark
 }
 
 /**
+ * A copy of what is selected of a value drawn on one line with its breaks as ↵: the text as the
+ * value holds it, each break kept, and no "…". The browser's own copy gave "Gift wrap Leave at the
+ * door" (and, while the ↵ was text, "Gift wrap↵ Leave at the door"): a break on a line that does
+ * not wrap is drawn, and copied, as a space. Only a selection within this one value; one that
+ * reaches past it (across cells or rows) is left to the browser.
+ */
+function copyAsStored(event: ClipboardEvent<HTMLElement>) {
+  const selection = window.getSelection();
+  const clipboard = event.clipboardData;
+  if (!selection || selection.rangeCount !== 1 || selection.isCollapsed || !clipboard) return;
+  const range = selection.getRangeAt(0);
+  const value = event.currentTarget;
+  const top = range.commonAncestorContainer;
+  const walker = document.createTreeWalker(top.nodeType === Node.TEXT_NODE ? (top.parentNode ?? top) : top, NodeFilter.SHOW_TEXT);
+  let text = '';
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!range.intersectsNode(node)) continue;
+    const whole = (node as Text).data;
+    const part = whole.slice(node === range.startContainer ? range.startOffset : 0, node === range.endContainer ? range.endOffset : whole.length);
+    if (part === '') continue;
+    if (!value.contains(node)) {
+      if (part.trim() === '') continue;
+      return;
+    }
+    if (node.parentElement?.closest('[data-more]')) continue;
+    text += part;
+  }
+  if (text === '') return;
+  clipboard.setData('text/plain', text);
+  event.preventDefault();
+}
+
+/**
  * A value by the manager's rules: NULL in muted italics, an empty text named as one (it is not
  * NULL), a binary value as a muted `[binary]`, and a preview that was cut marked with an ellipsis
  * that says the text goes on. Anything else is shown exactly as stored. `wrap`: on several lines
  * (a card opened out, a row's details); otherwise on one, cut by its place, its line breaks drawn
- * as ↵. `mark`: the search, marked in the text (Marked).
+ * as ↵ (and copied as breaks). `mark`: the search, marked in the text (Marked).
  */
 export function CellValue({ value, cut = false, wrap = false, mark }: { value: unknown; cut?: boolean; wrap?: boolean; mark?: string }) {
   const kind = cellKind(value);
@@ -59,12 +94,13 @@ export function CellValue({ value, cut = false, wrap = false, mark }: { value: u
   if (kind === 'binary') return <span data-kind="binary" className={muted}>[binary]</span>;
   const text = cellText(value);
   const more = <>
-    <span className={cn('flex-none pl-0.5', muted)} title="This text is longer than the part shown." aria-hidden="true">…</span>
-    <span className="sr-only"> (the text is longer than the part shown)</span>
+    <span data-more="" className={cn('flex-none pl-0.5', muted)} title="This text is longer than the part shown." aria-hidden="true">…</span>
+    <span data-more="" className="sr-only"> (the text is longer than the part shown)</span>
   </>;
   if (wrap) return <span data-kind={cut ? 'cut' : 'value'} className="whitespace-pre-wrap [overflow-wrap:anywhere]"><Marked text={text} mark={mark} />{cut && more}</span>;
-  if (!cut) return <span data-kind="value"><Marked text={text} mark={mark} breaks /></span>;
-  return <span data-kind="cut" className="flex min-w-0 items-baseline"><span className="min-w-0 overflow-hidden whitespace-nowrap"><Marked text={text} mark={mark} breaks /></span>{more}</span>;
+  const copy = text.includes('\n') ? copyAsStored : undefined;
+  if (!cut) return <span data-kind="value" onCopy={copy}><Marked text={text} mark={mark} breaks /></span>;
+  return <span data-kind="cut" className="flex min-w-0 items-baseline" onCopy={copy}><span className="min-w-0 overflow-hidden whitespace-nowrap"><Marked text={text} mark={mark} breaks /></span>{more}</span>;
 }
 
 interface CellEditorProps {

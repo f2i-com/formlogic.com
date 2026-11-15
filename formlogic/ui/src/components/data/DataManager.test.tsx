@@ -423,10 +423,51 @@ describe('searching', () => {
     await mount();
     const notes = cell(0, 'notes');
     expect(all('[data-break]', notes)).toHaveLength(1);
-    expect(notes.textContent).toBe('Gift wrap↵\nLeave at the door');
+    // The ↵ is drawn (generated content), not written: the text is the value's own, its break in it.
+    expect(one('[data-break]', notes)!.className).toContain("before:content-['↵']");
+    expect(notes.textContent).toBe('Gift wrap\nLeave at the door');
     expect(one('[data-break]', notes)!.getAttribute('aria-hidden')).toBe('true');
     // The whole of it on hover, though it is shorter than a cut.
     expect(notes.getAttribute('title')).toBe('Gift wrap\nLeave at the door');
+  });
+
+  it('copies a value drawn with ↵ as it is stored: its breaks kept, no ↵', async () => {
+    mocks.browse.mockImplementation(async (_app: string, _table: string, asking: NativeBrowseQuery) => bookings(asking, { rows: [{ ...bookingRows[0], notes: 'Gift wrap\nLeave at the door' }, ...bookingRows.slice(1)] }));
+    await mount();
+    const notes = cell(0, 'notes');
+    const value = one('[data-kind="value"]', notes)!;
+    /** Selects the range and copies, as the browser does: the copy event goes to where the selection starts. */
+    const copy = (range: Range) => {
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const setData = vi.fn();
+      const event = new Event('copy', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', { value: { setData } });
+      const start = range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer.parentElement! : (range.startContainer as Element).querySelector('[data-kind]')!;
+      act(() => { start.dispatchEvent(event); });
+      return { copied: setData.mock.calls.map((call) => call[1]), kept: event.defaultPrevented };
+    };
+
+    // The whole cell, as a triple-click selects it.
+    const whole = document.createRange();
+    whole.selectNodeContents(notes);
+    expect(copy(whole)).toEqual({ copied: ['Gift wrap\nLeave at the door'], kept: true });
+
+    // Part of it, across the break.
+    const texts = [...value.childNodes].filter((node): node is Text => node.nodeType === Node.TEXT_NODE);
+    const part = document.createRange();
+    part.setStart(texts[0], 'Gift '.length);
+    part.setEnd(texts[texts.length - 1], 'Leave'.length);
+    expect(copy(part)).toEqual({ copied: ['wrap\nLeave'], kept: true });
+
+    // Reaching past the value, into the cells after it: the browser's own copy.
+    const across = document.createRange();
+    across.setStart(texts[0], 0);
+    across.setEnd(notes.parentElement!, notes.parentElement!.childNodes.length);
+    expect(copy(across)).toEqual({ copied: [], kept: false });
+    // ...which takes no ↵ either: it is drawn, not text, so no selection holds it.
+    expect(one('[data-break]', notes)!.textContent).toBe('');
   });
 
   it('sends the search once the typing has rested for 300 ms, without a new entry in the history', async () => {
