@@ -6,7 +6,7 @@
 // sketch got confusing fast. EVERY mutation rides the §14.3 operation-commit gateway
 // (semantic batches carry baseSemanticRevision and reconcile on 409; drags are
 // layout-only batches that can never conflict).
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   Background,
   ConnectionMode,
@@ -603,17 +603,27 @@ export function DiagramCanvas({
     return { x: at.x, y: at.y, w: node.measured?.width ?? node.width ?? 180, h: node.measured?.height ?? node.height ?? 64 };
   }, [reactFlow]);
 
+  // Where cards asked for a moment ago are going, by their new ids, until the diagram comes back
+  // with them: a card asked for while another is still on its way (two quick double-clicks) goes
+  // beside it, not on top of it, where it hid the first.
+  const heldRef = useRef(new Map<string, Box>());
+
   /**
    * Where a new card of this size goes: near where it was wanted (else the middle of what is in
-   * view), never over another card; and if that is out of view, the view goes to it.
+   * view), never over another card; and if that is out of view, the view goes to it. `forId`: the
+   * new card's id, whose spot is held until the card is on the diagram (or its create fails).
    */
-  const placeFor = useCallback((size: { w: number; h: number }, want?: Spot): Spot => {
+  const placeFor = useCallback((size: { w: number; h: number }, want?: Spot, forId?: string): Spot => {
     const pane = paneRef.current?.getBoundingClientRect();
     const middle = pane && pane.width > 0 ? reactFlow.screenToFlowPosition({ x: pane.left + pane.width / 2, y: pane.top + pane.height / 2 }) : { x: 240, y: 180 };
-    const taken = reactFlow.getNodes().map((node) => boxOf(node.id)).filter((box): box is Box => box !== null);
+    const taken = [
+      ...reactFlow.getNodes().map((node) => boxOf(node.id)).filter((box): box is Box => box !== null),
+      ...heldRef.current.values(),
+    ];
     // A phone's canvas is narrow: the next card goes below the last, not off the side of the screen.
     const lean = pane && pane.width < 640 ? { x: 3, y: 1 } : { x: 1, y: 1 };
     const spot = freeSpot(want ?? { x: middle.x - size.w / 2, y: middle.y - size.h / 2 }, size, taken, lean);
+    if (forId) heldRef.current.set(forId, { ...spot, ...size });
     if (pane && pane.width > 0) {
       const topLeft = reactFlow.screenToFlowPosition({ x: pane.left, y: pane.top });
       const bottomRight = reactFlow.screenToFlowPosition({ x: pane.right, y: pane.bottom });
@@ -664,6 +674,10 @@ export function DiagramCanvas({
   useEffect(() => {
     semanticRef.current = blueprint.semanticRevision;
   }, [blueprint.semanticRevision]);
+  // A held spot is let go of once its card is on the diagram: its own box counts from then on.
+  useEffect(() => {
+    for (const node of initial.nodes) heldRef.current.delete(node.id);
+  }, [initial]);
 
   // FIFO mutation queue (audit FL-14): callers fire `void commit(...)` from many
   // handlers, so without serialization two same-tick semantic commits both read
@@ -687,8 +701,10 @@ export function DiagramCanvas({
         operations,
       });
       if (res.error || !res.data) {
-        const conflicted = typeof res.error === 'object' && res.error !== null
-          && (res.error as { code?: string }).code === 'revision_conflict';
+        // The server's refusal names its kind in `code`, beside its message (api.request); the
+        // demo's own gateway hands back an object with the code in `error` instead.
+        const conflicted = res.code === 'revision_conflict'
+          || (typeof res.error === 'object' && res.error !== null && (res.error as { code?: string }).code === 'revision_conflict');
         toast.error(
           conflicted ? 'Blueprint changed elsewhere' : 'Blueprint change failed',
           conflicted ? 'Reloaded the latest version — please retry.' : (typeof res.error === 'string' ? res.error : undefined),
@@ -816,20 +832,21 @@ export function DiagramCanvas({
             ? {}
             : { title };
       const size = sizeOf(elementType, extra);
-      const at = placeFor(size, position ? { x: position.x - size.w / 2, y: position.y - size.h / 2 } : undefined);
+      const targetId = `el-${generateId()}`;
+      const at = placeFor(size, position ? { x: position.x - size.w / 2, y: position.y - size.h / 2 } : undefined, targetId);
       void commit(
         [
           {
             operationId: `op-${generateId()}`,
             type: 'blueprint.element.create',
-            targetId: `el-${generateId()}`,
+            targetId,
             elementType: elementType as BlueprintOperation['elementType'],
             properties: { ...base, ...extra },
             layout: { x: at.x, y: at.y },
           },
         ],
         true,
-      );
+      ).then((made) => { if (!made) heldRef.current.delete(targetId); });
     },
     [commit, placeFor],
   );
@@ -997,6 +1014,8 @@ export function DiagramCanvas({
         );
         return;
       }
+      // A plain move is a layout batch of its own, and an undo step of its own (the gateway keeps
+      // each place's undo): Undo after moving a card puts it back, as in most drawing tools.
       void commit(
         [
           {
@@ -1011,6 +1030,46 @@ export function DiagramCanvas({
     },
     [CONTAINABLE, commit, elements, reactFlow],
   );
+
+  // Cards moved with the arrow keys are saved as a drag is. React Flow moves the selected cards
+  // when one of them has the focus, and only a drag's end saved a place, so a move by the keys was
+  // shown and never kept. Saved once the keys have stopped for a moment: one layout batch (one
+  // undo) for a run of presses, not one a press.
+  const keyMoveTimerRef = useRef<number | null>(null);
+  const saveKeyMove = useCallback(() => {
+    keyMoveTimerRef.current = null;
+    const moved = reactFlow.getNodes().filter((node) => node.selected && elements.some((element) => element.id === node.id));
+    if (moved.length === 0) return;
+    void commit(
+      moved.map((node) => ({
+        operationId: `op-${generateId()}`,
+        type: 'blueprint.layout.set' as const,
+        targetId: node.id,
+        layout: { x: Math.round(node.position.x), y: Math.round(node.position.y) },
+      })),
+      false,
+    );
+  }, [commit, elements, reactFlow]);
+  const saveKeyMoveRef = useRef(saveKeyMove);
+  useEffect(() => {
+    saveKeyMoveRef.current = saveKeyMove;
+  }, [saveKeyMove]);
+  // A move still waiting is saved as the canvas goes (moved, and straight off the page).
+  useEffect(() => () => {
+    if (keyMoveTimerRef.current === null) return;
+    window.clearTimeout(keyMoveTimerRef.current);
+    saveKeyMoveRef.current();
+  }, []);
+  const onCanvasKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown' && event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    // As React Flow moves them (its card's own handler has run by now): a card with the focus,
+    // that is selected. Not a key typed in a box on a card, nor one on the canvas itself.
+    const target = event.target as HTMLElement;
+    const id = target.classList?.contains('react-flow__node') ? target.getAttribute('data-id') : null;
+    if (id === null || !reactFlow.getNode(id)?.selected) return;
+    if (keyMoveTimerRef.current !== null) window.clearTimeout(keyMoveTimerRef.current);
+    keyMoveTimerRef.current = window.setTimeout(() => saveKeyMoveRef.current(), 400);
+  }, [reactFlow]);
 
   // ── Drawing layer (§11A.1b): freehand pen + pasted images ─────────────────────────
   const [penMode, setPenMode] = useState(false);
@@ -1061,20 +1120,21 @@ export function DiagramCanvas({
         toast.error('Image too large', 'It stores inline on the diagram — attach something smaller.');
         return;
       }
-      const at = placeFor({ w: props.w, h: props.h });
+      const targetId = `el-${generateId()}`;
+      const at = placeFor({ w: props.w, h: props.h }, undefined, targetId);
       void commit(
         [
           {
             operationId: `op-${generateId()}`,
             type: 'blueprint.element.create',
-            targetId: `el-${generateId()}`,
+            targetId,
             elementType: 'image' as BlueprintOperation['elementType'],
             properties: props,
             layout: { x: at.x, y: at.y },
           },
         ],
         true,
-      );
+      ).then((made) => { if (!made) heldRef.current.delete(targetId); });
     },
     [commit, placeFor],
   );
@@ -1092,31 +1152,32 @@ export function DiagramCanvas({
           toast.error('Image too large', 'It stores inline on the diagram — paste something smaller.');
           return;
         }
-        const at = placeFor({ w: props.w, h: props.h });
+        const targetId = `el-${generateId()}`;
+        const at = placeFor({ w: props.w, h: props.h }, undefined, targetId);
         void commit(
           [
             {
               operationId: `op-${generateId()}`,
               type: 'blueprint.element.create',
-              targetId: `el-${generateId()}`,
+              targetId,
               elementType: 'image' as BlueprintOperation['elementType'],
               properties: props,
               layout: { x: at.x, y: at.y },
             },
           ],
           true,
-        );
+        ).then((made) => { if (!made) heldRef.current.delete(targetId); });
       });
     };
     document.addEventListener('paste', onPaste);
     return () => document.removeEventListener('paste', onPaste);
   }, [commit, placeFor]);
 
-  // Removes everything selected, in one batch (one undo): a card's lines go with it first (the
+  // Removes these elements, in one batch (one undo): a card's lines go with it first (the
   // gateway refuses a line to nothing), and what sat in a box that goes stays where it was, on
   // the canvas itself.
-  const deleteSelected = useCallback(() => {
-    const chosen = new Set([...selectedIds, ...(selectedId ? [selectedId] : [])].filter((id) => elements.some((element) => element.id === id)));
+  const deleteElements = useCallback((ids: string[]) => {
+    const chosen = new Set(ids.filter((id) => elements.some((element) => element.id === id)));
     if (chosen.size === 0) return;
     // A deleted element's unsaved panel draft must not linger and reappear if an id is
     // ever reused (and it is simply dead weight otherwise).
@@ -1148,7 +1209,24 @@ export function DiagramCanvas({
     setSelectedId(null);
     setSelectedKey('');
     void commit(operations, true);
-  }, [commit, elements, reactFlow, selectedId, selectedIds]);
+  }, [commit, elements, reactFlow]);
+  // Everything selected: the toolbar's Delete and the Delete key.
+  const deleteSelected = useCallback(
+    () => deleteElements([...selectedIds, ...(selectedId ? [selectedId] : [])]),
+    [deleteElements, selectedId, selectedIds],
+  );
+
+  // Lets go of the selection from its panel (its close button, or Escape in it): the keyboard goes
+  // back to the card (or line) the panel was for. The panel and the button that had the focus go,
+  // and the focus went with them to the top of the page.
+  const closePanel = useCallback(() => {
+    const id = selectedId;
+    deselect();
+    if (id === null) return;
+    const shown = Array.from(paneRef.current?.querySelectorAll<HTMLElement>('.react-flow__node, .react-flow__edge') ?? [])
+      .find((item) => item.getAttribute('data-id') === id);
+    shown?.focus();
+  }, [deselect, selectedId]);
 
   // Delete/Backspace removes what is selected (same edges-first gateway batch as the
   // toolbar button) and Escape lets go of it — unless the user is typing in an input.
@@ -1160,12 +1238,14 @@ export function DiagramCanvas({
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
       if (selectedId === null && selectedIds.length === 0) return;
       event.preventDefault();
-      if (event.key === 'Escape') deselect();
-      else deleteSelected();
+      if (event.key === 'Escape') {
+        if (target?.closest?.('[data-selection-panel]')) closePanel();
+        else deselect();
+      } else deleteSelected();
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [deleteSelected, deselect, selectedId, selectedIds]);
+  }, [closePanel, deleteSelected, deselect, selectedId, selectedIds]);
 
   // On a phone the panel is a sheet over the foot of the canvas: the card it is for is moved into
   // the room above it (and in from the side), so what is being changed stays in sight.
@@ -1638,6 +1718,7 @@ export function DiagramCanvas({
         <div
           ref={paneRef}
           className="sketch-canvas relative min-h-0 min-w-0 flex-1"
+          onKeyDown={onCanvasKeyDown}
           onDragOver={(event) => {
             if (event.dataTransfer.types.includes('application/formlogic-diagram-tool')) {
               event.preventDefault();
@@ -1791,8 +1872,9 @@ export function DiagramCanvas({
             busy={busy}
             linkedNoteText={linkedNoteText}
             onSave={saveSelectedProperties}
-            onDelete={deleteSelected}
-            onClose={deselect}
+            // The one element the panel shows, as its button says; not everything selected with it.
+            onDelete={() => deleteElements([selectedElement.id])}
+            onClose={closePanel}
             // A line to another card without drawing it: on a phone, or from the keyboard.
             linkTargets={selectedElement.elementType === 'edge' || selectedElement.elementType === 'ink'
               ? []

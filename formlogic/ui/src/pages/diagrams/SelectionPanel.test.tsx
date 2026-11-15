@@ -221,3 +221,106 @@ describe('SelectionPanel (diagram selection editor)', () => {
     expect(onDelete).toHaveBeenCalledTimes(1);
   });
 });
+
+// The panel stays open while the diagram comes back after a change, so the element it shows can
+// change under it: a field typed on the card, another tab, Undo, its own Save. (Each render below
+// is the same panel given the element as the diagram now holds it, as the canvas does.)
+describe('SelectionPanel: the element changing while the panel is open', () => {
+  const fieldNames = () => [...container.querySelectorAll<HTMLInputElement>('input[aria-label^="Field name"]')].map((input) => input.value);
+  const saysNotSaved = () => (container.textContent ?? '').includes('Not saved yet');
+  const form = (properties: Record<string, unknown>) => element({ id: 'el-orders', elementType: 'form', properties });
+
+  it('takes in a field added on the card, and its next Save keeps it', async () => {
+    const onSave = vi.fn();
+    await render(form({ title: 'Orders', fields: [{ name: 'customer', type: 'short_text' }] }), { onSave });
+    await render(form({ title: 'Orders', fields: [{ name: 'customer', type: 'short_text' }, { name: 'total', type: 'short_text' }] }), { onSave });
+    expect(fieldNames()).toEqual(['customer', 'total']);
+    expect(saysNotSaved()).toBe(false);
+
+    const title = byLabel<HTMLInputElement>('Entity title');
+    setValue(title, 'Orders renamed');
+    act(() => title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    expect(onSave.mock.calls[0][0]).toMatchObject({ title: 'Orders renamed', fields: [{ name: 'customer', type: 'short_text' }, { name: 'total', type: 'short_text' }] });
+  });
+
+  it('keeps what was typed when the element changes elsewhere, takes the rest, and its retry keeps both', async () => {
+    const onSave = vi.fn();
+    const before = { title: 'Orders', fields: [{ name: 'customer', type: 'short_text' }] };
+    await render(form(before), { onSave });
+    setValue(byLabel<HTMLInputElement>('Entity title'), 'Orders v3');
+    clickButton('Save'); // refused: another tab added a field first (409), and the diagram comes back with it
+    await render(form({ ...before, fields: [...before.fields, { name: 'added_in_other_tab', type: 'number' }] }), { onSave });
+
+    expect(byLabel<HTMLInputElement>('Entity title').value).toBe('Orders v3');
+    expect(fieldNames()).toEqual(['customer', 'added_in_other_tab']);
+    expect(saysNotSaved()).toBe(true);
+    clickButton('Save');
+    expect(onSave).toHaveBeenCalledTimes(2);
+    expect(onSave.mock.calls[1][0]).toMatchObject({
+      title: 'Orders v3',
+      fields: [{ name: 'customer', type: 'short_text' }, { name: 'added_in_other_tab', type: 'number' }],
+    });
+  });
+
+  it('says nothing is left unsaved once its own Save comes back tidied', async () => {
+    const onSave = vi.fn();
+    await render(form({ title: 'Invoices', fields: [] }), { onSave });
+    clickButton('Add'); // a field row left empty
+    setValue(byLabel<HTMLInputElement>('Entity title'), 'Invoices to send ');
+    clickButton('Save');
+    expect(onSave.mock.calls[0][0]).toMatchObject({ title: 'Invoices to send', fields: [] });
+    await render(form(onSave.mock.calls[0][0]), { onSave });
+
+    expect(saysNotSaved()).toBe(false);
+    expect(byLabel<HTMLInputElement>('Entity title').value).toBe('Invoices to send');
+    expect(fieldNames()).toEqual([]);
+  });
+
+  it('keeps on typing after Save without calling its own change one made elsewhere', async () => {
+    const onSave = vi.fn();
+    await render(form({ title: 'Rooms', fields: [] }), { onSave });
+    const title = byLabel<HTMLInputElement>('Entity title');
+    setValue(title, 'Guest rooms');
+    clickButton('Save');
+    setValue(title, 'Guest rooms and suites'); // typed on while the save is on its way
+    await render(form(onSave.mock.calls[0][0]), { onSave });
+    expect(byLabel<HTMLInputElement>('Entity title').value).toBe('Guest rooms and suites');
+    expect(container.textContent).toContain('Not saved yet');
+    expect(container.textContent).not.toContain('Changed elsewhere');
+  });
+
+  it('merges the fields by name when they were changed here and elsewhere', async () => {
+    const onSave = vi.fn();
+    await render(form({ title: 'Orders', fields: [{ name: 'customer', type: 'short_text' }, { name: 'notes', type: 'short_text' }] }), { onSave });
+    clickButton('Add');
+    setValue(byLabel<HTMLInputElement>('Field name 3'), 'price');
+    // Elsewhere: a field added, another's type changed, and one taken out.
+    await render(form({ title: 'Orders', fields: [{ name: 'customer', type: 'email' }, { name: 'total', type: 'number' }] }), { onSave });
+    expect(fieldNames()).toEqual(['customer', 'price', 'total']);
+    clickButton('Save');
+    expect(onSave.mock.calls[0][0].fields).toEqual([{ name: 'customer', type: 'email' }, { name: 'price', type: 'short_text' }, { name: 'total', type: 'number' }]);
+  });
+
+  it('says so when a value typed here was changed elsewhere too, and can take the saved one', async () => {
+    const onSave = vi.fn();
+    await render(form({ title: 'Orders', fields: [] }), { onSave });
+    setValue(byLabel<HTMLInputElement>('Entity title'), 'Purchases');
+    await render(form({ title: 'Sales', fields: [] }), { onSave });
+    expect(byLabel<HTMLInputElement>('Entity title').value).toBe('Purchases');
+    expect(container.textContent).toContain('Changed elsewhere too since you began');
+    clickButton('take the saved version');
+    expect(byLabel<HTMLInputElement>('Entity title').value).toBe('Sales');
+    expect(saysNotSaved()).toBe(false);
+    expect(container.textContent).not.toContain('Changed elsewhere');
+  });
+
+  it("takes in a note's text written on the card (and after Undo), so Save does not write the old text back", async () => {
+    const onSave = vi.fn();
+    const note = (text: string) => element({ id: 'el-note', elementType: 'note', properties: { text } });
+    await render(note('Call the supplier'), { onSave });
+    await render(note('Call the supplier on Monday'), { onSave });
+    expect(byLabel<HTMLTextAreaElement>('Body text').value).toBe('Call the supplier on Monday');
+    clickButton('Save');
+    expect(onSave.mock.calls[0][0].text).toBe('Call the supplier on Monday');
+  });
+});
