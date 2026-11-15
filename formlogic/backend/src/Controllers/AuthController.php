@@ -26,6 +26,17 @@ class AuthController
 {
     use JsonResponseTrait;
 
+    /**
+     * A field of a request's body as text: a string as it is, a number as it is written, anything else (an array, an
+     * object, nothing) as no text, which each route answers as a field left out. Cast, an array said "Array to string
+     * conversion" into the answer where PHP shows its warnings, and into the log where it does not.
+     */
+    private static function field(mixed $data, string $name): string
+    {
+        $value = is_array($data) ? ($data[$name] ?? null) : null;
+        return is_string($value) || is_int($value) || is_float($value) ? (string) $value : '';
+    }
+
     private AuthService $authService;
     private IpResolver $ipResolver;
     private array $cookieConfig;
@@ -70,7 +81,7 @@ class AuthController
         // Trim as early as possible so a pasted trailing space/newline can't produce a
         // stored email that silently mismatches the trimmed value login() looks up
         // (requestPasswordReset already trims for the same reason).
-        $email = trim((string) ($data['email'] ?? ''));
+        $email = trim(self::field($data, 'email'));
 
         if ($email === '' || empty($data['password'])) {
             return $this->jsonResponse($response, [
@@ -136,7 +147,7 @@ class AuthController
         // the rate-limit key and the `WHERE email = :email` lookup as a distinct string, making
         // a legitimate login fail (and burn a rate-limit attempt) for a whitespace difference
         // register()/requestPasswordReset() already tolerate.
-        $email = trim((string) ($data['email'] ?? ''));
+        $email = trim(self::field($data, 'email'));
 
         if ($email === '' || !is_string($data['password'] ?? null) || $data['password'] === '') {
             return $this->jsonResponse($response, [
@@ -477,7 +488,7 @@ class AuthController
     public function forgotPassword(Request $request, Response $response): Response
     {
         $data = $request->getParsedBody();
-        $email = trim((string) ($data['email'] ?? ''));
+        $email = trim(self::field($data, 'email'));
 
         // Always respond success regardless of whether the email exists, to avoid
         // account enumeration.
@@ -542,8 +553,8 @@ class AuthController
     public function resetPassword(Request $request, Response $response): Response
     {
         $data = $request->getParsedBody();
-        $token = (string) ($data['token'] ?? '');
-        $password = (string) ($data['password'] ?? '');
+        $token = self::field($data, 'token');
+        $password = self::field($data, 'password');
 
         if ($token === '' || $password === '') {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Token and new password are required'], 400);
@@ -634,7 +645,7 @@ class AuthController
         }
 
         $data = $request->getParsedBody();
-        $password = (string) ($data['password'] ?? '');
+        $password = self::field($data, 'password');
         if ($password === '' || !$this->authService->verifyPassword($userId, $password)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Your current password is required to delete your account'], 400);
         }
@@ -931,8 +942,8 @@ class AuthController
             return $this->jsonError($response, 'Two-factor authentication is not available', 503);
         }
         $data = $request->getParsedBody();
-        $mfaToken = (string) ($data['mfaToken'] ?? '');
-        $code = (string) ($data['code'] ?? '');
+        $mfaToken = self::field($data, 'mfaToken');
+        $code = self::field($data, 'code');
         if ($mfaToken === '' || $code === '') {
             return $this->jsonError($response, 'A verification code is required', 400);
         }
@@ -1022,7 +1033,7 @@ class AuthController
         }
         $data = $request->getParsedBody();
         try {
-            $codes = $this->mfaService->enable($user->id, (string) ($data['code'] ?? ''));
+            $codes = $this->mfaService->enable($user->id, self::field($data, 'code'));
             // A session from before two-factor mustn't pass as one from after it: any other ends.
             $this->authService->revokeTokens($user->id);
             $fresh = $this->authService->getUserById($user->id);
@@ -1047,7 +1058,7 @@ class AuthController
             return $blocked;
         }
         $data = $request->getParsedBody();
-        if (!$this->authService->verifyPassword($user->id, (string) ($data['password'] ?? ''))) {
+        if (!$this->authService->verifyPassword($user->id, self::field($data, 'password'))) {
             // Not 401: the client takes that to mean the session has gone, and tears it down.
             return $this->jsonError($response, 'Incorrect password', 403, 'password_incorrect');
         }
@@ -1056,7 +1067,7 @@ class AuthController
         if (!is_array($data) || !array_key_exists('code', $data)) {
             return $this->jsonError($response, 'This page is out of date, so it did not ask for your code. Reload it and try again.', 403, 'mfa_code_required');
         }
-        if (!$this->mfaService->verifyChallenge($user->id, (string) ($data['code'] ?? ''))) {
+        if (!$this->mfaService->verifyChallenge($user->id, self::field($data, 'code'))) {
             return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 403, 'mfa_code_required');
         }
         $this->mfaService->disable($user->id);
@@ -1082,7 +1093,7 @@ class AuthController
             return $blocked;
         }
         $data = $request->getParsedBody();
-        if (!$this->mfaService->verifyChallenge($user->id, (string) ($data['code'] ?? ''))) {
+        if (!$this->mfaService->verifyChallenge($user->id, self::field($data, 'code'))) {
             return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 403, 'mfa_code_required');
         }
         $codes = $this->mfaService->regenerateRecoveryCodes($user->id);
