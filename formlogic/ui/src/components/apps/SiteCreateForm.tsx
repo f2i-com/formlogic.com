@@ -8,6 +8,7 @@ import { Input } from '../ui/Input';
 import { createSiteApp } from '../../lib/siteApps';
 import { softnWorkspacePath } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
+import { useFocusIfInView } from '../../hooks/useFocusIfInView';
 
 const isFileDrag = (event: React.DragEvent) => [...(event.dataTransfer?.types ?? [])].includes('Files');
 
@@ -20,6 +21,9 @@ export function SiteCreateForm({ disabled = false }: { disabled?: boolean }) {
   const [error, setError] = useState('');
   const lock = useRef(false);
   const input = useRef<HTMLInputElement>(null);
+  // Asked for at once where it is in view (beside the choice of what to make, on a wide screen).
+  const nameField = useRef<HTMLInputElement>(null);
+  useFocusIfInView(nameField);
   const canCreate = !!name.trim() && !!file && !creating && !disabled;
 
   const takeFile = (picked: File | null) => { setFile(picked); setError(''); };
@@ -49,7 +53,7 @@ export function SiteCreateForm({ disabled = false }: { disabled?: boolean }) {
     }}>
     <div>
       <label htmlFor="site-app-name" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">App name</label>
-      <Input id="site-app-name" value={name} onChange={event => setName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void create(); }} placeholder="e.g. Recipe Box, Team Directory, Booking Site" maxLength={120} disabled={creating || disabled} autoFocus />
+      <Input id="site-app-name" ref={nameField} value={name} onChange={event => setName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void create(); }} placeholder="e.g. Recipe Box, Team Directory, Booking Site" maxLength={120} disabled={creating || disabled} />
     </div>
     <div>
       <label htmlFor="site-app-build" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">Your build (.zip)</label>

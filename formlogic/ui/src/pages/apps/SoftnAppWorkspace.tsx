@@ -136,7 +136,8 @@ function Workspace({ app }: { app: App }) {
     const moved = sectionShown.current !== section;
     sectionShown.current = section;
     if (!location.hash) {
-      if (moved) document.documentElement.scrollTop = 0;
+      // (at once, as a page opens: the workspace's smooth scrolling is for moving within a section)
+      if (moved) document.documentElement.scrollTo?.({ top: 0, left: 0, behavior: 'instant' });
       return;
     }
     if (!hasProject) return;

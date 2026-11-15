@@ -12,6 +12,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { useBroadcastNotices } from '../../hooks/useBroadcastNotices';
+import { usePageTopOnNavigation } from '../../hooks/usePageTopOnNavigation';
 import { cn } from '../../lib/utils';
 
 export function AppShell() {
@@ -42,10 +43,14 @@ export function AppShell() {
   // persisted preference on every resize. The sidebar now respects the user's
   // explicit choice at all desktop widths.)
 
+  // A page the person goes to opens at its top: the "+" on a phone's bar opened Create app as far
+  // down as the page it was pressed on (usePageTopOnNavigation has which moves are left where they are).
+  usePageTopOnNavigation();
+
   // Move focus to the main region on navigation so keyboard / screen-reader
   // users land on the page content instead of re-traversing the chrome.
   useEffect(() => {
-    mainRef.current?.focus();
+    mainRef.current?.focus({ preventScroll: true });
   }, [location.pathname]);
 
   // The site is closed for maintenance: non-admins get the admin's message

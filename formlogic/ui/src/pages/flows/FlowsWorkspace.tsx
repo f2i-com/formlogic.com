@@ -506,9 +506,11 @@ export function FlowsWorkspace() {
   };
 
   return (
-    // Mobile height mirrors AppShell's real bottom-nav padding — pb-[calc(5rem+safe-area)] —
-    // so the workspace fills the viewport exactly (4rem here left a 16px page scroll).
-    <div className="flex h-[calc(100dvh-5rem-env(safe-area-inset-bottom)-var(--fl-demo-banner-h,0px))] flex-col overflow-hidden md:h-[calc(100dvh-var(--fl-demo-banner-h,0px))]">
+    // On a phone the height is the screen less AppShell's own padding at its foot (--fl-mobile-reserve:
+    // the bar and the room kept for the floating chat button), so the workspace fills the screen
+    // exactly and only its pane scrolls. It took 5rem off, the padding as it once was, and the page
+    // under it scrolled 48px as well: one swipe moved the pane, the next the whole page.
+    <div className="flex h-[calc(100dvh-var(--fl-mobile-reserve)-var(--fl-demo-banner-h,0px))] flex-col overflow-hidden md:h-[calc(100dvh-var(--fl-demo-banner-h,0px))]">
       {/* The page Header renders only on the start page — an open flow takes the FULL page
           (diagram-style: the editor toolbar carries the back link).
           This workspace is a fixed-height box that already sits BELOW the demo/acting

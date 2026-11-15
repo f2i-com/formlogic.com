@@ -23,6 +23,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { useVaultStore } from '../../stores/vaultStore';
 import { cn } from '../../lib/utils';
+import { useFocusIfInView } from '../../hooks/useFocusIfInView';
 import type { AppFormPrivacyDefault, AppKind } from '../../types/app';
 import { SoftnCreateForm } from './SoftnCreateForm';
 import { SiteCreateForm } from '../../components/apps/SiteCreateForm';
@@ -68,6 +69,10 @@ export function AppCreateStart() {
   const [appKind, setAppKind] = useState<AppKind>('internal');
   const [showVaultSetup, setShowVaultSetup] = useState(false);
   const [showVaultUnlock, setShowVaultUnlock] = useState(false);
+  // The name is asked for at once where it is in view (beside the choice, on a wide screen); on a
+  // phone the page opens at its top, at the choice, where autoFocus took it down to the field.
+  const nameField = useRef<HTMLInputElement>(null);
+  useFocusIfInView(nameField, build);
 
   // Source-specific readiness (audit FL-23): only a default AI that can actually
   // EXECUTE counts — otherwise the connect doors come first.
@@ -228,11 +233,11 @@ export function AppCreateStart() {
                   </label>
                   <Input
                     id="new-app-name"
+                    ref={nameField}
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') void create(); }}
                     placeholder="e.g. Plumbing Operations, Client Portal"
-                    autoFocus
                     disabled={creating}
                     maxLength={120}
                   />

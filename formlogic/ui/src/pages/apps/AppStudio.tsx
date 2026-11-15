@@ -78,8 +78,9 @@ export function AppStudio() {
   const acting = useAdminActing();
   const nativeDatabase = useNativeTables(appId && data.app && !isDemoLocalId(appId) && !acting ? appId : undefined, activeStep);
 
-  // Footer navigation should reveal the next section from its heading.
-  useEffect(() => { window.scrollTo(0, 0); }, [appId, activeStep]);
+  // Footer navigation should reveal the next section from its heading: at once, as a page opens (the
+  // workspace's smooth scrolling ran the page up through the whole of the next section).
+  useEffect(() => { window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); }, [appId, activeStep]);
 
   // The save indicator starts clean per app — one app's failure must not haunt
   // the next one's top bar.

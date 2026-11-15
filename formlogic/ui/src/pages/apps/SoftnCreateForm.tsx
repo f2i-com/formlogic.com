@@ -15,6 +15,7 @@ import { backendOf, withBackend } from '../../lib/softnBackend';
 import { api } from '../../lib/api';
 import { createSoftnApp, projectFromUpload, projectHasBackend, softnWorkspacePath, uploadName, type SoftnStart } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
+import { useFocusIfInView } from '../../hooks/useFocusIfInView';
 import { toast } from '../../stores/toastStore';
 import { useUIStore } from '../../stores/uiStore';
 
@@ -68,6 +69,10 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
   const [backendError, setBackendError] = useState('');
   const [readingBackend, setReadingBackend] = useState(false);
   const backendInput = useRef<HTMLInputElement>(null);
+  // The name, asked for at once where it is in view (beside the choice of what to make, on a wide
+  // screen), and never for an upload, whose file names the app.
+  const nameInput = useRef<HTMLInputElement>(null);
+  useFocusIfInView(nameInput);
   // The backend file most recently chosen, as `latest` is for the app's file.
   const latestBackend = useRef<File | null>(null);
   /** Read the backend file and put it with the page at once, so what would refuse it shows now, not at Create. */
@@ -169,7 +174,7 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
     <label htmlFor="softn-app-name" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">
       App name{method === 'upload' && <span className="font-normal text-gray-400 dark:text-slate-500"> (optional: an uploaded app keeps its own)</span>}
     </label>
-    <Input id="softn-app-name" value={name} onChange={event => setName(event.target.value)} placeholder={method === 'upload' && review ? review.name : 'e.g. Recipe Box, Team Directory, Booking Site'} maxLength={120} disabled={creating || disabled} autoFocus={!uploadOnly} />
+    <Input id="softn-app-name" ref={uploadOnly ? undefined : nameInput} value={name} onChange={event => setName(event.target.value)} placeholder={method === 'upload' && review ? review.name : 'e.g. Recipe Box, Team Directory, Booking Site'} maxLength={120} disabled={creating || disabled} />
   </div>;
 
   const dropZone = <div data-testid="softn-drop-zone" className={cn('rounded-xl border-2 border-dashed text-center transition-colors', uploadOnly ? 'px-5 py-8' : 'p-5', dragging ? 'border-primary-400 bg-primary-50/70 dark:border-primary-500/60 dark:bg-primary-500/10' : 'border-gray-300 dark:border-white/15')}>
