@@ -28,7 +28,15 @@ class BlueprintService
 {
     public const MAX_BLUEPRINTS_PER_OWNER = 100;
     public const MAX_ELEMENTS_PER_BLUEPRINT = 500;
-    public const MAX_OPERATIONS_PER_BATCH = 100;
+    /**
+     * A batch may change every element of the largest diagram twice over. Tidy up places each card
+     * (a layout.set each), and deleting a selection deletes each card and line in it and lets go
+     * of what sat in a deleted box (an update and a place each), all in ONE batch, so that one
+     * Undo takes it all back; that undo is a batch of the same size. At 100 both were refused on
+     * a diagram of more than 100 cards. What the operations carry is held by the request body
+     * cap (2 MiB) and each element's own properties cap.
+     */
+    public const MAX_OPERATIONS_PER_BATCH = 2 * self::MAX_ELEMENTS_PER_BLUEPRINT;
     public const ELEMENT_ID_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/';
 
     public const ELEMENT_TYPES = [
@@ -174,7 +182,8 @@ class BlueprintService
      *   blueprint.element.create  {targetId, elementType, resourceRef?, properties?, layout?}
      *   blueprint.element.update  {targetId, properties? , resourceRef?}   (semantic)
      *   blueprint.element.delete  {targetId}                                (tombstone)
-     *   blueprint.layout.set      {targetId, layout}                        (layout-only)
+     *   blueprint.layout.set      {targetId, layout}                        (layout-only;
+     *                             an empty layout forgets the saved place)
      *   blueprint.viewport.set    {viewport}                                (layout-only)
      */
     /**
@@ -324,9 +333,11 @@ class BlueprintService
     /**
      * §14 undo: apply the stored INVERSES of the newest undoable change set as a NEW
      * audited change set (never a rewind — history only moves forward). Inverses run in
-     * REVERSE order; change sets whose operations have no inverses (layout-only) are
-     * skipped when finding the target. Applying against the CURRENT revision means an
-     * inverse that no longer fits (e.g. the element was since deleted) refuses cleanly.
+     * REVERSE order; change sets whose operations have no inverses (a viewport move, or a
+     * place recorded before places had inverses) are skipped when finding the target. A
+     * change set that only moves cards is a target like any other (see inverseFor).
+     * Applying against the CURRENT revision means an inverse that no longer fits (e.g. the
+     * element was since deleted) refuses cleanly.
      *
      * @return array{changeSetId: string, semanticRevision: int, layoutRevision: int, undid: string}
      */
@@ -580,11 +591,25 @@ class BlueprintService
         foreach ($existing->fetchAll() as $element) {
             $live[(string) $element['id']] = (string) $element['element_type'];
         }
+        // Each line's two ends as they stand, read once for the batch: a delete is refused while
+        // a line still ends on what it deletes, and a batch that deletes many cards and their
+        // lines asked the database for every line again at each delete.
+        $edges = $this->mysql->prepare(
+            "SELECT id, properties_json FROM blueprint_elements WHERE blueprint_id = :b AND deleted_at IS NULL AND element_type = 'edge'"
+        );
+        $edges->execute(['b' => $blueprintId]);
+        $edgeEnds = [];
+        foreach ($edges->fetchAll() as $edge) {
+            $properties = is_string($edge['properties_json']) ? json_decode($edge['properties_json'], true) : null;
+            $edgeEnds[(string) $edge['id']] = is_array($properties)
+                ? [$properties['sourceId'] ?? null, $properties['targetId'] ?? null]
+                : [null, null];
+        }
 
         $planned = [];
         $seq = 0;
         foreach ($operations as $op) {
-            $planned[] = $this->validateOperation($blueprintId, $op, $live, $seq++);
+            $planned[] = $this->validateOperation($op, $live, $edgeEnds, $seq++);
         }
         if (count($live) > self::MAX_ELEMENTS_PER_BLUEPRINT) {
             throw new \InvalidArgumentException('Element limit reached (' . self::MAX_ELEMENTS_PER_BLUEPRINT . ')');
@@ -596,8 +621,10 @@ class BlueprintService
     /**
      * Structural validation of one operation against the WORKING element set ($live is
      * mutated so later ops in the batch see earlier ones). Returns the apply plan.
+     *
+     * @param array<string, array{0: mixed, 1: mixed}> $edgeEnds each stored line's [sourceId, targetId]
      */
-    private function validateOperation(string $blueprintId, mixed $op, array &$live, int $seq): array
+    private function validateOperation(mixed $op, array &$live, array $edgeEnds, int $seq): array
     {
         if (!is_array($op)) {
             throw new \InvalidArgumentException('Each operation must be an object');
@@ -681,11 +708,11 @@ class BlueprintService
                 // Deleting a node an edge still references leaves a dangling edge — refuse
                 // so diagrams stay structurally sound (delete the edge first).
                 foreach ($live as $id => $elementType) {
-                    if ($elementType !== 'edge' || $id === $targetId) {
+                    if ($elementType !== 'edge' || (string) $id === $targetId) {
                         continue;
                     }
-                    $edge = $this->fetchElementProperties($blueprintId, (string) $id);
-                    if (($edge['sourceId'] ?? null) === $targetId || ($edge['targetId'] ?? null) === $targetId) {
+                    [$from, $to] = $edgeEnds[(string) $id] ?? [null, null];
+                    if ($from === $targetId || $to === $targetId) {
                         throw new \InvalidArgumentException("Element '{$targetId}' is still referenced by edge '{$id}'");
                     }
                 }
@@ -756,6 +783,13 @@ class BlueprintService
                 ')->execute(['rev' => $semanticRevision, 'b' => $blueprintId, 'id' => $plan['targetId']]);
                 break;
             case 'blueprint.layout.set':
+                // An empty layout says the element has no saved place: the undo of the first
+                // place given to a card the canvas had placed by itself.
+                if ($plan['layout'] === []) {
+                    $this->mysql->prepare('DELETE FROM blueprint_layouts WHERE blueprint_id = :b AND element_id = :id')
+                        ->execute(['b' => $blueprintId, 'id' => $plan['targetId']]);
+                    break;
+                }
                 $this->upsertLayout($blueprintId, $plan['targetId'], $plan['layout']);
                 break;
             case 'blueprint.viewport.set':
@@ -832,8 +866,24 @@ class BlueprintService
                     'resourceRef' => $row['resource_ref_json'] !== null ? json_decode((string) $row['resource_ref_json'], true) : null,
                 ];
             }
+            case 'blueprint.layout.set': {
+                // A place is undone too, so a change set that moves things is undone whole: Tidy
+                // up, and a card let go of by a box that is deleted (without this, Undo brought
+                // the box back and left the card at its canvas place, now read inside the box,
+                // and Undo after Tidy up skipped it and undid the change before). A plain drag is
+                // then an undo step of its own, as in most drawing tools: Undo puts the card back.
+                $stmt = $this->mysql->prepare(
+                    'SELECT layout_json FROM blueprint_layouts WHERE blueprint_id = :b AND element_id = :id LIMIT 1'
+                );
+                $stmt->execute(['b' => $blueprintId, 'id' => $plan['targetId']]);
+                $raw = $stmt->fetchColumn();
+                $before = is_string($raw) ? json_decode($raw, true) : null;
+                // No place saved before (the canvas placed the card by itself): the undo forgets
+                // the place given (an empty layout, see applyOperation).
+                return ['type' => 'blueprint.layout.set', 'targetId' => $plan['targetId'], 'layout' => is_array($before) ? $before : []];
+            }
             default:
-                return null; // layout/viewport moves are not undo targets in v1
+                return null; // a viewport move is not an undo target
         }
     }
 
@@ -870,19 +920,6 @@ class BlueprintService
         if (strlen((string) json_encode($value)) > $cap) {
             throw new \InvalidArgumentException("{$label} exceeds the " . intdiv($cap, 1024) . ' KiB cap');
         }
-    }
-
-    /** @return array<string, mixed> */
-    private function fetchElementProperties(string $blueprintId, string $elementId): array
-    {
-        $stmt = $this->mysql->prepare('
-            SELECT properties_json FROM blueprint_elements
-            WHERE blueprint_id = :b AND id = :id AND deleted_at IS NULL LIMIT 1
-        ');
-        $stmt->execute(['b' => $blueprintId, 'id' => $elementId]);
-        $raw = $stmt->fetchColumn();
-        $decoded = is_string($raw) ? json_decode($raw, true) : null;
-        return is_array($decoded) ? $decoded : [];
     }
 
     private function upsertLayout(string $blueprintId, string $elementId, array $layout): void

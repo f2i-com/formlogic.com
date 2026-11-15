@@ -332,6 +332,134 @@ class BlueprintTest extends TestCase
         $this->assertSame('hello', $elements[0]['properties']['text'] ?? null);
     }
 
+    /** @return array<string, array<string, mixed>> the live elements by id */
+    private function elementsById(string $blueprintId): array
+    {
+        return array_column(self::$blueprints->getBlueprint($this->userId, $blueprintId)['elements'], null, 'id');
+    }
+
+    public function testUndoAfterTidyUpPutsTheCardsBackAndLeavesTheChangeBeforeIt(): void
+    {
+        $blueprint = $this->createBlueprint();
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 0,
+            'operations' => [
+                $this->op('blueprint.element.create', ['targetId' => 'a', 'elementType' => 'form', 'layout' => ['x' => 100, 'y' => 100]]),
+                $this->op('blueprint.element.create', ['targetId' => 'b', 'elementType' => 'form', 'layout' => ['x' => 700, 'y' => 450]]),
+            ],
+        ]);
+        // The last change before Tidy up: a note, placed by the canvas itself (no saved place).
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 1,
+            'operations' => [$this->op('blueprint.element.create', ['targetId' => 'c', 'elementType' => 'note', 'properties' => ['text' => 'Remember the deposit']])],
+        ]);
+        // Tidy up: ONE layout batch that moves every card.
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'operations' => [
+                $this->op('blueprint.layout.set', ['targetId' => 'a', 'layout' => ['x' => 108, 'y' => 100]]),
+                $this->op('blueprint.layout.set', ['targetId' => 'b', 'layout' => ['x' => 386, 'y' => 100]]),
+                $this->op('blueprint.layout.set', ['targetId' => 'c', 'layout' => ['x' => 100, 'y' => 215]]),
+            ],
+        ]);
+
+        $undo = self::$blueprints->undoLastChangeSet($this->userId, $blueprint['id']);
+        $this->assertSame(2, $undo['semanticRevision'], 'putting cards back is not a semantic change');
+        $byId = $this->elementsById($blueprint['id']);
+        $this->assertSame(['a', 'b', 'c'], array_keys($byId), 'the note added before Tidy up is still there');
+        $this->assertEquals(['x' => 100, 'y' => 100], $byId['a']['layout']);
+        $this->assertEquals(['x' => 700, 'y' => 450], $byId['b']['layout']);
+        $this->assertNull($byId['c']['layout'], 'a card that had no saved place has none again');
+
+        // Undo again redoes the tidy (the undo of the undo), places and all.
+        self::$blueprints->undoLastChangeSet($this->userId, $blueprint['id']);
+        $byId = $this->elementsById($blueprint['id']);
+        $this->assertEquals(['x' => 108, 'y' => 100], $byId['a']['layout']);
+        $this->assertEquals(['x' => 100, 'y' => 215], $byId['c']['layout']);
+    }
+
+    public function testUndoAfterDeletingABoxPutsWhatWasInItBackInItsPlaceInTheBox(): void
+    {
+        $blueprint = $this->createBlueprint();
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 0,
+            'operations' => [
+                $this->op('blueprint.element.create', ['targetId' => 'box', 'elementType' => 'shape', 'properties' => ['shape' => 'rect', 'w' => 360, 'h' => 240], 'layout' => ['x' => 200, 'y' => 160]]),
+                $this->op('blueprint.element.create', ['targetId' => 'in', 'elementType' => 'note', 'properties' => ['text' => 'Inside the box', 'parentId' => 'box'], 'layout' => ['x' => 40, 'y' => 50]]),
+            ],
+        ]);
+        // The canvas's delete: the note is let go of where it is drawn on the canvas, the box goes.
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], [
+            'baseSemanticRevision' => 1,
+            'operations' => [
+                $this->op('blueprint.element.update', ['targetId' => 'in', 'properties' => ['text' => 'Inside the box']]),
+                $this->op('blueprint.layout.set', ['targetId' => 'in', 'layout' => ['x' => 240, 'y' => 210]]),
+                $this->op('blueprint.element.delete', ['targetId' => 'box']),
+            ],
+        ]);
+        $this->assertEquals(['x' => 240, 'y' => 210], $this->elementsById($blueprint['id'])['in']['layout']);
+
+        self::$blueprints->undoLastChangeSet($this->userId, $blueprint['id']);
+        $byId = $this->elementsById($blueprint['id']);
+        $this->assertArrayHasKey('box', $byId);
+        $this->assertSame('box', $byId['in']['properties']['parentId'] ?? null);
+        $this->assertEquals(['x' => 40, 'y' => 50], $byId['in']['layout'], 'its place inside the box, not its canvas place read inside the box');
+    }
+
+    public function testOneBatchPlacesOrDeletesEveryCardOfABigDiagramAndOneUndoTakesItBack(): void
+    {
+        $blueprint = $this->createBlueprint();
+        $cards = 110;
+        $create = [];
+        for ($i = 0; $i < $cards; $i++) {
+            $create[] = $this->op('blueprint.element.create', ['targetId' => "n{$i}", 'elementType' => 'note', 'layout' => ['x' => $i * 10, 'y' => 0]]);
+        }
+        // A line between each card and the next.
+        for ($i = 1; $i < $cards; $i++) {
+            $create[] = $this->op('blueprint.element.create', ['targetId' => "l{$i}", 'elementType' => 'edge', 'properties' => ['edgeType' => 'relation', 'sourceId' => 'n' . ($i - 1), 'targetId' => "n{$i}"]]);
+        }
+        // Sketched a hundred at a time (the old cap), so what is tested below is Tidy up and Delete.
+        foreach (array_chunk($create, 100) as $revision => $chunk) {
+            self::$blueprints->commitOperations($this->userId, $blueprint['id'], ['baseSemanticRevision' => $revision, 'operations' => $chunk]);
+        }
+        $sketched = count(array_chunk($create, 100));
+
+        // Tidy up of 110 cards: one batch (it was refused, "operations must be 1-100 entries").
+        $tidy = [];
+        for ($i = 0; $i < $cards; $i++) {
+            $tidy[] = $this->op('blueprint.layout.set', ['targetId' => "n{$i}", 'layout' => ['x' => 0, 'y' => $i * 120]]);
+        }
+        self::$blueprints->commitOperations($this->userId, $blueprint['id'], ['operations' => $tidy]);
+        $this->assertEquals(['x' => 0, 'y' => 1200], $this->elementsById($blueprint['id'])['n10']['layout']);
+        self::$blueprints->undoLastChangeSet($this->userId, $blueprint['id']);
+        $this->assertEquals(['x' => 100, 'y' => 0], $this->elementsById($blueprint['id'])['n10']['layout']);
+
+        // Delete everything selected at once, the lines first, as the canvas sends it: 219 operations.
+        $delete = [];
+        for ($i = 1; $i < $cards; $i++) {
+            $delete[] = $this->op('blueprint.element.delete', ['targetId' => "l{$i}"]);
+        }
+        for ($i = 0; $i < $cards; $i++) {
+            $delete[] = $this->op('blueprint.element.delete', ['targetId' => "n{$i}"]);
+        }
+        $deleted = self::$blueprints->commitOperations($this->userId, $blueprint['id'], ['baseSemanticRevision' => $sketched, 'operations' => $delete]);
+        $this->assertSame([], self::$blueprints->getBlueprint($this->userId, $blueprint['id'])['elements']);
+        $undo = self::$blueprints->undoLastChangeSet($this->userId, $blueprint['id']);
+        $this->assertSame($deleted['semanticRevision'] + 1, $undo['semanticRevision']);
+        $this->assertCount(2 * $cards - 1, $this->elementsById($blueprint['id']), 'one Undo brings every card and line back');
+
+        // The cap still holds past one change per element, twice over.
+        $tooMany = [];
+        for ($i = 0; $i <= BlueprintService::MAX_OPERATIONS_PER_BATCH; $i++) {
+            $tooMany[] = $this->op('blueprint.layout.set', ['targetId' => 'n' . ($i % $cards), 'layout' => ['x' => $i, 'y' => 0]]);
+        }
+        try {
+            self::$blueprints->commitOperations($this->userId, $blueprint['id'], ['operations' => $tooMany]);
+            $this->fail('expected the batch cap');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('operations must be 1-' . BlueprintService::MAX_OPERATIONS_PER_BATCH, $e->getMessage());
+        }
+    }
+
     public function testOperationLogRecordsInversesAndRefusesReplays(): void
     {
         $blueprint = $this->createBlueprint();
