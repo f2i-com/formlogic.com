@@ -1138,15 +1138,25 @@ as their own.
 - **`refused`**: `off` (the owner has not allowed it), `signed_out` (an app is added to an account:
   a visitor has none, and a session on an app's own domain opens that app alone), `busy` (an offer is
   already open) or `invalid` (`from` is not such a route).
-- **`status`**: `added` carries the new app's `name`; `declined`, the person said no; `failed`
-  carries a `reason`, `invalid` (what the route handed over is not an app FormLogic can add),
-  `limit` (the person's plan has lapsed) or `failed`.
+- **`status`**: `added` carries the app's `name`, and `updated: true` where the person chose to
+  update the app they had added before (below); `declined`, the person said no; `failed` carries a
+  `reason`, `invalid` (what the route handed over is not an app FormLogic can add), `limit` (the
+  person's plan has lapsed) or `failed`.
 
 FormLogic asks the member in its own words, in its own sheet over the app; nothing is fetched until
 they agree. The files are then read exactly as a chosen `.softn` file is, by the importer and its
 rules, so nothing an upload would be refused for is let in this way, and the new app is made in the
 person's own account, as an upload's is. The offering app is told how it went and nothing about the
 app that was made but its name.
+
+**Offered again.** FormLogic keeps with the app it adds which app offered it and the `from` it came
+from (the app's `settings.softnMadeBy`). When the same app offers from the same `from` again, and the
+person still owns that app, FormLogic's sheet asks whether to **Update it**: its files become that
+app's next version, as the owner's own upload of a new version does, so it keeps its address, who
+may open it and what has been entered in it, and its History keeps the version before. **Add a copy**
+is still there. Only the person's own list of apps is read for this, and the offering app learns
+only whether it was updated. Give each thing your app makes one `from` that stays the same (Narrator
+uses its project's id), and publishing again updates it.
 
 ```javascript
 softn.backend.call("formlogicAddApp", {op: "offer", from: "/api/projects/" + id + "/export", name: title}, function (response) {

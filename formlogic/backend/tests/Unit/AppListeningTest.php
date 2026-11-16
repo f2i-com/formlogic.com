@@ -53,6 +53,21 @@ final class AppListeningTest extends TestCase
         $this->assertSame(['softnFiles' => 'ask', 'softnApps' => 'allow'], $sanitize->invoke($service, ['softnFiles' => 'ask', 'softnListen' => 'yes', 'softnApps' => 'allow']));
     }
 
+    public function testWhereAnOfferedAppCameFromIsKeptToItsShape(): void
+    {
+        $service = (new \ReflectionClass(AppService::class))->newInstanceWithoutConstructor();
+        $sanitize = new \ReflectionMethod(AppService::class, 'sanitizeAppSettings');
+        $made = ['app' => 'b7c1-app_9', 'from' => '/api/files?id=p123'];
+        $this->assertSame($made, $sanitize->invoke($service, ['softnMadeBy' => $made + ['extra' => 'dropped']])['softnMadeBy']);
+        foreach ([
+            'text', null, [], ['app' => 'a'], ['from' => '/api/x'], ['app' => 7, 'from' => '/api/x'], ['app' => 'a b', 'from' => '/api/x'], ['app' => str_repeat('a', 65), 'from' => '/api/x'],
+            ['app' => 'a', 'from' => 'api/x'], ['app' => 'a', 'from' => '/api/site/ai'], ['app' => 'a', 'from' => '/API/SITE/x'], ['app' => 'a', 'from' => 'https://elsewhere.example/api/x'],
+            ['app' => 'a', 'from' => '/api/../admin'], ['app' => 'a', 'from' => '/api/' . str_repeat('x', 300)], ['app' => 'a', 'from' => "/api/x\nSet-Cookie: y"], ['app' => 'a', 'from' => ['/api/x']],
+        ] as $odd) {
+            $this->assertArrayNotHasKey('softnMadeBy', $sanitize->invoke($service, ['softnMadeBy' => $odd]), var_export($odd, true));
+        }
+    }
+
     // ------------------------------------------------------------------ when it is on
 
     private function listening(bool $speechServer = true, bool $appAi = true): AppListening

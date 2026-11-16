@@ -31,7 +31,8 @@ export type DictateAnswer =
 export type AddAppAnswer =
   | { state: 'asking' | 'adding' | 'idle' }
   | { state: 'refused'; reason: 'off' | 'signed_out' | 'busy' | 'invalid' }
-  | { state: 'added'; name: string }
+  // `updated`: the person chose to update the app of theirs that an earlier offer from the same address added.
+  | { state: 'added'; name: string; updated?: true }
   | { state: 'declined'; reason: 'declined' }
   | { state: 'failed'; reason: 'invalid' | 'limit' | 'failed' };
 

@@ -326,7 +326,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   const scope = project?.storageScope;
   const listenAppId = !scope ? null : scope.access === 'members' ? `${scope.appId}:${scope.userId}` : scope.appId;
   const dictation = useNativeDictation({ slug, appId: listenAppId, enabled: listens, visitor: !plugin && !!project?.formlogic?.visitors });
-  const offering = useAppOffer({ slug, enabled: offers, who: `${userId ?? ''}/${generation}` });
+  const offering = useAppOffer({ slug, appId: scope?.appId ?? '', hostName: name || 'This app', enabled: offers, who: `${userId ?? ''}/${generation}` });
   const { call: dictate, release: stopListening } = dictation;
   const { call: offerApp } = offering;
   const host = useMemo<NativeHost>(() => ({
@@ -362,7 +362,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     {/* Listening: FormLogic's own question the first time, then its own sign for as long as the microphone is asked for or open. */}
     {dictation.view === 'question' && <ListenQuestion appName={name || 'this app'} onAnswer={dictation.answer} />}
     {(dictation.view === 'opening' || dictation.view === 'listening') && <ListeningBar appName={name || 'This app'} listening={dictation.view === 'listening'} onStop={dictation.halt} />}
-    {offering.offer?.open && <AddAppSheet offer={offering.offer} hostName={name || 'This app'} onAdd={() => void offering.add()} onClose={offering.close} />}</div> : !error ? <AppSplash look={look} label={name ? `Opening ${name}` : 'Opening the app'} /> : <div className="p-6">
+    {offering.offer?.open && <AddAppSheet offer={offering.offer} hostName={name || 'This app'} onAdd={() => void offering.add()} onUpdate={() => void offering.update()} onClose={offering.close} />}</div> : !error ? <AppSplash look={look} label={name ? `Opening ${name}` : 'Opening the app'} /> : <div className="p-6">
     {/* On a card of its own: the page around it may wear the app's loading colours, dark or light. */}
     <div className="mx-auto max-w-md rounded-2xl bg-white/95 p-5 shadow-sm dark:bg-slate-900/95">
       <p role="alert" className="text-sm text-slate-800 dark:text-slate-200">{error}</p>

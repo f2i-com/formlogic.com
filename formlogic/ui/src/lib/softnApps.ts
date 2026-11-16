@@ -5,7 +5,7 @@ import { api } from './api';
 import { importNativeProject, type NativeProject } from './nativeHosting';
 import { backendOf, withBackend } from './softnBackend';
 import { useAppStore } from '../stores/appStore';
-import type { App } from '../types/app';
+import type { App, AppSettings } from '../types/app';
 
 /** Whether the app is a hosted SoftN app (created as one, or marked so later). */
 export function isSoftnApp(app: Pick<App, 'settings'> | null | undefined): boolean {
@@ -80,7 +80,7 @@ export const SOFTN_NEEDS_ACCOUNT = 'SoftN apps are hosted on the server, so they
  * Create a SoftN app and install its first version. A .softn file (with a backend of its own or
  * none) is read before the app is created, so a file this host cannot take creates nothing.
  */
-export async function createSoftnApp(input: { name: string; description?: string; start: SoftnStart }): Promise<CreatedSoftnApp> {
+export async function createSoftnApp(input: { name: string; description?: string; start: SoftnStart; settings?: Pick<AppSettings, 'softnMadeBy'> }): Promise<CreatedSoftnApp> {
   // The demo keeps its apps in this browser; a SoftN app runs on the server, so nothing is created.
   if (api.isDemoMode()) throw new Error(SOFTN_NEEDS_ACCOUNT);
   let uploaded = input.start.kind === 'upload' ? await projectFromUpload(input.start.file) : null;
@@ -95,7 +95,7 @@ export async function createSoftnApp(input: { name: string; description?: string
   const app = await useAppStore.getState().createApp({
     name,
     description: input.description?.trim() || undefined,
-    settings: { softnApp: true },
+    settings: { ...input.settings, softnApp: true },
   });
   if (!app) throw new Error(useAppStore.getState().error || 'Could not create the app. Please try again.');
   const result = uploaded ? await api.saveNativeProject(app.id, uploaded, 0, { how: 'upload' }) : await api.installNativeStarter(app.id);

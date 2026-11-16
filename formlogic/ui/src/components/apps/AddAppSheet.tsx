@@ -11,8 +11,12 @@ import { Button } from '../ui/Button';
  * it until they share it. The offering app hears whether it was added, and its name.
  *
  * It cannot be put away while the app is being made: the person said yes, and is shown how it went.
+ *
+ * Where an earlier offer from the same place added an app of theirs (`offer.replaces`), the first
+ * choice is to update that app (`onUpdate`): it keeps its address and what has been entered in it,
+ * and its history keeps the version before. Adding a copy is still there.
  */
-export function AddAppSheet({ offer, hostName, onAdd, onClose }: { offer: AppOffer; hostName: string; onAdd: () => void; onClose: () => void }) {
+export function AddAppSheet({ offer, hostName, onAdd, onUpdate, onClose }: { offer: AppOffer; hostName: string; onAdd: () => void; onUpdate?: () => void; onClose: () => void }) {
   const sheet = useRef<HTMLDivElement>(null);
   // The keyboard comes to the sheet, not to Add app: the person was in the app, and a key meant for it adds nothing.
   useEffect(() => { sheet.current?.focus(); }, []);
@@ -23,7 +27,10 @@ export function AddAppSheet({ offer, hostName, onAdd, onClose }: { offer: AppOff
   }, [onClose]);
   const adding = offer.state === 'adding';
   const name = offer.shown || 'this app';
-  const title = offer.state === 'added' ? 'Added to your apps.' : offer.state === 'failed' ? 'This app could not be added' : `Add ${name} to your apps?`;
+  const replaces = onUpdate ? offer.replaces : undefined;
+  const title = offer.state === 'added' ? (offer.updated ? 'Updated.' : 'Added to your apps.')
+    : offer.state === 'failed' ? (offer.updating ? 'Your app could not be updated' : 'This app could not be added')
+    : replaces ? `Update ${replaces.name}?` : `Add ${name} to your apps?`;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div ref={sheet} role="dialog" aria-modal="true" aria-labelledby="fl-add-app-title" tabIndex={-1}
@@ -34,7 +41,7 @@ export function AddAppSheet({ offer, hostName, onAdd, onClose }: { offer: AppOff
         </div>
         {offer.state === 'added' ? (
           <div className="mt-3 space-y-4">
-            <p className="break-words text-sm leading-6 text-gray-600 dark:text-slate-300">{offer.added?.name ?? name} is yours: only you can open it until you share it.</p>
+            <p className="break-words text-sm leading-6 text-gray-600 dark:text-slate-300">{offer.updated ? `${offer.added?.name ?? name} is up to date. Its history has the version it had before.` : `${offer.added?.name ?? name} is yours: only you can open it until you share it.`}</p>
             <div className="flex flex-wrap gap-2">
               {offer.added && (
                 // A tab of its own: the app that made it stays open here.
@@ -53,12 +60,17 @@ export function AddAppSheet({ offer, hostName, onAdd, onClose }: { offer: AppOff
           </div>
         ) : (
           <div className="mt-3 space-y-4">
-            <p className="break-words text-sm leading-6 text-gray-600 dark:text-slate-300">{hostName} made this app and is offering you a copy. It becomes yours: only you can open it until you share it.</p>
+            {replaces ? (
+              <p className="break-words text-sm leading-6 text-gray-600 dark:text-slate-300">{hostName} has a new version of {replaces.name}, which you added from it before. Updating keeps its address and what has been entered in it, and its history keeps the version it has now.</p>
+            ) : (
+              <p className="break-words text-sm leading-6 text-gray-600 dark:text-slate-300">{hostName} made this app and is offering you a copy. It becomes yours: only you can open it until you share it.</p>
+            )}
             <div className="flex flex-wrap gap-2">
-              <Button isLoading={adding} disabled={adding} onClick={onAdd}>Add app</Button>
+              {replaces && <Button isLoading={adding && offer.updating} disabled={adding} onClick={onUpdate}>Update it</Button>}
+              <Button variant={replaces ? 'outline' : undefined} isLoading={adding && !offer.updating} disabled={adding} onClick={onAdd}>{replaces ? 'Add a copy' : 'Add app'}</Button>
               <Button variant="outline" disabled={adding} onClick={onClose}>Not now</Button>
             </div>
-            {adding && <p role="status" className="text-sm text-gray-500 dark:text-slate-400">Adding it to your apps…</p>}
+            {adding && <p role="status" className="text-sm text-gray-500 dark:text-slate-400">{offer.updating ? `Updating ${replaces?.name ?? 'it'}…` : 'Adding it to your apps…'}</p>}
           </div>
         )}
       </div>

@@ -7,8 +7,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppReader, NativeHost } from '../../lib/nativeHost';
 
-const mocks = vi.hoisted(() => ({ getNativeRuntime: vi.fn(), createSoftnApp: vi.fn(), frames: [] as Array<{ host?: NativeHost }> }));
-vi.mock('../../lib/api', () => ({ api: { getNativeRuntime: mocks.getNativeRuntime, getAppMembership: vi.fn() } }));
+const mocks = vi.hoisted(() => ({ getNativeRuntime: vi.fn(), createSoftnApp: vi.fn(), getApps: vi.fn(), getNativeProject: vi.fn(), saveNativeProject: vi.fn(), frames: [] as Array<{ host?: NativeHost }> }));
+vi.mock('../../lib/api', () => ({ api: { getNativeRuntime: mocks.getNativeRuntime, getAppMembership: vi.fn(), getApps: mocks.getApps, getNativeProject: mocks.getNativeProject, saveNativeProject: mocks.saveNativeProject } }));
 // The importer is the real one: what it refuses of an upload it refuses here.
 vi.mock('../../lib/softnApps', () => ({ createSoftnApp: mocks.createSoftnApp }));
 vi.mock('./HostedAppFrame', () => ({
@@ -70,6 +70,9 @@ function signIn(id: string | null, extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   mocks.frames.length = 0;
   mocks.createSoftnApp.mockReset().mockResolvedValue({ app: created, project: { version: 1, files: made, assets: {}, access: 'members' } });
+  mocks.getApps.mockReset().mockResolvedValue({ data: { apps: [], count: 0 } });
+  mocks.getNativeProject.mockReset();
+  mocks.saveNativeProject.mockReset();
   read = vi.fn<AppReader>(async () => ({ data: { result: { status: 200, body: { files: made, name: 'Tiny notes' } } } }));
   signIn('member-a');
 });
@@ -258,6 +261,75 @@ describe('an offer', () => {
     await settle();
     expect(mocks.createSoftnApp).not.toHaveBeenCalled();
     expect(await status()).toEqual({ state: 'idle' });
+  });
+
+  it('keeps with the app it adds which app offered it and from where', async () => {
+    await open();
+    await ask({ op: 'offer', from: '/api/made/7', name: 'Tiny notes' });
+    await settle();
+    await press('Add app');
+    const [{ settings }] = mocks.createSoftnApp.mock.calls[0] as [{ settings?: unknown }];
+    expect(settings).toEqual({ softnMadeBy: { app: 'app-one', from: '/api/made/7' } });
+  });
+
+  it('offered again from the same place, asks to update the app it added before, which keeps its address and what is in it', async () => {
+    const mine = (id: string, from: string, more: Record<string, unknown> = {}) => ({ id, name: `App ${id}`, slug: id, canManage: true, status: 'draft', updatedAt: '2026-11-10 10:00:00', settings: { softnApp: true, softnMadeBy: { app: 'app-one', from } }, ...more });
+    mocks.getApps.mockResolvedValue({ data: { apps: [
+      mine('older', '/api/made/7'), mine('newer', '/api/made/7', { updatedAt: '2026-11-15 09:00:00', name: 'Tiny notes' }), mine('elsewhere', '/api/made/8'),
+      mine('shared', '/api/made/7', { canManage: false, updatedAt: '2026-11-16 09:00:00' }), mine('archived', '/api/made/7', { status: 'archived', updatedAt: '2026-11-16 09:00:00' }),
+      { ...mine('other-app', '/api/made/7', { updatedAt: '2026-11-16 09:00:00' }), settings: { softnMadeBy: { app: 'app-two', from: '/api/made/7' } } },
+    ], count: 6 } });
+    mocks.getNativeProject.mockResolvedValue({ data: { available: true, project: { version: 4, files: { 'manifest.json': '{}' }, assets: {}, access: 'members', home: true } } });
+    mocks.saveNativeProject.mockResolvedValue({ data: { project: { version: 5 } } });
+    await open();
+    expect(await ask({ op: 'offer', from: '/api/made/7', name: 'Tiny notes' })).toEqual({ state: 'asking' });
+    await settle();
+    expect(title()).toBe('Update Tiny notes?');
+    expect(sheet()!.textContent).toContain('Narrator has a new version of Tiny notes, which you added from it before. Updating keeps its address and what has been entered in it, and its history keeps the version it has now.');
+    expect([...sheet()!.querySelectorAll('button')].map(button => button.textContent || button.getAttribute('aria-label'))).toEqual(['Close', 'Update it', 'Add a copy', 'Not now']);
+    expect(read).not.toHaveBeenCalled();
+    await press('Update it');
+    expect(read).toHaveBeenCalledWith('/api/made/7');
+    expect(mocks.getNativeProject).toHaveBeenCalledWith('newer', { media: 'refs' });
+    const [id, project, version, how] = mocks.saveNativeProject.mock.calls[0] as [string, { files: Record<string, string>; home: boolean; access: string }, number, unknown];
+    expect([id, version, how, project.home, project.access]).toEqual(['newer', 4, { how: 'upload', summary: 'Updated from Narrator' }, true, 'members']);
+    expect(project.files['ui/main.ui']).toBe('<Text>Notes</Text>');
+    expect(mocks.createSoftnApp).not.toHaveBeenCalled();
+    expect(await status()).toEqual({ state: 'added', name: 'Tiny notes', updated: true });
+    expect(title()).toBe('Updated.');
+    expect(sheet()!.textContent).toContain('Tiny notes is up to date. Its history has the version it had before.');
+    expect(sheet()!.querySelector('a')!.getAttribute('href')).toBe('/app/newer');
+    await press('Done');
+    // A copy may still be added, and an offer from elsewhere is an offer of a new app.
+    await ask({ op: 'offer', from: '/api/made/7', name: 'Tiny notes' });
+    await settle();
+    await press('Add a copy');
+    expect(mocks.createSoftnApp).toHaveBeenCalledTimes(1);
+    expect(await status()).toEqual({ state: 'added', name: 'Tiny notes' });
+    await press('Done');
+    await ask({ op: 'offer', from: '/api/made/9', name: 'Fresh' });
+    await settle();
+    expect(title()).toBe('Add Fresh to your apps?');
+  });
+
+  it('says so where the app it added before cannot be updated, and changes nothing else', async () => {
+    mocks.getApps.mockResolvedValue({ data: { apps: [{ id: 'mine', name: 'Tiny notes', slug: 'mine', canManage: true, status: 'draft', updatedAt: '', settings: { softnMadeBy: { app: 'app-one', from: '/api/made/7' } } }], count: 1 } });
+    mocks.getNativeProject.mockResolvedValue({ data: { available: true, project: { version: 2, files: {}, assets: {}, access: 'members' } } });
+    mocks.saveNativeProject.mockResolvedValue({ error: 'This app was changed by someone else. Reload it.' });
+    await open();
+    await ask({ op: 'offer', from: '/api/made/7', name: 'Tiny notes' });
+    await settle();
+    await press('Update it');
+    expect(await status()).toEqual({ state: 'failed', reason: 'failed' });
+    expect(title()).toBe('Your app could not be updated');
+    expect(sheet()!.querySelector('[role="alert"]')!.textContent).toBe('Tiny notes could not be updated: This app was changed by someone else. Reload it.');
+    expect(mocks.createSoftnApp).not.toHaveBeenCalled();
+    // A list that cannot be read leaves the offer an offer of a new app.
+    await press('Close');
+    mocks.getApps.mockRejectedValue(new Error('offline'));
+    await ask({ op: 'offer', from: '/api/made/7', name: 'Tiny notes' });
+    await settle();
+    expect(title()).toBe('Add Tiny notes to your apps?');
   });
 
   it('tells the app an action it does not know', async () => {

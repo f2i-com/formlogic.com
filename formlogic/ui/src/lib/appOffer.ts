@@ -7,6 +7,8 @@ import { strToU8, zipSync } from 'fflate';
 import { importNativeProject } from './nativeHosting';
 import type { AppReader } from './nativeHost';
 import { createSoftnApp } from './softnApps';
+import { api } from './api';
+import type { AppListItem } from '../types/app';
 
 /**
  * What an offer may be. `from` and `name` are the offering app's words: an address no longer than
@@ -72,10 +74,48 @@ export function offeredAppFile(files: Record<string, Uint8Array>, name: string):
 const PLAN_REFUSAL = /cloud access has expired/i;
 const messageOf = (reason: unknown, otherwise: string) => reason instanceof Error && reason.message ? reason.message : otherwise;
 
-/** `message` is for the person, in the sheet; the offering app hears only `reason`. */
+/** `message` is for the person, in the sheet; the offering app hears only `reason`. `updated`: an app of theirs was updated, not added. */
 export type OfferOutcome =
-  | { added: { id: string; name: string; slug: string } }
+  | { added: { id: string; name: string; slug: string }; updated?: true }
   | { reason: 'invalid' | 'limit' | 'failed'; message: string };
+
+/** Where an offered app comes from: the offering app's id, and the address its files are fetched from. Kept as the added app's settings.softnMadeBy. */
+export interface OfferSource { app: string; from: string }
+
+/** An app of the person's own that an earlier offer from the same place added: what an offer may update. */
+export interface OfferedBefore { id: string; name: string; slug: string }
+
+/**
+ * Of the person's apps (the apps list), the one an earlier offer from this app and this address
+ * added, and that they own: the newest such. Null where there is none. An app they only use, an
+ * archived one and one that says it came from somewhere else are never it.
+ */
+export function offeredBefore(apps: ReadonlyArray<Pick<AppListItem, 'id' | 'name' | 'slug' | 'settings' | 'canManage' | 'status' | 'updatedAt'>>, source: OfferSource): OfferedBefore | null {
+  let found: (typeof apps)[number] | null = null;
+  for (const app of apps) {
+    const made = app.settings?.softnMadeBy;
+    if (app.canManage !== true || app.status === 'archived' || !made || made.app !== source.app || made.from !== source.from) continue;
+    if (!found || String(app.updatedAt ?? '') > String(found.updatedAt ?? '')) found = app;
+  }
+  return found ? { id: found.id, name: found.name, slug: found.slug } : null;
+}
+
+type Fetched = { file: File; name: string; project: Awaited<ReturnType<typeof importNativeProject>> };
+
+/** The offering app's files, fetched as the person and read as an upload is read; or why they cannot be had. */
+async function fetchOffered(read: AppReader, from: string, shownName: string): Promise<Fetched | Extract<OfferOutcome, { reason: string }>> {
+  const answer = await read(from);
+  const sent = answer.data?.result;
+  if (answer.error || !sent || typeof sent.status !== 'number' || sent.status < 200 || sent.status > 299) {
+    return { reason: 'failed', message: 'The app did not hand over its files. Try again in a moment.' };
+  }
+  const offered = offeredFiles(sent.body);
+  if (!offered) return { reason: 'invalid', message: `What was handed over is not an app FormLogic can add: its files as text, up to ${OFFER_LIMITS.files} of them and ${OFFER_LIMITS.bytes / 1024 / 1024} MB in all.` };
+  const file = offeredAppFile(offered.files, offered.name || shownName);
+  // Read as an upload is, before anything is made or changed: a file the importer refuses changes nothing.
+  try { return { file, name: offered.name, project: await importNativeProject(file) }; }
+  catch (reason) { return { reason: 'invalid', message: messageOf(reason, 'These files are not an app FormLogic can add.') }; }
+}
 
 /**
  * Adds the offered app to the account of the person who agreed. `read` fetches `from` on the
@@ -83,25 +123,42 @@ export type OfferOutcome =
  * neither the answer nor the app's manifest names it; `stillTheirs` says whether the person asked is
  * still the one signed in, read again before anything is created. Never throws.
  */
-export async function addOfferedApp(read: AppReader, from: string, shownName: string, stillTheirs: () => boolean): Promise<OfferOutcome> {
+export async function addOfferedApp(read: AppReader, from: string, shownName: string, stillTheirs: () => boolean, source?: OfferSource): Promise<OfferOutcome> {
   const failed = (message: string): OfferOutcome => ({ reason: PLAN_REFUSAL.test(message) ? 'limit' : 'failed', message });
   try {
-    const answer = await read(from);
-    const sent = answer.data?.result;
-    if (answer.error || !sent || typeof sent.status !== 'number' || sent.status < 200 || sent.status > 299) {
-      return { reason: 'failed', message: 'The app did not hand over its files. Try again in a moment.' };
-    }
-    const offered = offeredFiles(sent.body);
-    if (!offered) return { reason: 'invalid', message: `What was handed over is not an app FormLogic can add: its files as text, up to ${OFFER_LIMITS.files} of them and ${OFFER_LIMITS.bytes / 1024 / 1024} MB in all.` };
-    const file = offeredAppFile(offered.files, offered.name || shownName);
-    // Read as an upload is, before any app exists: a file the importer refuses makes nothing.
-    try { await importNativeProject(file); }
-    catch (reason) { return { reason: 'invalid', message: messageOf(reason, 'These files are not an app FormLogic can add.') }; }
+    const fetched = await fetchOffered(read, from, shownName);
+    if ('reason' in fetched) return fetched;
     if (!stillTheirs()) return { reason: 'failed', message: 'You are no longer signed in as the person who was asked.' };
-    const created = await createSoftnApp({ name: offered.name, start: { kind: 'upload', file } });
+    // Where it came from is kept with it, so the next offer from the same place can update it.
+    const created = await createSoftnApp({ name: fetched.name, start: { kind: 'upload', file: fetched.file }, ...(source ? { settings: { softnMadeBy: source } } : {}) });
     if (created.error || !created.project) return failed(`${created.app.name} was created, but its files could not be installed: ${created.error ?? 'try again from its page.'}`);
     return { added: { id: created.app.id, name: created.app.name, slug: created.app.slug } };
   } catch (reason) {
     return failed(messageOf(reason, 'The app could not be added. Try again in a moment.'));
+  }
+}
+
+/**
+ * Updates an app of the person's that an earlier offer from the same place added (offeredBefore)
+ * with what the offering app hands over now. Its files are fetched and read as an upload is, and
+ * become the app's next version as an owner's upload does: the app keeps its address, who may open
+ * it and what has been entered in it, and its history keeps the version before. `hostName` is the
+ * offering app's name, for that history. Never throws.
+ */
+export async function updateOfferedApp(read: AppReader, from: string, target: OfferedBefore, stillTheirs: () => boolean, hostName: string): Promise<OfferOutcome> {
+  const failed = (message: string): OfferOutcome => ({ reason: PLAN_REFUSAL.test(message) ? 'limit' : 'failed', message });
+  try {
+    const fetched = await fetchOffered(read, from, target.name);
+    if ('reason' in fetched) return fetched;
+    if (!stillTheirs()) return { reason: 'failed', message: 'You are no longer signed in as the person who was asked.' };
+    const now = await api.getNativeProject(target.id, { media: 'refs' });
+    const installed = now.data?.project;
+    if (now.error || !installed || now.data?.readOnly) return { reason: 'failed', message: `${target.name} could not be opened to update it${now.error ? `: ${now.error}` : '.'}` };
+    const next = { ...fetched.project, home: installed.home ?? false, access: installed.access ?? fetched.project.access };
+    const saved = await api.saveNativeProject(target.id, next, installed.version, { how: 'upload', summary: `Updated from ${hostName}`.slice(0, 120) });
+    if (saved.error || !saved.data) return failed(`${target.name} could not be updated: ${saved.error || 'try again in a moment.'}`);
+    return { added: target, updated: true };
+  } catch (reason) {
+    return failed(messageOf(reason, 'The app could not be updated. Try again in a moment.'));
   }
 }

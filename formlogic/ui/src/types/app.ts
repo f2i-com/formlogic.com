@@ -101,6 +101,11 @@ export interface AppSettings {
   /** A hosted SoftN app may offer the apps it makes to the people using it, to add to their own
    *  account; FormLogic asks them each time. Absent: it may not. */
   softnApps?: 'allow';
+  /** This app was made by a hosted SoftN app and added from its offer (lib/appOffer): which app
+   *  offered it (`app`, its id) and the address its files came from (`from`). The same app offering
+   *  from the same address again may, once the owner agrees, update this app instead of adding
+   *  another. Written by FormLogic when it adds the app; the server keeps it to that shape. */
+  softnMadeBy?: { app: string; from: string };
   /** How a hosted SoftN app looks before it opens and where it is shared (AppLookService). */
   softnLook?: SoftnLook;
 }

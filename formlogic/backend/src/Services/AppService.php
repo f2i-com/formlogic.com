@@ -171,6 +171,13 @@ class AppService
                 unset($settings[$grant]);
             }
         }
+        // settings.softnMadeBy: the hosted app whose offer this app was added from (its id) and the
+        // address on that app's backend its files came from, so an offer from the same place can
+        // update this app instead of adding another (the owner is asked). Only that shape is kept.
+        if (array_key_exists('softnMadeBy', $settings)) {
+            $made = self::madeBy($settings['softnMadeBy']);
+            if ($made === null) unset($settings['softnMadeBy']); else $settings['softnMadeBy'] = $made;
+        }
         // settings.softnLook: how a hosted SoftN app looks before it opens and where it is shared
         // (AppLookService): its icon and share image, each one of its own media files, a description,
         // and the loading view's background and wheel colours. Only those, each held to its shape.
@@ -188,6 +195,22 @@ class AppService
             }
         }
         return $settings;
+    }
+
+    /**
+     * settings.softnMadeBy as it may be kept: {app, from}. `app` is an app's id (letters, digits, _ and -, up to 64);
+     * `from` an address on that app's own backend as an offer names it (under /api/ and never /api/site/, no scheme and
+     * no `..`, up to 300 characters: lib/appOffer's isOfferSource). Null for anything else.
+     */
+    public static function madeBy(mixed $value): ?array
+    {
+        if (!is_array($value)) return null;
+        $app = $value['app'] ?? null;
+        $from = $value['from'] ?? null;
+        if (!is_string($app) || preg_match('/^[A-Za-z0-9_-]{1,64}$/', $app) !== 1) return null;
+        if (!is_string($from) || strlen($from) > 300 || !str_starts_with($from, '/api/') || str_starts_with(strtolower($from), '/api/site/')
+            || str_contains($from, '://') || str_contains($from, '..') || preg_match('/[\x00-\x1F\x7F]/', $from) === 1) return null;
+        return ['app' => $app, 'from' => $from];
     }
 
     /** The fonts an app's theme offers (AppSettings → Appearance), the only ones its sign-in page takes. */
