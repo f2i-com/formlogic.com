@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Tests\Integration;
 
 use FormLogic\Services\AppAiUpstream;
+use FormLogic\Services\AppAiWorker;
 use FormLogic\Tests\Support\StubImagesServer;
 use PHPUnit\Framework\TestCase;
 
@@ -158,6 +159,98 @@ final class AppAiUpstreamTest extends TestCase
         $this->assertTrue($upstream->configured());
         $done = self::answers($upstream, ['c' => ['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => 'Hi']]]]);
         $this->assertSame('Hello from the stub.', $done['c']['text'] ?? null);
+    }
+
+    /**
+     * A line to say goes to the server the site names for speech (AI_SPEECH_BASE_URL), in the form
+     * OAIY Voice takes it, with that server's own key and voice, and never to the chat provider. What
+     * comes back is the sound itself, a WAV.
+     */
+    public function testALineToSayGoesToTheServerThatSpeaksAndComesBackAsItsSound(): void
+    {
+        $upstream = new AppAiUpstream(
+            ['url' => 'http://127.0.0.1:9/v1', 'key' => 'chat-key', 'model' => 'chatty'],
+            speech: ['url' => self::$stub->url(), 'key' => 'voice-key', 'model' => '', 'voice' => 'receptionist'],
+        );
+        $this->assertTrue($upstream->speaks());
+        $done = self::answers($upstream, [
+            's' => ['kind' => 'speech', 'prompt' => 'Hello there.'],
+            'w' => ['kind' => 'speech', 'prompt' => '[words] Hello.'],
+            'b' => ['kind' => 'speech', 'prompt' => '[busy] Hello.'],
+        ]);
+        $this->assertTrue($done['s']['ok'], (string) ($done['s']['message'] ?? ''));
+        $this->assertSame(['RIFF', 'WAVE', 'receptionist', ''], [substr($done['s']['audio'], 0, 4), substr($done['s']['audio'], 8, 4), $done['s']['voice'], $done['s']['model']]);
+        $this->assertSame(0.6, AppAiWorker::wavSeconds($done['s']['audio']), 'the stand-in says a twentieth of a second for each of its twelve characters');
+        $this->assertSame(['ok' => false, 'code' => 'engine_failed', 'message' => 'The AI answered without a sound.'], $done['w'], 'words where a sound was asked for are no speech');
+        $this->assertSame('busy', $done['b']['code']);
+
+        $said = array_values(array_filter(self::$stub->requests(), static fn(array $request) => ($request['body']['input'] ?? null) === 'Hello there.'));
+        $this->assertCount(1, $said);
+        $this->assertSame(['POST', '/v1/audio/speech'], [$said[0]['method'], $said[0]['path']]);
+        $this->assertSame(['input' => 'Hello there.', 'response_format' => 'wav', 'voice' => 'receptionist'], $said[0]['body']);
+        $this->assertSame('Bearer voice-key', $said[0]['headers']['authorization'] ?? null, 'the speech server\'s own key, never the chat provider\'s');
+        $this->assertSame([0, 0], [$upstream->count(), $upstream->count('speech')], 'nothing is left in flight');
+    }
+
+    /**
+     * Asked for in parts, a chat comes as it is written and a line as it is spoken: what has come
+     * so far is there to read while the request runs, and the answer in the end is the one a whole
+     * answer gives. A server that answers whole all the same is read as it always was.
+     */
+    public function testAChatAndALineAskedForInPartsAreReadAsTheyCome(): void
+    {
+        self::$stub->clear();
+        $upstream = new AppAiUpstream(['url' => self::$stub->url(), 'key' => '', 'model' => 'm'], speech: ['url' => self::$stub->url(), 'key' => '', 'model' => '', 'voice' => 'receptionist']);
+        $upstream->start('c', ['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => '[unhurried] Say hello.']], 'stream' => true]);
+        $upstream->start('s', ['kind' => 'speech', 'prompt' => '[unhurried] One. Two two. Three three three.', 'stream' => true]);
+        $upstream->start('w', ['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => '[whole] Say hello.']], 'stream' => true]);
+        $upstream->start('v', ['kind' => 'speech', 'prompt' => '[whole] Hello there.', 'stream' => true]);
+        $seen = ['c' => [], 's' => [], 'w' => [], 'v' => []];
+        $done = [];
+        $deadline = microtime(true) + 30;
+        while (count($done) < 4 && microtime(true) < $deadline) {
+            $done += $upstream->poll(0.05);
+            foreach ($upstream->progress() as $id => $so) $seen[$id][] = isset($so['text']) ? $so['text'] : strlen($so['pcm']) . '@' . $so['rate'];
+        }
+        $this->assertSame(['ok' => true, 'text' => 'Hello from the stub.', 'model' => 'm'], $done['c']);
+        $texts = array_values(array_unique($seen['c']));
+        $this->assertGreaterThan(1, count($texts), 'the reply was there to read before it was whole');
+        foreach ($texts as $text) $this->assertStringStartsWith($text, 'Hello from the stub.');
+
+        $this->assertTrue($done['s']['ok'], (string) ($done['s']['message'] ?? ''));
+        $this->assertSame(['RIFF', 'WAVE', 'receptionist'], [substr($done['s']['audio'], 0, 4), substr($done['s']['audio'], 8, 4), $done['s']['voice']]);
+        // Three sentences of 16, 8 and 18 characters, a twentieth of a second each, and a fifth of a second after each.
+        $this->assertSame(2.7, AppAiWorker::wavSeconds($done['s']['audio']), 'the sound that came in pieces, put in one WAV');
+        $sizes = array_values(array_unique($seen['s']));
+        $this->assertGreaterThan(1, count($sizes), 'the sound was there to pass on before the line was whole');
+        foreach ($sizes as $size) $this->assertMatchesRegularExpression('/^\d*[02468]@24000$/', $size, 'whole samples, at the rate the server says');
+
+        // Answered whole all the same: nothing to pass on meanwhile, and the same answers in the end.
+        $this->assertSame([[], []], [$seen['w'], $seen['v']]);
+        $this->assertSame(['ok' => true, 'text' => 'Hello from the stub.', 'model' => 'm'], $done['w']);
+        $this->assertSame(['RIFF', 1.0], [substr($done['v']['audio'], 0, 4), AppAiWorker::wavSeconds($done['v']['audio'])]);
+
+        $asked = [];
+        foreach (self::$stub->requests() as $request) $asked[$request['path']][] = array_diff_key($request['body'], ['messages' => true, 'input' => true, 'model' => true]);
+        $this->assertSame([['stream' => true], ['stream' => true]], $asked['/v1/chat/completions']);
+        $this->assertSame([['response_format' => 'pcm', 'voice' => 'receptionist'], ['response_format' => 'pcm', 'voice' => 'receptionist']], $asked['/v1/audio/speech']);
+        $this->assertSame(0, $upstream->count());
+        $this->assertSame([], $upstream->progress());
+    }
+
+    /** With no server named for speech, a line is not said: least of all by the chat provider. */
+    public function testASiteWithNoServerThatSpeaksSaysNothing(): void
+    {
+        $upstream = new AppAiUpstream(['url' => self::$stub->url(), 'key' => '', 'model' => 'm']);
+        $this->assertTrue($upstream->configured());
+        $this->assertFalse($upstream->speaks());
+        try {
+            $upstream->start('x', ['kind' => 'speech', 'model' => null, 'prompt' => 'Hello there.']);
+            $this->fail('A line was sent with no speech server named');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('The site has no server that speaks', $e->getMessage());
+        }
+        $this->assertSame([], self::$stub->requests());
     }
 
     public function testASiteWithNoUpstreamIsNeverAsked(): void

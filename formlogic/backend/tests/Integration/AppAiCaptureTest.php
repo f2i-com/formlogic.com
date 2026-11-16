@@ -92,7 +92,8 @@ final class AppAiCaptureTest extends TestCase
         return ['softn-runner (or Node where none ships)' => ['auto'], 'Node runner.mjs' => ['node']];
     }
 
-    private function boot(string $runner = 'auto'): void
+    /** $speaks: the site names a server that speaks (AI_SPEECH_BASE_URL), as its settings would say. */
+    private function boot(string $runner = 'auto', bool $speaks = false): void
     {
         if (self::$pdo === null) $this->markTestSkipped('No test database');
         $this->storage = self::$tmpRoot . '/native-' . bin2hex(random_bytes(3));
@@ -107,6 +108,7 @@ final class AppAiCaptureTest extends TestCase
         $this->visitors = new AppVisitors(self::$mysql, ['secure' => false], new SessionOriginPolicy([self::ORIGIN]));
         $configured = $this->createMock(AIService::class);
         $configured->method('isConfigured')->willReturn(true);
+        $configured->method('envSpeech')->willReturn($speaks ? ['url' => 'http://127.0.0.1:9/v1', 'key' => '', 'model' => '', 'voice' => ''] : null);
         $this->ai = new AppAiService(self::$mysql, $this->site, $this->visitors, $this->native, null, $configured);
         $flows = new FlowService(self::$mysql);
         $this->router = new NativeRecordEventRouter($flows, $this->ai);
@@ -166,7 +168,7 @@ function forgetJob(req) { softn.sql.execute("DELETE FROM ai_jobs WHERE id = ?", 
 function deliver(req) { return { status: 200, body: { delivered: true } }; }
 JS;
 
-    private function project(string $access, bool $asks, bool $sells = false): array
+    private function project(string $access, bool $asks, bool $sells = false, ?array $uses = null): array
     {
         $manifest = [
             'name' => 'Logo maker', 'version' => '0.0.1', 'main' => 'ui/main.ui',
@@ -188,7 +190,7 @@ JS;
                 ],
             ],
         ];
-        if ($asks) $manifest['formlogicAi'] = ['uses' => ['pictures', 'picture-edits', 'chat'], 'purpose' => 'Draws logos.', 'jobs' => ['table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver']];
+        if ($asks) $manifest['formlogicAi'] = ['uses' => $uses ?? ['pictures', 'picture-edits', 'chat'], 'purpose' => 'Draws logos.', 'jobs' => ['table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver']];
         if ($sells) $manifest['formlogicPayments'] = ['purpose' => 'Pay 5 cents to download a logo.', 'items' => [['id' => 'download', 'label' => 'Download a logo', 'priceCents' => 5]], 'routes' => ['/api/touch']];
         return ['version' => 0, 'home' => true, 'access' => $access, 'assets' => [], 'files' => [
             'manifest.json' => json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
@@ -198,12 +200,12 @@ JS;
         ]];
     }
 
-    /** A published app with this project, and AI set to $mode for it. $sells: it declares payments too. */
-    private function app(string $access = 'application', bool $asks = true, string $mode = 'site', bool $sells = false): array
+    /** A published app with this project, and AI set to $mode for it. $sells: it declares payments too. $uses: what it asks the AI for, when not pictures and chat. */
+    private function app(string $access = 'application', bool $asks = true, string $mode = 'site', bool $sells = false, ?array $uses = null): array
     {
         $app = self::$apps->createApp(['name' => 'Logos ' . bin2hex(random_bytes(3)), 'settings' => ['softnApp' => true]], $this->ownerId);
         $this->appIds[] = $app['id'];
-        $this->native->install($app['id'], $this->project($access, $asks, $sells), 0);
+        $this->native->install($app['id'], $this->project($access, $asks, $sells, $uses), 0);
         self::$pdo->prepare("UPDATE apps SET status = 'published' WHERE id = ?")->execute([$app['id']]);
         if ($mode !== 'off') self::$pdo->prepare('INSERT INTO app_ai_settings (app_id, mode) VALUES (?, ?)')->execute([$app['id'], $mode]);
         return self::$apps->getApp($app['id']);
@@ -1008,6 +1010,69 @@ JS;
         $this->assertFalse(AppAiService::deliveryMayAsk($nobody));
         $this->assertNull($this->captured($app, self::row('picture'), self::deliveryBinding($nobody['id'])));
         $this->assertFalse(AppAiService::deliveryMayAsk(['requester_kind' => AppAiService::TEST_REQUESTER, 'follow_up_of' => null, 'status' => 'done']));
+    }
+
+    // ------------------------------------------------------------------ speech
+
+    /** What an app that chats and speaks declares, as AppFormlogicManifest::ai() reads it. */
+    private const SPEAKS = ['uses' => ['chat', 'speech'], 'kinds' => ['chat', 'speech'], 'purpose' => 'Draws logos.', 'table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver', 'parts' => null];
+
+    /** A speech row as an app writes one (the words to say in its `prompt`), captured: the job it became. */
+    private function said(array $app, mixed $words, array $more = []): array
+    {
+        return (array) $this->captured($app, $more + ['id' => 'row-' . bin2hex(random_bytes(6)), 'kind' => 'speech', 'prompt' => $words], self::visitor()[0]);
+    }
+
+    /**
+     * A line to say is a job of its own kind: its `prompt` is the words, 1 to 300 characters, held to
+     * the site's refused words as a picture's prompt is, and counted as any job is.
+     */
+    public function testALineToSayIsTakenWhereTheSiteSpeaksAndHeldToItsLength(): void
+    {
+        $this->boot('auto', true);
+        $app = $this->app(uses: ['chat', 'speech']);
+        $this->assertSame(['chat', 'speech'], $this->ai->availability(['id' => $app['id'], 'ownerId' => $this->ownerId], self::SPEAKS)['kinds']);
+
+        $job = $this->said($app, '  Your CRM is ready.  ', ['size' => '512x512', 'seed' => 4, 'max_output' => 50]);
+        $this->assertSame(
+            ['queued', 'speech', 'Your CRM is ready.', 'site-env', 'env', null, null, null],
+            [$job['status'], $job['kind'], $job['prompt'], $job['source'], $job['target'], $job['size'], $job['seed'], $job['max_output']],
+            'the words, and nothing a picture or a chat would carry',
+        );
+        $this->assertSame('queued', $this->said($app, str_repeat('a', AppAiService::MAX_SPEECH))['status']);
+        $this->assertSame(2, $this->counter($app['id'], 'app', ''), 'a line said is a use, as a picture is');
+        foreach ([null, '', '   ', str_repeat('a', AppAiService::MAX_SPEECH + 1), "Hello\x07there", 12, ['Hello']] as $words) {
+            $refused = $this->said($app, $words);
+            $this->assertSame(['refused', 'bad_request', 'A speech job needs a prompt: the words to say, 1 to 300 characters.'], [$refused['status'], $refused['code'], $refused['message']], json_encode($words));
+        }
+        $this->site->save(['allowApps' => true, 'pictureModel' => 'flux-test', 'words' => ['plonk']]);
+        $word = $this->said($app, 'Say plonk for me.');
+        $this->assertSame(['refused', 'prompt_refused'], [$word['status'], $word['code']]);
+        $this->assertSame(2, $this->counter($app['id'], 'app', ''), 'a refused line is not counted');
+    }
+
+    /**
+     * Where the site names no server that speaks, speech is not offered. An app that also chats goes
+     * on chatting, and a line it asks for is answered at once with the reason (no row waits forever);
+     * an app that asks for speech alone has no AI, and is told why.
+     */
+    public function testWhereTheSiteDoesNotSpeakALineIsAnsweredAtOnce(): void
+    {
+        $this->boot();
+        $app = $this->app(uses: ['chat', 'speech']);
+        $who = ['id' => $app['id'], 'ownerId' => $this->ownerId];
+        $available = $this->ai->availability($who, self::SPEAKS);
+        $this->assertSame([true, ['chat'], null], [$available['enabled'], $available['kinds'], $available['reason']]);
+
+        $job = $this->said($app, 'Your CRM is ready.');
+        $this->assertSame(['refused', 'ai_unavailable', AppAiService::REASONS['speech_unset']], [$job['status'], $job['code'], $job['message']]);
+        $this->assertNotNull($job['next_attempt_at'], 'and told at once');
+        $this->assertSame('queued', ((array) $this->captured($app, self::row('chat'), self::visitor()[0]))['status'], 'its chat goes on');
+        $this->assertSame(1, $this->counter($app['id'], 'app', ''), 'the line was not counted');
+
+        $none = $this->ai->availability($who, ['uses' => ['speech'], 'kinds' => ['speech']] + self::SPEAKS);
+        $this->assertSame([false, [], 'speech_unset'], [$none['enabled'], $none['kinds'], $none['reason']]);
+        $this->assertSame('ai_unavailable', AppAiService::code('speech_unset'));
     }
 
     public function testChatAndBadJobsAreReadAsTheyAre(): void

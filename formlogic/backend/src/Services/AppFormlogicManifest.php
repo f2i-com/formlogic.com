@@ -12,7 +12,7 @@ use InvalidArgumentException;
  * from the page's copy), and FormLogic shows them at install review and in the app's settings.
  *
  *   "formlogicAi": {
- *     "uses": ["pictures", "picture-edits", "chat"],
+ *     "uses": ["pictures", "picture-edits", "chat", "speech"],
  *     "purpose": "One sentence shown to the owner and the app's visitors.",
  *     "jobs": { "table": "ai_jobs", "deliver": "/api/site/ai/deliver" }
  *   }
@@ -29,7 +29,7 @@ use InvalidArgumentException;
 final class AppFormlogicManifest
 {
     /** What an app may use FormLogic's AI for, and the job kind each allows. */
-    public const AI_USES = ['pictures' => 'picture', 'picture-edits' => 'edit', 'chat' => 'chat'];
+    public const AI_USES = ['pictures' => 'picture', 'picture-edits' => 'edit', 'chat' => 'chat', 'speech' => 'speech'];
     /** A jobs table the runner's record events can name (record-events.mjs, record_events.rs). */
     public const TABLE = '/^[A-Za-z][A-Za-z0-9_]{0,62}$/D';
     /** A delivery route: the site's alone (PluginService::SITE_ROUTE_PREFIX), never a page's. */
@@ -52,7 +52,7 @@ final class AppFormlogicManifest
     }
 
     /**
-     * The app's AI declaration: {uses: list<string>, kinds: list<string>, purpose, table, deliver},
+     * The app's AI declaration: {uses: list<string>, kinds: list<string>, purpose, table, deliver, parts: ?string},
      * or null when it declares none or a malformed one (an installed app was validated already).
      */
     public static function ai(array $manifest): ?array
@@ -107,12 +107,21 @@ final class AppFormlogicManifest
         if (!preg_match(self::SITE_ROUTE, $jobs['deliver'])) throw new InvalidArgumentException("{$lead}'s deliver route must be under /api/site/, which only FormLogic itself may call.");
         $routes = self::declaredRoutes($manifest, $lead);
         if (!in_array('POST ' . $jobs['deliver'], $routes, true)) throw new InvalidArgumentException("{$lead} delivers to {$jobs['deliver']}, but the server block declares no POST route there.");
+        // "parts": a second route, for an answer passed on as it is made (a reply as it is written, a
+        // line's sound as it is spoken). An app that names none is delivered whole answers alone.
+        $parts = $jobs['parts'] ?? null;
+        if ($parts !== null) {
+            if (!is_string($parts) || !preg_match(self::SITE_ROUTE, $parts)) throw new InvalidArgumentException("{$lead}'s parts route must be under /api/site/, which only FormLogic itself may call.");
+            if ($parts === $jobs['deliver']) throw new InvalidArgumentException("{$lead}'s parts route cannot be its deliver route: a part is not a result.");
+            if (!in_array('POST ' . $parts, $routes, true)) throw new InvalidArgumentException("{$lead} takes parts at {$parts}, but the server block declares no POST route there.");
+        }
         return [
             'uses' => array_values($uses),
             'kinds' => array_values(array_map(static fn(string $use) => self::AI_USES[$use], $uses)),
             'purpose' => $purpose,
             'table' => $jobs['table'],
             'deliver' => $jobs['deliver'],
+            'parts' => $parts,
         ];
     }
 

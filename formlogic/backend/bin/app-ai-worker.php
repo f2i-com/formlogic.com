@@ -73,6 +73,12 @@ try {
         static function (string $line): void {
             fwrite(STDERR, date('c') . ' ' . $line . "\n");
         },
+        null,
+        // Between passes the worker rests, and is woken when a job is written (AppAiWorker::wake).
+        static function (float $seconds): void {
+            static $seen = null;
+            $seen = \FormLogic\Services\AppAiWorker::rest($seconds, $seen);
+        },
     );
     // 0: done. 1: a pass failed (--watch ends at once, for its supervisor to start it with a fresh
     // connection). 75: FormLogic was updated; a fresh worker has to take over.

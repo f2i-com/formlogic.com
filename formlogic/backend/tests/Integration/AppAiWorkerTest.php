@@ -63,6 +63,8 @@ final class AppAiWorkerTest extends TestCase
     private SiteDesktopAi $desktop;
     private NativeRecordEventRouter $router;
     private string $results = '';
+    /** The server that speaks, as the site's settings name it (AIService::envSpeech()), or null. */
+    private ?array $speech = null;
     /** @var string[] */
     private array $appIds = [];
     /** @var string[] app owners made beyond the administrator */
@@ -105,8 +107,10 @@ final class AppAiWorkerTest extends TestCase
     }
 
     /** The site, its administrator (who owns the apps here, as 5CD's owner does) and their OAIY computer. */
-    private function boot(string $runner = 'auto', bool $computer = true): void
+    private function boot(string $runner = 'auto', bool $computer = true, bool $speaks = false): void
     {
+        // $speaks: the site names a server that speaks (AI_SPEECH_BASE_URL): here, the stand-in.
+        $this->speech = $speaks && self::$stub !== null ? ['url' => self::$stub->url(), 'key' => '', 'model' => '', 'voice' => 'narrator'] : null;
         if (self::$pdo === null) $this->markTestSkipped('No test database');
         if (!AppAiPictures::available()) $this->markTestSkipped('No GD here');
         $node = getenv('FORMLOGIC_NODE_BIN') ?: null;
@@ -129,6 +133,7 @@ final class AppAiWorkerTest extends TestCase
         }
         $configured = $this->createMock(AIService::class);
         $configured->method('isConfigured')->willReturn(true);
+        $configured->method('envSpeech')->willReturn($this->speech);
         $this->ai = new AppAiService(self::$mysql, $this->site, $this->visitors, $this->native, $this->computers, $configured);
         $this->router = new NativeRecordEventRouter(new FlowService(self::$mysql), $this->ai);
         $this->results = self::$tmpRoot . '/results-' . bin2hex(random_bytes(3));
@@ -143,7 +148,7 @@ final class AppAiWorkerTest extends TestCase
 
     private function worker(?DataEncryption $encryption = null, ?AppAiUpstream $env = null): AppAiWorker
     {
-        $env ??= new AppAiUpstream(self::$stub !== null ? ['url' => self::$stub->url(), 'key' => '', 'model' => 'stub-chat'] : null);
+        $env ??= new AppAiUpstream(self::$stub !== null ? ['url' => self::$stub->url(), 'key' => '', 'model' => 'stub-chat'] : null, speech: $this->speech);
         return new AppAiWorker(self::$mysql, $this->ai, $this->site, $this->native, $this->router, $this->desktop, $this->computers, $env, $this->results, $encryption);
     }
 
@@ -191,12 +196,13 @@ function deliver(req) {
   var ai = formlogic.ai || {};
   var tries = softn.sql.first("SELECT COUNT(*) AS n FROM tries", []);
   softn.sql.execute("INSERT INTO tries(job_id, idem) VALUES(?,?)", [String(b.jobId || ""), String((req.headers || {})["idempotency-key"] || "")]);
+  if (b.parts !== undefined) softn.sql.execute("INSERT OR REPLACE INTO settings(name, value) VALUES(?,?)", ["parts:" + String(b.jobId), String(b.parts)]);
   var refuse = softn.sql.first("SELECT value FROM settings WHERE name = 'refuse'", []);
   if (refuse && Number(refuse.value) > Number(tries.n)) return { status: 503, body: { error: "busy" } };
-  softn.sql.execute("INSERT INTO deliveries(job_id, status, picture, mime, width, height, seed, model, text, code, message, is_delivery, requester, address_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+  softn.sql.execute("INSERT INTO deliveries(job_id, status, picture, mime, width, height, seed, model, text, code, message, is_delivery, requester, address_key, audio, seconds, voice) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     [String(b.jobId), String(b.status), b.picture || null, b.mimeType || null, b.width || null, b.height || null,
      b.seed === undefined || b.seed === null ? null : String(b.seed), b.model || null, b.text || null, b.code || null, b.message || null, ai.delivery === true ? 1 : 0, ai.requester || null,
-     formlogic.addressKey || null]);
+     formlogic.addressKey || null, b.audio || null, b.seconds === undefined ? null : b.seconds, b.voice || null]);
   // A deliver route that asks for more: `follow` new picture jobs each time it is handed a result.
   var follow = softn.sql.first("SELECT value FROM settings WHERE name = 'follow'", []);
   var wanted = follow ? Number(follow.value) : 0;
@@ -207,10 +213,21 @@ function deliver(req) {
   }
   return { status: 200, body: { ok: true } };
 }
+// Part of an answer, passed on while the rest is still being made (an app that declares jobs.parts).
+function part(req) {
+  var b = req.body || {};
+  var ai = req.context && req.context.formlogic && req.context.formlogic.ai ? req.context.formlogic.ai : {};
+  var refuse = softn.sql.first("SELECT value FROM settings WHERE name = 'refuse_parts'", []);
+  if (refuse) return { status: 503, body: { error: "busy" } };
+  softn.sql.execute("INSERT INTO parts(job_id, n, text, audio, seconds, last, is_part, requester, idem) VALUES(?,?,?,?,?,?,?,?,?)",
+    [String(b.jobId), Number(b.part), b.text || null, b.audio || null, b.seconds === undefined ? null : b.seconds, b.last === true ? 1 : 0,
+     ai.part === true && ai.delivery === true ? 1 : 0, ai.requester || null, String((req.headers || {})["idempotency-key"] || "")]);
+  return { status: 200, body: { ok: true } };
+}
 function ping(req) { return { status: 200, body: { ok: true } }; }
 JS;
 
-    private function project(): array
+    private function project(?array $uses = null, bool $parts = false): array
     {
         $manifest = [
             'name' => 'Logo maker', 'version' => '0.0.1', 'main' => 'ui/main.ui',
@@ -224,25 +241,31 @@ JS;
                     ['path' => '/api/site/ai/deliver', 'method' => 'POST', 'handler' => 'deliver', 'transaction' => 'write', 'authorization' => 'anonymous'],
                 ],
             ],
-            'formlogicAi' => ['uses' => ['pictures', 'picture-edits', 'chat'], 'purpose' => 'Draws logos.', 'jobs' => ['table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver']],
+            'formlogicAi' => ['uses' => $uses ?? ['pictures', 'picture-edits', 'chat'], 'purpose' => 'Draws logos.', 'jobs' => ['table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver']],
         ];
+        // An app that takes answers in parts names a second route for them.
+        if ($parts) {
+            $manifest['server']['routes'][] = ['path' => '/api/site/ai/part', 'method' => 'POST', 'handler' => 'part', 'transaction' => 'write', 'authorization' => 'anonymous'];
+            $manifest['formlogicAi']['jobs']['parts'] = '/api/site/ai/part';
+        }
         return ['version' => 0, 'home' => true, 'access' => 'application', 'assets' => [], 'files' => [
             'manifest.json' => json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
             'ui/main.ui' => '<Stack><Text>Logos</Text></Stack>',
             'server/main.logic' => self::SERVER,
             'server/migrations/001.sql' => "CREATE TABLE ai_jobs(id TEXT PRIMARY KEY, kind TEXT NOT NULL, prompt TEXT, size TEXT, seed INTEGER, reference TEXT, messages TEXT, max_output INTEGER);\n"
-                . "CREATE TABLE deliveries(job_id TEXT, status TEXT, picture TEXT, mime TEXT, width INTEGER, height INTEGER, seed TEXT, model TEXT, text TEXT, code TEXT, message TEXT, is_delivery INTEGER, requester TEXT, address_key TEXT);\n"
+                . "CREATE TABLE deliveries(job_id TEXT, status TEXT, picture TEXT, mime TEXT, width INTEGER, height INTEGER, seed TEXT, model TEXT, text TEXT, code TEXT, message TEXT, is_delivery INTEGER, requester TEXT, address_key TEXT, audio TEXT, seconds REAL, voice TEXT);\n"
                 . "CREATE TABLE tries(job_id TEXT, idem TEXT);\n"
+                . "CREATE TABLE parts(job_id TEXT, n INTEGER, text TEXT, audio TEXT, seconds REAL, last INTEGER, is_part INTEGER, requester TEXT, idem TEXT);\n"
                 . "CREATE TABLE settings(name TEXT PRIMARY KEY, value TEXT);",
         ]];
     }
 
-    /** A published app, owned by the administrator (or $owner), its AI on the site's. */
-    private function app(?string $owner = null): array
+    /** A published app, owned by the administrator (or $owner), its AI on the site's. $uses: what it asks the AI for, when not pictures and chat. */
+    private function app(?string $owner = null, ?array $uses = null, bool $parts = false): array
     {
         $app = self::$apps->createApp(['name' => 'Logos ' . bin2hex(random_bytes(3)), 'settings' => ['softnApp' => true]], $owner ?? $this->adminId);
         $this->appIds[] = $app['id'];
-        $this->native->install($app['id'], $this->project(), 0);
+        $this->native->install($app['id'], $this->project($uses, $parts), 0);
         self::$pdo->prepare("UPDATE apps SET status = 'published' WHERE id = ?")->execute([$app['id']]);
         self::$pdo->prepare("INSERT INTO app_ai_settings (app_id, mode) VALUES (?, 'site')")->execute([$app['id']]);
         $this->native->request($app['id'], ['method' => 'GET', 'path' => '/api/ping', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
@@ -261,7 +284,7 @@ JS;
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )->execute([$id, $appId, bin2hex(random_bytes(16)), 'job-' . substr($id, 0, 8), 'visitor', $visitor, self::IP_KEY, $kind, 'queued',
             $available['source'] . '-' . ($available['target'] === 'env' ? 'env' : 'oaiy'), $available['target'], $prompt, hash('sha256', (string) $prompt),
-            $kind === 'chat' ? null : ($fields['size'] ?? '1024x1024'), $fields['seed'] ?? null, $fields['reference'] ?? null, gmdate('Y-m-d'), gmdate('Y-m-d\TH'),
+            $kind === 'chat' || $kind === 'speech' ? null : ($fields['size'] ?? '1024x1024'), $fields['seed'] ?? null, $fields['reference'] ?? null, gmdate('Y-m-d'), gmdate('Y-m-d\TH'),
             $createdAt ?? AppAiService::stamp(microtime(true))]);
         foreach ([['requester', 'v:' . $visitor, gmdate('Y-m-d')], ['ip', self::IP_KEY, gmdate('Y-m-d')], ['ip-hour', self::IP_KEY, gmdate('Y-m-d\TH')], ['app', '', gmdate('Y-m-d')]] as [$scope, $subject, $period]) {
             self::$pdo->prepare('INSERT INTO app_ai_counters (app_id, scope, subject, period, used) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE used = used + 1')->execute([$appId, $scope, $subject, $period]);
@@ -617,6 +640,176 @@ JS;
         foreach ($sent as $request) {
             if ($request['path'] === '/v1/images/generations') $this->assertSame([true, '1'], [$request['body']['incognito'] ?? null, $request['headers']['x-oaiy-incognito'] ?? null]);
         }
+    }
+
+    /**
+     * A line to say goes to the server the site names for speech, beside its chats, and its sound
+     * reaches the app whole: a WAV as a data URL, with how long it plays and the voice that said it.
+     * One too long to deliver at once is failed with the reason, and its use given back.
+     */
+    #[DataProvider('runners')]
+    public function testALineIsSaidByTheSitesSpeechServerAndItsSoundReachesTheApp(string $runner): void
+    {
+        $this->boot($runner, false, true);
+        if (self::$stub === null) $this->markTestSkipped('Needs curl');
+        self::$stub->clear();
+        $app = $this->app(uses: ['chat', 'speech']);
+        $line = $this->queue($app['id'], 'speech', ['prompt' => 'Your CRM is ready.']);
+        $long = $this->queue($app['id'], 'speech', ['prompt' => '[long] Everything, in one breath.']);
+        $chat = $this->queue($app['id'], 'chat');
+        $this->assertSame(3, $this->used($app['id']), 'a line said is a use, as a chat is');
+        $worker = $this->worker();
+        $told = fn(): array => array_column($this->appRows($app['id'], 'SELECT job_id, status FROM deliveries'), 'status', 'job_id');
+        $deadline = microtime(true) + 60;
+        while (microtime(true) < $deadline && count($told()) < 3) $worker->tick();
+        $this->assertSame(['done', 'failed', 'done'], [$this->job($line)['status'], $this->job($long)['status'], $this->job($chat)['status']]);
+
+        $rows = [];
+        foreach ($this->appRows($app['id'], 'SELECT job_id, status, audio, mime, seconds, voice, text, code, message, is_delivery FROM deliveries') as $row) $rows[$row['job_id']] = $row;
+        $said = $rows['job-' . substr($line, 0, 8)];
+        $this->assertSame(['done', 'audio/wav', 0.9, 'narrator', 1], [$said['status'], $said['mime'], (float) $said['seconds'], $said['voice'], (int) $said['is_delivery']]);
+        $this->assertStringStartsWith('data:audio/wav;base64,', (string) $said['audio']);
+        $wav = (string) base64_decode(substr((string) $said['audio'], 22), true);
+        $this->assertSame(['RIFF', 'WAVE', 44 + 43200], [substr($wav, 0, 4), substr($wav, 8, 4), strlen($wav)], 'the sound as the server made it: a twentieth of a second a character');
+        $tooLong = $rows['job-' . substr($long, 0, 8)];
+        $this->assertSame(['failed', 'too_large', 'That line is too long to say at once. Say it in shorter lines.', null], [$tooLong['status'], $tooLong['code'], $tooLong['message'], $tooLong['audio']]);
+        $this->assertSame('Hello from the stub.', $rows['job-' . substr($chat, 0, 8)]['text']);
+        $this->assertSame(2, $this->used($app['id']), 'the line that could not be delivered is given back');
+
+        $asked = array_values(array_filter(self::$stub->requests(), static fn(array $request) => $request['path'] === '/v1/audio/speech'));
+        $this->assertCount(2, $asked);
+        foreach ($asked as $request) $this->assertSame(['response_format' => 'wav', 'voice' => 'narrator'], array_diff_key($request['body'], ['input' => true]));
+        $this->assertSame(['narrator', 'audio/wav'], [json_decode((string) $this->job($line)['result_meta'], true)['voice'] ?? null, json_decode((string) $this->job($line)['result_meta'], true)['mimeType'] ?? null], 'what is kept of a line said is how it was said, never its sound');
+        $this->assertStringNotContainsString('base64', (string) $this->job($line)['result_meta']);
+    }
+
+    /**
+     * An app that takes parts is passed a chat's reply as it is written and a line's sound as it
+     * is spoken, in order and before the whole answer, which is delivered as it always was. The
+     * pieces of the sound are cut at its pauses and add up to the whole. An app that stops taking
+     * parts is sent no more of that answer's, and still gets the answer.
+     */
+    public function testAnAppThatTakesPartsIsPassedAReplyAsItIsWrittenAndALineAsItIsSpoken(): void
+    {
+        $this->boot('auto', false, true);
+        if (self::$stub === null) $this->markTestSkipped('Needs curl');
+        self::$stub->clear();
+        $app = $this->app(uses: ['chat', 'speech'], parts: true);
+        $chat = $this->queue($app['id'], 'chat', ['say' => '[unhurried] Say hello.']);
+        $line = $this->queue($app['id'], 'speech', ['prompt' => '[unhurried] One one one one. Two two two two. Three three three.']);
+        $worker = $this->worker();
+        $told = fn(): array => array_column($this->appRows($app['id'], 'SELECT job_id, status FROM deliveries'), 'status', 'job_id');
+        $deadline = microtime(true) + 60;
+        $before = [];
+        while (microtime(true) < $deadline && count($told()) < 2) {
+            $worker->tick();
+            // What the app had been passed while nothing was delivered yet.
+            if ($told() === []) $before = $this->appRows($app['id'], 'SELECT job_id, n FROM parts ORDER BY rowid');
+        }
+        $this->assertSame(['done', 'done'], [$this->job($chat)['status'], $this->job($line)['status']]);
+        $this->assertNotSame([], $before, 'parts reached the app while the answers were still being made');
+
+        $chatJob = 'job-' . substr($chat, 0, 8);
+        $lineJob = 'job-' . substr($line, 0, 8);
+        $written = $this->appRows($app['id'], "SELECT n, text, audio, is_part, requester, idem FROM parts WHERE job_id = '{$chatJob}' ORDER BY rowid");
+        $this->assertGreaterThan(1, count($written));
+        $this->assertSame(range(0, count($written) - 1), array_map('intval', array_column($written, 'n')), 'in order, from 0');
+        foreach ($written as $index => $row) {
+            $this->assertStringStartsWith((string) $row['text'], 'Hello from the stub.');
+            $this->assertSame([1, null, 'fl-ai-' . $chat . '-' . $index], [(int) $row['is_part'], $row['audio'], $row['idem']], 'as the site itself, marked as a part');
+            $this->assertNotNull($row['requester']);
+        }
+        $this->assertLessThan(mb_strlen('Hello from the stub.'), mb_strlen((string) $written[0]['text']), 'the first of it came before it was whole');
+        $delivered = [];
+        foreach ($this->appRows($app['id'], 'SELECT job_id, status, text, audio, seconds FROM deliveries') as $row) $delivered[$row['job_id']] = $row;
+        $this->assertSame('Hello from the stub.', $delivered[$chatJob]['text'], 'the whole reply is delivered as it always was');
+
+        // The line: sentences of 28, 16 and 18 characters, a twentieth of a second each, and a fifth of a second after each.
+        $spoken = $this->appRows($app['id'], "SELECT n, text, audio, seconds, last FROM parts WHERE job_id = '{$lineJob}' ORDER BY rowid");
+        $this->assertGreaterThan(1, count($spoken));
+        $this->assertSame(range(0, count($spoken) - 1), array_map('intval', array_column($spoken, 'n')));
+        $whole = (string) base64_decode(substr((string) $delivered[$lineJob]['audio'], 22), true);
+        $this->assertSame(3.7, (float) $delivered[$lineJob]["seconds"]);
+        $pieces = '';
+        foreach ($spoken as $index => $row) {
+            $this->assertNull($row['text']);
+            $this->assertStringStartsWith('data:audio/wav;base64,', (string) $row['audio']);
+            $wav = (string) base64_decode(substr((string) $row['audio'], 22), true);
+            $this->assertSame(['RIFF', 'WAVE'], [substr($wav, 0, 4), substr($wav, 8, 4)], 'each piece is a sound of its own');
+            $this->assertEqualsWithDelta(AppAiWorker::wavSeconds($wav), (float) $row['seconds'], 0.01);
+            $this->assertSame($index === count($spoken) - 1 ? 1 : 0, (int) $row['last'], 'the last piece says it is the last');
+            // Cut in a pause: a piece ends in silence.
+            if ($index < count($spoken) - 1) $this->assertSame(str_repeat("\0", 200), substr($wav, -200));
+            $pieces .= substr($wav, 44);
+        }
+        $this->assertSame(substr($whole, 44), $pieces, 'the pieces, one after another, are the whole sound');
+        $counts = array_column($this->appRows($app['id'], "SELECT name, value FROM settings WHERE name LIKE 'parts:%'"), 'value', 'name');
+        $this->assertSame((string) count($spoken), $counts['parts:' . $lineJob], 'the delivery says how many parts the app took');
+        $this->assertSame((string) count($written), $counts['parts:' . $chatJob]);
+
+        // An app that does not take a part is sent no more of that answer's, and still gets the answer.
+        $this->native->withDatabase($app['id'], static fn(PDO $db) => $db->exec("INSERT INTO settings(name, value) VALUES('refuse_parts', '1')"));
+        $again = $this->queue($app['id'], 'chat', ['say' => '[unhurried] Say hello again.']);
+        $deadline = microtime(true) + 60;
+        while (microtime(true) < $deadline && count($told()) < 3) $worker->tick();
+        $this->assertSame('done', $this->job($again)['status']);
+        $againJob = 'job-' . substr($again, 0, 8);
+        $this->assertSame([], $this->appRows($app['id'], "SELECT n FROM parts WHERE job_id = '{$againJob}'"));
+        $this->assertSame('Hello from the stub.', $this->appRows($app['id'], "SELECT text FROM deliveries WHERE job_id = '{$againJob}'")[0]['text']);
+
+        // An app that names no parts route is asked for whole answers, as it always was.
+        $plain = $this->app(uses: ['chat', 'speech']);
+        $whole = $this->queue($plain['id'], 'speech', ['prompt' => 'Your CRM is ready.']);
+        $deadline = microtime(true) + 60;
+        while (microtime(true) < $deadline && $this->job($whole)['status'] !== 'done') $worker->tick();
+        $formats = array_column(array_column(array_values(array_filter(self::$stub->requests(), static fn(array $request) => $request['path'] === '/v1/audio/speech')), 'body'), 'response_format');
+        $this->assertSame(['pcm', 'wav'], $formats);
+    }
+
+    /** Where a line's sound may be cut to pass on what is before: in its last pause, once there is half a second to play. */
+    public function testALinesSoundIsCutInItsPauses(): void
+    {
+        $rate = 24000;
+        $tone = static function (float $seconds, int $level = 8000) use ($rate): string {
+            $data = '';
+            for ($i = 0, $n = (int) round($seconds * $rate); $i < $n; $i++) $data .= pack('v', (int) round(sin($i * 2 * M_PI * 220 / $rate) * $level) & 0xFFFF);
+            return $data;
+        };
+        $silence = static fn(float $seconds): string => str_repeat("\0\0", (int) round($seconds * $rate));
+        $at = static fn(?int $cut): ?float => $cut === null ? null : $cut / 2 / $rate;
+
+        $this->assertNull(AppAiWorker::pauseIn($tone(0.4), 0, $rate), 'too little to pass on');
+        $this->assertNull(AppAiWorker::pauseIn($tone(2.0), 0, $rate), 'no pause yet');
+        $this->assertNull(AppAiWorker::pauseIn($silence(0.3) . $tone(0.6), 0, $rate), 'a breath before the first word is no place to cut');
+        $sound = $tone(1.0) . $silence(0.2) . $tone(0.5);
+        $cut = AppAiWorker::pauseIn($sound, 0, $rate);
+        $this->assertEqualsWithDelta(1.1, $at($cut), 0.03, 'in the middle of the pause');
+        $this->assertSame(0, $cut % 2, 'between two samples');
+        $this->assertNull(AppAiWorker::pauseIn($sound, $cut, $rate), 'what follows the cut is not yet a piece');
+        $two = $tone(0.8) . $silence(0.2) . $tone(0.8) . $silence(0.2) . $tone(0.3);
+        $this->assertEqualsWithDelta(1.9, $at(AppAiWorker::pauseIn($two, 0, $rate)), 0.03, 'the last pause: as much as can be passed on at once');
+        $this->assertEqualsWithDelta(1.9, $at(AppAiWorker::pauseIn($two, (int) (0.9 * $rate) * 2, $rate)), 0.03, 'counted from where the last piece ended');
+        // Five seconds with no pause: cut at the quietest moment of the last of them.
+        $long = $tone(4.6) . $tone(0.04, 900) . $tone(0.8);
+        $this->assertEqualsWithDelta(4.62, $at(AppAiWorker::pauseIn($long, 0, $rate)), 0.03);
+        $this->assertNull(AppAiWorker::pauseIn($tone(4.9), 0, $rate), 'under five seconds, a pause is waited for');
+    }
+
+    /** A site whose AI is a computer does not speak for apps yet: a line asked of it is answered at once, with the reason. */
+    public function testALineAskedOfAComputerIsAnsweredAtOnce(): void
+    {
+        $this->boot('auto', true, true);
+        $app = $this->app(uses: ['chat', 'speech']);
+        $line = $this->queue($app['id'], 'speech', ['prompt' => 'Your CRM is ready.']);
+        $this->assertNotSame('env', $this->job($line)['target']);
+        $worker = $this->worker();
+        $worker->tick();
+        $worker->tick();
+        $job = $this->job($line);
+        $this->assertSame(['failed', 'ai_unavailable', AppAiService::REASONS['speech_unset']], [$job['status'], $job['code'], $job['message']]);
+        $this->assertSame([], $this->relay->listPending($this->adminId, null, 10, 'inst-site-ai'), 'nothing was sent to the computer');
+        $this->assertSame(0, $this->used($app['id']), 'and its use is given back');
+        $this->assertSame([['failed', 'ai_unavailable']], array_map(static fn(array $row) => [$row['status'], $row['code']], $this->appRows($app['id'], 'SELECT status, code FROM deliveries')));
     }
 
     /** An owner's test runs like any job, counts in the app's day, and is kept for them: never delivered to the app. */
@@ -1372,5 +1565,5 @@ JS;
     }
 
     /** What the test app declares, as AppFormlogicManifest::ai() reads it. */
-    private const DECLARED = ['uses' => ['pictures', 'picture-edits', 'chat'], 'kinds' => ['picture', 'edit', 'chat'], 'purpose' => 'Draws logos.', 'table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver'];
+    private const DECLARED = ['uses' => ['pictures', 'picture-edits', 'chat'], 'kinds' => ['picture', 'edit', 'chat'], 'purpose' => 'Draws logos.', 'table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver', 'parts' => null];
 }

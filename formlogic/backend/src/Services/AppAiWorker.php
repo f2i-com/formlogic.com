@@ -57,6 +57,13 @@ final class AppAiWorker
     /** The .env upstream takes this many App AI pictures and chats at once. */
     public const ENV_PICTURES = 1;
     public const ENV_CHATS = 2;
+    /** Lines the site's speech server is asked to say at once: a voice says one at a time, and a second waits its turn there. */
+    public const ENV_SPEECH = 2;
+    /**
+     * The most sound one speech job delivers, as a WAV: with its base64 it stays inside what an app's
+     * route takes in one request (2 MB), as a picture does. About 23 seconds at 24 kHz, 16-bit, one channel.
+     */
+    public const MAX_SPEECH_BYTES = 1100000;
     /** An OAIY computer takes one App AI chat beside its one picture. */
     public const COMPUTER_CHATS = 1;
     /** How many of each app's waiting jobs of one kind a pass looks at: its oldest (send). */
@@ -87,6 +94,19 @@ final class AppAiWorker
     private int $passes = 0;
     /** The log has been told this run that the site's data key is set and cannot be used (once, not for every job). */
     private bool $keyUnusableSaid = false;
+    /** How often, in seconds, a chat's reply is passed on to its app as it is written. */
+    public const PART_EVERY = 0.25;
+    /** A sample of a line's sound this near to nothing is silence (of 32768). */
+    private const QUIET = 500;
+    /**
+     * What has been passed on of the answers asked for in parts, by job: how many parts, how much
+     * of the reply (characters) or of the sound (bytes), when, and whether the app has stopped taking them.
+     *
+     * @var array<string, array{n: int, chars: int, bytes: int, at: float, off: bool}>
+     */
+    private array $passed = [];
+    /** @var array<string, array{at: int, route: ?string}> each app's parts route, as it was last read */
+    private array $partsRoutes = [];
     /** @var array{fingerprint: string, mode: string, startedAt: int}|null what this worker says of itself (identify) */
     private ?array $identity = null;
 
@@ -116,7 +136,7 @@ final class AppAiWorker
         $ai = AppAiService::standalone($mysql, $native);
         return new self(
             $mysql, $ai, new AppAiSiteSettings(), $native, new NativeRecordEventRouter(new FlowService($mysql), $ai),
-            $desktop, $computers, new AppAiUpstream(static fn(): ?array => $site->envUpstream()), self::resultsPath(), DataEncryption::fromEnvironment(),
+            $desktop, $computers, new AppAiUpstream(static fn(): ?array => $site->envUpstream(), speech: static fn(): ?array => $site->envSpeech()), self::resultsPath(), DataEncryption::fromEnvironment(),
         );
     }
 
@@ -124,6 +144,39 @@ final class AppAiWorker
     public static function resultsPath(): string
     {
         return dirname(__DIR__, 2) . '/storage/app-ai/results';
+    }
+
+    /**
+     * Tell a resting worker that a job was just written, so it looks now and not at its next second.
+     * A byte is added to a file beside the results, whose size the worker watches while it rests
+     * (rest). Best effort: a worker that misses it looks within a second anyway.
+     */
+    public static function wake(?string $results = null): void
+    {
+        $file = ($results ?? self::resultsPath()) . '/.wake';
+        clearstatcache(true, $file);
+        // Kept small: begun again once it has grown.
+        @file_put_contents($file, '.', (int) @filesize($file) < 4096 ? FILE_APPEND : 0);
+    }
+
+    /**
+     * How a worker rests between passes: for $seconds, or until a job is written (wake). $seen is
+     * what the last rest answered (null the first time), so a job written while the worker was
+     * busy with a pass ends the rest at once. Answers what it saw, for the next rest.
+     */
+    public static function rest(float $seconds, ?int $seen, ?string $results = null): ?int
+    {
+        $file = ($results ?? self::resultsPath()) . '/.wake';
+        $until = microtime(true) + $seconds;
+        do {
+            clearstatcache(true, $file);
+            $size = @filesize($file);
+            $size = $size === false ? null : $size;
+            if ($size !== $seen) return $size;
+            $left = $until - microtime(true);
+            if ($left > 0) usleep((int) (min($left, 0.05) * 1000000));
+        } while ($left > 0);
+        return $seen;
     }
 
     /**
@@ -369,11 +422,11 @@ final class AppAiWorker
                     $this->fail((string) $job['id'], $reason, AppAiService::siteTestFailure($reason, null)['message']);
                     continue;
                 }
-                $reason = $route['availability']['enabled'] ? 'not_offered' : (string) $route['availability']['reason'];
+                $reason = $route['availability']['enabled'] ? ($job['kind'] === 'speech' ? 'speech_unset' : 'not_offered') : (string) $route['availability']['reason'];
                 $this->fail((string) $job['id'], AppAiService::code($reason), AppAiService::REASONS[$reason] ?? AppAiService::REASONS['not_offered']);
                 continue;
             }
-            $groups[$route['key'] . '|' . ($job['kind'] === 'chat' ? 'chat' : 'picture')][] = $job + ['_route' => $route];
+            $groups[$route['key'] . '|' . AppAiService::lane((string) $job['kind'])][] = $job + ['_route' => $route];
         }
 
         // Fair turns: the app served least recently, then within it the requester served least
@@ -478,8 +531,10 @@ final class AppAiWorker
     private function room(array $route, string $lane): int
     {
         if ($route['kind'] === 'off') return 0;
-        $limit = $route['kind'] === 'env' ? ($lane === 'chat' ? self::ENV_CHATS : self::ENV_PICTURES) : ($lane === 'chat' ? self::COMPUTER_CHATS : 1);
-        $kinds = $lane === 'chat' ? "('chat')" : "('picture','edit')";
+        $limit = $route['kind'] === 'env'
+            ? match ($lane) { 'chat' => self::ENV_CHATS, 'speech' => self::ENV_SPEECH, default => self::ENV_PICTURES }
+            : ($lane === 'chat' ? self::COMPUTER_CHATS : 1);
+        $kinds = AppAiService::laneKinds($lane);
         $target = $route['kind'] === 'env' ? 'env' : (string) $route['target']['connectionId'];
         $statement = $this->pdo()->prepare("SELECT COUNT(*) FROM app_ai_jobs WHERE target = ? AND status IN ('sending','running') AND kind IN {$kinds}");
         $statement->execute([$target]);
@@ -502,8 +557,10 @@ final class AppAiWorker
         $asked = $asked->fetch(PDO::FETCH_ASSOC);
         if (!is_array($asked)) return 'skip';
         $job += $asked;
-        $picture = $job['kind'] !== 'chat';
-        $model = $picture ? $route['pictureModel'] : $route['chatModel'];
+        $speech = $job['kind'] === 'speech';
+        $picture = !$speech && $job['kind'] !== 'chat';
+        // A line to say is said by the voice the site's speech server is set to: no model of the app's or the route's.
+        $model = $speech ? null : ($picture ? $route['pictureModel'] : $route['chatModel']);
         $seed = $job['seed'] === null ? null : (int) $job['seed'];
         $size = (string) ($job['size'] ?: '1024x1024');
         $target = $route['kind'] === 'env' ? 'env' : (string) $route['target']['connectionId'];
@@ -528,9 +585,11 @@ final class AppAiWorker
             }
             try {
                 $this->env->start($id, ['kind' => $job['kind'], 'model' => $model, 'prompt' => $job['prompt'], 'size' => $size, 'seed' => $seed, 'reference' => $reference,
-                    'messages' => $picture ? null : json_decode((string) $job['prompt'], true),
+                    'messages' => $picture || $speech ? null : json_decode((string) $job['prompt'], true),
                     // `max_tokens` to the upstream, and how much of its answer is read whatever it sends.
-                    'maxTokens' => $picture ? null : $tokens, 'maxCharacters' => $picture ? null : AppAiService::answerCharacters($tokens)]);
+                    'maxTokens' => $picture || $speech ? null : $tokens, 'maxCharacters' => $picture || $speech ? null : AppAiService::answerCharacters($tokens),
+                    // An app that takes parts is passed a reply as it is written and a line as it is spoken (parts).
+                    'stream' => !$picture && $this->partsRoute((string) $job['app_id']) !== null]);
             } catch (\Throwable $e) {
                 $this->logger?->warning('App AI: the .env upstream could not be asked: ' . $e->getMessage());
                 return $waitAgain(30);
@@ -539,6 +598,12 @@ final class AppAiWorker
             return 'sent';
         }
 
+        // Speech is asked of the site's speech server alone: a computer's AI lane carries none yet, and
+        // availability() offers none there. One that reaches here was asked for before that changed.
+        if ($speech) {
+            $this->fail($id, 'ai_unavailable', AppAiService::REASONS['speech_unset'], unsent: true);
+            return 'skip';
+        }
         if ($this->desktop === null) return $waitAgain(30);
         // A data key that is set and cannot be used: the turn's key could only be kept in the clear, which is never done
         // once encryption is asked for (DataEncryption). Nothing is sent; the job waits for the key to be put right.
@@ -625,10 +690,11 @@ final class AppAiWorker
         $count = 0;
         foreach ($this->env->poll($this->env->count() > 0 ? 0.2 : 0.0) as $id => $answer) {
             $job = $this->job((string) $id);
-            if ($job === null || $job['status'] !== 'running') continue;
+            if ($job === null || $job['status'] !== 'running') { unset($this->passed[(string) $id]); continue; }
             $this->finish($job, $answer);
             $count++;
         }
+        $this->parts();
         $running = $this->pdo()->query("SELECT * FROM app_ai_jobs WHERE status = 'running'")->fetchAll(PDO::FETCH_ASSOC);
         foreach ($running as $job) {
             $age = microtime(true) - (float) strtotime(substr((string) $job['started_at'], 0, 19) . ' UTC');
@@ -700,10 +766,135 @@ final class AppAiWorker
         return $count;
     }
 
+    // ------------------------------------------------------------------ 4a. parts
+
+    /** The route an app takes parts at (`formlogicAi.jobs.parts`), or null: read again every half minute. */
+    private function partsRoute(string $appId): ?string
+    {
+        $known = $this->partsRoutes[$appId] ?? null;
+        if ($known !== null && time() - $known['at'] < 30) return $known['route'];
+        try {
+            $route = AppFormlogicManifest::ai($this->native->installedManifest($appId))['parts'] ?? null;
+        } catch (\Throwable) {
+            $route = null;
+        }
+        $this->partsRoutes[$appId] = ['at' => time(), 'route' => $route];
+        return $route;
+    }
+
+    /**
+     * Pass on what has come so far of the answers asked for in parts (an app that declares
+     * `jobs.parts`): a chat's reply as far as it is written, a few times a second, and a line's
+     * sound up to its last pause, so the app's page can show the reply and play the line while the
+     * rest is still being made. Parts are in order and best effort: an app that does not take one is
+     * sent no more of that job's, and the whole answer follows as the job's delivery whatever happened.
+     */
+    private function parts(): void
+    {
+        foreach (array_keys($this->passed) as $id) {
+            if (!$this->env->has((string) $id)) unset($this->passed[$id]);
+        }
+        foreach ($this->env->progress() as $id => $so) {
+            $id = (string) $id;
+            $state = $this->passed[$id] ?? ['n' => 0, 'chars' => 0, 'bytes' => 0, 'at' => 0.0, 'off' => false];
+            if ($state['off']) continue;
+            $body = null;
+            if (isset($so['text'])) {
+                $length = mb_strlen($so['text']);
+                if ($length <= $state['chars'] || microtime(true) - $state['at'] < self::PART_EVERY) continue;
+                $body = ['text' => $so['text']];
+                $state['chars'] = $length;
+            } else {
+                $cut = self::pauseIn($so['pcm'], $state['bytes'], $so['rate']);
+                if ($cut === null) continue;
+                $body = self::soundPart(substr($so['pcm'], $state['bytes'], $cut - $state['bytes']), $so['rate']);
+                $state['bytes'] = $cut;
+            }
+            $job = $this->job($id);
+            if ($job === null || $job['status'] !== 'running') continue;
+            $state['at'] = microtime(true);
+            if ($this->part($job, $state['n'], $body)) $state['n']++;
+            else $state['off'] = true;
+            $this->passed[$id] = $state;
+        }
+    }
+
+    /** A piece of a line's sound as a part carries it: a WAV, as a data URL, and how long it plays. */
+    private static function soundPart(string $pcm, int $rate): array
+    {
+        return ['audio' => 'data:audio/wav;base64,' . base64_encode(AppAiUpstream::wav($pcm, $rate)), 'mimeType' => 'audio/wav', 'seconds' => round(strlen($pcm) / 2 / max(1, $rate), 2)];
+    }
+
+    /**
+     * One part of a job's answer, told to its app at its parts route: {jobId, part: its number from 0,
+     * text} or {jobId, part, audio, mimeType, seconds}. As the site itself, like a delivery, and
+     * marked as a part (`ai.part`); a part asks for no follow-up, and is never tried again. Whether the app took it.
+     */
+    private function part(array $job, int $n, array $body): bool
+    {
+        $route = $this->partsRoute((string) $job['app_id']);
+        if ($route === null) return false;
+        $request = [
+            'method' => 'POST', 'path' => $route, 'query' => (object) [], 'body' => (object) (['jobId' => (string) $job['app_job_id'], 'part' => $n] + $body),
+            'headers' => (object) ['authorization' => '', 'idempotency-key' => 'fl-ai-' . $job['id'] . '-' . $n], 'client_ip' => '127.0.0.1', 'photos' => false,
+        ];
+        $who = AppAiService::requesterId(['kind' => (string) $job['requester_kind'], 'id' => (string) $job['requester_id']]);
+        $identity = ['formlogic' => ['appId' => (string) $job['app_id'], 'ai' => ['delivery' => true, 'part' => true] + ($who !== null ? ['requester' => $who] : [])]];
+        try {
+            $answer = $this->native->request((string) $job['app_id'], $request, $identity, []);
+            $status = is_int($answer['status'] ?? null) ? $answer['status'] : 0;
+        } catch (\Throwable) {
+            $status = 0;
+        }
+        return $status >= 200 && $status < 300;
+    }
+
+    /**
+     * Where a line's sound, as far as it has come, may be cut so that what is before it can be
+     * passed on: in the middle of its last pause (a tenth of a second or more of near silence) that
+     * leaves half a second or more to play, or, where five seconds have come without a pause, at the
+     * quietest moment of the last of them. Null: nothing to pass on yet. $pcm is 16-bit mono sound,
+     * $from the byte the last piece ended at; the answer is the byte the next piece ends at.
+     */
+    public static function pauseIn(string $pcm, int $from, int $rate): ?int
+    {
+        $window = max(1, intdiv($rate, 50));
+        $windows = intdiv(intdiv(strlen($pcm) - $from, 2), $window);
+        if ($windows < 30) return null;
+        // How loud each fiftieth of a second is: the largest of its samples.
+        $loud = [];
+        for ($w = 0; $w < $windows; $w++) {
+            $peak = 0;
+            foreach (unpack('v*', substr($pcm, $from + $w * $window * 2, $window * 2)) ?: [] as $sample) {
+                $level = $sample > 32767 ? 65536 - $sample : $sample;
+                if ($level > $peak) $peak = $level;
+            }
+            $loud[$w] = $peak;
+        }
+        $cut = null;
+        $start = null;
+        for ($w = 0; $w <= $windows; $w++) {
+            if ($w < $windows && $loud[$w] < self::QUIET) { $start ??= $w; continue; }
+            if ($start === null) continue;
+            $middle = $start + intdiv($w - $start, 2);
+            if ($w - $start >= 5 && $middle >= 25) $cut = $middle;
+            $start = null;
+        }
+        if ($cut === null && $windows >= 250) {
+            for ($w = $windows - 50; $w < $windows - 5; $w++) {
+                if ($cut === null || $loud[$w] < $loud[$cut]) $cut = $w;
+            }
+        }
+        return $cut === null ? null : $from + $cut * $window * 2;
+    }
+
     /** What came back for a job: a result to deliver (or keep, for a test), or a failure. */
     private function finish(array $job, array $answer): void
     {
         $id = (string) $job['id'];
+        // What was passed on of it as it was made (parts).
+        $passed = $this->passed[$id] ?? null;
+        unset($this->passed[$id]);
         $test = $job['requester_kind'] === AppAiService::TEST_REQUESTER;
         if (!$answer['ok']) {
             $code = in_array($answer['code'], self::CODES, true) ? (string) $answer['code'] : 'engine_failed';
@@ -724,9 +915,26 @@ final class AppAiWorker
                 $picture = AppAiPictures::deliverable($answer['picture']);
                 $result = ['picture' => $picture['dataUrl'], 'mimeType' => $picture['mimeType'], 'width' => $picture['width'], 'height' => $picture['height'],
                     'seed' => $answer['seed'] ?? null, 'model' => $answer['model'] ?? $job['model']];
+            } elseif (isset($answer['audio'])) {
+                // A line said: the sound as it came, a WAV, as a data URL the app keeps or hands its page.
+                $sound = (string) $answer['audio'];
+                if (strlen($sound) > self::MAX_SPEECH_BYTES) {
+                    $this->fail($id, 'too_large', 'That line is too long to say at once. Say it in shorter lines.');
+                    return;
+                }
+                $result = ['audio' => 'data:audio/wav;base64,' . base64_encode($sound), 'mimeType' => 'audio/wav', 'seconds' => self::wavSeconds($sound),
+                    'voice' => (string) ($answer['voice'] ?? ''), 'model' => $answer['model'] ?? $job['model']];
+                // A line passed on in parts: what is left of it after the last piece is its last part.
+                if ($passed !== null && $passed['n'] > 0 && !$passed['off'] && strlen($sound) - 44 - $passed['bytes'] >= 2) {
+                    $rate = (int) (unpack('V', substr($sound, 24, 4))[1] ?? 24000);
+                    if ($this->part($job, $passed['n'], self::soundPart(substr($sound, 44 + $passed['bytes']), $rate) + ['last' => true])) $passed['n']++;
+                    else $passed['off'] = true;
+                }
             } else {
                 $result = ['text' => (string) $answer['text'], 'model' => $answer['model'] ?? $job['model']];
             }
+            // How many parts its app took of it, so the app knows whether it has all of a line's sound in pieces.
+            if ($passed !== null && $passed['n'] > 0) $result['parts'] = $passed['off'] ? 0 : $passed['n'];
         } catch (\RuntimeException $e) {
             $this->fail($id, 'engine_failed', 'The AI\'s picture could not be read.');
             $this->breaker((string) $job['app_id'], true);
@@ -737,7 +945,7 @@ final class AppAiWorker
         if (file_put_contents($this->results . '/' . $file, json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), LOCK_EX) === false) {
             throw new \RuntimeException('App AI results storage is unavailable');
         }
-        $meta = array_diff_key($result, ['picture' => true, 'text' => true]);
+        $meta = array_diff_key($result, ['picture' => true, 'text' => true, 'audio' => true]);
         $now = AppAiService::stamp(microtime(true));
         // Ready: delivered to the app as the next pass looks; a test's result waits for its owner instead.
         $ready = $this->pdo()->prepare("UPDATE app_ai_jobs SET status = ?, result_path = ?, result_meta = ?, code = NULL, message = NULL, channel = NULL, reference = NULL, finished_at = ?, next_attempt_at = ?, model = COALESCE(?, model) WHERE id = ? AND status = 'running'");
@@ -916,6 +1124,29 @@ final class AppAiWorker
     // ------------------------------------------------------------------ helpers
 
     /** How long a chat job's answer may be, in tokens: its app's `max_output` within the site's ceiling, or the ceiling. */
+    /**
+     * How long a WAV plays, in seconds, from its own header: its sound's bytes over the bytes it
+     * plays a second. Null where the header does not say.
+     */
+    public static function wavSeconds(string $wav): ?float
+    {
+        $at = 12;
+        $rate = null;
+        $length = strlen($wav);
+        while ($at + 8 <= $length) {
+            $name = substr($wav, $at, 4);
+            $size = unpack('V', substr($wav, $at + 4, 4))[1];
+            if ($name === 'fmt ' && $at + 20 <= $length) $rate = unpack('V', substr($wav, $at + 16, 4))[1];
+            if ($name === 'data') {
+                // A WAV written as it was made names no length (0xFFFFFFFF): its sound is what is left.
+                $bytes = min($size, $length - $at - 8);
+                return $rate !== null && $rate > 0 ? round($bytes / $rate, 2) : null;
+            }
+            $at += 8 + $size + ($size % 2);
+        }
+        return null;
+    }
+
     private function answerTokens(array $job): int
     {
         return AppAiService::answerTokens($job['max_output'] ?? null, $this->site->current());

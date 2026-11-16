@@ -40,10 +40,10 @@ export interface AppAiSiteOffer {
   offered: boolean;
   /** It would answer now. */
   working: boolean;
-  /** Why it is not offered or would not work: site_ai_closed, ai_paused, site_ai_gone, site_ai_unavailable, model_unset, no_pictures. */
+  /** Why it is not offered or would not work: site_ai_closed, ai_paused, site_ai_gone, site_ai_unavailable, model_unset, no_pictures, speech_unset. */
   reason: string | null;
   kinds: string[];
-  /** What the app asks for that the site's AI cannot do yet, and why (model_unset, no_pictures). */
+  /** What the app asks for that the site's AI cannot do yet, and why (model_unset, no_pictures, speech_unset). */
   missing: { kinds: string[]; reason: string } | null;
 }
 
@@ -211,10 +211,11 @@ export const SITE_AI_REASON_WORDS: Record<string, string> = {
   ai_paused: 'The site\'s administrator has paused AI for apps.',
   model_unset: 'No picture model is chosen for this site\'s AI yet, so it cannot make pictures.',
   no_pictures: 'This site\'s server cannot prepare pictures for apps yet.',
+  speech_unset: 'This site\'s AI has no voice set up, so it cannot say an app\'s lines aloud. The app can still speak with the visitor\'s own device.',
 };
 
 /** What a job's kind is called to a person. */
-export const AI_KIND_WORDS: Record<string, string> = { picture: 'Picture', edit: 'Picture edit', chat: 'Chat' };
+export const AI_KIND_WORDS: Record<string, string> = { picture: 'Picture', edit: 'Picture edit', chat: 'Chat', speech: 'Speech' };
 
 /** What a status is called to a person. */
 export function aiStatusWords(status: string, code: string | null): string {

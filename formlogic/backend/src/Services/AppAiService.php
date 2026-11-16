@@ -30,6 +30,8 @@ class AppAiService
     public const BINDING_PREFIX = 'fl-ai-';
     public const SIZES = ['512x512', '768x768', '1024x1024', '1024x768', '768x1024'];
     public const MAX_PROMPT = 4000;
+    /** The longest line a speech job may say: about twenty seconds, whose sound fits one delivery (AppAiWorker::MAX_SPEECH_BYTES). */
+    public const MAX_SPEECH = 300;
     public const MAX_MESSAGES = 24;
     public const MAX_CHAT_CHARACTERS = 16000;
     /** A reference picture for an edit, as the app sends it: a data URL of at most 2 MB. */
@@ -160,8 +162,9 @@ class AppAiService
             if ($own === null) return $off('own_unset', 'own');
             // The computer as the owner chose it: still theirs, and still the key it was pinned to.
             if (!$this->ownStillPinned((string) $app['ownerId'], $own)) return $off('own_changed', 'own');
-            $kinds = array_values(array_filter($declared['kinds'], static fn(string $kind) => $kind === 'chat' || ($pictures && ($own['pictureModel'] ?? null) !== null)));
-            return ['enabled' => $kinds !== [], 'source' => 'own', 'target' => $own['connectionId'], 'label' => $own['deviceName'] !== '' ? 'OAIY on ' . $own['deviceName'] : 'The owner\'s OAIY', 'kinds' => $kinds, 'reason' => $kinds === [] ? $unset : null];
+            // Speech is not asked of a computer yet (below): an app that asks only for speech has none here.
+            $kinds = array_values(array_filter($declared['kinds'], static fn(string $kind) => $kind === 'chat' || ($kind !== 'speech' && $pictures && ($own['pictureModel'] ?? null) !== null)));
+            return ['enabled' => $kinds !== [], 'source' => 'own', 'target' => $own['connectionId'], 'label' => $own['deviceName'] !== '' ? 'OAIY on ' . $own['deviceName'] : 'The owner\'s OAIY', 'kinds' => $kinds, 'reason' => $kinds === [] ? self::nothingTaken($declared['kinds'], $unset) : null];
         }
         if (!$site['allowApps']) return $off('site_ai_closed', 'site');
         return $this->onSite($declared['kinds'], $site);
@@ -195,11 +198,38 @@ class AppAiService
         }
         // Pictures need a model chosen for them, and this server able to redraw what comes back.
         $pictures = AppAiPictures::available();
-        $kinds = array_values(array_filter($kinds, static fn(string $kind) => $kind === 'chat' || ($pictures && $site['pictureModel'] !== null)));
+        // Speech needs a server that speaks, named in the site's settings (AI_SPEECH_BASE_URL), and is
+        // asked of that server alone: a computer's AI lane carries no speech yet, so a site whose AI
+        // is a computer does not speak for apps.
+        $speaks = $source['kind'] === 'env' && $this->ai !== null && $this->ai->envSpeech() !== null;
+        $wanted = $kinds;
+        $kinds = array_values(array_filter($kinds, static fn(string $kind) => match ($kind) {
+            'chat' => true,
+            'speech' => $speaks,
+            default => $pictures && $site['pictureModel'] !== null,
+        }));
         return [
             'enabled' => $kinds !== [], 'source' => 'site', 'target' => $source['kind'] === 'env' ? 'env' : (string) $source['computer']['connectionId'],
-            'label' => 'This site\'s AI', 'kinds' => $kinds, 'reason' => $kinds === [] ? ($pictures ? 'model_unset' : 'no_pictures') : null,
+            'label' => 'This site\'s AI', 'kinds' => $kinds, 'reason' => $kinds === [] ? self::nothingTaken($wanted, $pictures ? 'model_unset' : 'no_pictures') : null,
         ];
+    }
+
+    /** Why none of the kinds an app asks for can be taken: no speech, where speech is all it asks for; else why no pictures. */
+    private static function nothingTaken(array $wanted, string $pictures): string
+    {
+        return $wanted !== [] && array_diff($wanted, ['speech']) === [] ? 'speech_unset' : $pictures;
+    }
+
+    /** The lane a kind of job waits in: pictures and edits one after another, chats beside them, speech beside both. */
+    public static function lane(string $kind): string
+    {
+        return match ($kind) { 'chat' => 'chat', 'speech' => 'speech', default => 'picture' };
+    }
+
+    /** The kinds of job a lane holds, as SQL's IN takes them. */
+    public static function laneKinds(string $lane): string
+    {
+        return match ($lane) { 'chat' => "('chat')", 'speech' => "('speech')", default => "('picture','edit')" };
     }
 
     /**
@@ -346,9 +376,9 @@ class AppAiService
         $jobs = [];
         $heard = [];
         foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $lane = $row['kind'] === 'chat' ? 'chat' : 'picture';
+            $lane = self::lane((string) $row['kind']);
             if ($row['status'] !== 'queued') { $jobs[(string) $row['app_job_id']] = ['status' => 'running', 'lane' => $lane]; continue; }
-            $kinds = $lane === 'chat' ? "('chat')" : "('picture','edit')";
+            $kinds = self::laneKinds($lane);
             $ahead = $this->pdo()->prepare("SELECT COUNT(*) FROM app_ai_jobs WHERE target <=> ? AND kind IN {$kinds} AND status IN ('queued','sending','running') AND created_at < ?");
             $ahead->execute([$row['target'], $row['created_at']]);
             $target = (string) $row['target'];
@@ -471,6 +501,8 @@ class AppAiService
                 }
             }
             $pdo->commit();
+            // A worker resting between passes is told, so the job is sent now and not at its next second.
+            if ($this->realClock) AppAiWorker::wake();
             return 1;
         } catch (\Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
@@ -567,7 +599,8 @@ class AppAiService
     private function admission(string $appId, array $requester, array $settings, array $available, array $site, string $kind, string $day, string $hour): ?array
     {
         if (!$available['enabled'] || !in_array($kind, $available['kinds'], true)) {
-            $reason = $available['enabled'] ? 'not_offered' : (string) $available['reason'];
+            // (A line to say where the AI does not speak is told so, in so many words.)
+            $reason = $available['enabled'] ? ($kind === 'speech' ? 'speech_unset' : 'not_offered') : (string) $available['reason'];
             return ['code' => self::code($reason), 'message' => self::REASONS[$reason] ?? self::REASONS['ai_off']];
         }
         $pdo = $this->pdo();
@@ -691,9 +724,17 @@ class AppAiService
         if ($row === null) return $bad('The job could not be read from the app\'s database.');
         if ($appJobId === '' || strlen($appJobId) > 100) return $bad('A job\'s id must be 1 to 100 characters.');
         $kind = $row['kind'] ?? null;
-        if (!is_string($kind) || !in_array($kind, AppFormlogicManifest::AI_USES, true)) return $bad('A job\'s kind is picture, edit or chat.');
+        if (!is_string($kind) || !in_array($kind, AppFormlogicManifest::AI_USES, true)) return $bad('A job\'s kind is picture, edit, chat or speech.');
         if (!in_array($kind, $declared['kinds'], true)) return $bad("This app's manifest does not use the AI for {$kind} jobs.", ['kind' => $kind]);
         $site = $this->site->current();
+        if ($kind === 'speech') {
+            // A line to say, in its `prompt`: short enough that its sound fits one delivery. Which voice
+            // says it is the site's choice, as the model of a picture or a chat is.
+            $words = is_string($row['prompt'] ?? null) ? trim($row['prompt']) : '';
+            if ($words === '' || mb_strlen($words) > self::MAX_SPEECH || preg_match('/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/u', $words) !== 0) return $bad('A speech job needs a prompt: the words to say, 1 to ' . self::MAX_SPEECH . ' characters.', ['kind' => $kind]);
+            if (AppAiSiteSettings::refusedWord($words, $site['words']) !== null) return [['appJobId' => $appJobId, 'kind' => $kind], ['code' => 'prompt_refused', 'message' => 'That request includes words this site does not allow.']];
+            return [['appJobId' => $appJobId, 'kind' => $kind, 'prompt' => $words], null];
+        }
         if ($kind === 'chat') {
             $messages = is_string($row['messages'] ?? null) ? json_decode($row['messages'], true) : null;
             if (!is_array($messages) || !array_is_list($messages) || $messages === [] || count($messages) > self::MAX_MESSAGES) return $bad('A chat job needs messages: a JSON list of 1 to ' . self::MAX_MESSAGES . ' {role, content}.', ['kind' => $kind]);
@@ -759,6 +800,7 @@ class AppAiService
         'site_ai_unavailable' => 'The site\'s AI is not set up.',
         'site_ai_gone' => 'The computer this site\'s AI runs on was unlinked or has a new key. An administrator can choose it again.',
         'model_unset' => 'No model is chosen for this kind of request yet.',
+        'speech_unset' => 'This app\'s AI does not speak: the site\'s AI has no voice set up, or the AI is an OAIY computer, which is not asked to speak yet.',
         'no_pictures' => 'This server cannot draw pictures for apps: it needs PHP\'s GD extension.',
         'not_offered' => 'This kind of AI request is not available for this app right now.',
         'visitor_required' => 'Open the app in your browser to use its AI.',
@@ -862,7 +904,7 @@ class AppAiService
             'working' => $reason === null,
             'reason' => $reason,
             'kinds' => $on['kinds'],
-            'missing' => $missing === [] ? null : ['kinds' => $missing, 'reason' => AppAiPictures::available() ? 'model_unset' : 'no_pictures'],
+            'missing' => $missing === [] ? null : ['kinds' => $missing, 'reason' => self::nothingTaken($missing, AppAiPictures::available() ? 'model_unset' : 'no_pictures')],
         ];
     }
 

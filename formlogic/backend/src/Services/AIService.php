@@ -125,6 +125,29 @@ class AIService
     }
 
     /**
+     * Where the site's AI speaks for apps: an OpenAI-style `/audio/speech` server of its own
+     * (AI_SPEECH_BASE_URL), such as OAIY Voice. Speech is never sent to AI_BASE_URL: a chat server
+     * need not speak, and an app's words would go where nobody chose to send them. Null when no
+     * such server is named, or the site's AI is off (the switch that turns the provider off turns
+     * its voice off with it).
+     *
+     * @return ?array{url: string, key: string, model: string, voice: string}
+     */
+    public function envSpeech(): ?array
+    {
+        $url = rtrim(trim((string) ($_ENV['AI_SPEECH_BASE_URL'] ?? '')), '/');
+        if ($url === '' || !$this->isEnabled()) {
+            return null;
+        }
+        $key = (string) ($_ENV['AI_SPEECH_API_KEY'] ?? '');
+        // As for the chat provider's key: never over plaintext HTTP in production.
+        if (self::keyBlockedOverHttp($url, $key, ($_ENV['APP_ENV'] ?? 'production') !== 'development')) {
+            $key = '';
+        }
+        return ['url' => $url, 'key' => $key, 'model' => trim((string) ($_ENV['AI_SPEECH_MODEL'] ?? '')), 'voice' => trim((string) ($_ENV['AI_SPEECH_VOICE'] ?? ''))];
+    }
+
+    /**
      * Whether the server's own settings name an AI provider at all (a key, or an endpoint of its own),
      * whatever the Site AI switch says: what App AI's setup checklist can offer to turn on. Never
      * with AI_ENABLED off, which no switch in the site turns back on.

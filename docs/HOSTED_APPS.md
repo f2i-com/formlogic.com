@@ -350,10 +350,15 @@ takes them out of the page's copy of the manifest.
 }
 ```
 
-- `uses`: any of `pictures`, `picture-edits` and `chat`. `purpose`: one sentence (up to 200
-  characters) that the owner and the app's visitors are shown.
+- `uses`: any of `pictures`, `picture-edits`, `chat` and `speech` (a line said aloud:
+  [A line to say](#app-ai-asking-for-a-job)). `purpose`: one sentence (up to 200 characters) that
+  the owner and the app's visitors are shown.
 - `jobs.table`: the table the app's server writes its AI jobs into. `jobs.deliver`: the route
   FormLogic posts results to. It must be under `/api/site/` and declared as a POST route of the server.
+- `jobs.parts` (optional): a second route, under the same rules and not the deliver route, for an
+  answer passed on while it is still being made: a chat's reply as it is written, a line's sound as
+  it is spoken ([Answers in parts](#app-ai-where-it-runs-and-what-the-app-is-delivered)). An app that
+  names none is delivered whole answers alone.
 - `items`: up to 20 things the app charges for, each with an id (lower-case letters, digits, `-` and
   `_`), a label and a price of 1 to 500 cents. `routes`: the POST routes that may ask for a charge.
 - Both need the app's own backend (a `server` block).
@@ -451,8 +456,8 @@ rolls back (an exception, or an answer with `rollback: true`) asks for nothing. 
 | Column | Meaning |
 |---|---|
 | `id` | TEXT PRIMARY KEY, up to 100 characters: the job's id in deliveries |
-| `kind` | `picture`, `edit` or `chat`; it must be one of the app's `uses` |
-| `prompt` | a picture or edit's prompt, up to 4,000 characters |
+| `kind` | `picture`, `edit`, `chat` or `speech`; it must be one of the app's `uses` |
+| `prompt` | a picture or edit's prompt, up to 4,000 characters; a speech job's words to say, up to 300 |
 | `size` | `512x512`, `768x768`, `1024x1024` (the default), `1024x768` or `768x1024` |
 | `seed` | optional, 0 to 9007199254740991 (2^53 − 1); without one, the AI picks one and the delivery reports it |
 | `reference` | an edit's picture: a PNG, JPEG or WebP data URL of at most 2 MB |
@@ -482,6 +487,16 @@ Anything but a whole number of 1 or more is `bad_request`.
   given up on after two minutes (`timeout`).
 - An app that reads only the start of an answer (one JSON object, say) should ask for no more
   tokens than that takes: the rest is the computer's time, and the next job waits for it.
+
+**A line to say.** A `speech` job's `prompt` is the words: 1 to 300 characters, about twenty
+seconds aloud, so that its sound fits one delivery. A longer piece is the app's to say in lines. The
+voice is never the app's choice, as the model of a picture is not: it is the one the site's speech
+server is set to. The words are held to the site's refused words as a prompt is, and a line is a use
+like any other job. Speech is offered where the site's AI is the server's own provider **and** names a
+server that speaks (`AI_SPEECH_BASE_URL`, below); anywhere else an app that also chats goes on
+chatting, `ai.uses` on its requests leaves `speech` out, and a line asked for all the same is
+answered at once, `failed`, `ai_unavailable`: "This app's AI does not speak…". An app should
+have another way to say a line (the browser's own voice, or the words on the page) for exactly then.
 
 **Always an answer.** Every request of an app that declares AI carries the subscription, whatever its
 AI can do at that moment, so no row waits forever. A job FormLogic cannot take is still taken,
@@ -544,7 +559,8 @@ administrator acting as the owner may look but not change it.
   AI yet, has no AI set up, lost the computer it ran on, has paused AI for apps, or has no picture
   model chosen (chat only, for now). The same answer has it as `site`: `{offered, working, reason,
   kinds, missing}`, `reason` one of `site_ai_closed`, `site_ai_unavailable`, `site_ai_gone`,
-  `ai_paused`, or `model_unset` or `no_pictures` when pictures are all the app asks for; `missing`
+  `ai_paused`, or `model_unset` or `no_pictures` when pictures are all the app asks for, or
+  `speech_unset` when speech is; `missing`
   (`{kinds, reason}`) is what the app asks for that a working site's AI cannot do yet. An
   administrator gets a link, **Set up the site's AI**, to the card that fixes it; anyone else is told
   to ask one.
@@ -590,9 +606,15 @@ supervisor with `--watch`:
 * * * * * cd /path/to/formlogic/backend && php bin/app-ai-worker.php >> logs/app-ai-worker.log 2>&1
 ```
 
+- **It does not wait out the second.** With nothing to do the worker passes about once a second.
+  A job written while it rests wakes it (the request that wrote the job adds a byte to
+  `storage/app-ai/results/.wake`, which the resting worker watches), so a person's request is sent
+  as it is made. A pass that did something is followed at once by another, since a result delivered
+  often asks for a follow-up, and while a request is in flight on the `.env` upstream the worker
+  passes about five times a second, so an answer is collected, and delivered, as it comes.
 - **It never outlives an update.** A worker keeps the code it started with, and one left running
-  through an update fails what the new code asks of it. So before every pass it reads the code's
-  fingerprint on disk again (CodeFingerprint: the size and time of every PHP file under `src/`,
+  through an update fails what the new code asks of it. So before a pass, about once a second, it
+  reads the code's fingerprint on disk again (CodeFingerprint: the size and time of every PHP file under `src/`,
   `config/` and `bin/`, and Composer's list; it differs after any update of the server's code, with
   or without a schema change). When it differs the worker takes nothing new, finishes what it has in
   hand, logs `FormLogic was updated; stopping so a fresh worker starts` and exits with status 75. A
@@ -606,6 +628,16 @@ supervisor with `--watch`:
   Platform → Plans & AI → Serve it from your OAIY), the owner's own (**Use my OAIY**), or the `.env` upstream
   (`AI_BASE_URL`, in Studio's gateway form: `POST /images/generations`, an edit's picture as
   `images: ["data:…"]`, `incognito: true` and `X-OAIY-Incognito: 1`).
+- **Where a line is said.** Speech has a server of its own, named in the server's settings:
+  `AI_SPEECH_BASE_URL` (with `AI_SPEECH_API_KEY`, `AI_SPEECH_VOICE` and `AI_SPEECH_MODEL`, each
+  optional). It is asked `POST {base}/audio/speech` `{input, response_format: "wav", voice?,
+  model?}`, the form OAIY Voice takes (`oaiy-voice`, `http://127.0.0.1:8783/v1` beside an OAIY on
+  the same machine) and any OpenAI-style speech server does, and answers the sound itself. A line is
+  never sent to `AI_BASE_URL`: a chat provider need not speak, and an app's words would go where
+  nobody chose to send them. The Site AI switch that turns the provider off turns its voice off with
+  it. **A computer is not asked to speak yet**: its AI lane carries chat and pictures, so an app whose
+  AI is an OAIY computer (the site's, or its owner's own) has no speech, and says so
+  (`speech_unset`).
 - **A computer that is gone is not chosen.** The site's computer, once it is unlinked, gets a new key
   (OAIY reinstalled) or its administrator loses the role, reads as unmade: members' Site AI and apps
   are not sent to it, and **nothing is sent to the `.env` upstream in its place** (members are told
@@ -617,7 +649,8 @@ supervisor with `--watch`:
   (`kind: "image"`) a claim of their own, so a computer holds one picture and one request of any other
   kind; a picture never takes one of the members' three chat places. App AI's own requests are queued
   as the app's owner but never take the owner's own two places (`desktop_ai_requests.source =
-  'app-ai'`). The `.env` upstream takes one picture and two chats at once.
+  'app-ai'`). The `.env` upstream takes one picture and two chats at once, and its speech server
+  two lines.
 - **Fair turns.** On each computer the app served least recently goes first, then within it the
   requester served least recently, then the oldest job. A job waiting 30 minutes runs out
   (`expired`).
@@ -670,6 +703,8 @@ job id>` header, so the app can tell a retry from a second result.
   "picture": "data:image/jpeg;base64,…", "mimeType": "image/jpeg", "width": 1024, "height": 1024,
   "seed": 1873465, "model": "flux-3-image-klein" }
 { "jobId": "<the row's id>", "status": "done", "text": "…", "model": "…" }
+{ "jobId": "<the row's id>", "status": "done",
+  "audio": "data:audio/wav;base64,…", "mimeType": "audio/wav", "seconds": 4.2, "voice": "…", "model": "…" }
 { "jobId": "<the row's id>", "status": "failed", "code": "model_disabled", "message": "…" }
 { "jobId": "<the row's id>", "status": "cancelled" }
 ```
@@ -678,6 +713,36 @@ job id>` header, so the app can tell a retry from a second result.
   can keep it in one SQL call and send it to its page in one answer. A JPEG comes back a *baseline*
   JPEG of at most 1024 px; a PNG stays a PNG while it fits (1024, 896, then 768 px) and is otherwise a
   baseline JPEG at 1024 px. Never WebP, never progressive.
+- **Answers in parts.** An app that names `jobs.parts` is passed a chat's reply and a line's
+  sound while they are still being made, so its page can show the words as they are written and
+  play the voice as it speaks. On the server's own provider (`AI_BASE_URL`, `AI_SPEECH_BASE_URL`)
+  such an app's chat is asked for with `stream: true` and its line as `response_format: "pcm"`
+  (raw 16-bit mono sound, which OAIY Voice streams from its first frame); a server that answers
+  whole all the same is read as it always was, and a linked computer's answers come whole. Each
+  part is a POST to the parts route, as the site itself, like a delivery (`ai.delivery` and
+  `ai.part` are both true, `ai.requester` is who asked):
+
+  ```json
+  { "jobId": "<the row's id>", "part": 0, "text": "Hello! What wou" }
+  { "jobId": "<the row's id>", "part": 0, "audio": "data:audio/wav;base64,…", "mimeType": "audio/wav", "seconds": 1.04 }
+  ```
+
+  `part` counts from 0. A chat's part carries the whole reply so far, about four times a second
+  while it grows. A line's part carries the next piece of its sound, a WAV of its own: pieces are
+  cut in the line's pauses (a tenth of a second or more of near silence, once there is half a
+  second to play; after five seconds without one, at the quietest moment), so played one after
+  another they are the line, and the last piece carries `"last": true`. Parts are best effort and
+  never tried again: an app that does not take one (anything but a 2xx) is sent no more of that
+  answer's. They ask for nothing: a row a parts route writes in the jobs table is no follow-up.
+  The whole answer is still delivered to `jobs.deliver` as it always was, with `"parts": n`, how
+  many the app took, so an app should act on the delivery alone and treat parts as a preview.
+- **The sound** of a line is the WAV the speech server made, untouched, as a data URL of at most
+  about 1,470,000 characters (1,100,000 bytes of sound: some 23 seconds at 24 kHz, 16-bit, one
+  channel), so the app can keep it in one SQL call and hand it to its page in one answer. `seconds`
+  is how long it plays, read from its header (null where the header does not say); `voice` and
+  `model` are the site's settings for it, empty when the server's own are used. A line whose sound is
+  longer than that is `failed`, `too_large`, and its use given back: say it in shorter lines.
+  FormLogic keeps how a line was said (`result_meta`), never its sound.
 - **`code`** on a failure: `model_disabled` (switched off, or its files are missing: the
   administrator is warned), `model_unknown`, `busy`, `bad_request`, `too_large`, `engine_failed`,
   `timeout`, `expired`, `ai_off`, `ai_paused`, `ai_unavailable`, and for a job refused when it was asked
@@ -707,7 +772,7 @@ job id>` header, so the app can tell a retry from a second result.
     `ai.requester`, which is the same on the delivery as it was on the request that asked.
 - **Queue positions** are not delivered: every request of the app sees its requester's open jobs in
   `req.context.formlogic.ai.jobs`, by the row's id: `{status: "queued", lane, position, waiting}` or
-  `{status: "running", lane}`. `lane` is `picture` (pictures and edits) or `chat`; `position` counts
+  `{status: "running", lane}`. `lane` is `picture` (pictures and edits), `chat` or `speech`; `position` counts
   the jobs ahead of it in that lane on the same computer (or the `.env` upstream); `waiting` is
   `queue` (its turn has not come) or `computer_offline` (the computer it waits for has not been heard
   from in 90 seconds). Members see this for their own jobs, as visitors do.

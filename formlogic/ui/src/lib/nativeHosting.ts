@@ -43,7 +43,7 @@ export type NativeMediaFiles = Record<string, string | Uint8Array>;
  */
 export interface NativeFormlogic { visitors?: boolean; ai?: boolean; payments?: boolean }
 
-const AI_USE_WORDS: Record<string, string> = { pictures: 'pictures', 'picture-edits': 'picture edits', chat: 'chat' };
+const AI_USE_WORDS: Record<string, string> = { pictures: 'pictures', 'picture-edits': 'picture edits', chat: 'chat', speech: 'speech' };
 
 /**
  * What an app's manifest asks of FormLogic itself, in the owner's words, for the review before it

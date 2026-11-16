@@ -31,7 +31,7 @@ final class AppFormlogicManifestTest extends TestCase
     {
         $manifest = self::manifest(['formlogicAi' => self::AI, 'formlogicPayments' => self::PAYMENTS]);
         AppFormlogicManifest::validate($manifest);
-        $this->assertSame(['uses' => ['pictures', 'chat'], 'kinds' => ['picture', 'chat'], 'purpose' => 'Draws logos and talks them through.', 'table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver'], AppFormlogicManifest::ai($manifest));
+        $this->assertSame(['uses' => ['pictures', 'chat'], 'kinds' => ['picture', 'chat'], 'purpose' => 'Draws logos and talks them through.', 'table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver', 'parts' => null], AppFormlogicManifest::ai($manifest));
         $this->assertSame(['purpose' => 'Pay 5¢ to download a logo.', 'items' => ['download' => ['label' => 'Download a logo', 'priceCents' => 5]], 'routes' => ['/api/download']], AppFormlogicManifest::payments($manifest));
         $this->assertTrue(AppFormlogicManifest::asksForVisitors($manifest));
     }
@@ -57,6 +57,9 @@ final class AppFormlogicManifestTest extends TestCase
             'sqlite table' => [['formlogicAi' => ['jobs' => ['table' => 'sqlite_master', 'deliver' => '/api/site/ai/deliver']] + self::AI], 'SQLite\'s own'],
             'deliver outside /api/site/' => [['formlogicAi' => ['jobs' => ['table' => 'ai_jobs', 'deliver' => '/api/deliver']] + self::AI], 'under /api/site/'],
             'deliver route undeclared' => [['formlogicAi' => ['jobs' => ['table' => 'ai_jobs', 'deliver' => '/api/site/elsewhere']] + self::AI], 'declares no POST route'],
+            'parts outside /api/site/' => [['formlogicAi' => ['jobs' => ['table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver', 'parts' => '/api/parts']] + self::AI], 'parts route must be under /api/site/'],
+            'parts at the deliver route' => [['formlogicAi' => ['jobs' => ['table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver', 'parts' => '/api/site/ai/deliver']] + self::AI], 'cannot be its deliver route'],
+            'parts route undeclared' => [['formlogicAi' => ['jobs' => ['table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver', 'parts' => '/api/site/ai/part']] + self::AI], 'takes parts at /api/site/ai/part'],
             'payments item id' => [['formlogicPayments' => ['items' => [['id' => 'Down Load', 'label' => 'x', 'priceCents' => 5]]] + self::PAYMENTS], 'lower-case'],
             'payments price too high' => [['formlogicPayments' => ['items' => [['id' => 'download', 'label' => 'x', 'priceCents' => 501]]] + self::PAYMENTS], 'from 1 to 500'],
             'payments price not whole' => [['formlogicPayments' => ['items' => [['id' => 'download', 'label' => 'x', 'priceCents' => 4.5]]] + self::PAYMENTS], 'from 1 to 500'],
@@ -72,6 +75,24 @@ final class AppFormlogicManifestTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage($reason);
         AppFormlogicManifest::validate(self::manifest($extra));
+    }
+
+    /** An app may name a second route, for an answer passed on as it is made. One that names none takes whole answers alone. */
+    public function testAnAppMayTakeAnswersInParts(): void
+    {
+        $this->assertNull(AppFormlogicManifest::ai(self::manifest(['formlogicAi' => self::AI]))['parts']);
+        $manifest = self::manifest(['formlogicAi' => ['jobs' => ['table' => 'ai_jobs', 'deliver' => '/api/site/ai/deliver', 'parts' => '/api/site/ai/part']] + self::AI]);
+        $manifest['server']['routes'][] = ['path' => '/api/site/ai/part', 'method' => 'POST', 'handler' => 'part', 'transaction' => 'write', 'authorization' => 'anonymous'];
+        AppFormlogicManifest::validate($manifest);
+        $this->assertSame('/api/site/ai/part', AppFormlogicManifest::ai($manifest)['parts']);
+    }
+
+    /** Speech is a use of its own: an app that has Narrator's voice asks for it by name. */
+    public function testAnAppMayAskForSpeech(): void
+    {
+        $declared = AppFormlogicManifest::ai(self::manifest(['formlogicAi' => ['uses' => ['chat', 'speech']] + self::AI]));
+        $this->assertSame([['chat', 'speech'], ['chat', 'speech']], [$declared['uses'], $declared['kinds']]);
+        $this->assertSame('speech', AppFormlogicManifest::AI_USES['speech']);
     }
 
     public function testASectionNeedsTheAppsOwnBackend(): void

@@ -70,7 +70,7 @@ final class AppAiWorkerLoopTest extends TestCase
     {
         $status = $this->loop()->run(false, 12);
         $this->assertSame(0, $status);
-        $this->assertCount(12, $this->passes, 'about a pass a second');
+        $this->assertCount(12, $this->passes, 'about a pass a second while there is nothing to do');
         $this->assertNotContains(false, array_column($this->passes, 'takeNew'));
         $this->assertSame([], $this->said, 'a pass that did nothing says nothing');
         $this->assertSame(12, $this->reads, 'the code on disk is read again before every pass');
@@ -83,11 +83,35 @@ final class AppAiWorkerLoopTest extends TestCase
         $this->assertSame(['{"sent":2,"delivered":1}'], $this->said);
     }
 
+    public function testAPassThatDidSomethingIsFollowedAtOnce(): void
+    {
+        // What a pass did often makes more to do (a delivery whose app asked for a follow-up): the
+        // next pass does not wait out the second.
+        $this->pass = fn(int $number): array => $number === 2 ? ['delivered' => 1] : [];
+        $this->loop()->run(false, 3);
+        $this->assertEqualsWithDelta([1000.0, 1001.0, 1001.2, 1002.2], array_column($this->passes, 'at'), 0.001);
+    }
+
+    public function testWithWorkInFlightItPassesSeveralTimesASecondAndStillReadsTheCodeOnceASecond(): void
+    {
+        $this->busy = fn(): bool => $this->clock < 1002.95;
+        $this->loop()->run(false, 1);
+        $this->assertGreaterThanOrEqual(14, count($this->passes), 'an answer is collected as it comes, not at the next second');
+        $this->assertEqualsWithDelta(0.2, $this->passes[1]['at'] - $this->passes[0]['at'], 0.001);
+        $this->assertLessThanOrEqual(4, $this->reads);
+        $this->assertGreaterThanOrEqual(3, $this->reads);
+    }
+
     public function testARunPastItsBudgetFinishesWhatItHasInHandAndTakesNothingNew(): void
     {
         $this->busy = fn(): bool => $this->clock < 1004.5;
         $this->loop()->run(false, 2);
-        $this->assertSame([true, true, false, false, false], array_column($this->passes, 'takeNew'));
+        foreach ($this->passes as $pass) {
+            if ($pass['at'] < 1001.9) $this->assertTrue($pass['takeNew']);
+            if ($pass['at'] > 1002.1) $this->assertFalse($pass['takeNew']);
+        }
+        $last = end($this->passes)['at'];
+        $this->assertTrue($last > 1004.2 && $last < 1004.6, 'it went on until what it had in hand was done, and no longer');
     }
 
     public function testAWatchingWorkerStopsWhenFormLogicIsUpdatedUnderIt(): void
@@ -102,10 +126,14 @@ final class AppAiWorkerLoopTest extends TestCase
         // It noticed before its next pass, took nothing new from then on, and finished what it had
         // in hand before it ended.
         $noticed = array_values(array_filter($this->passes, static fn(array $pass): bool => !$pass['takeNew']));
-        $this->assertSame(1012.0, $noticed[0]['at']);
-        $this->assertSame(1019.0, end($this->passes)['at']);
-        foreach ($this->passes as $pass) $this->assertSame($pass['at'] < 1012.0, $pass['takeNew']);
-        $this->assertSame(13, $this->reads, 'once it knows, it does not read the code again');
+        $this->assertTrue($noticed[0]['at'] > 1011.9 && $noticed[0]['at'] < 1013.3, 'noticed within about a second');
+        $last = end($this->passes)['at'];
+        $this->assertTrue($last > 1019.7 && $last < 1020.1);
+        foreach ($this->passes as $pass) {
+            if ($pass['at'] < 1011.9) $this->assertTrue($pass['takeNew']);
+            if ($pass['at'] > 1013.3) $this->assertFalse($pass['takeNew']);
+        }
+        $this->assertTrue($this->reads === 13 || $this->reads === 14, 'once it knows, it does not read the code again');
     }
 
     public function testAWatchingWorkerWithNothingInHandStopsAtOnce(): void

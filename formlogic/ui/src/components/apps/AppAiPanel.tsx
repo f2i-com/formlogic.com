@@ -8,7 +8,7 @@ import { AiTestResult } from './AiTestResult';
 import { AppAiOwnComputer } from './AppAiOwnComputer';
 import { useAiTest } from './useAiTest';
 
-const USE_WORDS: Record<string, string> = { pictures: 'pictures', 'picture-edits': 'picture edits', chat: 'chat' };
+const USE_WORDS: Record<string, string> = { pictures: 'pictures', 'picture-edits': 'picture edits', chat: 'chat', speech: 'speech' };
 const LIMITS: { key: 'perRequesterDay' | 'perIpDay' | 'perIpHour' | 'perAppDay'; label: string; hint: string }[] = [
   { key: 'perIpDay', label: 'Free requests per network address a day', hint: 'Your visitors\' free rounds. People on one network share them.' },
   { key: 'perRequesterDay', label: 'Per person a day', hint: 'Each visitor, by their browser, or member, by their account.' },

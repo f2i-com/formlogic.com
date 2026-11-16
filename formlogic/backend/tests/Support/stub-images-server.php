@@ -12,7 +12,13 @@ declare(strict_types=1);
  *   `[toolarge]` 413; `[broken]` 500; `[garbage]` 200 with bytes that are not a picture;
  *   `[slow:N]` waits N seconds first;
  * - `[jpeg]` answers a JPEG; `[big]` a noisy 1024 px PNG of several megabytes; otherwise a small PNG;
- * - a chat's `[long:N]` answers N characters whatever `max_tokens` says: a model that runs on.
+ * - a chat's `[long:N]` answers N characters whatever `max_tokens` says: a model that runs on;
+ * - a chat asked for with `stream: true` is answered as server-sent events, a few characters at a
+ *   time, and a line asked for as `response_format: "pcm"` as raw sound, a tone for each sentence and
+ *   a fifth of a second of silence after it (`[unhurried]`: with a wait between the pieces;
+ *   `[whole]`: answered whole all the same, as a server that does not stream answers);
+ * - a line to say (`POST /v1/audio/speech`, as OAIY Voice takes one) is answered with a WAV of a tone;
+ *   `[words]` answers JSON where a sound was asked for, `[long]` half a minute of sound.
  *
  * Every request is appended to STUB_IMAGES_LOG as one JSON line: method, path, headers, body.
  */
@@ -43,7 +49,7 @@ $answer = static function (int $status, array $json): never {
 };
 $said = $path === '/v1/chat/completions'
     ? (string) (is_array($body['messages'] ?? null) && $body['messages'] !== [] ? (end($body['messages'])['content'] ?? '') : '')
-    : (string) ($body['prompt'] ?? '');
+    : (string) ($path === '/v1/audio/speech' ? ($body['input'] ?? '') : ($body['prompt'] ?? ''));
 if (preg_match('/\[slow:(\d+)\]/', $said, $m)) sleep((int) $m[1]);
 $model = (string) ($body['model'] ?? 'stub-model');
 
@@ -62,11 +68,59 @@ if (str_contains($said, '[unknown]')) $answer(400, ['error' => ['message' => "un
 if (str_contains($said, '[toolarge]')) $answer(413, ['error' => ['message' => 'the reference is too large']]);
 if (str_contains($said, '[broken]')) $answer(500, ['error' => ['message' => 'the engine stopped']]);
 
+$unhurried = str_contains($said, '[unhurried]');
+if ($path === '/v1/chat/completions' && ($body['stream'] ?? false) === true && !str_contains($said, '[whole]')) {
+    // A chat asked for as it is written: server-sent events, the reply five characters at a time.
+    $text = preg_match('/\[long:(\d+)\]/', $said, $m) ? substr(str_repeat('All work and no play. ', (int) ceil((int) $m[1] / 22)), 0, (int) $m[1]) : 'Hello from the stub.';
+    http_response_code(200);
+    header('Content-Type: text/event-stream');
+    header('Cache-Control: no-cache');
+    while (ob_get_level() > 0) ob_end_flush();
+    foreach (str_split($text, 5) as $piece) {
+        echo 'data: ' . json_encode(['id' => 'chat-1', 'model' => $model, 'choices' => [['index' => 0, 'delta' => ['content' => $piece]]]]) . "\n\n";
+        flush();
+        if ($unhurried) usleep(150000);
+    }
+    echo "data: [DONE]\n\n";
+    exit;
+}
+if ($path === '/v1/audio/speech' && ($body['response_format'] ?? '') === 'pcm' && !str_contains($said, '[whole]') && !str_contains($said, '[words]')) {
+    // A line asked for as it is spoken, as OAIY Voice streams one: raw 16-bit mono sound at 24 kHz.
+    // Each sentence is a tone, a twentieth of a second a character, then a fifth of a second of silence.
+    $rate = 24000;
+    http_response_code(200);
+    header('Content-Type: audio/pcm');
+    header('X-Sample-Rate: ' . $rate);
+    while (ob_get_level() > 0) ob_end_flush();
+    foreach (preg_split('/(?<=[.!?])\s+/', trim($said)) ?: [] as $sentence) {
+        $data = '';
+        $samples = (int) round($rate * 0.05 * mb_strlen($sentence));
+        for ($i = 0; $i < $samples; $i++) $data .= pack('v', (int) round(sin($i * 2 * M_PI * 220 / $rate) * 8000) & 0xFFFF);
+        echo $data . str_repeat("\0\0", (int) ($rate * 0.2));
+        flush();
+        if ($unhurried) usleep(300000);
+    }
+    exit;
+}
+
 if ($path === '/v1/chat/completions') {
     if (preg_match('/\[long:(\d+)\]/', $said, $m)) {
         $answer(200, ['id' => 'chat-1', 'model' => $model, 'choices' => [['index' => 0, 'message' => ['role' => 'assistant', 'content' => substr(str_repeat('All work and no play. ', (int) ceil((int) $m[1] / 22)), 0, (int) $m[1])]]]]);
     }
     $answer(200, ['id' => 'chat-1', 'model' => $model, 'choices' => [['index' => 0, 'message' => ['role' => 'assistant', 'content' => 'Hello from the stub.']]]]);
+}
+if ($path === '/v1/audio/speech') {
+    // A line said, as OAIY Voice answers one: the sound itself, a WAV (24 kHz, 16-bit, one channel) of
+    // a tone, a twentieth of a second for each character of the line.
+    if (str_contains($said, '[words]')) $answer(200, ['text' => 'I would rather write.']);
+    $rate = 24000;
+    $samples = str_contains($said, '[long]') ? 30 * $rate : max(1, (int) round($rate * 0.05 * mb_strlen($said)));
+    $data = '';
+    for ($i = 0; $i < $samples; $i++) $data .= pack('v', (int) round(sin($i * 2 * M_PI * 220 / $rate) * 8000) & 0xFFFF);
+    http_response_code(200);
+    header('Content-Type: audio/wav');
+    echo 'RIFF' . pack('V', 36 + strlen($data)) . 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, $rate, $rate * 2, 2, 16) . 'data' . pack('V', strlen($data)) . $data;
+    exit;
 }
 if ($path !== '/v1/images/generations') $answer(404, ['error' => ['message' => 'not found']]);
 
