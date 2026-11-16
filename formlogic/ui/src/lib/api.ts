@@ -2571,6 +2571,17 @@ class ApiClient {
     const headers: Record<string, string> = visitor ? { ...engine, 'X-FormLogic-Visitor': '1' } : engine;
     return this.request(`/app/${encodeURIComponent(slug)}/native/request`, { method: 'POST', body: JSON.stringify(input), signal, ...(Object.keys(headers).length ? { headers } : {}) });
   }
+  /**
+   * What a person said to a native app whose owner lets people speak to it (the app's
+   * `formlogicDictate` bridge), as words: the recording, a 16 kHz mono 16-bit WAV in base64 with
+   * no `data:` prefix, goes to the site's speech server and only its words come back for the app.
+   * The page records it, never the app's frame. `visitor` as `runNativeRequest`'s. A refusal
+   * carries the server's code (`listen_off`, `invalid_audio`, `too_long`, `listen_failed`), and too
+   * many in a row its 429.
+   */
+  async listenNative(slug: string, audioBase64: string, signal?: AbortSignal, visitor = false): Promise<ApiResponse<{ text: string; seconds: number }>> {
+    return unwrapData(await this.request<{ data: { text: string; seconds: number } }>(`/app/${encodeURIComponent(slug)}/native/listen`, { method: 'POST', body: JSON.stringify({ audio: audioBase64 }), signal, ...(visitor ? { headers: { 'X-FormLogic-Visitor': '1' } } : {}) }));
+  }
 
   async getAppHosting(id: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment | null; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy; actor?: unknown }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/hosting`);

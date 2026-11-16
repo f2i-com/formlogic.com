@@ -95,6 +95,12 @@ export interface AppSettings {
   /** A hosted SoftN app may open the files a person picks and save files they ask for: 'ask' asks
    *  each person first, 'allow' asks nobody (the owner knows the app). Absent: it may not. */
   softnFiles?: 'ask' | 'allow';
+  /** People may speak to a hosted SoftN app: FormLogic's page listens when they press the app's
+   *  microphone, asks them first, and gives the app only the words. Absent: it may not. */
+  softnListen?: 'allow';
+  /** A hosted SoftN app may offer the apps it makes to the people using it, to add to their own
+   *  account; FormLogic asks them each time. Absent: it may not. */
+  softnApps?: 'allow';
   /** How a hosted SoftN app looks before it opens and where it is shared (AppLookService). */
   softnLook?: SoftnLook;
 }

@@ -248,9 +248,13 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
         // Permissions Policy - disable potentially dangerous browser features.
         // geolocation/camera stay SELF-only (not denied) to match the SPA
         // .htaccess: the form runtime's Location + Camera fields need them.
+        // The microphone is SELF-only too: FormLogic's own page listens for a
+        // hosted app whose owner allowed it (AppListening). An app's frame has
+        // no origin, so it is never "self", and its frame element passes no
+        // microphone on: the app is given the words, never the sound.
         $response = $response->withHeader(
             'Permissions-Policy',
-            'geolocation=(self), microphone=(), camera=(self), payment=()'
+            'geolocation=(self), microphone=(self), camera=(self), payment=()'
         );
 
         // HSTS - only in production and over HTTPS

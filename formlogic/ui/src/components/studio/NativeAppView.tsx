@@ -15,6 +15,12 @@ import { HostedAppFrame } from './HostedAppFrame';
 import { SiteAppFrame, type SiteProblem } from './SiteAppFrame';
 import { AppSplash } from './AppSplash';
 import { WalletSheet } from '../apps/WalletSheet';
+import { AddAppSheet } from '../apps/AddAppSheet';
+import { ListenQuestion, ListeningBar } from './NativeListening';
+import { useNativeDictation } from './useNativeDictation';
+import { useAppOffer } from './useAppOffer';
+import { canRecord } from '../../lib/dictationRecorder';
+import type { NativeHost } from '../../lib/nativeHost';
 import { applyAppHead, rememberedLook, rememberLook, type NativeLook } from '../../lib/appLook';
 import { passAction, unmetRequirement } from '../../lib/passes';
 
@@ -192,7 +198,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
         const was = project.storageScope;
         const inPlace = !project.site && !next.site && next.access === project.access && scope.appId === was.appId && scope.access === was.access &&
           (scope.access !== 'members' || (was.access === 'members' && scope.userId === was.userId)) &&
-          next.files === project.files &&
+          next.files === project.files && !!next.listen === !!project.listen && !!next.offers === !!project.offers &&
           JSON.stringify(next.origins ?? []) === JSON.stringify(project.origins ?? []) &&
           JSON.stringify(next.formlogic ?? null) === JSON.stringify(project.formlogic ?? null);
         if (!inPlace) { reopenWith(project, whole, engine); return; }
@@ -308,6 +314,27 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     walletWaiting.current = [];
     for (const resolve of waiting) resolve({ closed: true, balanceCents });
   }, []);
+  // What else this page does for the app when it asks (HostedAppFrame's `host`), each only where
+  // its owner chose it (the admitted runtime GET's `listen` and `offers`) and never for a plugin's
+  // page: listening for it, where this page opens the microphone, shows that it has and gives the
+  // app only the words; and offering the person an app it made, in FormLogic's own sheet. The app's
+  // frame is told nothing of either choice: it asks, and is answered.
+  const listens = !plugin && !!project?.listen;
+  const offers = !plugin && !!project?.offers;
+  // A person's yes to listening is kept as their answer about files is: by the app, and for a
+  // members' app by the member too.
+  const scope = project?.storageScope;
+  const listenAppId = !scope ? null : scope.access === 'members' ? `${scope.appId}:${scope.userId}` : scope.appId;
+  const dictation = useNativeDictation({ slug, appId: listenAppId, enabled: listens, visitor: !plugin && !!project?.formlogic?.visitors });
+  const offering = useAppOffer({ slug, enabled: offers, who: `${userId ?? ''}/${generation}` });
+  const { call: dictate, release: stopListening } = dictation;
+  const { call: offerApp } = offering;
+  const host = useMemo<NativeHost>(() => ({
+    abilities: () => ({ dictate: listens && canRecord(), addApp: offers }),
+    dictate,
+    addApp: offerApp,
+    gone: stopListening,
+  }), [listens, offers, dictate, offerApp, stopListening]);
   const verify = current?.pass?.verifyPath ? `${current.pass.verifyPath}&return=` : null;
   const linkClass = 'mt-4 inline-flex min-h-11 items-center text-primary-600 dark:text-primary-300';
   if (project && filesAppId && answer === null) {
@@ -324,13 +351,18 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       </section>
     </div>;
   }
-  return project ? <div className="h-full">{project.site
+  // (`relative`: the sign that the page is listening sits over the top of the app.)
+  return project ? <div className="relative h-full">{project.site
     // A JavaScript app: the server's own pages in a frame, admitted by everything above as any app
     // is. Who is using it is said only to an app its members open; anyone's app is told nobody, and
     // what it keeps in the browser is kept for the app alone, as `storageScope` has it.
     ? <SiteAppFrame slug={slug} appId={project.storageScope?.appId ?? slug} name={name ?? ''} version={project.version} site={project.site} backendOrigins={project.origins} userId={project.access === 'members' ? userId ?? null : null} look={look} onProblem={onSiteProblem} onLost={siteLost} initialRoute={startAt} onRoute={fullScreen ? followRoute : undefined} className={fullScreen ? undefined : 'min-h-[420px] rounded-2xl border border-slate-200 dark:border-slate-700'} />
-    : <HostedAppFrame initialPlace={startAt} onPlace={fullScreen && !plugin ? followRoute : undefined} slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} onWallet={native?.wallet ? onWallet : undefined} update={update} onUpdate={live ? onUpdate : undefined} />}
-    {walletOpen && <WalletSheet slug={slug} appName={name || 'this app'} visitor={!!native?.visitor} onClose={closeWallet} />}</div> : !error ? <AppSplash look={look} label={name ? `Opening ${name}` : 'Opening the app'} /> : <div className="p-6">
+    : <HostedAppFrame initialPlace={startAt} onPlace={fullScreen && !plugin ? followRoute : undefined} slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} onWallet={native?.wallet ? onWallet : undefined} host={plugin ? undefined : host} update={update} onUpdate={live ? onUpdate : undefined} />}
+    {walletOpen && <WalletSheet slug={slug} appName={name || 'this app'} visitor={!!native?.visitor} onClose={closeWallet} />}
+    {/* Listening: FormLogic's own question the first time, then its own sign for as long as the microphone is asked for or open. */}
+    {dictation.view === 'question' && <ListenQuestion appName={name || 'this app'} onAnswer={dictation.answer} />}
+    {(dictation.view === 'opening' || dictation.view === 'listening') && <ListeningBar appName={name || 'This app'} listening={dictation.view === 'listening'} onStop={dictation.halt} />}
+    {offering.offer?.open && <AddAppSheet offer={offering.offer} hostName={name || 'This app'} onAdd={() => void offering.add()} onClose={offering.close} />}</div> : !error ? <AppSplash look={look} label={name ? `Opening ${name}` : 'Opening the app'} /> : <div className="p-6">
     {/* On a card of its own: the page around it may wear the app's loading colours, dark or light. */}
     <div className="mx-auto max-w-md rounded-2xl bg-white/95 p-5 shadow-sm dark:bg-slate-900/95">
       <p role="alert" className="text-sm text-slate-800 dark:text-slate-200">{error}</p>

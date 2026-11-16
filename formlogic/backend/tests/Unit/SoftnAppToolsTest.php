@@ -607,6 +607,8 @@ final class SoftnAppToolsTest extends TestCase
         $this->assertSame(['tables' => 1, 'bytes' => 4096], $builder['database']);
         $this->assertStringContainsString('Not published', $over['reach']);
         $this->assertSame('off', $over['files']);
+        // What else its owner may let it ask of the page: off until they say so.
+        $this->assertSame(['off', 'off'], [$over['listening'], $over['offers']]);
         // A token kept to another app does not reach this one.
         $this->expectException(ChatToolDeniedException::class);
         $tools->call('get_softn_app', ['appId' => 'app-1'], new ChatToolsContext('owner', scopedAppId: 'app-2', source: 'mcp'));

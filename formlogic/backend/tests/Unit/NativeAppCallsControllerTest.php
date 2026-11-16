@@ -117,6 +117,7 @@ final class NativeAppCallsControllerTest extends TestCase
             $this->assertNotSame(NativeAppCallsController::class, $row[2]);
         }
         // The runtime is handed the record, or nothing would ever be written down.
-        $this->assertMatchesRegularExpression('~NativeAppController::class, function \(Container \$c\) \{.*?NativeAppCalls::class\)\s*\);~s', $source);
+        // (Inside that one factory: no brace between its start and the record, whatever follows it.)
+        $this->assertMatchesRegularExpression('~NativeAppController::class, function \(Container \$c\) \{[^}]*?NativeAppCalls::class\)~s', $source);
     }
 }

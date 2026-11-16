@@ -220,6 +220,104 @@ class AppAiService
         return $wanted !== [] && array_diff($wanted, ['speech']) === [] ? 'speech_unset' : $pictures;
     }
 
+    /**
+     * Whether the site's speech server would be asked for this app now: availability()'s answer for
+     * an app that asked for speech alone, so every switch that stops a line being said stops this
+     * too (the owner's AI for the app set to this site's AI, apps allowed and not paused, the app
+     * not stopped or resting, its owner's plan, the site's AI the server's own provider, and a
+     * speech server named). What the app's manifest declares is not asked: this is for what
+     * FormLogic's own page does for an app (AppListening), which is no job of the app's.
+     */
+    public function siteSpeaksFor(array $app): bool
+    {
+        $available = $this->availability($app, ['kinds' => ['speech']]);
+        return $available['enabled'] && $available['source'] === 'site' && in_array('speech', $available['kinds'], true);
+    }
+
+    /**
+     * A recording put into words for an app, for FormLogic's own page (AppListening): that it
+     * happened, and how long it was, counted in the app's day (`listen`, and `listen-secs` in whole
+     * seconds, each recording's rounded up) and kept as the day's other counts are, no longer.
+     * Nothing of what was said. It is no job, and counts against no allowance.
+     */
+    public function heard(string $appId, float $seconds): void
+    {
+        $add = $this->pdo()->prepare('INSERT INTO app_ai_counters (app_id, scope, subject, period, used) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE used = used + VALUES(used)');
+        $add->execute([$appId, 'listen', '', $this->day(), 1]);
+        $add->execute([$appId, 'listen-secs', '', $this->day(), max(1, (int) ceil($seconds))]);
+    }
+
+    /**
+     * A recording to be put into words for an app (AppListening), taken from the allowances its AI
+     * requests are taken from, as a spoken line is: the person's day, their network's day and hour,
+     * the app's day, and the site's day. `['taken' => counters]` when it may go ahead, counted
+     * already; `['refused' => {code, message}]` when an allowance is spent, in admission's words.
+     * $requester is ['kind' => user|visitor, 'id' => …], or null where nobody is known: then the
+     * network's, the app's and the site's are counted, and nobody's own. Counted under the app's
+     * lock, as a job is, so two recordings at once cannot both take the last of an allowance.
+     *
+     * @return array{taken: list<array{0: string, 1: string, 2: string, 3: string}>}|array{refused: array{code: string, message: string}}
+     */
+    public function takeForListening(string $appId, ?array $requester, string $ip): array
+    {
+        $pdo = $this->pdo();
+        $now = ($this->now)();
+        $day = gmdate('Y-m-d', $now);
+        $hour = gmdate('Y-m-d\TH', $now);
+        $site = $this->site->current();
+        $ipKey = $this->visitors->ipKey($ip);
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare('INSERT IGNORE INTO app_ai_settings (app_id, per_requester_day, per_ip_day, per_ip_hour, per_app_day) VALUES (?, ?, ?, ?, ?)')
+                ->execute([$appId, $site['defaults']['perRequesterDay'], $site['defaults']['perIpDay'], $site['defaults']['perIpHour'], $site['defaults']['perAppDay']]);
+            $lock = $pdo->prepare('SELECT * FROM app_ai_settings WHERE app_id = ? FOR UPDATE');
+            $lock->execute([$appId]);
+            $row = $lock->fetch(PDO::FETCH_ASSOC);
+            $settings = is_array($row) ? self::shape($row) : $this->defaultSettings($appId);
+            $limits = [
+                ['ip', $ipKey, $day, $settings['perIpDay'], 'Today\'s free AI requests from this network are used up. They start again tomorrow (UTC).'],
+                ['ip-hour', $ipKey, $hour, $settings['perIpHour'], 'Too many AI requests from this network this hour. Try again later.'],
+                ['app', '', $day, $settings['perAppDay'], 'This app has used its AI for today. Try again tomorrow (UTC).'],
+            ];
+            if ($requester !== null) array_unshift($limits, ['requester', self::subject($requester), $day, $settings['perRequesterDay'], 'You have used today\'s AI allowance. It starts again tomorrow (UTC).']);
+            foreach ($limits as [$scope, $subject, $period, $limit, $message]) {
+                if ($this->used($appId, $scope, $subject, $period) >= $limit) {
+                    $pdo->commit();
+                    return ['refused' => ['code' => 'limit_reached', 'message' => $message]];
+                }
+            }
+            // The site's day, across apps: listening is only ever on the site's AI (siteSpeaksFor).
+            $pdo->prepare("INSERT IGNORE INTO app_ai_counters (app_id, scope, subject, period, used) VALUES ('', 'site', '', ?, 0)")->execute([$day]);
+            $siteRow = $pdo->prepare("SELECT used FROM app_ai_counters WHERE app_id = '' AND scope = 'site' AND subject = '' AND period = ? FOR UPDATE");
+            $siteRow->execute([$day]);
+            if ((int) $siteRow->fetchColumn() >= (int) $site['siteDay']) {
+                $pdo->commit();
+                return ['refused' => ['code' => 'limit_reached', 'message' => 'The site\'s AI has done all it can for apps today. Try again tomorrow (UTC).']];
+            }
+            $taken = [[$appId, 'ip', $ipKey, $day], [$appId, 'ip-hour', $ipKey, $hour], [$appId, 'app', '', $day], ['', 'site', '', $day]];
+            if ($requester !== null) array_unshift($taken, [$appId, 'requester', self::subject($requester), $day]);
+            $add = $pdo->prepare('INSERT INTO app_ai_counters (app_id, scope, subject, period, used) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE used = used + 1');
+            foreach ($taken as $counter) $add->execute($counter);
+            $pdo->commit();
+            return ['taken' => $taken];
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    /**
+     * What takeForListening counted, given back: the speech server did not put the recording into
+     * words, so nothing was had for it.
+     *
+     * @param list<array{0: string, 1: string, 2: string, 3: string}> $taken
+     */
+    public function giveBackListening(array $taken): void
+    {
+        $back = $this->pdo()->prepare('UPDATE app_ai_counters SET used = GREATEST(used - 1, 0) WHERE app_id = ? AND scope = ? AND subject = ? AND period = ?');
+        foreach ($taken as $counter) $back->execute($counter);
+    }
+
     /** The lane a kind of job waits in: pictures and edits one after another, chats beside them, speech beside both. */
     public static function lane(string $kind): string
     {

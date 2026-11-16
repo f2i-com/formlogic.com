@@ -654,4 +654,65 @@ describe('SoftnAppWorkspace', () => {
       expect(mocks.saveNativeProject).toHaveBeenCalledWith('app-1', expect.objectContaining({ assets: kept }), 1);
     });
   });
+
+  describe('what the app may ask of FormLogic’s own page', () => {
+    const realUpdate = useAppStore.getState().updateApp;
+    // The store's own save, without the server: the app's settings become what was sent.
+    const updateApp = vi.fn(async (id: string, data: Record<string, unknown>) => {
+      useAppStore.setState(state => ({ apps: state.apps.map(candidate => candidate.id === id ? { ...candidate, ...data } as never : candidate) }));
+      return true;
+    });
+    beforeEach(() => { updateApp.mockClear(); useAppStore.setState({ updateApp: updateApp as never }); });
+    afterEach(() => { useAppStore.setState({ updateApp: realUpdate }); });
+    const toggle = (name: string) => [...container.querySelectorAll<HTMLButtonElement>('button[role="switch"]')]
+      .find(control => document.getElementById(control.getAttribute('aria-labelledby') ?? '')?.textContent === name)!;
+    const settingsSent = () => (updateApp.mock.calls[updateApp.mock.calls.length - 1][1] as { settings: Record<string, unknown> }).settings;
+
+    it('has a switch for listening and one for the apps it makes, both off until the owner turns them on', async () => {
+      await render('published', installed(1), '/settings');
+      const listening = container.querySelector('#settings-listening')!;
+      expect(listening.textContent).toContain('Listening');
+      expect(listening.textContent).toContain('Let people speak to this app');
+      expect(listening.textContent).toContain('FormLogic listens when they press the app’s microphone and gives the app only the words. Needs the site’s speech server.');
+      const apps = container.querySelector('#settings-apps')!;
+      expect(apps.textContent).toContain('Apps it makes');
+      expect(apps.textContent).toContain('Let this app offer the apps it makes');
+      expect(apps.textContent).toContain('It offers them to the people using it, to add to their own. FormLogic asks them each time.');
+      expect(toggle('Let people speak to this app').getAttribute('aria-checked')).toBe('false');
+      expect(toggle('Let this app offer the apps it makes').getAttribute('aria-checked')).toBe('false');
+      // And each is among the settings on the page, beside the files one.
+      expect([...container.querySelectorAll('nav[aria-label="Settings on this page"] a')].map(link => link.textContent)).toEqual(expect.arrayContaining(['Files on this device', 'Listening', 'Apps it makes']));
+    });
+
+    it('saves Listening as softnListen, on the settings the app has now, and takes it away again', async () => {
+      await render('published', installed(1), '/settings');
+      await act(async () => toggle('Let people speak to this app').click());
+      expect(updateApp).toHaveBeenCalledWith('app-1', { settings: { softnApp: true, softnListen: 'allow' } });
+      expect(toggle('Let people speak to this app').getAttribute('aria-checked')).toBe('true');
+      expect(toggle('Let this app offer the apps it makes').getAttribute('aria-checked')).toBe('false');
+      await act(async () => toggle('Let people speak to this app').click());
+      expect(settingsSent()).toEqual({ softnApp: true });
+      expect(toggle('Let people speak to this app').getAttribute('aria-checked')).toBe('false');
+    });
+
+    it('saves Apps it makes as softnApps, beside what is already set', async () => {
+      await render('published', installed(1), '/settings');
+      // Set since the page was opened (the files choice, listening): merged onto a fresh read, never written over.
+      useAppStore.setState(state => ({ apps: state.apps.map(candidate => ({ ...candidate, settings: { ...candidate.settings, softnFiles: 'ask', softnListen: 'allow' } }) as never) }));
+      await act(async () => {});
+      await act(async () => toggle('Let this app offer the apps it makes').click());
+      expect(settingsSent()).toEqual({ softnApp: true, softnFiles: 'ask', softnListen: 'allow', softnApps: 'allow' });
+      expect(toggle('Let this app offer the apps it makes').getAttribute('aria-checked')).toBe('true');
+      await act(async () => toggle('Let this app offer the apps it makes').click());
+      expect(settingsSent()).toEqual({ softnApp: true, softnFiles: 'ask', softnListen: 'allow' });
+    });
+
+    it('are the owner’s to set: nobody else is shown them', async () => {
+      useAuthStore.setState({ user: { id: 'manager', email: 'manager@example.test' } as never });
+      await render('published', installed(1), '/settings');
+      expect(container.querySelector('#settings-listening')).toBeNull();
+      expect(container.querySelector('#settings-apps')).toBeNull();
+      expect(container.querySelector('#settings-access')).not.toBeNull();
+    });
+  });
 });

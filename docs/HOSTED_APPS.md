@@ -123,6 +123,12 @@ choice is the grant (`settings.softnFiles`, `ask` or `allow`). Only a granted ap
 download (`sandbox="allow-scripts allow-downloads"`); it still never sees anything on the device but
 what the person picks. SoftN v0.0.33's frame reads the grant; an older one grants nothing.
 
+**Listening** and **Apps it makes** (Settings, the owner alone) are two more such choices, each off
+until the owner turns it on: whether FormLogic's page may listen to a person for the app and give it
+their words (`settings.softnListen`), and whether the app may offer the person an app it made, to
+add to their own (`settings.softnApps`). Both are described under
+[Listening, and offering an app](#listening-and-offering-an-app).
+
 **Look and sharing** (Settings, the owner alone) is how the app looks before it opens and wherever it
 is shared (`settings.softnLook`, AppLookService):
 
@@ -968,6 +974,187 @@ make it a protocol: the runner's output carrying, outside the handler's answer a
 after the handler returns (any handler-supplied value replaced), `"softn": {"transaction":
 "committed" | "rolled_back" | "none"}`, for FormLogic to read instead of the log.
 
+## Listening, and offering an app
+
+Two things a hosted SoftN app may ask of the page it is shown in, which is FormLogic's own page and
+not the app's frame: to listen to the person and give the app their words, and to add an app it has
+made to the signed-in person's own apps. Each is off until the app's owner allows it, as **Files on
+this device** is. Each is done by FormLogic's page, where the person sees it and can stop it, and the
+app hears only how it went. A plugin's page is never given either.
+
+### What the owner allows
+
+Two choices in the app's Settings, the owner's alone, kept in the app's `settings` beside
+`softnFiles`:
+
+| Setting | Panel | What it allows |
+|---|---|---|
+| `softnListen: "allow"` | **Listening**: "Let people speak to this app" | FormLogic's page may listen for the app when it asks, and give it the words |
+| `softnApps: "allow"` | **Apps it makes**: "Let this app offer the apps it makes" | The app may offer the signed-in person an app it made, for FormLogic to ask them about |
+
+Anything but `"allow"` is dropped when the settings are saved (AppService), so each is on or absent.
+An AI tool reads them from `get_softn_app` as `listening` and `offers`, each `allow` or `off`.
+
+**Listening also needs the site to be able to.** It is on for an app only while all of these hold:
+
+- the owner allowed it;
+- the site names a speech server, `AI_SPEECH_BASE_URL` (the server an app's `speech` lines are said
+  by: [Where a line is said](#app-ai-where-it-runs-and-what-the-app-is-delivered)), and the site's AI
+  is on;
+- **AI for this app** is set to **this site's AI**, with every switch that would stop one of its
+  lines being said: apps allowed to use the site's AI and not paused, the app's AI not stopped by
+  the administrator or resting, the owner's plan active, and the site's AI the server's own provider
+  rather than a computer. FormLogic asks App AI the one question it asks for a `speech` job
+  (AppAiService::siteSpeaksFor), so the two never disagree.
+
+The app's manifest need not declare the `speech` use: listening is the page's doing, not a job of the
+app's. It does need a `formlogicAi` section, with any use, since that is what gives its owner **AI for
+this app** to turn on. An app on its owner's own OAIY is not listened for, as it is not spoken for.
+The speech server must transcribe as well as speak: OAIY Voice started with `--mode both` (in `tts`
+mode it answers a recording 404, and every attempt fails as `listen_failed`, below).
+
+The page is told both when it opens the app: `GET /api/app/{slug}/native` carries `project.listen`
+and `project.offers`, each `true` or `false`, beside `project.files`.
+
+### How an app asks
+
+Through `softn.backend.call(action, input, callback)`, as it opens the wallet. FormLogic's page
+answers these three actions itself; nothing of them reaches the app's backend. An older FormLogic
+does not know them and fails the call (`response.error`), which is how an app knows to offer neither.
+No call waits on the person: each answers at once, and the app asks again (`status`) to learn what
+they chose.
+
+```javascript
+softn.backend.call("formlogicHost", {op: "abilities"}, function (response) {
+  if (response.error) return;                    // an older FormLogic: no microphone button, no offer
+  canDictate = response.result.dictate === true;
+  canOffer = response.result.addApp === true;
+});
+```
+
+`formlogicHost` `{op: "abilities"}` answers `{dictate: boolean, addApp: boolean}`: whether the page
+would listen for this app now (the owner's choice, the site, and a browser that can record), and
+whether it would take an offer.
+
+### Listening: `formlogicDictate`
+
+| Call | Answer |
+|---|---|
+| `{op: "start"}` | `{state: "asking" \| "listening"}`, or `{state: "refused", reason: "off" \| "denied" \| "no_microphone" \| "busy"}` |
+| `{op: "status"}` | `{state: "asking" \| "listening" \| "ended" \| "idle", level?: 0..1, reason?}` |
+| `{op: "stop"}` | `{text, seconds}`, or `{text: "", reason: "nothing" \| "limit" \| "failed"}` |
+| `{op: "cancel"}` | `{cancelled: true}` |
+
+- **`start`.** FormLogic asks the person once per app per browser before it listens for that app
+  ("asking": its own question, or the browser's about the microphone), and remembers a yes on that
+  device; a no is not kept, and the next press asks again. `refused` says why not: `off` (listening
+  is not on for this app), `denied` (the person or the browser said no), `no_microphone`, or `busy`
+  (it is asking or listening already).
+- **`status`.** `level` is how loud the person is while it listens, 0 to 1, for a meter. `ended`: it
+  stopped without the app, at the limit or because the person stopped it in FormLogic's page, and
+  holds what was said for `stop`. `idle` with a `reason` (`denied`, `no_microphone`, `failed`) says
+  why the last try heard nothing.
+- **`stop`.** The words, and how many seconds were heard. With no words: `nothing` (silence, or too
+  short to be speech), `limit` (too many recordings in a minute, or an AI allowance spent for the day: try again later)
+  or `failed`.
+- **`cancel`** lets the microphone go and sends nothing.
+
+While it listens FormLogic shows its own indicator, with its own Stop, over the app. It stops by
+itself after 60 seconds. The microphone is opened by FormLogic's page and never by the frame: the app
+is given the words and never the sound.
+
+```javascript
+function listen() {
+  softn.backend.call("formlogicDictate", {op: "start"}, function (response) {
+    if (response.error || response.result.state === "refused") { hint = "Type it instead."; return; }
+    listening = true;                            // "asking" or "listening": ask `status` to follow it
+  });
+}
+function done() {
+  softn.backend.call("formlogicDictate", {op: "stop"}, function (response) {
+    listening = false;
+    if (!response.error && response.result.text) draft = draft + " " + response.result.text;
+  });
+}
+```
+
+**The recording's route**, for FormLogic's own page: `POST /api/app/{slug}/native/listen`
+`{"audio": "<a RIFF/WAVE file in base64>"}` (with or without `data:audio/wav;base64,` before it),
+admitted as the app's own requests are: whoever may open the app, a members' app's member or anyone
+at one open to all. The page records at 16 kHz, 16 bits, one channel, so a minute is 1.92 MB.
+
+| Answer | When |
+|---|---|
+| `200 {"data": {"text", "seconds"}}` | The words, trimmed, and the recording's length. Silence is `text: ""` |
+| `403`, code `listen_off` | Listening is not on for this app now (the conditions above) |
+| `400`, code `invalid_audio` | Not base64, not a WAV of PCM sound (one or two channels, 8 to 96 kHz, 8 to 32 bits), or empty |
+| `413`, code `too_long` | Longer than 60 seconds (a recorder's last buffer, up to a second, is not held against it), or more than 2.2 MB decoded |
+| `429`, code `limit_reached` | An AI allowance is spent: the person's, their network's, the app's or the site's for the day (below), in App AI's words |
+| `502`, code `listen_failed` | The speech server was not reached, did not answer in 30 seconds, or answered without words |
+| `429`, with `retryAfter` | More than 20 in a minute from one person (a member by account, a visitor by address), in each app apart |
+| `413`, no code | The request itself is over 3 MB |
+
+Errors are FormLogic's usual `{"error": true, "message", "code"}`; the message is a plain sentence,
+and what the speech server said goes to the server's log, never to the page. The recording is read
+before anything is sent, and what is sent is its sound under a header written here, so nothing else
+a file carried goes with it: `POST {AI_SPEECH_BASE_URL}/audio/transcriptions` `{"audio": "<base64
+WAV>", "response_format": "json"}`, with `Authorization: Bearer` when `AI_SPEECH_API_KEY` is set,
+answered `{"text": "…"}`, the form OAIY Voice takes. **Nothing is kept**: not the recording, not the
+words. Only that it happened and how long it was is counted, in the app's day beside App AI's other
+counts (`app_ai_counters`, `listen` and `listen-secs`, removed after three days).
+
+**A recording costs one AI request**, as a spoken line does, from the same allowances: the person's
+day (a members' app's member, or the visitor the browser is where the page marks the request as the
+app's own requests are marked), their network's day and hour, the app's day and the site's day, as
+the owner and the administrator set them for the app's AI. It is taken once the recording has been
+read, under the app's lock as a job is, and given back when the speech server did not put it into
+words.
+
+**The microphone is the site's page's.** FormLogic's pages are sent `Permissions-Policy: …
+microphone=(self) …`, as they are `camera=(self)`: by the API (SecurityHeadersMiddleware), the bundled
+`.htaccess` and the nginx examples in `formlogic/README.md`. Where the runtime documents are sent the
+same header (the bundled `.htaccess` sends it with every page that is not the API's), they gain
+nothing by it. An app's frame has no origin, so it is not `self` to the page that frames it, and a
+feature reaches such a frame only where the frame element passes it on (`allow="microphone"`), which
+FormLogic's never does; a header on the frame's own document can only take a feature away.
+`getUserMedia` in the frame fails as it always has.
+
+### Offering an app: `formlogicAddApp`
+
+For an app that makes apps, as Narrator does: it may offer the person the one it just made, to keep
+as their own.
+
+| Call | Answer |
+|---|---|
+| `{op: "offer", from: "/api/…", name}` | `{state: "asking"}`, or `{state: "refused", reason: "off" \| "signed_out" \| "busy" \| "invalid"}` |
+| `{op: "status"}` | `{state: "asking" \| "adding" \| "added" \| "declined" \| "failed" \| "idle", name?, reason?}` |
+
+- **`from`** is a GET route of the offering app's own backend, a path under `/api/` and never under
+  `/api/site/`, which FormLogic calls as the person once they have said yes. It answers JSON holding
+  `files`, an object of path to text (the SoftN app's files: `manifest.json`, its pages, its logic),
+  and optionally `name`, at the top level or under `data`. The page takes up to 200 files and 4 MB of
+  text in all: an app made in a page, not one with media.
+- **`name`** is what FormLogic shows the person while it asks. It is display text only.
+- **`refused`**: `off` (the owner has not allowed it), `signed_out` (an app is added to an account:
+  a visitor has none, and a session on an app's own domain opens that app alone), `busy` (an offer is
+  already open) or `invalid` (`from` is not such a route).
+- **`status`**: `added` carries the new app's `name`; `declined`, the person said no; `failed`
+  carries a `reason`, `invalid` (what the route handed over is not an app FormLogic can add),
+  `limit` (the person's plan has lapsed) or `failed`.
+
+FormLogic asks the member in its own words, in its own sheet over the app; nothing is fetched until
+they agree. The files are then read exactly as a chosen `.softn` file is, by the importer and its
+rules, so nothing an upload would be refused for is let in this way, and the new app is made in the
+person's own account, as an upload's is. The offering app is told how it went and nothing about the
+app that was made but its name.
+
+```javascript
+softn.backend.call("formlogicAddApp", {op: "offer", from: "/api/projects/" + id + "/export", name: title}, function (response) {
+  if (response.error || response.result.state !== "asking") return;   // not offered: say why, or keep its own download
+  // ask {op: "status"} now and then: "added", "declined" or "failed"
+});
+```
+
 ## Choose the right starting point
 
 | You want to… | Start here |
@@ -1069,7 +1256,7 @@ If the shell that answers on `host.html` does not announce `host-js`, the frame 
 
 Choosing host JavaScript is an explicit transfer of trust, which is why it takes an administrator's verification of the owner's account. It is worth being plain about what it costs, because none of it is theoretical — the list below was measured in Chromium, Firefox and WebKit.
 
-**What does not change.** The frame is still `sandbox="allow-scripts"` with no `allow-same-origin`, so it still has an opaque origin: no FormLogic cookies, no storage, no access to the surrounding page, no pop-ups, no top-level navigation, no forms, no downloads. The shell's policy still pins every kind of loading to the runtime directory, so third-party fetches, WebSockets, images and beacons are still blocked, and no credentialed request to `/api` can be made from inside the frame. The parent bridge is still the only data path, every action is still authorised server-side under the *viewer's* session, and the server still runs every backend action on ZIPP. The editors always run on ZIPP. **The data an app can reach does not change at all** — the same actions, the same workspace records, the same browser storage it could already reach on ZIPP.
+**What does not change.** The frame is still `sandbox="allow-scripts"` (with `allow-downloads` only where the owner lets the app save files) and no `allow-same-origin`, so it still has an opaque origin: no FormLogic cookies, no storage, no access to the surrounding page, no pop-ups, no top-level navigation, no forms, no downloads but those, and no microphone. The shell's policy still pins every kind of loading to the runtime directory, so third-party fetches, WebSockets, images and beacons are still blocked, and no credentialed request to `/api` can be made from inside the frame. The parent bridge is still the only data path, every action is still authorised server-side under the *viewer's* session, and the server still runs every backend action on ZIPP. The editors always run on ZIPP. **The data an app can reach does not change at all** — the same actions, the same workspace records, the same browser storage it could already reach on ZIPP.
 
 **What is lost.** What ZIPP provides, and host JavaScript does not, is a *bound on the author's code*:
 
@@ -1176,7 +1363,7 @@ Both browser integrations use the same ZIPP engine: the JavaScript/Python (`web-
 
 Hosted apps use main-thread script execution. The iframe's existing opaque origin and `worker-src blob:` policy do not permit Softn's additional URL-based sandbox workers; sharing engine bytes does not change those capabilities.
 
-Serve `/hosted-runtime/` static assets with `Access-Control-Allow-Origin: *` and `X-Content-Type-Options: nosniff`; the opaque iframe needs anonymous CORS access to its trusted JS/WASM. An Apache `.htaccess` is included; equivalent headers must be configured for Nginx or another host. **Both** runtime entry documents (`/hosted-runtime/index.html` and `/hosted-runtime/host.html`) must also send `Content-Security-Policy: sandbox allow-scripts; frame-ancestors 'self'; base-uri 'self'; object-src 'none'`, and the embedded editor entry documents (`/app-editors/builder/index.html` and `/app-editors/studio/index.html`) `Content-Security-Policy: frame-ancestors 'self'; base-uri 'self'; object-src 'none'`, all four with `X-Frame-Options: SAMEORIGIN`. The `sandbox` keeps the runtime opaque however it is reached, so it cannot run at this origin even where a proxy loses the framing rule; the editors are same-origin and must not carry it. The two runtime documents also send `Cache-Control: no-cache, no-transform`: a CDN that rewrites pages leaves them as sent (Cloudflare's Web Analytics otherwise adds its script to the app's frame, where it runs beside the app). Do not omit `host.html`: it is the document whose shell policy carries `'unsafe-eval'`, so it is the last one that may be framed by anybody. Never add a redirect or rewrite under `/hosted-runtime/` or `/app-editors/` — CSP path matching stops at a redirect, which is how a frame could reach `/api` with the viewer's cookies; `formlogic/ui/scripts/check-security-invariants.mjs` fails the build if one appears, and `scripts/fetch-softn-release.mjs` refuses a Softn release whose own `hosted-runtime/` or `app-editors/` `.htaccess` carries a `Redirect` or `RewriteRule`, before anything installs. The web-root `.htaccess` scopes these exceptions to the embedded documents; keep the dashboard's default framing denial. If a proxy or CDN injects another `frame-ancestors 'none'` or `X-Frame-Options: DENY` on these paths, remove that conflicting override for the embedded documents. Do not add permissive CORS to authenticated API routes. Vite development has a middleware limited to the static runtime directory.
+Serve `/hosted-runtime/` static assets with `Access-Control-Allow-Origin: *` and `X-Content-Type-Options: nosniff`; the opaque iframe needs anonymous CORS access to its trusted JS/WASM. An Apache `.htaccess` is included; equivalent headers must be configured for Nginx or another host. **Both** runtime entry documents (`/hosted-runtime/index.html` and `/hosted-runtime/host.html`) must also send `Content-Security-Policy: sandbox allow-scripts allow-downloads; frame-ancestors 'self'; base-uri 'self'; object-src 'none'` (`allow-downloads` because a document's sandbox and its frame's both apply: the frame element decides which app may save a file, the one its owner lets use files), and the embedded editor entry documents (`/app-editors/builder/index.html` and `/app-editors/studio/index.html`) `Content-Security-Policy: frame-ancestors 'self'; base-uri 'self'; object-src 'none'`, all four with `X-Frame-Options: SAMEORIGIN`. The `sandbox` keeps the runtime opaque however it is reached, so it cannot run at this origin even where a proxy loses the framing rule; the editors are same-origin and must not carry it. The two runtime documents also send `Cache-Control: no-cache, no-transform`: a CDN that rewrites pages leaves them as sent (Cloudflare's Web Analytics otherwise adds its script to the app's frame, where it runs beside the app). Do not omit `host.html`: it is the document whose shell policy carries `'unsafe-eval'`, so it is the last one that may be framed by anybody. Never add a redirect or rewrite under `/hosted-runtime/` or `/app-editors/` — CSP path matching stops at a redirect, which is how a frame could reach `/api` with the viewer's cookies; `formlogic/ui/scripts/check-security-invariants.mjs` fails the build if one appears, and `scripts/fetch-softn-release.mjs` refuses a Softn release whose own `hosted-runtime/` or `app-editors/` `.htaccess` carries a `Redirect` or `RewriteRule`, before anything installs. The web-root `.htaccess` scopes these exceptions to the embedded documents; keep the dashboard's default framing denial. If a proxy or CDN injects another `frame-ancestors 'none'` or `X-Frame-Options: DENY` on these paths, remove that conflicting override for the embedded documents. Do not add permissive CORS to authenticated API routes. Vite development has a middleware limited to the static runtime directory.
 
 PHP needs the existing sandbox binaries, PDO SQLite, and writable `backend/storage/hosted-apps` outside the public document root. No new MySQL migration or Node process is needed on the API server. Deploy the new PHP classes and route wiring with the frontend assets.
 
@@ -1427,7 +1614,7 @@ workspace follows the links too and keeps the workspace's own address.
 A link is read from the page that shows it (one written in an imported part, from the page that
 imports it), and it opens a page file of the app or a place on the same page (`#top`).
 
-**Links out of the app.** The frame's sandbox is `allow-scripts` alone: it may open no window, and
+**Links out of the app.** The frame's sandbox is `allow-scripts` (and `allow-downloads` where files are allowed): it may open no window, and
 an address it goes to in place of the app is a page of this site, which refuses to be framed. A
 frame that keeps its links (the runtime's `features` name `links/1`, and `ready` says `links: 1`;
 from SoftN v0.0.41) never leaves the app for a link the person clicks. A link to another site, a

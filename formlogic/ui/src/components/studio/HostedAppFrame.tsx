@@ -14,6 +14,7 @@ import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurre
 import { copyHostedActor, HOSTED_ACTOR_ERROR, isHostedAdmissionCurrent, sameHostedActor, type HostedAdmission } from '../../lib/hostedActor';
 import { outsideLinkOf, type OutsideLink } from "../../lib/outsideLink";
 import { bytesToBase64, type NativeMediaFiles } from "../../lib/nativeHosting";
+import type { AppReader, NativeHost } from "../../lib/nativeHost";
 import { OutsideLinkBar } from "./OutsideLinkBar";
 
 const navigate = (path: string) => window.location.assign(path);
@@ -71,6 +72,7 @@ export function HostedAppFrame({
   domain = false,
   plugin,
   onWallet,
+  host,
   update,
   onUpdate,
   initialPlace,
@@ -116,6 +118,15 @@ export function HostedAppFrame({
    * answered when it closes, with the balance then. The app learns nothing else of it.
    */
   onWallet?: () => Promise<{ closed: true; balanceCents: number }>;
+  /**
+   * What else FormLogic's own page does for a native app that asks (lib/nativeHost; NativeAppView
+   * answers): `formlogicHost` says what it can do here, `formlogicDictate` has the page listen
+   * (it opens the microphone, which the frame cannot have, and the app is given only the words)
+   * and `formlogicAddApp` has it offer the person an app this one made. The page asks the person
+   * itself and each call is answered without waiting on them. Never for a plugin's page. Told
+   * when this frame goes (`gone`), so nothing stays open for a frame that is no longer there.
+   */
+  host?: NativeHost;
   /** The app IS the page: no card around it, and no minimum height to overflow a short screen. */
   bare?: boolean;
   /**
@@ -149,6 +160,9 @@ export function HostedAppFrame({
   // The wallet's opener, read when the frame asks: a new callback from the page never remounts the app.
   const onWalletRef = useRef(onWallet);
   useLayoutEffect(() => { onWalletRef.current = onWallet; }, [onWallet]);
+  // And what else the page does for the app: read as the frame asks, as the wallet's opener is.
+  const hostRef = useRef(host);
+  useLayoutEffect(() => { hostRef.current = host; }, [host]);
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
   const hosted = useMemo(() => {
     const actor = copyHostedActor(hostedAdmission?.actor);
@@ -256,6 +270,7 @@ export function HostedAppFrame({
     let expired = false;
     let inFlight = 0;
     let remounting = false;
+    let hostTold = false;
     // The files this frame opens with: the props', or the version an earlier frame of this same mount
     // took in place.
     if (taken.current && taken.current.base !== mountBase) taken.current = null;
@@ -316,6 +331,16 @@ export function HostedAppFrame({
     /** Only the typed code remounts: a bare 409 is an ordinary failure the app must hear. */
     const engineChanged = (result: { status?: number; code?: string }) =>
       result.status === 409 && result.code === "engine_changed";
+    // One GET of the app's own backend as the person, sent as its `nativeRequest` is: for the files
+    // of an app it offers (`formlogicAddApp`), read by the page once the person has agreed. Not
+    // stopped with this frame: their yes stands though the frame is opened again meanwhile.
+    const readFromApp: AppReader = async (from) => {
+      const url = new URL(from, window.location.origin);
+      if (url.origin !== window.location.origin) throw new Error("This URL is not part of the app backend");
+      const result = await api.runNativeRequest(slug, { path: url.pathname, query: Object.fromEntries(url.searchParams), method: "GET", headers: {}, body: {} }, undefined, clientEngine, !!mountNative?.visitor);
+      if (isCurrentMount() && engineChanged(result)) void remountOnNewEngine();
+      return result;
+    };
     // The server decided differently while this page was open (a revocation, a policy edit). Take
     // its new decision and rebuild the frame on it, rather than telling the person about an
     // engine. One refetch at a time: four actions can be in flight and all of them can be refused.
@@ -389,6 +414,9 @@ export function HostedAppFrame({
       mountValid = false;
       controller.abort();
       clearTimeout(timeout);
+      // What the page held open for this frame (the microphone, while it listened) goes with it.
+      // Once: a later frame of this app may be listened for, and is not this one's to end.
+      if (!hostTold) { hostTold = true; hostRef.current?.gone(); }
       if (!channelClosed && channel) {
         channelClosed = true;
         // Closing a MessagePort does not reliably notify its peer. Explicitly
@@ -621,6 +649,27 @@ export function HostedAppFrame({
             if (input.op !== "open") throw new Error("Unknown wallet action.");
             const closed = await openWallet();
             if (isCurrentMount()) reply({ result: closed });
+            return;
+          }
+          // What else FormLogic's own page does for an app (`host`): never for a plugin's page. Each
+          // is the page's to do where the person sees it; the frame hears only how it went.
+          const page = mountNative && !plugin ? hostRef.current : undefined;
+          if (page && action === "formlogicHost") {
+            if (input.op !== "abilities") throw new Error("Unknown host action.");
+            reply({ result: page.abilities() });
+            return;
+          }
+          // Listening: the page opens the microphone and shows that it has. `stop` waits for the
+          // speech server, inside the frame's own deadline; the rest answer at once.
+          if (page && action === "formlogicDictate") {
+            const answer = await page.dictate(input);
+            if (isCurrentMount()) reply({ result: answer });
+            return;
+          }
+          // An app this one made, offered to the person: the page asks them, and fetches its files
+          // from this app's backend only on their yes.
+          if (page && action === "formlogicAddApp") {
+            reply({ result: page.addApp(input, readFromApp) });
             return;
           }
           // Not for a plugin's page: a plugin is anyone's code, and workspaceOpen moves this page.

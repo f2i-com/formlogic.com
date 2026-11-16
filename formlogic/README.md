@@ -308,7 +308,7 @@ server {
         add_header Cache-Control $formlogic_cache;
         add_header X-Content-Type-Options "nosniff" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-        add_header Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()" always;
+        add_header Permissions-Policy "geolocation=(self), microphone=(self), camera=(self), payment=()" always;
         add_header X-Frame-Options "DENY" always;
         add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
     }
@@ -333,7 +333,7 @@ server {
         add_header Cache-Control "no-cache";
         add_header X-Content-Type-Options "nosniff" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-        add_header Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()" always;
+        add_header Permissions-Policy "geolocation=(self), microphone=(self), camera=(self), payment=()" always;
         add_header Content-Security-Policy "frame-ancestors *; base-uri 'self'; object-src 'none'" always;
     }
 
@@ -409,7 +409,7 @@ server {
         add_header Cache-Control $formlogic_cache;
         add_header X-Content-Type-Options "nosniff" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-        add_header Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()" always;
+        add_header Permissions-Policy "geolocation=(self), microphone=(self), camera=(self), payment=()" always;
         add_header X-Frame-Options "DENY" always;
         add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
     }
@@ -420,7 +420,7 @@ server {
         add_header Cache-Control $formlogic_cache;
         add_header X-Content-Type-Options "nosniff" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-        add_header Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()" always;
+        add_header Permissions-Policy "geolocation=(self), microphone=(self), camera=(self), payment=()" always;
         add_header X-Frame-Options "DENY" always;
         add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
     }

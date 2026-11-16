@@ -924,8 +924,14 @@ $container->set(\FormLogic\Controllers\NativeAppController::class, function (Con
         $c->get(\FormLogic\Services\AppAiService::class),
         $c->get(\FormLogic\Services\AppWalletService::class),
         $c->get(\FormLogic\Services\NativeAppCharges::class),
-        $c->get(\FormLogic\Services\NativeAppCalls::class)
+        $c->get(\FormLogic\Services\NativeAppCalls::class),
+        $c->get(\FormLogic\Services\AppListening::class)
     );
+});
+// Listening for a hosted app (AppListening): FormLogic's page records the person and the site's
+// speech server (AI_SPEECH_BASE_URL) puts it into words, where the app's owner allowed it.
+$container->set(\FormLogic\Services\AppListening::class, function (Container $c) {
+    return new \FormLogic\Services\AppListening($c->get(\FormLogic\Services\AppAiService::class), $c->get(AIService::class));
 });
 // App AI, visitors and payments (docs/HOSTED_APPS.md, "App AI, visitors and payments").
 $container->set(\FormLogic\Services\AppAiSiteSettings::class, fn () => new \FormLogic\Services\AppAiSiteSettings());
@@ -1465,6 +1471,9 @@ $app->add(new BodySizeLimitMiddleware(
         // A request from an app's page: a photo upload route takes up to 5.6 MB (SoftN's limit), which
         // the controller holds each route to (NativeAppService::visitorRequest); any other, 2 MB as before.
         ['path' => '#^/api/app/[^/]+/native/request$#', 'method' => 'POST', 'maxBytes' => 6 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => false],
+        // A recording FormLogic's page made for an app, to be put into words (NativeAppController::listen):
+        // a WAV of a minute at most in base64, which the service holds to 2.2 MB decoded (AppListening).
+        ['path' => '#^/api/app/[^/]+/native/listen$#', 'method' => 'POST', 'maxBytes' => 3 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => false],
 
         ['path' => '#^/api/account/backup/import$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/v1/data-node/restores$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => ['application/zip'], 'auth' => false],
@@ -3703,6 +3712,14 @@ $app->get('/api/app/{slug}/native/media', function ($request, $response) use ($c
 $app->post('/api/app/{slug}/native/request', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->runtime($request, $response, $getArgs($request));
 })->add($appAccessGate)->add($nativeLimiter)->add($authOptional);
+// A recording FormLogic's own page made for an app, put into words by the site's speech server
+// (NativeAppController::listen), admitted as the app's requests are. Each one is a transcription,
+// so it has a small budget of its own: 20 a minute for whoever is asking (a member by account, a
+// visitor by address), in each app apart, refused with the limiter's 429 and how long to wait.
+$listenLimiter = new RateLimitMiddleware($rateLimiter, 20, 60, 'app_listen', true, true, null, true);
+$app->post('/api/app/{slug}/native/listen', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->listen($request, $response, $getArgs($request));
+})->add($appAccessGate)->add($listenLimiter)->add($authOptional);
 // A JavaScript app's built site, file by file (SiteAppController). Its page runs with no origin and
 // sends no session, so the address admits the request: a ticket signed for this app and version,
 // handed out only by the runtime descriptor above, which rides the gate and the membership checks.

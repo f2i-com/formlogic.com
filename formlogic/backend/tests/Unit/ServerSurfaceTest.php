@@ -80,4 +80,31 @@ final class ServerSurfaceTest extends TestCase
         self::assertSame('max-age=31536000', $this->hsts('https://shop.acme.com/api/x', 'https://forms.example'));
         self::assertSame('max-age=31536000', $this->hsts('https://shop.acme.com/api/x', null));
     }
+
+    /**
+     * FormLogic's own pages may use the microphone, as they may the camera: the page listens for a
+     * hosted app whose owner allowed it (AppListening). The API's answers, the bundled .htaccess and
+     * the README's nginx examples say the same policy, so no server takes it away again. An app's
+     * frame is not "self" (it has no origin), and is given no microphone by any of them.
+     */
+    public function testTheSitesOwnPagesMayUseTheMicrophoneWhereverTheyAreServedFrom(): void
+    {
+        $policy = 'geolocation=(self), microphone=(self), camera=(self), payment=()';
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new Response(200);
+            }
+        };
+        $answer = (new SecurityHeadersMiddleware(false))->process((new ServerRequestFactory())->createServerRequest('GET', 'https://forms.example/api/x'), $handler);
+        self::assertSame($policy, $answer->getHeaderLine('Permissions-Policy'));
+
+        $htaccess = (string) file_get_contents(__DIR__ . '/../../../ui/public/.htaccess');
+        self::assertSame(1, preg_match_all('/Permissions-Policy "([^"]*)"/', $htaccess, $apache));
+        self::assertSame([$policy], $apache[1]);
+
+        $readme = (string) file_get_contents(__DIR__ . '/../../../README.md');
+        self::assertSame(4, preg_match_all('/add_header Permissions-Policy "([^"]*)" always;/', $readme, $nginx));
+        self::assertSame([$policy], array_values(array_unique($nginx[1])));
+    }
 }

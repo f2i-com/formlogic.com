@@ -149,6 +149,8 @@ it.each([
   ['its storage is another app\'s', { storageScope: { access: 'application', appId: 'app-two' } }, {}],
   ['it is for members now', { access: 'members', storageScope: { access: 'members', appId: 'app-one', userId: 'user-1' } }, {}],
   ['it may use files now', { files: 'allow' }, {}],
+  ['people may speak to it now', { listen: true }, {}],
+  ['it may offer the apps it makes now', { offers: true }, {}],
   ['it may call other origins', { origins: ['https://other.example.com'] }, {}],
   ['it asks FormLogic for visitors now', { formlogic: { visitors: true, ai: false, payments: false } }, {}],
 ])('never hands over a version where %s: it is opened as an opening', async (_what, differs, top) => {

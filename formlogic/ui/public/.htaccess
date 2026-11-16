@@ -35,7 +35,7 @@ Options -Indexes
   Header always set Referrer-Policy "strict-origin-when-cross-origin" env=!IS_API
   # geolocation/camera stay SELF-only: the form runtime has a Location (GPS)
   # field and a Camera field; () would deny them even to our own pages.
-  Header always set Permissions-Policy "geolocation=(self), microphone=(), camera=(self), payment=()" env=!IS_API
+  Header always set Permissions-Policy "geolocation=(self), microphone=(self), camera=(self), payment=()" env=!IS_API
   # Deny framing of the app shell (clickjacking / UI-redress). No script-src/style-src
   # so the SPA + zipp WASM worker are unaffected — only framing is restricted.
   Header always set X-Frame-Options "DENY" env=!IS_API

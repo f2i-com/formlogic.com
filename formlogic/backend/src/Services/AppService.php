@@ -162,6 +162,15 @@ class AppService
         if (array_key_exists('softnFiles', $settings) && !in_array($settings['softnFiles'], ['ask', 'allow'], true)) {
             unset($settings['softnFiles']);
         }
+        // settings.softnListen: whether FormLogic's own page may listen for a hosted SoftN app when
+        // it asks, and give it the words (AppListening). settings.softnApps: whether the app may
+        // offer the signed-in person an app it made, for FormLogic to ask them about and add to
+        // their own apps. Each is 'allow' or nothing: off unless the owner said so.
+        foreach (['softnListen', 'softnApps'] as $grant) {
+            if (array_key_exists($grant, $settings) && $settings[$grant] !== 'allow') {
+                unset($settings[$grant]);
+            }
+        }
         // settings.softnLook: how a hosted SoftN app looks before it opens and where it is shared
         // (AppLookService): its icon and share image, each one of its own media files, a description,
         // and the loading view's background and wheel colours. Only those, each held to its shape.

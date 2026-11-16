@@ -13,7 +13,7 @@
 // address of it that names a SoftN app comes here (lib/softnApps: softnPathForStudio).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Braces, Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, History as HistoryIcon, LayoutDashboard, Lock, MessageSquare, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wallet, Wand2, Workflow } from 'lucide-react';
+import { Braces, Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, History as HistoryIcon, LayoutDashboard, Lock, MessageSquare, Mic, PackagePlus, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wallet, Wand2, Workflow } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Textarea } from '../../components/ui/Textarea';
@@ -305,6 +305,24 @@ function Workspace({ app }: { app: App }) {
         toast.success('Saved', next === 'ask' ? 'Each person is asked before the app opens.' : next === 'allow' ? 'The app may use files without asking.' : 'The app cannot open or save files.');
       }
     } finally { setFilesBusy(false); }
+  };
+
+  // What else the app may ask of FormLogic's own page, each the owner's choice as files are and
+  // each on or absent: to listen when a person speaks to it (softnListen), and to offer the people
+  // using it the apps it makes (softnApps). Merged onto a fresh read, as the rest is.
+  const [asksBusy, setAsksBusy] = useState(false);
+  const changeAsk = async (key: 'softnListen' | 'softnApps', on: boolean) => {
+    setAsksBusy(true);
+    try {
+      await fetchApps();
+      const settings = { ...(useAppStore.getState().apps.find(candidate => candidate.id === app.id)?.settings ?? app.settings) };
+      if (on) settings[key] = 'allow'; else delete settings[key];
+      if (await updateApp(app.id, { settings })) {
+        toast.success('Saved', key === 'softnListen'
+          ? (on ? 'People can speak to the app. Each is asked the first time.' : 'The app cannot listen.')
+          : (on ? 'The app can offer the apps it makes. Each person is asked.' : 'The app cannot offer apps.'));
+      }
+    } finally { setAsksBusy(false); }
   };
 
   // The app's look and sharing (AppLookService), with the browser bar colour, merged as the rest is.
@@ -653,7 +671,8 @@ function Workspace({ app }: { app: App }) {
         {section === 'settings' && <div className="mt-4">
           {/* The page is long: one line of links to its panels, each an address a link elsewhere can use. */}
           <nav aria-label="Settings on this page" className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-            {([['settings-access', 'Who can use it', true], ['settings-before', 'Before it opens', isOwner], ['settings-files', 'Files on this device', isOwner && !isSite], ['settings-outside', 'Outside sites', isOwner && isSite],
+            {([['settings-access', 'Who can use it', true], ['settings-before', 'Before it opens', isOwner], ['settings-files', 'Files on this device', isOwner && !isSite],
+              ['settings-listening', 'Listening', isOwner && !isSite], ['settings-apps', 'Apps it makes', isOwner && !isSite], ['settings-outside', 'Outside sites', isOwner && isSite],
               ['settings-signin', 'Phone sign-in codes', showsCodes], ['app-ai-settings', 'AI', isOwner && backend && declaresFormlogicAi(project)],
               ['settings-payments', 'Payments', isOwner && backend && declaresFormlogicPayments(project)], ['settings-look', 'Look and sharing', isOwner],
               ['settings-engine', 'Engine', !isSite && !!(draft.engine && draft.enginePolicy)], ['settings-more', 'More tools', true]] as const)
@@ -695,6 +714,16 @@ function Workspace({ app }: { app: App }) {
                   <span><span className="block text-sm font-medium text-slate-900 dark:text-white">{label}</span><span className="mt-0.5 block text-xs leading-5 text-slate-500 dark:text-slate-400">{hint}</span></span>
                 </label>)}
             </fieldset>
+          </Panel>}
+          {/* What the app may ask of FormLogic's own page, which does it where the person sees it
+              (NativeAppView): a SoftN app's too, as files are. Off until its owner turns each on. */}
+          {app.ownerId === userId && !isSite && <Panel id="settings-listening" title="Listening" icon={<Mic className="h-4 w-4" />}>
+            <Switch label="Let people speak to this app" description="FormLogic listens when they press the app’s microphone and gives the app only the words. Needs the site’s speech server."
+              checked={app.settings?.softnListen === 'allow'} disabled={asksBusy || readOnly} onChange={on => void changeAsk('softnListen', on)} />
+          </Panel>}
+          {app.ownerId === userId && !isSite && <Panel id="settings-apps" title="Apps it makes" icon={<PackagePlus className="h-4 w-4" />}>
+            <Switch label="Let this app offer the apps it makes" description="It offers them to the people using it, to add to their own. FormLogic asks them each time."
+              checked={app.settings?.softnApps === 'allow'} disabled={asksBusy || readOnly} onChange={on => void changeAsk('softnApps', on)} />
           </Panel>}
           {/* Only for an app whose manifest names a provider for the codes it texts: no other app sends any. */}
           {showsCodes && <Panel id="settings-signin" title="Phone sign-in codes" icon={<MessageSquare className="h-4 w-4" />}>

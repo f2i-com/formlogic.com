@@ -31,8 +31,11 @@ export function mediaSize(value: NativeMedia): number {
  * What a member's page runs. `media`, from FormLogic v0.1.24, names the app's media pack, fetched
  * whole and unpacked into `assets` before the frame is given them (readMediaPackBytes: each file's
  * bytes, views into the pack); a server before it sends `assets` in the JSON itself, in base64.
+ * `listen` and `offers` are the owner's two choices about what the app may ask of FormLogic's own
+ * page (settings.softnListen, settings.softnApps): to listen when a person speaks to it, and to
+ * offer them the apps it makes. They are the page's to act on and are never sent into the frame.
  */
-export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: NativeMediaFiles; media?: { url: string; sha256: string; size: number; count: number }; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[]; files?: 'ask' | 'allow'; formlogic?: NativeFormlogic; site?: { url: string; entry: string; proof: string } }
+export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: NativeMediaFiles; media?: { url: string; sha256: string; size: number; count: number }; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[]; files?: 'ask' | 'allow'; listen?: boolean; offers?: boolean; formlogic?: NativeFormlogic; site?: { url: string; entry: string; proof: string } }
 /** An app's media as its page runs it: each file's bytes, or (from a server before the media pack) its base64. */
 export type NativeMediaFiles = Record<string, string | Uint8Array>;
 

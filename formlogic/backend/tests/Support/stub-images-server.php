@@ -18,9 +18,18 @@ declare(strict_types=1);
  *   a fifth of a second of silence after it (`[unhurried]`: with a wait between the pieces;
  *   `[whole]`: answered whole all the same, as a server that does not stream answers);
  * - a line to say (`POST /v1/audio/speech`, as OAIY Voice takes one) is answered with a WAV of a tone;
- *   `[words]` answers JSON where a sound was asked for, `[long]` half a minute of sound.
+ *   `[words]` answers JSON where a sound was asked for, `[long]` half a minute of sound;
+ * - a recording to put into words (`POST /v1/audio/transcriptions` {audio: a WAV in base64,
+ *   response_format: "json"}, as OAIY Voice takes one, for AppListening) is answered `{text}`: how
+ *   many samples it holds, at what rate, in how many channels, with a space before and a line end
+ *   after, as a model leaves them. A recording has no prompt, so what it asks for is read from the
+ *   first bytes of its sound: `[busy]`, `[broken]`, `[toolarge]` and `[slow:N]` as above; `[silent]`
+ *   answers no words (`{text: ""}`), `[wordless]` an answer with no `text`, `[prose]` words that are
+ *   not JSON, and `[endless]` 400,000 characters. One that is not a WAV, or asks for another
+ *   format, is refused 400.
  *
- * Every request is appended to STUB_IMAGES_LOG as one JSON line: method, path, headers, body.
+ * Every request is appended to STUB_IMAGES_LOG as one JSON line: method, path, headers, body (a
+ * picture to edit and a recording by their length and first characters).
  */
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -38,6 +47,7 @@ if (is_string($log) && $log !== '') {
     foreach (['images'] as $key) {
         if (isset($logged[$key]) && is_array($logged[$key])) $logged[$key] = array_map(static fn($item) => is_string($item) ? ['length' => strlen($item), 'prefix' => substr($item, 0, 30)] : $item, $logged[$key]);
     }
+    if (is_string($logged['audio'] ?? null)) $logged['audio'] = ['length' => strlen($logged['audio']), 'prefix' => substr($logged['audio'], 0, 30)];
     file_put_contents($log, json_encode(['method' => $method, 'path' => $path, 'headers' => $headers, 'body' => $logged], JSON_UNESCAPED_SLASHES) . "\n", FILE_APPEND | LOCK_EX);
 }
 
@@ -47,9 +57,15 @@ $answer = static function (int $status, array $json): never {
     echo json_encode($json, JSON_UNESCAPED_SLASHES);
     exit;
 };
-$said = $path === '/v1/chat/completions'
-    ? (string) (is_array($body['messages'] ?? null) && $body['messages'] !== [] ? (end($body['messages'])['content'] ?? '') : '')
-    : (string) ($path === '/v1/audio/speech' ? ($body['input'] ?? '') : ($body['prompt'] ?? ''));
+// A recording to put into words: the WAV itself, or false where the request carries none.
+$recording = $path === '/v1/audio/transcriptions' && is_string($body['audio'] ?? null) ? base64_decode($body['audio'], true) : false;
+$said = match ($path) {
+    '/v1/chat/completions' => (string) (is_array($body['messages'] ?? null) && $body['messages'] !== [] ? (end($body['messages'])['content'] ?? '') : ''),
+    '/v1/audio/speech' => (string) ($body['input'] ?? ''),
+    // The first bytes of its sound, after the 44 of its header.
+    '/v1/audio/transcriptions' => $recording === false ? '' : substr($recording, 44, 64),
+    default => (string) ($body['prompt'] ?? ''),
+};
 if (preg_match('/\[slow:(\d+)\]/', $said, $m)) sleep((int) $m[1]);
 $model = (string) ($body['model'] ?? 'stub-model');
 
@@ -121,6 +137,26 @@ if ($path === '/v1/audio/speech') {
     header('Content-Type: audio/wav');
     echo 'RIFF' . pack('V', 36 + strlen($data)) . 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, $rate, $rate * 2, 2, 16) . 'data' . pack('V', strlen($data)) . $data;
     exit;
+}
+if ($path === '/v1/audio/transcriptions') {
+    // A recording put into words, as OAIY Voice answers one: `{text}`. Only a WAV under the usual
+    // 44-byte header is taken here, which is what AppListening sends whatever it was sent.
+    if ($recording === false || strlen($recording) < 44 || substr($recording, 0, 4) !== 'RIFF' || substr($recording, 8, 8) !== 'WAVEfmt ' || substr($recording, 36, 4) !== 'data') {
+        $answer(400, ['error' => ['message' => 'invalid WAV: not a RIFF/WAVE file', 'type' => 'invalid_request_error']]);
+    }
+    if (($body['response_format'] ?? 'json') !== 'json') $answer(400, ['error' => ['message' => 'only response_format "json" is answered here', 'type' => 'invalid_request_error']]);
+    $format = unpack('vtag/vchannels/Vrate/Vbytes/valign/vbits', $recording, 20);
+    $samples = intdiv(strlen($recording) - 44, max(1, (int) $format['align']));
+    if (str_contains($said, '[silent]')) $answer(200, ['text' => '']);
+    if (str_contains($said, '[wordless]')) $answer(200, ['task' => 'transcribe']);
+    if (str_contains($said, '[prose]')) {
+        http_response_code(200);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'I heard you.';
+        exit;
+    }
+    if (str_contains($said, '[endless]')) $answer(200, ['text' => str_repeat('and on ', 57143)]);
+    $answer(200, ['text' => " {$samples} samples at {$format['rate']} Hz in {$format['channels']}.\n"]);
 }
 if ($path !== '/v1/images/generations') $answer(404, ['error' => ['message' => 'not found']]);
 

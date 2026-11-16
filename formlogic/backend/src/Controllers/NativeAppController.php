@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
-use FormLogic\Services\{AccessGateService, AppAiService, AppFormlogicManifest, AppService, AppUserService, AppVisitors, AppWalletService, NativeAppCalls, NativeAppCharges, NativeAppService, NativePhoneVerification, NativeRecordEventRouter, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService, WalletRefusal};
+use FormLogic\Services\{AccessGateService, AppAiService, AppFormlogicManifest, AppListening, AppService, AppUserService, AppVisitors, AppWalletService, ListenRefusal, NativeAppCalls, NativeAppCharges, NativeAppService, NativePhoneVerification, NativeRecordEventRouter, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService, WalletRefusal};
 use FormLogic\Support\AfterResponse;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -30,7 +30,8 @@ class NativeAppController
     // reflection autowiring SKIPS optional parameters (ReflectionBasedAutowiring), so an `= null`
     // here would silently hand production a controller that decides no app's engine.
     // $calls: the record of the app's calls (NativeAppCalls) its API section shows; none, and nothing is written down.
-    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null, private ?AppLookService $look = null, private ?NativePhoneVerification $verification = null, private ?NativeRecordEventRouter $records = null, private ?AppVisitors $visitors = null, private ?AppAiService $ai = null, private ?AppWalletService $wallets = null, private ?NativeAppCharges $charges = null, private ?NativeAppCalls $calls = null)
+    // $listening: what puts a recording made for an app into words (AppListening); none, and no app is listened for.
+    public function __construct(private AppService $apps, private AppUserService $users, private NativeAppService $native, private PlanService $plans, private FlowService $flows, private RuntimeEngineService $engines, private ?PluginService $plugins = null, private ?AccessGateService $gate = null, private ?AppLookService $look = null, private ?NativePhoneVerification $verification = null, private ?NativeRecordEventRouter $records = null, private ?AppVisitors $visitors = null, private ?AppAiService $ai = null, private ?AppWalletService $wallets = null, private ?NativeAppCharges $charges = null, private ?NativeAppCalls $calls = null, private ?AppListening $listening = null)
     {
         // Every dispatch goes through the one router, so App AI's jobs are never acknowledged unread.
         $this->records ??= new NativeRecordEventRouter($this->flows, $this->ai);
@@ -493,6 +494,16 @@ class NativeAppController
                 // settings.softnFiles): 'ask' has the page ask each person first. A plugin's page never may.
                 $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
                 $files = $plugin === null && in_array($settings['softnFiles'] ?? null, ['ask', 'allow'], true) ? ['files' => $settings['softnFiles']] : [];
+                // What else the app may ask of FormLogic's own page, each off unless its owner allowed
+                // it, and never for a plugin's page. `listen`: the page may listen to the person for
+                // it and give it the words (settings.softnListen, and only while the site's speech
+                // server would be asked for this app: AppListening::on). `offers`: it may offer the
+                // signed-in person an app it made, which the page asks them about and adds to their
+                // own apps (settings.softnApps).
+                $asked = [
+                    'listen' => $plugin === null && $this->listening !== null && $this->listening->on($app),
+                    'offers' => $plugin === null && ($settings['softnApps'] ?? null) === 'allow',
+                ];
                 // An app that asks for FormLogic's visitors, AI or payments: the page marks its
                 // requests (X-FormLogic-Visitor) and may open FormLogic's wallet. Its visitors'
                 // browsers get their cookie here, or have its age renewed, once a page load.
@@ -521,7 +532,7 @@ class NativeAppController
                     $ticket = NativeAppService::siteTicket($built['key'], (string) $app['id'], $built['version'], null, is_string($frame) ? $frame : null);
                     $site = ['site' => ['url' => SiteAppController::address((string) $app['slug'], $ticket, $built['entry']), 'entry' => $built['entry'], 'proof' => NativeAppService::siteProof($built['key'], $ticket)]];
                 }
-                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client] + $served + ['access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope] + $files + $formlogic + $site]
+                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client] + $served + ['access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope] + $files + $asked + $formlogic + $site]
                     + $updates + $this->lookForRuntime($app, $plugin) + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();
@@ -710,6 +721,66 @@ class NativeAppController
         } catch (\Throwable $e) {
             error_log('App call not recorded for app ' . $appId . ': ' . get_class($e));
         }
+    }
+
+    /**
+     * A recording put into words for an app (AppListening), from FormLogic's own page, never the
+     * app's frame: POST /api/app/{slug}/native/listen {audio: a RIFF/WAVE file in base64}. The page
+     * records the person once they said it may, and gives the app the words this answers,
+     * `{data: {text, seconds}}`; the app never has the sound. Admitted as the app's own requests are
+     * (runtime()): whoever may open the app, a members' app's member or anyone at one open to all.
+     * A plugin's page is never listened for.
+     *
+     * Refused in a plain sentence with a code: `listen_off` (403) where listening is not on for the
+     * app now, `invalid_audio` (400), `too_long` (413), `listen_failed` (502) when the speech
+     * server did not answer with words. Nothing is kept of the sound or the words.
+     */
+    public function listen(Request $request, Response $response, array $args): Response
+    {
+        $app = $this->apps->getAppBySlug((string) ($args['slug'] ?? ''));
+        $user = $request->getAttribute('userId');
+        $owner = $app && $user && $app['ownerId'] === $user;
+        if (!$app || !$this->apps->isRuntimeVisible($app, (string) ($user ?? ''))) return $this->jsonError($response, 'App not found or access denied', 404);
+        if ($blocked = $this->blockIfDemo($request, $response, 'Native hosting is unavailable in the shared demo.')) return $blocked;
+        $setCookie = null;
+        $answer = $this->respond($response, function () use ($request, $response, $app, $user, $owner, &$setCookie) {
+            $off = fn(): Response => $this->jsonError($response->withHeader('Cache-Control', 'no-store'), 'Listening is not turned on for this app.', 403, 'listen_off');
+            if ($this->plugins?->forApp($app) !== null) return $off();
+            // Who may open the app, as runtime() decides it, against the settled project.
+            $project = $this->native->runtimeProject($app['id'])['project'] ?? null;
+            if (!$project) throw new \RuntimeException('Native app not found', 404);
+            $membership = $user && !$owner && $project['access'] === 'members' ? $this->users->getAppUser($app['id'], $user) : null;
+            if ($project['access'] === 'members' && !$owner && (!$user || ($membership['status'] ?? '') !== 'active')) throw new \RuntimeException('Sign in with an active app membership to continue', 403);
+            if ($this->listening === null) return $off();
+            // Who is asking, and from where, as App AI counts a request of this app's
+            // (formlogicRequest): a members' app's member, or the visitor this browser is, where the
+            // page marks the request as the app's own requests are marked. The recording is taken
+            // from their allowances (AppListening::hear).
+            $requester = null;
+            if ($project['access'] === 'members') {
+                $requester = ['kind' => 'user', 'id' => (string) $user];
+            } elseif ($this->visitors !== null) {
+                $visitor = $this->visitors->resolve($request, (string) $app['id'], $this->visitors->marked($request));
+                if ($visitor !== null) {
+                    $requester = ['kind' => 'visitor', 'id' => $visitor['id']];
+                    $setCookie = $visitor['setCookie'];
+                }
+            }
+            $ip = \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request);
+            $input = $request->getParsedBody();
+            // The speech server is waited for up to AppListening::TIMEOUT seconds: longer than a
+            // request is given on many servers. (Not where there is no limit, the command line's.)
+            $limit = (int) ini_get('max_execution_time');
+            if ($limit > 0 && $limit < AppListening::TIMEOUT + 30) @set_time_limit(AppListening::TIMEOUT + 30);
+            try {
+                $heard = $this->listening->hear($app, is_array($input) ? ($input['audio'] ?? null) : null, $requester, $ip);
+            } catch (ListenRefusal $refused) {
+                return $this->jsonError($response->withHeader('Cache-Control', 'no-store'), $refused->getMessage(), $refused->status, $refused->reason);
+            }
+            return ['data' => $heard];
+        });
+        // A browser that was no visitor of the app's yet is one now, as it would be after a request of the app's own.
+        return $setCookie !== null ? $answer->withAddedHeader('Set-Cookie', $setCookie) : $answer;
     }
 
     /**

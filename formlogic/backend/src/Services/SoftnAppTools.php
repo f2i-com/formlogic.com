@@ -87,6 +87,10 @@ class SoftnAppTools
             'reach' => self::reach($app, $project),
             // What the owner chose about the person's own files (Settings → Files on this device).
             'files' => in_array($settings['softnFiles'] ?? null, ['ask', 'allow'], true) ? $settings['softnFiles'] : 'off',
+            // And about FormLogic listening for the app when it asks (settings.softnListen), and the
+            // app offering the person an app it made (settings.softnApps): each 'allow' or 'off'.
+            'listening' => ($settings['softnListen'] ?? null) === 'allow' ? 'allow' : 'off',
+            'offers' => ($settings['softnApps'] ?? null) === 'allow' ? 'allow' : 'off',
         ] + self::addresses($app, $project, $ctx);
         if ($project !== null) {
             $files = is_array($project['files'] ?? null) ? $project['files'] : [];
