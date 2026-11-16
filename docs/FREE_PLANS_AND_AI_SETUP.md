@@ -164,6 +164,11 @@ is named in step 1 with **Forget it**; nothing is sent anywhere in its place unt
 - **Requests each new app starts with:** per network address a day (20: an app's free rounds), per
   person a day (10), per network address an hour (10), and per app a day (500, also the most an owner
   may set on the site's AI). **Requests a day, all apps together** (2,000) is the site's own ceiling.
+- **Most a chat request may hold, in characters** (16,000; from 2,000 to 64,000): everything an app
+  sends the model at once, all its messages together. An app that writes pages, or keeps a long
+  conversation, needs more room than the start gives. Keep it inside your model's context (a token
+  is about four characters), with room left for the answer; an app is told the number, and one that
+  sends more is refused.
 - **Longest chat answer, in tokens** (2,000; from 16 to 8,000; a token is about four characters). An
   app may ask for a shorter answer for a request, never a longer one, and gets this length when it
   asks for none. The AI is told the length, and FormLogic also stops reading an answer that runs past

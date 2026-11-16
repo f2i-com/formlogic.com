@@ -266,6 +266,11 @@ class AppAiService
             'usedToday' => $requester === null ? 0 : $this->used((string) $app['id'], 'requester', self::subject($requester), $day),
             'ipPerDay' => $settings['perIpDay'],
             'ipUsedToday' => $this->used((string) $app['id'], 'ip', $ipKey, $day),
+            // What a chat job may hold (characters, all its messages together) and how long its
+            // answer may be (tokens), as the administrator has them now: an app that would fill
+            // the room it is given reads them here instead of finding out by being refused.
+            'chatInput' => self::chatCharacters($this->site->current()),
+            'chatOutput' => self::answerTokens(null, $this->site->current()),
             'jobs' => $requester === null ? (object) [] : $this->openJobs((string) $app['id'], $requester),
         ];
         // Who is asking, as the delivery of their jobs will name them (contract §0.13).
@@ -573,6 +578,16 @@ class AppAiService
         return $asked === null ? $ceiling : max(1, min((int) $asked, $ceiling));
     }
 
+    /**
+     * The most a chat job may hold, in characters: the administrator's `chatMaxInput` ($site's),
+     * which starts at MAX_CHAT_CHARACTERS. Read as the job is taken, so a change applies at once.
+     */
+    public static function chatCharacters(array $site): int
+    {
+        $room = (int) ($site['chatMaxInput'] ?? AppAiSiteSettings::CHAT_MAX_INPUT_DEFAULT);
+        return max(AppAiSiteSettings::CHAT_MAX_INPUT[0], min($room, AppAiSiteSettings::CHAT_MAX_INPUT[1]));
+    }
+
     /** The characters FormLogic reads of an answer that may have $tokens tokens. */
     public static function answerCharacters(int $tokens): int
     {
@@ -748,7 +763,8 @@ class AppAiService
                 $clean[] = ['role' => $role, 'content' => $content];
                 if ($role === 'user' && ($word = AppAiSiteSettings::refusedWord($content, $site['words'])) !== null) return [['appJobId' => $appJobId, 'kind' => $kind], ['code' => 'prompt_refused', 'message' => 'That request includes words this site does not allow.']];
             }
-            if ($total > self::MAX_CHAT_CHARACTERS) return $bad('A chat job may hold up to ' . self::MAX_CHAT_CHARACTERS . ' characters.', ['kind' => $kind]);
+            $room = self::chatCharacters($site);
+            if ($total > $room) return $bad('A chat job may hold up to ' . $room . ' characters.', ['kind' => $kind]);
             // How long the answer may be, in tokens, when the app says: a `max_output` column of its
             // jobs row. More than the site allows is held to what it allows as the job is sent.
             $maxOutput = $row['max_output'] ?? null;

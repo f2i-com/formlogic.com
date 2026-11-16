@@ -119,11 +119,15 @@ export interface AppAiSiteSettings {
   siteDay: number;
   /** The longest answer a chat job may have, in tokens: an app's own `max_output` is held to it. */
   chatMaxOutput: number;
+  /** The most a chat job may hold, in characters, all its messages together. */
+  chatMaxInput: number;
   words: string[];
 }
 
 /** What the longest chat answer may be set to, in tokens (AppAiSiteSettings::CHAT_MAX_OUTPUT on the server). */
 export const CHAT_MAX_OUTPUT = { min: 16, max: 8000, start: 2000 } as const;
+/** What the most a chat job may hold may be set to, in characters (AppAiSiteSettings::CHAT_MAX_INPUT on the server). */
+export const CHAT_MAX_INPUT = { min: 2000, max: 64000, start: 16000 } as const;
 
 export interface AppAiAdminApp {
   appId: string;

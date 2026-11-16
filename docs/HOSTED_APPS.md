@@ -395,7 +395,7 @@ What the app's backend sees (`req.context.formlogic`):
 | `visitor: {id}` | an application-access app, on a request FormLogic's page marked |
 | `owner: true` | an application-access app, on a request from the app's owner while they are signed in to FormLogic; absent otherwise, never `false` |
 | `addressKey` | every request from the app's page, for an app that declares either section: a member's, a visitor's, and one nobody marked; absent when the address is not known |
-| `ai: {enabled, source, label, uses, perDay, usedToday, ipPerDay, ipUsedToday, jobs, requester?, reason?}` | an app that declares `formlogicAi` |
+| `ai: {enabled, source, label, uses, perDay, usedToday, ipPerDay, ipUsedToday, chatInput, chatOutput, jobs, requester?, reason?}` | an app that declares `formlogicAi` |
 | `ai: {delivery: true, requester}` | FormLogic delivering a result to the app's deliver route |
 | `wallet: {available, balanceCents, currency, items, reason?}` | an app that declares `formlogicPayments` |
 | `payment: {chargeId, item, amountCents, status, code?, balanceCents, alreadyPaid}` | a charge's second run (see [App payments](#app-payments-a-prepaid-balance-and-a-charge-in-two-runs)) |
@@ -461,13 +461,24 @@ rolls back (an exception, or an answer with `rollback: true`) asks for nothing. 
 | `size` | `512x512`, `768x768`, `1024x1024` (the default), `1024x768` or `768x1024` |
 | `seed` | optional, 0 to 9007199254740991 (2^53 − 1); without one, the AI picks one and the delivery reports it |
 | `reference` | an edit's picture: a PNG, JPEG or WebP data URL of at most 2 MB |
-| `messages` | a chat job's JSON list of 1 to 24 `{role: system/user/assistant, content}`, up to 16,000 characters |
+| `messages` | a chat job's JSON list of 1 to 24 `{role: system/user/assistant, content}`, up to as many characters as the site gives a chat job room for (16,000 to start with; below) |
 | `max_output` | optional, a chat job's longest answer in tokens: a whole number, 1 or more (below) |
 | `status` | optional and the app's own, but setting it to `cancelled` cancels the job (below) |
 
 Other columns are the app's own. The model is never the app's choice: the owner or the
 administrator pins it. FormLogic reads the whole row after the commit, once per event, checks it,
 counts it and queues it.
+
+**How much a chat job may hold.** All the messages of a chat job together may hold as many
+characters as the administrator gives one room for (Admin → Platform → AI for apps → Limits and
+safety, **Most a chat request may hold**: 16,000 characters to start with, 2,000 to 64,000). A job
+that holds more is `bad_request`, with the number in its message. The app is told the room it
+has on every request, as `ai.chatInput` (characters), beside `ai.chatOutput` (the longest
+answer, in tokens, as below), so an app that shows the model what it is working on (a page it is
+writing, a long conversation) can fill the room it is given instead of finding its edge by being
+refused. Both are read as the job is taken, so a change applies at once. The room is the site's
+to give and the model's to have: a request a model has no context for fails as the AI's own
+error, and one for a linked computer must also fit its sealed request.
 
 **How long a chat's answer may be.** A chat job's answer has a length in tokens: its row's
 `max_output`, held to the administrator's ceiling (Admin → Platform → AI for apps → Limits and

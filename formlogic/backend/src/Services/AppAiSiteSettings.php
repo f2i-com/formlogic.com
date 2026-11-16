@@ -27,6 +27,15 @@ class AppAiSiteSettings
      */
     public const CHAT_MAX_OUTPUT = [16, 8000];
     public const CHAT_MAX_OUTPUT_DEFAULT = 2000;
+    /**
+     * The most a chat job may hold, in characters, all its messages together: what an app may ask
+     * the model to read at once. [lowest, highest] it may be set to, and where it starts. An app
+     * that shows the model what it is working on (a page it is writing, a long conversation) needs
+     * more room than the start gives; how much a model can take is its context, about four
+     * characters a token, and a request past that fails as past the context.
+     */
+    public const CHAT_MAX_INPUT = [2000, 64000];
+    public const CHAT_MAX_INPUT_DEFAULT = 16000;
 
     public function __construct(private ?string $path = null)
     {
@@ -51,6 +60,8 @@ class AppAiSiteSettings
             'siteDay' => 2000,
             // The longest answer a chat job may have, in tokens, whatever its app asks for.
             'chatMaxOutput' => self::CHAT_MAX_OUTPUT_DEFAULT,
+            // The most a chat job may hold, in characters, whatever its app writes.
+            'chatMaxInput' => self::CHAT_MAX_INPUT_DEFAULT,
             // Words and phrases a prompt may not contain (case-insensitive, whole words).
             'words' => [],
         ];
@@ -108,6 +119,7 @@ class AppAiSiteSettings
         }
         if (array_key_exists('siteDay', $data)) $out['siteDay'] = self::limit($data['siteDay'], 'siteDay', [0, 1000000]);
         if (array_key_exists('chatMaxOutput', $data)) $out['chatMaxOutput'] = self::limit($data['chatMaxOutput'], 'chatMaxOutput', self::CHAT_MAX_OUTPUT);
+        if (array_key_exists('chatMaxInput', $data)) $out['chatMaxInput'] = self::limit($data['chatMaxInput'], 'chatMaxInput', self::CHAT_MAX_INPUT);
         if (array_key_exists('words', $data)) $out['words'] = self::words($data['words']);
         return $out;
     }

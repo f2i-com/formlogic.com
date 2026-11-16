@@ -887,6 +887,41 @@ JS;
         }
     }
 
+    public function testAChatJobHoldsWhatTheAdministratorGivesItRoomFor(): void
+    {
+        $this->boot();
+        $app = $this->app();
+        $ask = fn(int $characters): array => (array) $this->captured($app, self::row('chat', ['messages' => json_encode([['role' => 'system', 'content' => 'Be brief.'], ['role' => 'user', 'content' => str_repeat('a', $characters - 9)]])]), self::visitor()[0]);
+
+        // Where it starts: 16,000 characters, all the messages together.
+        $this->assertSame([16000, 16000], [AppAiSiteSettings::defaults()['chatMaxInput'], AppAiService::chatCharacters(AppAiSiteSettings::defaults())]);
+        $this->assertSame(16000, AppAiService::chatCharacters([]), 'settings from before there was one');
+        $this->assertSame('queued', $ask(16000)['status']);
+        $over = $ask(16001);
+        $this->assertSame(['refused', 'bad_request', 'A chat job may hold up to 16000 characters.'], [$over['status'], $over['code'], $over['message']]);
+
+        // Raised, an app is given the room, and told it has it: read as the job is taken.
+        $this->site->save(['allowApps' => true, 'pictureModel' => 'flux-test', 'chatMaxInput' => 40000, 'chatMaxOutput' => 6000]);
+        $this->assertSame('queued', $ask(40000)['status']);
+        $more = $ask(40001);
+        $this->assertSame(['refused', 'A chat job may hold up to 40000 characters.'], [$more['status'], $more['message']]);
+        $ai = $this->call($app, '/api/jobs', self::MARKED)['body']['context']['formlogic']['ai'];
+        $this->assertSame([40000, 6000], [$ai['chatInput'], $ai['chatOutput']]);
+        // Lowered, it is held to that.
+        $this->site->save(['allowApps' => true, 'pictureModel' => 'flux-test', 'chatMaxInput' => 2000]);
+        $this->assertSame(['queued', 'refused'], [$ask(2000)['status'], $ask(2001)['status']]);
+
+        $this->assertSame([2000, 64000], [AppAiSiteSettings::validate(['chatMaxInput' => 2000])['chatMaxInput'], AppAiSiteSettings::validate(['chatMaxInput' => 64000])['chatMaxInput']]);
+        foreach ([1999, 64001, '16000', 16000.0] as $refused) {
+            try {
+                AppAiSiteSettings::validate(['chatMaxInput' => $refused]);
+                $this->fail('accepted ' . json_encode($refused));
+            } catch (\InvalidArgumentException $e) {
+                $this->assertSame('chatMaxInput must be a whole number from 2000 to 64000.', $e->getMessage());
+            }
+        }
+    }
+
     public function testADeliverysBindingIsReadBackAsItsJob(): void
     {
         $job = bin2hex(random_bytes(16));

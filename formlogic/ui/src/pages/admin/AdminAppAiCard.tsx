@@ -10,7 +10,7 @@ import { Button } from '../../components/ui/Button';
 import { Panel } from '../../components/ui/Panel';
 import { Switch } from '../../components/ui/Switch';
 import { api, type SiteAiDesktopState } from '../../lib/api';
-import { CHAT_MAX_OUTPUT, type AppAiAdminView, type AppAiLimits, type AppAiSiteSettings } from '../../lib/appAi';
+import { CHAT_MAX_INPUT, CHAT_MAX_OUTPUT, type AppAiAdminView, type AppAiLimits, type AppAiSiteSettings } from '../../lib/appAi';
 import { onSiteAiChanged } from '../../lib/siteAiEvents';
 import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
@@ -26,9 +26,9 @@ const LIMITS: { key: keyof AppAiLimits; label: string; hint: string }[] = [
 ];
 const field = 'mt-1 block min-h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white max-sm:min-h-11';
 /** The limits edited below the checklist, saved together. */
-type LimitsDraft = Pick<AppAiSiteSettings, 'defaults' | 'siteDay' | 'chatMaxOutput'>;
-/** The form's start: what is saved. A server from before chat answers had a length sends none. */
-const draftOf = (settings: AppAiSiteSettings): LimitsDraft => ({ defaults: settings.defaults, siteDay: settings.siteDay, chatMaxOutput: settings.chatMaxOutput ?? CHAT_MAX_OUTPUT.start });
+type LimitsDraft = Pick<AppAiSiteSettings, 'defaults' | 'siteDay' | 'chatMaxOutput' | 'chatMaxInput'>;
+/** The form's start: what is saved. A server from before chat answers had a length, or chat requests a size, sends none. */
+const draftOf = (settings: AppAiSiteSettings): LimitsDraft => ({ defaults: settings.defaults, siteDay: settings.siteDay, chatMaxOutput: settings.chatMaxOutput ?? CHAT_MAX_OUTPUT.start, chatMaxInput: settings.chatMaxInput ?? CHAT_MAX_INPUT.start });
 /** A whole number of 0 or more, as typed. */
 const wholeNumber = (typed: string) => Math.max(0, Math.floor(Number(typed) || 0));
 
@@ -71,7 +71,8 @@ export function AdminAppAiCard() {
     setSaving('limits');
     // The answer length is held to what the server takes, so a number typed past either end is saved as that end.
     const chatMaxOutput = Math.min(CHAT_MAX_OUTPUT.max, Math.max(CHAT_MAX_OUTPUT.min, draft.chatMaxOutput));
-    const result = await api.adminPutAppAi({ ...saved, ...draft, chatMaxOutput, words: words.split('\n').map((w) => w.trim()).filter(Boolean) });
+    const chatMaxInput = Math.min(CHAT_MAX_INPUT.max, Math.max(CHAT_MAX_INPUT.min, draft.chatMaxInput));
+    const result = await api.adminPutAppAi({ ...saved, ...draft, chatMaxOutput, chatMaxInput, words: words.split('\n').map((w) => w.trim()).filter(Boolean) });
     setSaving(null);
     if (result.error || !result.data) { toast.error('Not saved', result.error ?? ''); return; }
     setView(result.data);
@@ -152,6 +153,13 @@ export function AdminAppAiCard() {
                 <input type="number" min={CHAT_MAX_OUTPUT.min} max={CHAT_MAX_OUTPUT.max} className={field} data-testid="ai-chat-max-output" value={draft.chatMaxOutput} onChange={(e) => setDraft({ ...draft, chatMaxOutput: wholeNumber(e.target.value) })} />
                 <span className="mt-1 block text-xs leading-5 text-gray-500 dark:text-slate-400">
                   From {CHAT_MAX_OUTPUT.min} to {CHAT_MAX_OUTPUT.max.toLocaleString('en')}; about four characters a token. An app may ask for less, never more, and an answer is cut off there.
+                </span>
+              </label>
+              <label className="block text-sm">
+                <span className="font-medium text-gray-700 dark:text-slate-300">Most a chat request may hold, in characters</span>
+                <input type="number" min={CHAT_MAX_INPUT.min} max={CHAT_MAX_INPUT.max} className={field} data-testid="ai-chat-max-input" value={draft.chatMaxInput} onChange={(e) => setDraft({ ...draft, chatMaxInput: wholeNumber(e.target.value) })} />
+                <span className="mt-1 block text-xs leading-5 text-gray-500 dark:text-slate-400">
+                  From {CHAT_MAX_INPUT.min.toLocaleString('en')} to {CHAT_MAX_INPUT.max.toLocaleString('en')}: everything an app sends the model at once. An app that writes pages, or holds a long conversation, needs more room. Keep it inside your model&apos;s context, about four characters a token.
                 </span>
               </label>
               <label className="block text-sm @md:col-span-2">

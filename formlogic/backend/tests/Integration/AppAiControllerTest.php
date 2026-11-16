@@ -265,6 +265,13 @@ final class AppAiControllerTest extends TestCase
         $shorter = self::read($this->controller->adminPut($this->request('PUT', $this->otherId, ['allowApps' => true, 'chatMaxOutput' => 600]), new Response()));
         $this->assertSame(600, $shorter['body']['data']['settings']['chatMaxOutput']);
         $this->assertSame(600, self::read($this->controller->adminGet($this->request('GET', $this->otherId), new Response()))['body']['data']['settings']['chatMaxOutput'], 'and it is kept');
+        // What a chat job may hold: 16,000 characters until the administrator says otherwise, within 2,000 to 64,000.
+        $this->assertSame(16000, $saved['body']['data']['settings']['chatMaxInput']);
+        $roomier = self::read($this->controller->adminPut($this->request('PUT', $this->otherId, ['allowApps' => true, 'chatMaxOutput' => 600, 'chatMaxInput' => 48000]), new Response()));
+        $this->assertSame([600, 48000], [$roomier['body']['data']['settings']['chatMaxOutput'], $roomier['body']['data']['settings']['chatMaxInput']]);
+        $this->assertSame(48000, self::read($this->controller->adminGet($this->request('GET', $this->otherId), new Response()))['body']['data']['settings']['chatMaxInput'], 'and it is kept');
+        $tooMuch = self::read($this->controller->adminPut($this->request('PUT', $this->otherId, ['allowApps' => true, 'chatMaxInput' => 64001]), new Response()));
+        $this->assertSame([400, 'chatMaxInput must be a whole number from 2000 to 64000.'], [$tooMuch['status'], $tooMuch['body']['message'] ?? null]);
         foreach ([15, 8001, '600', 600.5, null] as $refused) {
             $answer = self::read($this->controller->adminPut($this->request('PUT', $this->otherId, ['allowApps' => true, 'chatMaxOutput' => $refused]), new Response()));
             $this->assertSame([400, 'chatMaxOutput must be a whole number from 16 to 8000.'], [$answer['status'], $answer['body']['message'] ?? null], json_encode($refused));
