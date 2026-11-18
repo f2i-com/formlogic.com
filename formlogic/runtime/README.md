@@ -168,9 +168,9 @@ both CI launchers embed the one Linux-built guest, and a local build records
 
 ## Maintaining the Wasmtime host
 
-The Windows and Linux launchers use Wasmtime and Wasmtime-WASI 48.0.9,
+The Windows and Linux launchers use Wasmtime and Wasmtime-WASI 50.0.2,
 resolved in `host/Cargo.lock`. Both use the Rust compiler named by
-`rust-version` in `host/Cargo.toml` (currently 1.95.0). This lets FormLogic
+`rust-version` in `host/Cargo.toml` (currently 1.97.0). This lets FormLogic
 take host security fixes while building the embedded guest with ZIPP's
 release compiler. The host precompiles and loads the guest with the same
 locked Wasmtime version and engine settings.
