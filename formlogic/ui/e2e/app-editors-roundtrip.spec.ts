@@ -169,7 +169,8 @@ test.describe('embedded editors: round trip and live conflict', () => {
       await openStudioAiPanel(studioFrame);
       await studioFrame.getByRole('textbox', { name: 'Message to AI' }).fill('Update the heading to Studio edited app, preserving all other files.');
       await studioFrame.getByRole('button', { name: 'Send message', exact: true }).click();
-      await expect(studioFrame.getByText('Updated the heading.', { exact: true })).toBeVisible({ timeout: 60000 });
+      // Studio reports the edit it actually made to the host before the draft is reviewed.
+      await expect(studio.getByRole('status')).toContainText(/Done:.*Studio edited app.*ui\/main\.ui/, { timeout: 60000 });
       // One round read and wrote the file and the next finished, as tool calls FormLogic relayed with its tools.
       expect(studioRequests.map(r => r.aiTools)).toEqual([1, 1]);
       expect(studioToolErrors).toEqual([]);
