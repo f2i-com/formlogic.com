@@ -110,6 +110,22 @@ describe('Popover', () => {
     expect(document.activeElement?.textContent).toBe('first action');
   });
 
+  it('respects a quick selection and cancels initial focus when the menu closes', async () => {
+    await render(<Harness onClose={vi.fn()} />);
+    await clickTrigger();
+    const second = panel()!.querySelectorAll('button')[1];
+    second.focus();
+    await flushInitialFocus();
+    expect(document.activeElement).toBe(second);
+    await clickTrigger();
+    await clickTrigger();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    await flushInitialFocus();
+    expect(document.activeElement).toBe(container.querySelector('button'));
+  });
+
   it('closes on Escape', async () => {
     const onClose = vi.fn();
     await render(<Harness onClose={onClose} />);

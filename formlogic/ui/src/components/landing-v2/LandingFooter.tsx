@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { FormLogicMark } from './shared';
 import { GITHUB_URL } from './stats';
 
@@ -11,12 +11,8 @@ export function LandingFooter() {
     <>
       <section className="lv2-cta">
         <div className="lv2-container lv2-cta__inner">
-          <span className="lv2-cta__orb">
-            <Sparkles size={24} />
-          </span>
           <div className="lv2-cta__text">
-            <small>YOUR NEXT WORKFLOW STARTS HERE</small>
-            <h2>Build something your business can actually run on.</h2>
+            <h2>Create your FormLogic workspace</h2>
           </div>
           <Link to="/signup" className="lv2-btn lv2-btn--light">
             Start building free <ArrowRight size={17} />
@@ -28,7 +24,7 @@ export function LandingFooter() {
         <div className="lv2-container lv2-footer__top">
           <div className="lv2-footer__brand">
             <FormLogicMark />
-            <p>Forms, apps, flows and local capability — connected.</p>
+            <p>Build forms, host apps and automate the work around them.</p>
           </div>
           <div className="lv2-footer__col">
             <strong>Product</strong>
@@ -40,8 +36,9 @@ export function LandingFooter() {
           <div className="lv2-footer__col">
             <strong>Resources</strong>
             <Link to="/docs">Documentation</Link>
+            <Link to="/ai-setup">Set up your AI assistant</Link>
             <Link to="/aokie">Aokie setup guide</Link>
-            <Link to="/docs">Self-hosting</Link>
+            <a href="/docs#self-hosting">Self-hosting</a>
             <a href={GITHUB_URL} target="_blank" rel="noreferrer">GitHub</a>
             <a href={SUPPORT_EMAIL}>Support</a>
           </div>

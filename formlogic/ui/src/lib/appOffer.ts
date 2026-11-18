@@ -67,7 +67,7 @@ export function offeredFiles(body: unknown): { files: Record<string, Uint8Array>
 /** Those files as the .softn file an upload is, named for the app (an upload with no name of its own goes by its file's). */
 export function offeredAppFile(files: Record<string, Uint8Array>, name: string): File {
   const base = name.replace(/[\\/:]+/g, ' ').trim() || 'app';
-  return new File([new Uint8Array(zipSync(files))], `${base}.softn`, { type: 'application/zip' });
+  return new File([new Uint8Array(zipSync(files))], `${base}.zip`, { type: 'application/zip' });
 }
 
 /** The server's refusal of an account whose cloud time has run out (CloudWriteGateMiddleware's 402). */

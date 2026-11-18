@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
-import { ArrowRight, Menu, Moon, Star, Sun, X } from 'lucide-react';
+import { ArrowRight, BookOpen, Boxes, Braces, CreditCard, LayoutGrid, Menu, Monitor, Moon, Sun, X } from 'lucide-react';
 import { FormLogicMark } from './shared';
 import { GITHUB_URL } from './stats';
 import { useUIStore } from '../../stores/uiStore';
 import { useAuthStore } from '../../stores/authStore';
+import '../../styles/landing-hero.css';
 
 /**
  * Sticky dark marketing nav. In-page anchors for the sections, router links
@@ -55,19 +56,19 @@ export function LandingNav({ onMenuOpen }: { onMenuOpen?: () => void } = {}) {
   const signedIn = useAuthStore((s) => !!s.user && !s.user.isDemo);
 
   return (
-    <nav className="lv2-nav" aria-label="FormLogic primary navigation">
+    <nav className="lv2-nav fl-public-nav" aria-label="FormLogic primary navigation">
       <div className="lv2-container lv2-nav__inner">
         <a href="/#top" className="lv2-nav__brand" aria-label="FormLogic home" onClick={close}>
           <FormLogicMark />
         </a>
 
         <div id="lv2-nav-links" className={`lv2-nav__links${open ? ' lv2-open' : ''}`}>
-          <a href="/#platform" onClick={close}>Product</a>
-          <a href="/#portable-apps" onClick={close}>Build apps</a>
-          <a href="/#desktop" onClick={close}>OAIY</a>
-          <NavLink to="/packs" onClick={close}>Marketplace</NavLink>
-          <a href="/#pricing" onClick={close}>Pricing</a>
-          <NavLink to="/docs" onClick={close}>Docs</NavLink>
+          <a href="/#platform" onClick={close}><LayoutGrid size={16} aria-hidden="true" />Product</a>
+          <a href="/#portable-apps" onClick={close}><Braces size={16} aria-hidden="true" />Build apps</a>
+          <a href="/#desktop" onClick={close}><Monitor size={16} aria-hidden="true" />OAIY</a>
+          <NavLink to="/packs" onClick={close}><Boxes size={16} aria-hidden="true" />Marketplace</NavLink>
+          <a href="/#pricing" onClick={close}><CreditCard size={16} aria-hidden="true" />Pricing</a>
+          <NavLink to="/docs" onClick={close}><BookOpen size={16} aria-hidden="true" />Docs</NavLink>
           {signedIn ? (
             <Link to="/" onClick={close} className="lv2-nav__mobile-start">
               Open your workspace <ArrowRight size={15} aria-hidden="true" />
@@ -98,13 +99,11 @@ export function LandingNav({ onMenuOpen }: { onMenuOpen?: () => void } = {}) {
             href={GITHUB_URL}
             target="_blank"
             rel="noreferrer"
-            aria-label="Star FormLogic on GitHub"
-            title="Star us on GitHub"
+            aria-label="FormLogic on GitHub"
+            title="FormLogic on GitHub"
             className="lv2-nav__star"
           >
-            <GithubMark size={15} />
-            <span>Star</span>
-            <Star size={13} className="lv2-nav__star-glyph" />
+            <GithubMark size={17} />
           </a>
           {signedIn ? (
             <Link to="/" className="lv2-nav__cta">

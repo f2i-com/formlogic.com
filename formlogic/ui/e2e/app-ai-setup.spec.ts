@@ -133,7 +133,7 @@ test('An administrator sets up AI for apps on their own computer, using only the
   const installed = await admin.api.put(`/api/apps/${app.id}/native`, { headers: { 'X-CSRF-Token': admin.csrf }, data: { project, expectedVersion: 0 } });
   expect(installed.ok(), await installed.text()).toBe(true);
 
-  await page.goto(`/apps/${app.id}/softn`);
+  await page.goto(`/apps/${app.id}/web`);
   const prompt = page.getByTestId('app-ai-prompt');
   await expect(prompt).toContainText('This app can use AI.');
   await prompt.getByRole('button', { name: 'Set it up' }).click();
@@ -147,8 +147,8 @@ test('An administrator sets up AI for apps on their own computer, using only the
   await expect(panel.getByTestId('ai-test')).toContainText('Test picture: It works', { timeout: 90_000 });
   await expect(panel.getByTestId('ai-test').getByRole('img', { name: 'The test picture' })).toBeVisible();
   // Its AI is on now: the line is not shown again.
-  await page.goto(`/apps/${app.id}/softn`);
-  await expect(page.getByRole('navigation', { name: 'App sections' })).toBeVisible();
+  await page.goto(`/apps/${app.id}/web`);
+  await expect(page.getByRole('navigation', { name: 'Current app location' })).toBeVisible();
   await expect(page.getByTestId('app-ai-prompt')).toHaveCount(0);
 
   expect((await admin.api.delete(`/api/apps/${app.id}`, { headers: { 'X-CSRF-Token': admin.csrf } })).ok()).toBe(true);

@@ -1,12 +1,15 @@
-import { useEffect, useRef, Suspense } from 'react';
+import { useEffect, useRef, useState, Suspense } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { pathClaimsBottomEdge } from '../../lib/bottomEdgeClaim';
 import { Wrench, WifiOff } from 'lucide-react';
-import { Sidebar } from './Sidebar';
+import { DesktopNavigation } from './DesktopNavigation';
+import { AccountInDock } from './navigationDock';
+import { AppNavigationProvider } from './AppNavigationContext';
 import { MobileNav } from './MobileNav';
 import { DemoBanner } from './DemoBanner';
 import { DesktopConnectionPopover } from '../desktop/DesktopConnectionPopover';
 import { SiteChatWidget } from '../chat/SiteChatWidget';
+import { InlineChatMount } from '../chat/inlineChat';
 import { useChatDockOffset } from '../chat/useChatDockOffset';
 import { useUIStore } from '../../stores/uiStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -16,11 +19,12 @@ import { usePageTopOnNavigation } from '../../hooks/usePageTopOnNavigation';
 import { cn } from '../../lib/utils';
 
 export function AppShell() {
-  const { sidebarCollapsed, isMobile, setIsMobile } = useUIStore();
+  const { sidebarCollapsed, sidebarFloating, sidebarEdge, isMobile, setIsMobile } = useUIStore();
   // §11B O5: the docked chat narrows the workspace (see the main className below).
   // The EFFECTIVE state, not the stored preference: docking is refused on windows
   // too narrow to hold both, so this inset can never strand the workspace at 128px.
-  const chatDockedVisible = useChatDockOffset();
+  const [inlineChatTarget, setInlineChatTarget] = useState<HTMLDivElement | null>(null);
+  const chatDockedVisible = useChatDockOffset() && !inlineChatTarget;
   const isOnline = useOnlineStatus();
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
@@ -80,7 +84,10 @@ export function AppShell() {
   return (
     // accent-*: a plain radio button, tick box or slider in the workspace takes the product's
     // accent (indigo by day, lime by night) in place of the browser's own blue.
-    <div className="min-h-screen bg-gray-50 accent-primary-600 dark:bg-slate-950 dark:accent-primary-500">
+    <AppNavigationProvider>
+    <div className="fl-workspace min-h-screen bg-gray-50 accent-primary-600 dark:bg-slate-950 dark:accent-primary-500"
+      data-dock={sidebarFloating ? 'floating' : sidebarEdge} data-rail-collapsed={sidebarCollapsed} data-chat-rail={chatDockedVisible}
+      data-system-banner={!isOnline || (maintenance.active && isAdmin)}>
       {/* Skip to content (visible on keyboard focus) */}
       <a
         href="#main-content"
@@ -112,7 +119,7 @@ export function AppShell() {
       )}
 
       {/* Desktop Sidebar */}
-      {!isMobile && <Sidebar offline={!isOnline} />}
+      {!isMobile && <DesktopNavigation />}
 
       {/* Main Content */}
       <main
@@ -124,11 +131,7 @@ export function AppShell() {
           // (wide widgets like tables use their own contained overflow-x-auto). clip,
           // not hidden, so it doesn't create a scroll container — the sticky header
           // and dropdowns keep working.
-          'min-h-screen motion-safe:transition-[margin] duration-300 motion-reduce:transition-none focus:outline-none overflow-x-clip',
-          sidebarCollapsed ? 'md:ml-16' : 'md:ml-64',
-          // §11B O5: a DOCKED chat is a sibling surface, not an overlay — the
-          // workspace narrows so both stay fully visible (the co-creation shell).
-          chatDockedVisible && 'md:mr-96',
+          'min-h-screen focus:outline-none overflow-x-clip',
           // Clear the fixed bottom nav plus the home-indicator inset. Routes that
           // claim the bottom edge (the studio) carry no floating furniture, so they
           // reserve the nav only — the extra 4rem was padding for controls that are
@@ -151,7 +154,9 @@ export function AppShell() {
             </div>
           }
         >
-          <Outlet />
+          <AccountInDock.Provider value={!isMobile && !sidebarFloating && (sidebarEdge === 'top' || sidebarEdge === 'bottom')}>
+            <InlineChatMount.Provider value={setInlineChatTarget}><Outlet /></InlineChatMount.Provider>
+          </AccountInDock.Provider>
         </Suspense>
       </main>
 
@@ -166,7 +171,8 @@ export function AppShell() {
       {/* Floating Site Chat (plan Phase 6): launcher bottom-right, draggable panel /
           mobile bottom sheet. Also fixed z-40, under the z-50 banners; renders nothing
           when signed out. */}
-      <SiteChatWidget />
+      <SiteChatWidget inlineTarget={inlineChatTarget} />
     </div>
+    </AppNavigationProvider>
   );
 }

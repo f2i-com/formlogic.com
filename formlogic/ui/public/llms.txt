@@ -1,7 +1,7 @@
 # FormLogic: app-building guide for AI assistants
 
-FormLogic hosts forms, app dashboards, automations and editable Softn projects
-with private .logic backend actions and per-app SQLite databases.
+FormLogic hosts forms, dashboards, automations and web apps built with JavaScript, React or Vue.
+An app can have private backend handlers and its own SQLite database.
 
 ## Start
 - Human-readable onboarding: /ai-setup (public, no account required).
@@ -35,13 +35,16 @@ Private actions define onRequest(ctx); ctx.db provides get/list/put/remove over 
 app's SQLite records. Keep private action source in package.actions, not client files.
 Downloaded client projects require a compatible authenticated host for backend calls.
 
-## SoftN apps: a website, tool or web app of its own
-A SoftN app has its own pages and logic, a private backend and a SQLite database, and
-no forms. list_apps marks each app kind "softn" or "forms".
-1. create_softn_app {name, request}: a new app with a working starter.
-2. get_softn_guide (no topic), then get_softn_guide {topic: "language"}: READ BOTH
-   BEFORE WRITING A FILE. SoftN is its own language, not React, Vue or plain web pages.
-   lookup_softn_components {names} gives a component's props and events.
+## Standalone web apps
+Open /apps/new?type=web to start from Vanilla JS, React JSX or Vue, then open the working preview in Studio or Builder.
+On /apps/new with a connected AI, the user can describe the app in chat. A compatible tool-enabled model can use a temporary MCP connection granted for this tab.
+Upload a ZIP from Apps. An editable project contains its manifest and original source,
+including JSX or Vue components and their runnable modules. For a site built elsewhere,
+zip the browser-ready HTML, JavaScript and assets. Build npm-based projects locally first.
+1. create_softn_app {name, request, template: "javascript"} creates an editable JavaScript app.
+2. Read get_softn_guide for the host contract and inspect the project's manifest.
+   For classic component markup, read get_softn_guide {topic: "language"} and use
+   lookup_softn_components {names} for component properties and events.
 3. get_native_app_project {appId}: the files and the version; files: [paths] reads them.
 4. update_native_app_files {appId, expectedVersion, files, remove, media, removeMedia}:
    installs the next version. Its backend is started first, and a version that does
@@ -57,10 +60,10 @@ publish_native_app_project and update_native_app_files require the current
 expectedVersion. Keep the app's own authentication or choose FormLogic membership
 explicitly; owner administration is separate from visitors.
 
-A SoftN app is managed on its own page (Apps > the app): Edit shows it running and opens
+A web app is managed on its own page (Apps > the app): Edit shows it running and opens
 AI Studio, the Visual Builder and its source code; Data, Members, Automations, Domains
 and Settings are the other sections. App Studio is for forms apps, and its addresses
-for a SoftN app lead to that page. Source code lists every file of the app in groups
+for a standalone web app lead to that page. Source code lists every file of the app in groups
 (pages, logic, styles, backend, database changes, the manifest) beside a highlighted
 editor; a file is added or removed there, and a new database change is numbered and
 listed in the manifest for you. Changes are a draft until published, and publishing
@@ -69,8 +72,8 @@ A forms app can carry a project too: App Studio > Screens > Hosting & app tools 
 Native app hosting, with the same source editor under its Source tab.
 
 list_native_app_records inspects the app's tables and record previews. For owner CRUD
-through the UI, open the app's Data section (a forms app: Data & forms > Records >
-Database records): Add row creates (the new row then opens), Edit on an open row loads full
+through the UI, open Data in a web app or Forms > App database in a forms app and
+select a table. Add row creates a row, Edit on an open row loads full
 values and Save changes stores them, and Delete row requires confirmation. Writes
 apply database constraints and connected record automations, but bypass the app's
 backend validation functions. Do not use shortened list previews as replacement values.

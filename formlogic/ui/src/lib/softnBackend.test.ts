@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { backendOf, backendOrigin, withBackend } from './softnBackend';
+import { backendOf, backendOrigin, customApiProject, withBackend } from './softnBackend';
 import type { NativeProject } from './nativeHosting';
 
 const project = (files: Record<string, string>): NativeProject => ({ version: 1, files, assets: { 'assets/icon.svg': 'PHN2Zy8+' }, access: 'application' });
@@ -16,6 +16,19 @@ const pageOnly = () => project({
   'manifest.json': JSON.stringify({ id: 'com.example.coffee', name: 'Coffee', version: '1.0.0', main: 'ui/main.ui', config: { theme: { mode: 'light' } } }),
   'ui/main.ui': '<Text>Page, newer</Text>',
   'logic/main.logic': 'var API_BASE = "https://coffee.example";',
+});
+it('starts a custom API alongside existing private files and preserves the app’s access and identity', () => {
+  const original = pageOnly();
+  original.files['server/main.logic'] = '// Private work in progress';
+  const next = customApiProject(original);
+  const manifest = JSON.parse(next.files['manifest.json']);
+  expect(manifest.server.routes).toEqual([{ method: 'GET', path: '/api/status', handler: 'appStatus', transaction: 'read', authorization: 'anonymous' }]);
+  expect(manifest.server.database.migrations).toEqual([]);
+  expect(manifest.id).toBe('com.example.coffee');
+  expect(next).toMatchObject({ access: original.access, assets: original.assets, version: original.version });
+  expect(next.files[manifest.server.entry]).toContain('function appStatus(req)');
+  expect(next.files['server/main.logic']).toEqual(original.files['server/main.logic']);
+  expect(original.files['manifest.json']).not.toContain('/api/status');
 });
 const fullApp = () => project({
   'manifest.json': JSON.stringify({ id: 'com.example.coffee', name: 'Coffee', version: '1.0.0', main: 'ui/main.ui',

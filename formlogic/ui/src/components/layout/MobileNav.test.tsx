@@ -67,7 +67,7 @@ describe('the bar at the foot of a phone’s screen', () => {
   });
 
   it('lights Apps on an app’s own page too, and Home only at its own address', async () => {
-    await renderNav('/apps/plumbing/softn/data');
+    await renderNav('/apps/plumbing/web/data');
     expect(item('Apps')!.className).toContain('bg-primary-50');
     expect(item('Home')!.className).not.toContain('bg-primary-50');
     await act(async () => root.unmount());

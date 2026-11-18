@@ -1,8 +1,8 @@
 import '../styles/landing-v2.css';
 import '../styles/landing-refresh.css';
+import '../styles/landing-guides.css';
 import { LiveDemoSection } from '../components/landing/LiveDemoSection';
 import { FormExamplesSection } from '../components/landing/FormExamplesSection';
-import { AiMcpSpotlight } from '../components/landing-v2/AiMcpSpotlight';
 import { AokieSpotlight } from '../components/landing-v2/AokieSpotlight';
 import { CapabilityBento } from '../components/landing-v2/CapabilityBento';
 import { DesktopSpotlight } from '../components/landing-v2/DesktopSpotlight';
@@ -10,29 +10,13 @@ import { LandingFooter } from '../components/landing-v2/LandingFooter';
 import { LandingHero } from '../components/landing-v2/LandingHero';
 import { LandingNav } from '../components/landing-v2/LandingNav';
 import { PortableAppsSpotlight } from '../components/landing-v2/PortableAppsSpotlight';
-import { PlatformStory } from '../components/landing-v2/PlatformStory';
 import { PricingSection } from '../components/landing-v2/PricingSection';
-import { useLandingFonts, useReveal } from '../components/landing-v2/hooks';
+import { useLandingFonts, useLandingFragment, useReveal } from '../components/landing-v2/hooks';
 import { useBetaMode } from '../hooks/useBetaMode';
-
-/**
- * Marketing landing page (landing-v2, 2026-07 redesign).
- *
- * Story: Capture → Operate → Automate, with Aokie as the flagship solution and
- * FormLogic Desktop as the local capability layer. The page is an orchestrator
- * over components/landing-v2/*; all visual rules live in styles/landing-v2.css
- * (scoped under .lv2 — the dark hero/desktop/footer are dark in both themes,
- * the light bands follow the app theme).
- *
- * Contracts preserved from the previous landing:
- *  - named export `Landing`, rendered eagerly at "/" for signed-out + demo;
- *  - `useBetaMode()` drives beta wording (never hardcoded);
- *  - the REAL `LiveDemoSection` (live demo apps, no signup) stays;
- *  - no heavy imports (pack catalogue, React Flow, Monaco, Recharts).
- */
 
 export function Landing() {
   useLandingFonts();
+  useLandingFragment();
   useReveal();
   const beta = useBetaMode();
 
@@ -41,23 +25,18 @@ export function Landing() {
       <a href="#main-content" className="fl-skip">Skip to content</a>
       <LandingNav />
       <main id="main-content">
-      <LandingHero beta={beta} />
-      <PlatformStory />
-      <div id="live-demo" className="lv2-band--alt lv2-demo-band">
-        <LiveDemoSection />
-      </div>
-      {/* Standalone form examples with live QR codes — forms are shareable without an app.
-          Wrapped in a theme-following band: the bare .lv2 backdrop is fixed navy in BOTH
-          themes, which would put the section's light-mode text on a dark background. */}
-      <div className="lv2-band lv2-demo-band">
-        <FormExamplesSection />
-      </div>
-      <AokieSpotlight />
-      <PortableAppsSpotlight />
-      <CapabilityBento />
-      <DesktopSpotlight />
-      <AiMcpSpotlight />
-      <PricingSection beta={beta} />
+        <LandingHero beta={beta} />
+        <div id="live-demo" className="lv2-band--alt lv2-demo-band">
+          <LiveDemoSection />
+        </div>
+        <div className="lv2-band lv2-demo-band">
+          <FormExamplesSection />
+        </div>
+        <PortableAppsSpotlight />
+        <div id="platform"><CapabilityBento /></div>
+        <AokieSpotlight />
+        <DesktopSpotlight />
+        <PricingSection beta={beta} />
       </main>
       <LandingFooter />
     </div>

@@ -7,7 +7,7 @@ describe('the SoftN app hand-off', () => {
   beforeEach(() => useUIStore.getState().setSoftnOpen(null));
 
   it('links a SoftN app to its workspace', () => {
-    expect(chatToolLinkPath({ kind: 'softnApp', id: 'a 1' })).toBe('/apps/a%201/softn');
+    expect(chatToolLinkPath({ kind: 'softnApp', id: 'a 1' })).toBe('/apps/a%201/web');
   });
 
   it('hands the request to AI Studio the first time, and opens the app plainly after that', () => {
@@ -19,10 +19,10 @@ describe('the SoftN app hand-off', () => {
   });
 
   it('links a section of a SoftN app’s page: its data at a table, its members, its source', () => {
-    expect(chatToolLinkPath({ kind: 'softnApp', id: 'a1', section: 'data', table: 'orders' })).toBe('/apps/a1/softn/data/orders');
-    expect(chatToolLinkPath({ kind: 'softnApp', id: 'a1', section: 'data' })).toBe('/apps/a1/softn/data');
-    expect(chatToolLinkPath({ kind: 'softnApp', id: 'a1', section: 'members' })).toBe('/apps/a1/softn/members');
-    expect(chatToolLinkPath({ kind: 'softnApp', id: 'a1', section: 'edit' })).toBe('/apps/a1/softn/edit');
+    expect(chatToolLinkPath({ kind: 'softnApp', id: 'a1', section: 'data', table: 'orders' })).toBe('/apps/a1/web/data/orders');
+    expect(chatToolLinkPath({ kind: 'softnApp', id: 'a1', section: 'data' })).toBe('/apps/a1/web/data');
+    expect(chatToolLinkPath({ kind: 'softnApp', id: 'a1', section: 'members' })).toBe('/apps/a1/web/members');
+    expect(chatToolLinkPath({ kind: 'softnApp', id: 'a1', section: 'edit' })).toBe('/apps/a1/web/edit');
   });
 
   it('hands a change to an app that exists to AI Studio as an edit, each new request once', () => {

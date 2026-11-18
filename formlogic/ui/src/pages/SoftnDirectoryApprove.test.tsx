@@ -19,7 +19,7 @@ const waiting: SoftnDraft = {
   draftId: 'a'.repeat(32), appId: 'app-1', status: 'awaiting_approval', destination: 'https://softn.com', target: null,
   sha256: 'b'.repeat(64), bytes: 2048, listing: { name: 'Tide Times', description: 'High and low water.', category: 'tools' },
   permissions: { net: { enabled: true, allowed_hosts: ['api.tides.example'] } },
-  warnings: ['The app’s backend (1 file in server/) is left out.'], previewUrl: '/apps/app-1/softn', approvalUrl: '/softn-directory/approve/' + 'a'.repeat(32),
+  warnings: ['The app’s backend (1 file in server/) is left out.'], previewUrl: '/apps/app-1/web', approvalUrl: '/app-directory/approve/' + 'a'.repeat(32),
   expiresAt: '2026-11-04 00:00:00', error: null, publication: null,
 };
 let root: Root | null = null;
@@ -31,8 +31,8 @@ async function open() {
   root = createRoot(container);
   await act(async () => {
     root!.render(
-      <MemoryRouter initialEntries={[`/softn-directory/approve/${'a'.repeat(32)}`]}>
-        <Routes><Route path="/softn-directory/approve/:draftId" element={<SoftnDirectoryApprove />} /></Routes>
+      <MemoryRouter initialEntries={[waiting.approvalUrl]}>
+        <Routes><Route path="/app-directory/approve/:draftId" element={<SoftnDirectoryApprove />} /></Routes>
       </MemoryRouter>,
     );
   });
@@ -52,7 +52,7 @@ afterEach(async () => {
   container.remove();
 });
 
-describe('approving a draft for the SoftN directory', () => {
+describe('approving a draft for the app directory', () => {
   it('says where it goes, who sees it, what it may use and what it is, before anything is public', async () => {
     await open();
     const text = container.textContent ?? '';
@@ -143,17 +143,17 @@ describe('approving a draft for the SoftN directory', () => {
     await open();
     approve.mockResolvedValue({ error: 'The last attempt may have reached the directory.' });
     getDraft.mockResolvedValue({ data: { ...waiting, status: 'uncertain', error: 'No clear answer from the directory.' } });
-    await act(async () => { button(/Publish to the SoftN directory/)!.click(); });
+    await act(async () => { button(/Publish to the app directory/)!.click(); });
     await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain('The last attempt may have reached the directory.');
-    expect(button(/Publish to the SoftN directory/)).toBeUndefined();
+    expect(button(/Publish to the app directory/)).toBeUndefined();
     expect(button(/I checked: try again/)).toBeDefined();
   });
 
   it('sends someone signed out (or in the demo) through sign-in, not to a 404', () => {
     const routes = readFileSync(join(__dirname, '../App.tsx'), 'utf8');
-    expect(routes.match(/path="\/softn-directory\/approve\/:draftId" element=\{<SignInFirst \/>\}/g)).toHaveLength(2);
-    expect(routes).toContain('path="/softn-directory/approve/:draftId" element={<SoftnDirectoryApprove />}');
+    expect(routes.match(/path="\/app-directory\/approve\/:draftId" element=\{<SignInFirst \/>\}/g)).toHaveLength(2);
+    expect(routes).toContain('path="/app-directory/approve/:draftId" element={<SoftnDirectoryApprove />}');
   });
 
   it('is not a second main landmark inside the app shell', async () => {
@@ -163,7 +163,7 @@ describe('approving a draft for the SoftN directory', () => {
 
   it('publishes on the person’s click, then shows the app’s links and no button', async () => {
     await open();
-    await act(async () => { button(/Publish to the SoftN directory/)!.click(); });
+    await act(async () => { button(/Publish to the app directory/)!.click(); });
     expect(approve).toHaveBeenCalledWith('a'.repeat(32), false);
     const links = Array.from(container.querySelectorAll('a')).map((a) => a.getAttribute('href'));
     expect(links).toEqual(expect.arrayContaining(['https://softn.com/app/tide-times', 'https://softn.com/play/tide-times']));
@@ -173,7 +173,7 @@ describe('approving a draft for the SoftN directory', () => {
   it('after an unclear try, asks the person to check before trying again', async () => {
     getDraft.mockResolvedValue({ data: { ...waiting, status: 'uncertain', error: 'No clear answer from the directory.' } });
     await open();
-    expect(button(/Publish to the SoftN directory/)).toBeUndefined();
+    expect(button(/Publish to the app directory/)).toBeUndefined();
     await act(async () => { button(/I checked: try again/)!.click(); });
     expect(approve).toHaveBeenCalledWith('a'.repeat(32), true);
   });

@@ -33,6 +33,12 @@ const GUIDE_SOURCE = 'apps/softn-studio/src/lib/agent/guide.ts';
 
 /** [Studio's words, FormLogic's]. Each is in both the JavaScript and the Python guide. */
 const FOR_FORMLOGIC = [
+  ['# How to build a SoftN app', '# Classic component projects'],
+  ['A SoftN app is a bundle', 'A classic component project is a bundle'],
+  ["SoftN's components", 'the built-in components'],
+  ['HTML with SoftN in it', 'HTML with component markup'],
+  ['capitalised tags are SoftN components', 'capitalised tags are built-in components'],
+  ["a line starting `#if` is SoftN's", 'a line starting `#if` is a template condition'],
   [
     'Without the file, every capability is denied; declare exactly what the logic calls, in the same step you write the call.',
     'Without the file, every capability is denied; declare exactly what the logic calls, in the same step you write the call. (On FormLogic this file is not read at all: FormLogic decides what a hosted app may use, so do not write one there.)',
@@ -114,7 +120,8 @@ export async function buildSoftnGuide({ repo = softnRepo(), root = ROOT } = {}) 
   const variant = (python, which) => {
     const text = guide.buildGuide({ python, torch: false, backend: true, style: 'clean' });
     if (typeof text !== 'string' || text.length < 5000 || !text.startsWith('# ')) throw new GuideError(`The ${which} guide is not the text it was (${String(text).length} characters).`);
-    return forFormLogic(text, which);
+    const hosted = forFormLogic(text, which);
+    return python ? hosted : hosted.replace('write SoftN that way', 'use that pattern here').replace('SoftN draws those', 'the renderer draws those');
   };
   return {
     source: { repository: 'f2i-com/softn.com', file: GUIDE_SOURCE, commit: headCommit(repo), license: 'Apache-2.0' },

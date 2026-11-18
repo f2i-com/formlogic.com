@@ -1,8 +1,11 @@
-// Device connector check — a small surface that exercises the `device` connector
+// Device connector check for the same commands available to installed apps.
 // (phone abilities) through the SAME getConnectorClient() path apps use. Handy for
 // verifying the connector in a browser, the PWA, and the FormLogic Native Runtime.
 // Reachable at /device-check (append ?flDeviceMock for deterministic values).
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowLeft, Play } from 'lucide-react';
 import { getConnectorClient } from '../client-runtime/connectors/nativeConnectorClient';
 import type { ConnectorStatusInfo } from '../client-runtime/connectors/connectorTypes';
 
@@ -19,10 +22,12 @@ const PAYLOADS: Record<string, unknown> = {
 };
 
 export function DeviceCheck() {
+  useDocumentTitle('Device connector');
   const client = getConnectorClient();
   const [status, setStatus] = useState<ConnectorStatusInfo | null>(null);
   const [native] = useState(() => getConnectorClient().isNativeAvailable());
   const [rows, setRows] = useState<Row[]>([]);
+  const [listState, setListState] = useState<'loading' | 'ready' | 'error'>('loading');
 
   useEffect(() => {
     let alive = true;
@@ -34,9 +39,12 @@ export function DeviceCheck() {
       .list()
       .then((list) => {
         const dev = list.find((c) => c.id === 'device');
-        if (alive) setRows((dev?.commands ?? []).map((command) => ({ command })));
+        if (alive) {
+          setRows((dev?.commands ?? []).map((command) => ({ command })));
+          setListState('ready');
+        }
       })
-      .catch(() => {});
+      .catch(() => { if (alive) setListState('error'); });
     return () => {
       alive = false;
     };
@@ -54,60 +62,42 @@ export function DeviceCheck() {
   }
 
   return (
-    <div style={S.page}>
-      <div style={S.wrap}>
-        <header style={S.head}>
-          <h1 style={S.h1}>Device connector</h1>
-          <span style={{ ...S.badge, ...(native ? S.badgeOk : {}) }}>
-            {native ? 'native runtime' : 'browser'}
-          </span>
+    <main className="min-h-dvh bg-gray-50 px-4 py-6 text-gray-900 dark:bg-slate-950 dark:text-white sm:py-12">
+      <div className="mx-auto max-w-3xl">
+        <Link to="/" className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-primary-700 hover:underline dark:text-primary-300"><ArrowLeft size={16} aria-hidden="true" />FormLogic home</Link>
+        <header className="mb-6 mt-5">
+          <h1 className="text-3xl font-bold tracking-tight">Device connector</h1>
+          <p className="mt-2 text-gray-600 dark:text-slate-300">Run a command to check the capabilities available to apps in {native ? 'this native runtime' : 'this browser'}.</p>
+          {status && (
+            <p className="mt-4 rounded-xl border border-gray-200 bg-white p-3 text-sm leading-6 dark:border-slate-700 dark:bg-slate-900">
+              <strong>Connector {status.available ? 'available' : 'unavailable'}</strong>
+              {status.detail && <span className="block text-gray-600 dark:text-slate-300">{status.detail}</span>}
+            </p>
+          )}
         </header>
-        {status && (
-          <p style={S.detail}>
-            <code style={S.code}>device</code> · {status.available ? 'available' : 'unavailable'} ·{' '}
-            {status.detail}
-          </p>
-        )}
-        <p style={S.hint}>
-          The phone's abilities as an abstract connector — the same <code style={S.code}>connector.request('device', …)</code>{' '}
-          apps use. Tap a capability to read it.
-        </p>
 
-        <div style={S.grid}>
+        {rows.length === 0 && <p role="status" className="text-sm text-gray-600 dark:text-slate-300">
+          {listState === 'loading' ? 'Checking available commands…' : listState === 'error' ? 'Could not load the device commands. Reload this page to try again.' : 'This device has no available commands.'}
+        </p>}
+        <div className="grid gap-3 sm:grid-cols-2">
           {rows.map((row) => (
-            <button key={row.command} type="button" style={S.card} onClick={() => run(row.command)}>
-              <div style={S.cardHead}>
-                <span style={S.cmd}>{row.command}</span>
-                <span style={S.run}>{row.running ? '…' : 'run ▸'}</span>
+            <div key={row.command} className="min-w-0 rounded-xl border border-gray-200 bg-white px-4 dark:border-slate-700 dark:bg-slate-900">
+              <button
+                type="button" disabled={row.running} onClick={() => run(row.command)}
+                aria-label={`Run ${row.command}`}
+                className="flex min-h-14 w-full items-center justify-between gap-3 text-left disabled:opacity-60"
+              >
+                <code className="break-all text-sm font-semibold">{row.command}</code>
+                <span className="inline-flex items-center gap-1.5 text-sm text-primary-700 dark:text-primary-300"><Play size={13} aria-hidden="true" />{row.running ? 'Running…' : 'Run'}</span>
+              </button>
+              <div aria-live="polite">
+                {row.error && <p className="mb-4 break-words text-sm text-red-700 dark:text-red-300">{row.error}</p>}
+                {row.result !== undefined && <pre className="mb-4 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-gray-100 p-3 text-xs leading-relaxed dark:bg-slate-950">{JSON.stringify(row.result, null, 2)}</pre>}
               </div>
-              {row.error && <div style={S.err}>{row.error}</div>}
-              {row.result !== undefined && (
-                <pre style={S.pre}>{JSON.stringify(row.result, null, 2)}</pre>
-              )}
-            </button>
+            </div>
           ))}
-          {rows.length === 0 && <p style={S.hint}>No device capabilities detected.</p>}
         </div>
       </div>
-    </div>
+    </main>
   );
 }
-
-const S: Record<string, React.CSSProperties> = {
-  page: { minHeight: '100dvh', background: '#080b16', color: '#eaeefb', fontFamily: 'system-ui, sans-serif' },
-  wrap: { maxWidth: 760, margin: '0 auto', padding: '28px 18px 48px' },
-  head: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  h1: { fontSize: 22, fontWeight: 700, margin: 0 },
-  badge: { fontSize: 12, padding: '5px 11px', borderRadius: 999, border: '1px solid #212c48', color: '#8a97ba' },
-  badgeOk: { color: '#34d399', borderColor: 'rgba(52,211,153,0.35)' },
-  detail: { color: '#8a97ba', fontSize: 13, margin: '10px 0 0' },
-  hint: { color: '#8a97ba', fontSize: 13, lineHeight: 1.5, margin: '8px 0 18px' },
-  code: { fontFamily: 'ui-monospace, monospace', color: '#fbbf24', fontSize: 12 },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 },
-  card: { textAlign: 'left', background: 'linear-gradient(180deg,#111830,#0e1428)', border: '1px solid #1a2338', borderRadius: 14, padding: 14, color: '#eaeefb', cursor: 'pointer' },
-  cardHead: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  cmd: { fontFamily: 'ui-monospace, monospace', fontSize: 13, fontWeight: 600 },
-  run: { fontSize: 11, color: '#fbbf24' },
-  err: { marginTop: 8, color: '#f87171', fontSize: 12 },
-  pre: { marginTop: 8, background: 'rgba(4,8,18,0.7)', border: '1px solid #1a2338', borderRadius: 10, padding: 10, fontSize: 11, lineHeight: 1.5, color: '#cbd5e1', overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
-};

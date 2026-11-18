@@ -29,7 +29,7 @@ export function PricingSection({ beta }: { beta: boolean }) {
               style: "currency",
               currency: plans.currency,
             }).format(plans.pricePerMonthCents / 100),
-            period: "USD / 30 days",
+            period: `${plans.currency} / 30 days`,
             description: plans.paidDescription,
             items: [
               "Optional support for development",

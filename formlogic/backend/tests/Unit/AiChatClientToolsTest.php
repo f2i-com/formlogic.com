@@ -283,6 +283,48 @@ class AiChatClientToolsTest extends TestCase
         $this->assertSame([], $ai->lastPayload);
     }
 
+    public function testReportedInvalidToolCallOffersRecoveryWithoutExposingProviderOutput(): void
+    {
+        $ai = $this->service();
+        $ai->httpStatus = 422;
+        $ai->httpBody = '{"error":{"type":"server_error","code":"tool_contract_error","message":"private model output"}}';
+        $result = $this->chat($ai, ['aiTools' => 1, 'tools' => self::tools(), 'messages' => [['role' => 'user', 'content' => 'Hi']]]);
+        $this->assertSame(502, $result['status']);
+        $this->assertSame([
+            'error' => true,
+            'code' => 'invalid_model_tool_call',
+            'message' => 'The model returned an invalid tool call. Review any earlier actions, then ask for the next step on its own.',
+        ], $result['body']);
+    }
+
+    public static function unrelatedUpstreamErrors(): array
+    {
+        $contractError = '{"error":{"code":"tool_contract_error","message":"private model output"}}';
+        return [
+            'no tools in this round' => [422, $contractError, false],
+            'another status' => [400, $contractError, true],
+            'rate limit' => [429, $contractError, true],
+            'message quotes the code' => [422, '{"error":{"code":"invalid_request_error","message":"tool_contract_error"}}', true],
+            'code in wrong position' => [422, '{"code":"tool_contract_error"}', true],
+            'code in invalid shape' => [422, '{"error":{"code":["tool_contract_error"]}}', true],
+            'malformed JSON' => [422, '{"error":{"code":"tool_contract_error"}', true],
+            'scalar JSON' => [422, '"tool_contract_error"', true],
+            'body beyond classification limit' => [422, $contractError . str_repeat(' ', 16384), true],
+            'nested beyond classification limit' => [422, '{"error":{"code":"tool_contract_error","details":[[[[[[[[]]]]]]]]}}', true],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('unrelatedUpstreamErrors')]
+    public function testUnrelatedProviderErrorsKeepTheGenericReply(int $status, string $body, bool $hasTools): void
+    {
+        $ai = $this->service();
+        $ai->httpStatus = $status;
+        $ai->httpBody = $body;
+        $result = $this->chat($ai, ['aiTools' => 1, 'tools' => $hasTools ? self::tools() : [], 'messages' => [['role' => 'user', 'content' => 'Hi']]]);
+        $this->assertSame(502, $result['status']);
+        $this->assertSame(['error' => true, 'message' => 'The AI request failed'], $result['body']);
+    }
+
     public function testAnUpstreamFailureIsA502WithoutDetail(): void
     {
         $ai = $this->service();
@@ -303,12 +345,17 @@ class FakeClientToolsAiService extends AIService
     /** @var array<string, mixed> */
     public array $lastPayload = [];
     public bool $fail = false;
+    public int $httpStatus = 200;
+    public string $httpBody = '';
 
     protected function chatCompletionsToolsRequest(array $payload): array
     {
         $this->lastPayload = $payload;
         if ($this->fail) {
             throw new \Exception('API error (500): upstream secret detail');
+        }
+        if ($this->httpStatus !== 200) {
+            return $this->decodeToolRoundResponse($this->httpBody, $this->httpStatus, !empty($payload['tools']));
         }
         return $this->replyBody;
     }

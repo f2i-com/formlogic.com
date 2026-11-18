@@ -66,7 +66,7 @@ describe('the sections of Settings', () => {
     await open('/settings');
     expect(current()).toEqual(['Account']);
     expect(shown()).toEqual(['Account']);
-    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'instant' });
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
@@ -76,7 +76,7 @@ describe('the sections of Settings', () => {
     await open(`/settings#${hash}`);
     expect(current()).toEqual([section]);
     expect(shown()).toEqual([section]);
-    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'instant' });
     expect(scrollIntoView).not.toHaveBeenCalled();
     // The panel still carries the id, for what looks it up; it asks for the page's top when a browser goes to it.
     expect(host.querySelector(`#${hash}`)?.className).toContain('scroll-mt-[100vh]');
@@ -92,7 +92,7 @@ describe('the sections of Settings', () => {
     expect(current()).toEqual([section]);
     expect(shown()).toEqual([section]);
     expect(broughtIntoView()).toEqual([hash]);
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' });
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'instant' });
     // It is inside the section that opened, and stops below the sticky header.
     const panel = host.querySelector<HTMLElement>(`#${hash}`)!;
     expect(panel.closest('[data-settings-section]')?.getAttribute('aria-label')).toBe(section);
@@ -103,7 +103,7 @@ describe('the sections of Settings', () => {
   it('names a section by its own id too', async () => {
     await open('/settings#connections');
     expect(current()).toEqual(['AI & devices']);
-    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'instant' });
   });
 
   it('open on Account for a hash that is no address of the page', async () => {
@@ -165,7 +165,7 @@ describe('the shared demo in Settings', () => {
   it('opens Your data from its top for the recycle bin it has not got', async () => {
     await open('/settings#trash', true);
     expect(current()).toEqual(['Your data']);
-    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'instant' });
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 });

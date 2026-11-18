@@ -1,7 +1,9 @@
-import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useRef, useEffect, useId } from 'react';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import { useFormStore } from '../../stores/formStore';
+import { useUIStore } from '../../stores/uiStore';
+import { workspaceTools } from '../layout/workspaceTools';
 import { toast } from '../../stores/toastStore';
 import { cn } from '../../lib/utils';
 import { useSignOutWithUnsentCheck } from './useSignOutWithUnsentCheck';
@@ -13,41 +15,58 @@ import {
   Cloud,
   CloudOff,
   RefreshCw,
-  Database,
+  Menu,
+  Sun,
+  Moon,
   ShieldCheck,
 } from 'lucide-react';
 
 interface UserMenuProps {
-  onOpenAuth: () => void;
+  onOpenAuth?: () => void;
+  dockEdge?: 'top' | 'bottom';
 }
 
-export function UserMenu({ onOpenAuth }: UserMenuProps) {
+export function UserMenu({ onOpenAuth, dockEdge }: UserMenuProps) {
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const pointerInside = useRef(false);
 
+  const menuId = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const theme = useUIStore(state => state.theme);
+  const toggleTheme = useUIStore(state => state.toggleTheme);
   const { user } = useAuthStore();
   const { storageMode, setStorageMode, syncToApi, setSyncConflicts, loadAllFullForms } = useFormStore();
 
   useEffect(() => {
     if (!isOpen) return;
-    function handleClickOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
+    function handlePointerDown(event: PointerEvent) {
+      pointerInside.current = !!menuRef.current?.contains(event.target as Node);
+      if (!pointerInside.current) setIsOpen(false);
+    }
+
+    function clearPointer() {
+      pointerInside.current = false;
     }
 
     function handleEscape(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setIsOpen(false);
+        trigger.current?.focus();
       }
     }
 
-    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('pointerup', clearPointer, true);
+    document.addEventListener('pointercancel', clearPointer, true);
     document.addEventListener('keydown', handleEscape);
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      clearPointer();
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('pointerup', clearPointer, true);
+      document.removeEventListener('pointercancel', clearPointer, true);
       document.removeEventListener('keydown', handleEscape);
     };
   }, [isOpen]);
@@ -135,7 +154,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
 
   const handleSyncToCloud = async () => {
     if (!user) {
-      onOpenAuth();
+      onOpenAuth?.();
       setIsOpen(false);
       return;
     }
@@ -167,6 +186,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
   };
 
   if (!user) {
+    if (!onOpenAuth) return null;
     return (
       <button
         onClick={onOpenAuth}
@@ -178,147 +198,77 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
     );
   }
 
+  const row = 'flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-primary-500 disabled:opacity-50 dark:text-slate-200 dark:hover:bg-white/5';
+  const navRow = ({ isActive }: { isActive: boolean }) => cn(row, isActive && 'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300');
+  const close = () => setIsOpen(false);
+  const accountLinks = [
+    { path: '/settings', icon: Settings, label: 'Settings' },
+    { path: '/billing', icon: Cloud, label: 'Cloud & billing' },
+    ...(user.isAdmin ? [{ path: '/admin', icon: ShieldCheck, label: 'Admin' }] : []),
+  ];
+
   return (
-    <div className="relative" ref={menuRef}>
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        aria-label="User menu"
-        aria-expanded={isOpen}
-        className={cn(
-          'flex items-center gap-2 px-2 py-1.5 text-sm rounded-lg transition-all duration-150 cursor-pointer',
-          'hover:bg-gray-100 dark:hover:bg-slate-800',
-          isOpen && 'bg-gray-100 dark:bg-slate-800'
-        )}
-      >
-        <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-primary-foreground text-sm font-medium shadow-sm">
+    <div className="relative" ref={menuRef} onBlur={event => {
+      // WebKit can focus the page during a press on a link. Let its click reach the link.
+      if (!pointerInside.current && event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) close();
+    }}>
+      <button type="button" ref={trigger} onClick={() => setIsOpen(open => !open)}
+        aria-label="User menu" aria-expanded={isOpen} aria-controls={isOpen ? menuId : undefined}
+        title="Workspace and account menu"
+        className={cn('flex h-11 min-w-11 items-center justify-center gap-2 rounded-lg text-sm transition-colors hover:bg-gray-100 focus-visible:outline-2 focus-visible:outline-primary-500 dark:hover:bg-slate-800 md:px-2',
+          isOpen && 'bg-gray-100 dark:bg-slate-800')}>
+        <Menu className="size-5 text-slate-700 dark:text-slate-200 md:hidden" aria-hidden="true" />
+        <span className="hidden size-8 items-center justify-center rounded-full bg-primary-600 font-semibold text-primary-foreground md:flex" aria-hidden="true">
           {user.name?.[0]?.toUpperCase() || user.email[0].toUpperCase()}
-        </div>
-        <span className="max-w-[120px] truncate hidden lg:block font-medium text-gray-700 dark:text-slate-300">
-          {user.name || user.email.split('@')[0]}
         </span>
-        <ChevronDown className={cn(
-          'h-4 w-4 text-gray-400 dark:text-slate-500 transition-transform duration-200',
-          isOpen && 'rotate-180'
-        )} />
+        {!dockEdge && <span className="hidden max-w-[120px] truncate font-medium text-gray-700 dark:text-slate-300 lg:block">{user.name || user.email.split('@')[0]}</span>}
+        <ChevronDown className={cn('hidden size-4 text-slate-500 motion-safe:transition-transform md:block', (dockEdge === 'bottom') !== isOpen && 'rotate-180')} aria-hidden="true" />
       </button>
-
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-xl shadow-lg border border-gray-200/80 dark:border-slate-800 py-1 z-50 animate-scale-in">
-          {/* User info */}
-          <div className="px-4 py-3 border-b border-gray-100 dark:border-slate-800">
-            <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">
-              {user.name || 'User'}
-            </p>
-            <p className="text-xs text-gray-500 dark:text-slate-400 truncate mt-0.5">{user.email}</p>
-          </div>
-
-          {/* Storage mode indicator */}
-          <div className="px-4 py-2.5 border-b border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-800/50">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-500 dark:text-slate-400">Storage Mode</span>
-              <span className={cn(
-                'text-xs font-medium flex items-center gap-1.5 px-2 py-0.5 rounded-full',
-                storageMode === 'api'
-                  ? 'text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-500/10'
-                  : 'text-gray-600 dark:text-slate-300 bg-gray-200 dark:bg-slate-700'
-              )}>
-                {storageMode === 'api' ? (
-                  <>
-                    <Cloud className="h-3 w-3" />
-                    Cloud
-                  </>
-                ) : (
-                  <>
-                    <Database className="h-3 w-3" />
-                    Local
-                  </>
-                )}
-              </span>
+        <div id={menuId} role="region" aria-label="Workspace and account" className={cn('absolute right-0 z-50 w-72 max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900',
+          dockEdge === 'bottom' ? 'bottom-full mb-2' : 'top-full mt-2',
+          dockEdge ? 'max-h-[calc(100dvh-var(--fl-nav-height)-var(--fl-system-top,0px)-1rem)]' : 'max-h-[calc(100dvh-10rem-var(--fl-demo-banner-h,0px)-env(safe-area-inset-bottom))] md:max-h-[calc(100dvh-7rem-var(--fl-demo-banner-h,0px))]')}>
+          <div className="flex items-center gap-3 border-b border-slate-200 px-2 pb-3 pt-1.5 dark:border-slate-700">
+            <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-semibold text-primary-800 dark:bg-primary-500/15 dark:text-primary-300">
+              {user.name?.[0]?.toUpperCase() || user.email[0].toUpperCase()}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">{user.name || 'User'}</p>
+              <p className="truncate text-xs text-slate-600 dark:text-slate-400">{user.email}</p>
             </div>
           </div>
 
-          {/* Menu items */}
-          <div className="py-1">
-            <button
-              onClick={handleToggleStorageMode}
-              disabled={isSyncing}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
-            >
-              {isSyncing ? (
-                <>
-                  <RefreshCw className="h-4 w-4 text-gray-400 dark:text-slate-500 animate-spin" />
-                  {storageMode === 'local' ? 'Moving forms to your account…' : 'Copying forms to this device…'}
-                </>
-              ) : storageMode === 'api' ? (
-                <>
-                  <CloudOff className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                  Keep new forms on this device
-                </>
-              ) : (
-                <>
-                  <Cloud className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                  Save my forms to my account
-                </>
-              )}
+          <nav aria-label="More tools" className="border-b border-slate-200 py-1.5 dark:border-slate-700 md:hidden">
+            {workspaceTools(!!user.isDemo).map(({ path, icon: Icon, label }) =>
+              <NavLink key={path} to={path} className={navRow} onClick={close}><Icon className="size-4" aria-hidden="true" />{label}</NavLink>)}
+          </nav>
+          <nav aria-label="Account" className="py-1.5">
+            {accountLinks.map(({ path, icon: Icon, label }) =>
+              <NavLink key={path} to={path} className={navRow} onClick={close}><Icon className="size-4" aria-hidden="true" />{label}</NavLink>)}
+          </nav>
+          <button type="button" onClick={toggleTheme} className={cn(row, !dockEdge && 'md:hidden')}>
+            {theme === 'dark' ? <Sun className="size-4" aria-hidden="true" /> : <Moon className="size-4" aria-hidden="true" />}
+            {theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          </button>
+
+          <div className="mt-1 border-y border-slate-200 py-1.5 dark:border-slate-700">
+            <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-400">
+              <span>Form storage</span>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">{storageMode === 'api' ? 'Cloud' : 'This device'}</span>
+            </div>
+            <button type="button" onClick={handleToggleStorageMode} disabled={isSyncing} className={row}>
+              {isSyncing ? <RefreshCw className="size-4 motion-safe:animate-spin" /> : storageMode === 'api' ? <CloudOff className="size-4" /> : <Cloud className="size-4" />}
+              {isSyncing
+                ? (storageMode === 'local' ? 'Moving forms to your account…' : 'Copying forms to this device…')
+                : (storageMode === 'api' ? 'Keep new forms on this device' : 'Save my forms to my account')}
             </button>
-
-            {storageMode === 'local' && (
-              <button
-                onClick={handleSyncToCloud}
-                disabled={isSyncing}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
-              >
-                <RefreshCw className={cn('h-4 w-4 text-gray-400 dark:text-slate-500', isSyncing && 'animate-spin')} />
-                {isSyncing ? 'Syncing...' : 'Sync to Cloud'}
-              </button>
-            )}
-
-            <button
-              onClick={() => {
-                setIsOpen(false);
-                navigate('/settings');
-              }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              <Settings className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-              Settings
-            </button>
-
-            <button
-              onClick={() => {
-                setIsOpen(false);
-                navigate('/billing');
-              }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              <Cloud className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-              Cloud &amp; billing
-            </button>
-
-            {user.isAdmin && (
-              <button
-                onClick={() => {
-                  setIsOpen(false);
-                  navigate('/admin');
-                }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-              >
-                <ShieldCheck className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                Admin
-              </button>
-            )}
+            {storageMode === 'local' && <button type="button" onClick={handleSyncToCloud} disabled={isSyncing} className={row}>
+              <RefreshCw className={cn('size-4', isSyncing && 'motion-safe:animate-spin')} />{isSyncing ? 'Syncing…' : 'Sync to Cloud'}
+            </button>}
           </div>
-
-          {/* Logout */}
-          <div className="border-t border-gray-100 dark:border-slate-800 py-1">
-            <button
-              onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
-            >
-              <LogOut className="h-4 w-4" />
-              Sign Out
-            </button>
-          </div>
+          <button type="button" onClick={handleLogout} className={cn(row, 'mt-1 text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10')}>
+            <LogOut className="size-4" aria-hidden="true" />Sign Out
+          </button>
         </div>
       )}
       {signOut.dialog}

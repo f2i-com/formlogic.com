@@ -35,8 +35,17 @@ function dedupeFormsById(forms: Form[]): Form[] {
  * is complete says so before its first edit (pushHistory): `fieldCount` goes stale with a deleted
  * field, and only the mark then tells that form from a row.
  */
-function hasItsFields(form: Form): boolean {
+export function hasItsFields(form: Form): boolean {
   return (form as Form & { _fieldsLoaded?: boolean })._fieldsLoaded === true || form.fields.length >= (form.fieldCount ?? 0);
+}
+
+// A list read can finish after the designer has loaded or edited the full form.
+// Its summary has no questions and must not replace that newer copy.
+function mergeFormList(rows: Form[], before: Form[], current: Form[]): Form[] {
+  const earlier = new Map(before.map(form => [form.id, form]));
+  const changed = new Map(current.filter(form => earlier.get(form.id) !== form && hasItsFields(form)).map(form => [form.id, form]));
+  const localDemo = current.filter(form => isDemoLocalFormId(form.id));
+  return dedupeFormsById([...rows.map(row => changed.get(row.id) ?? row), ...localDemo]);
 }
 
 /**
@@ -537,9 +546,8 @@ export const useFormStore = create<FormState>()(
             }
             if (forms !== null) {
               // Keep any demo-created (browser-only) forms alongside the server's seeded forms.
-              const localDemo = get().forms.filter((f) => isDemoLocalFormId(f.id));
               set({
-                forms: dedupeFormsById([...forms, ...localDemo]),
+                forms: mergeFormList(forms, state.forms, get().forms),
                 isLoading: false,
                 isInitialized: true,
                 error: null,
@@ -591,11 +599,10 @@ export const useFormStore = create<FormState>()(
             const fetched = acting
               ? forms.map((f) => ({ ...f, _adminForeign: true } as Form))
               : forms;
-            const localDemo = get().forms.filter((f) => isDemoLocalFormId(f.id));
             // Clear `error` on success: it is what the Dashboard and Forms list read to
             // decide between "you have no forms" and "we couldn't load them", so a
             // successful retry has to retract the failure.
-            set({ forms: dedupeFormsById([...fetched, ...localDemo]), isLoading: false, error: null });
+            set({ forms: mergeFormList(fetched, state.forms, get().forms), isLoading: false, error: null });
           } else {
             set({ error: 'Failed to load forms', isLoading: false });
           }

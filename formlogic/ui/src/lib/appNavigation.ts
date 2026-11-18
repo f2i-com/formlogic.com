@@ -1,3 +1,5 @@
+import { viewerOwnsApp, type App, type AppSummary } from '../types/app';
+
 /**
  * Where clicking an app goes — ONE definition, because there are three places that
  * list apps (the sidebar, the mobile drawer, the Home strip) and they had drifted.
@@ -12,18 +14,29 @@ export interface AppNavTarget {
   id: string;
   slug: string;
   canManage?: boolean;
-  /** A hosted SoftN app's owner manages it in its workspace rather than the App Studio. */
+  ownerId?: string;
   settings?: { softnApp?: boolean } | null;
 }
 
-export function appClickPath(app: AppNavTarget): string {
-  if (!app.canManage) return `/app/${app.slug}`;
-  return app.settings?.softnApp === true ? `/apps/${app.id}/softn` : `/apps/${app.id}/studio`;
+export function appClickPath(app: AppNavTarget, userId?: string): string {
+  if (!viewerOwnsApp(app, userId)) return `/app/${app.slug}`;
+  return app.settings?.softnApp === true ? `/apps/${app.id}/web` : `/apps/${app.id}/studio`;
+}
+
+export function appSettingsPath(app: AppNavTarget): string {
+  return app.settings?.softnApp ? `/apps/${app.id}/web/settings` : `/apps/${app.id}/settings`;
+}
+
+/** The data shortcut opens the primary editor's records when both kinds are present. */
+export function appDataLink(app: Pick<App, 'id' | 'settings' | 'formCount'>, summary?: AppSummary) {
+  const base = `/apps/${app.id}`;
+  if (app.settings?.softnApp && summary?.tables != null) return { to: `${base}/web/data`, label: 'Data' };
+  if ((app.formCount ?? 0) > 0) return { to: `${base}/records`, label: 'Form records' };
+  if (summary?.installed && summary.tables != null) return { to: `${base}/studio/data`, label: 'Data' };
 }
 
 /** Matching label, so the tooltip/aria never promises the wrong destination. */
-export function appClickLabel(app: AppNavTarget & { name?: string }): string {
+export function appClickLabel(app: AppNavTarget & { name?: string }, userId?: string): string {
   const name = app.name ?? 'app';
-  if (!app.canManage) return `Open ${name}`;
-  return app.settings?.softnApp === true ? `Open ${name} in its workspace` : `Open ${name} in the App Studio`;
+  return viewerOwnsApp(app, userId) ? `Open ${name} in its workspace` : `Open ${name}`;
 }

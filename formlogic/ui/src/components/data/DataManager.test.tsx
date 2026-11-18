@@ -873,6 +873,28 @@ describe('a row’s details', () => {
     expect(button('Next row on this page')!.disabled).toBe(true);
   });
 
+  it('reflows an open row when a dock narrows the database without resizing the window', async () => {
+    let resized: () => void = () => {};
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    try {
+      await mount({ query: query({ row: { id: '8214' } }) });
+      const frame = container.firstElementChild as HTMLElement;
+      expect(details()?.tagName).toBe('ASIDE');
+      Object.defineProperty(frame, 'clientWidth', { value: 760, configurable: true });
+      await act(async () => resized());
+      expect(details()?.getAttribute('role')).toBe('dialog');
+      expect(frame.className).not.toContain('lg:flex-row');
+      Object.defineProperty(frame, 'clientWidth', { value: 1100, configurable: true });
+      await act(async () => resized());
+      expect(details()?.tagName).toBe('ASIDE');
+      expect(frame.className).toContain('lg:flex-row');
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('is a dialog over the page below a wide screen, with Back, and gives the focus back when it closes', async () => {
     tablet();
     await mount();
@@ -1703,13 +1725,16 @@ describe('what there is to show', () => {
   });
 
   it('says when the app has no tables yet, or nothing installed', async () => {
+    const emptyAction = <a href="/apps/app1/web/api">Open API routes</a>;
     mocks.summary.mockResolvedValue({ data: { installed: true, tables: [], summary: { tables: [], bytes: 4096, hiddenTables: 1 } } });
-    await mount();
+    await mount({ emptyAction });
     expect(container.textContent).toContain('No tables yet');
+    expect(container.textContent).toContain('Open API routes');
     expect(container.textContent).toContain('1 system table is not shown.');
     mocks.summary.mockResolvedValue({ data: { installed: false, tables: [] } });
-    await remount();
+    await remount({ emptyAction });
     expect(container.textContent).toContain('This app has no version installed yet');
+    expect(container.textContent).not.toContain('Open API routes');
   });
 
   it('says a table has no rows yet', async () => {

@@ -297,7 +297,7 @@ class RuntimeEngineService
     {
         if (!self::featuresRun($this->installedFeatures(), $languages)) {
             throw new \RuntimeException(
-                'This app\'s logic is written in Python and the installed Softn runtime does not advertise '
+                'This app\'s logic is written in Python and the installed sandbox runtime does not advertise '
                 . self::PYTHON_LOGIC_FEATURE . '; install a runtime that does (node scripts/fetch-softn-release.mjs).',
                 503
             );

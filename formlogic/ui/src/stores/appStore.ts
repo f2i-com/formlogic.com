@@ -192,6 +192,7 @@ export const useAppStore = create<AppState>()(
       },
 
       addFormToApp: async (appId, formId, displayName) => {
+        const session = currentSessionGeneration();
         try {
           // Ensure the form exists on the server (may only be in local storage)
           const form = useFormStore.getState().forms.find((f) => f.id === formId);
@@ -208,6 +209,10 @@ export const useAppStore = create<AppState>()(
             toast.error('Failed to add form', result.error);
             return false;
           }
+          const formCount = result.data?.forms?.length;
+          if (formCount !== undefined && isSessionGenerationCurrent(session)) {
+            set(s => ({ apps: s.apps.map(app => app.id === appId ? { ...app, formCount } : app) }));
+          }
           return true;
         } catch {
           toast.error('Failed to add form', 'An unexpected error occurred.');
@@ -216,9 +221,11 @@ export const useAppStore = create<AppState>()(
       },
 
       removeFormFromApp: async (appId, formId) => {
+        const session = currentSessionGeneration();
         try {
           const result = await api.removeAppForm(appId, formId);
           if (result.error) toast.error('Remove failed', result.error);
+          else if (isSessionGenerationCurrent(session)) await get().fetchApps();
         } catch {
           toast.error('Remove failed', 'Could not remove the form. Please try again.');
         }

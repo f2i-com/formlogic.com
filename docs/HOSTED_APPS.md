@@ -5,22 +5,43 @@
 
 App Studio → Screens → **App hosting** hosts a text app bundle with private `.logic` actions and a separate SQLite database. The starter is a working team notes app. Edit the interface and actions, publish the project, then open Preview or `/app/<slug>/project`. Publishing a project does not change the parent app's publication status: members need an active membership and a published app. Owners can preview drafts.
 
-## SoftN apps
+<a id="softn-apps"></a>
+## Web apps
 
-A **SoftN app** is an app whose interface, private backend and database are its SoftN project,
-with no forms needed (`settings.softnApp: true`). Create one with **Create app → SoftN app**, by
-dropping a `.softn` file on **Apps → Import**, or by asking the chat (its `create_softn_app` tool
-creates the app and takes the person to AI Studio, which builds it from their request, and
-`edit_softn_app` hands a change to an app that exists to AI Studio the same way; an MCP client
-builds and changes it with the SoftN app tools, taught by `get_softn_guide`:
-[MCP.md](MCP.md#softn-apps-over-mcp)). Its first
-version is the working starter (`POST /api/apps/{id}/native/starter`, refused once anything is
-installed) or the uploaded file; both are for members only and open at the app's address until
-the owner changes that.
+A web app can have its own pages, private backend and SQLite database. Choose
+**Apps → Create app → Web starter** to edit a Vanilla JS, React or Vue starter, or
+describe the app in AI Studio. To bring a JavaScript, React or Vue app, choose
+**Apps → Import an app** and upload a ZIP with the browser-ready files. An editable
+project ZIP can also include the original source and a private backend. New apps
+start with members-only access. An external AI can also create and edit a project
+using the [web app tools over MCP](MCP.md#web-apps-over-mcp).
 
-Any SoftN app can be uploaded, with a backend of its own or none:
+### Host a web app and add a custom API
 
-- **No backend** (no `server` block in `manifest.json`, which is most SoftN apps): it runs in the
+1. Open **Apps → Import**, choose the app’s project ZIP and select **Create from this file**. The **Edit** tab opens the app as its owner. If you have a second complete bundle of the same app containing its backend, attach that bundle during import. An existing SQLite database and its original key file can be selected separately when bringing data from another host.
+2. For a browser-only app, open **Data → Write a custom API**. FormLogic opens the handler for `GET /api/status` in the source editor. It returns `{"status":"ok"}`. Choose **Save changes** on a draft app to install it. For an app that already has a backend, open **Edit → Edit the source code** to change its handlers.
+3. Open **API**, select the installed route and use **Try it** to call it as the owner. To store shared records, add a SQL file under `server/migrations/`, list it in `server.database.migrations` in `manifest.json`, and use `softn.sql` inside the handler. Give each new migration a filename that sorts after the existing ones. The **Data** tab shows the installed tables and rows.
+4. In **Settings**, choose who can open the app. Select **Publish**, then open the app’s address in another browser session to check the visitor experience. For subsequent edits to a live app, **Publish changes** installs the new routes and handlers. The **API** tab tests the installed version. A refused update keeps the previous version running.
+
+Vanilla JS, React and Vue apps can call the route from an app module using `softn:api`.
+
+```js
+import { api } from 'softn:api';
+
+export async function getStatus() {
+  const response = await api.fetch('/api/status');
+  if (!response.ok) throw new Error('Status request failed (' + response.status + ')');
+  return response.json();
+}
+```
+
+The handler runs on FormLogic. A visitor receives the app’s response and client files. The private handler, SQL migrations and database stay on the server.
+
+### Supported bundles
+
+An editable app ZIP can be uploaded, with a backend of its own or none:
+
+- **No backend** (no `server` block in `manifest.json`): it runs in the
   member's browser alone. Nothing starts a runner for it and it has no database here, so what it
   saves stays in each visitor's browser and the **Data** tab says so. Its media are served to its
   page. Its seed data (the `.xdb` files `manifest.files.xdb` names) is kept with it, downloaded
@@ -57,30 +78,21 @@ modules (`.wasm`) are media too from SoftN v0.0.41, which runs each in a worker 
 reaches nothing of the page or the network (`softn.wasm.*` from the app's logic, `<WasmApp>` for a
 program that draws).
 
-Source files are the app's pages (`.html`, or `.ui` in an app made before SoftN's HTML pages), their
-logic (`.js`, or `.logic`; `.py` for Python), stylesheets (`.css`), JSON, seed data (`.xdb`), and a
-backend's `server/….logic` and `server/migrations/….sql`. An app written the way SoftN writes one
-now (`index.html` with `<script src="main.js">` and `<link rel="stylesheet" href="styles.css">`) is
-kept as it is. Until November 2026 only the earlier spellings were, and such an app was refused
-file by file. They are source text and nothing else here: the app's frame is handed them with the
-rest and reads them as SoftN, the app's stored copy is under `storage/`, which is never served, and
-no page of this site is made from them. Other kinds (`.htm`, `.mjs`, `.ts`, `.wasm`, a name in
-capitals) are refused, with what an app is made of said in the refusal. A file name may not have
-two dots together, and `apiVersion` is written `1`, not `1.0`.
+Source files include `.html` and classic `.ui` pages, `.js`, `.mjs`, `.jsx`, `.vue`, `.ts`, `.logic`, `.py`, CSS, JSON and `.xdb` seed data. Studio and Builder keep original JSX and Vue components alongside their generated JavaScript. Save component edits in either editor to update both files. A custom backend uses `server/*.logic` handlers and `server/migrations/*.sql`. Source file extensions are lowercase, filenames cannot contain two consecutive dots, and `apiVersion` must be the integer `1`.
 
-The owner manages it at `/apps/<id>/softn`, a page of six sections, each at its own address so a
+The owner manages it at `/apps/<id>/web`, a page of six sections, each at its own address so a
 link or the back button lands where it was. The page itself is the **Overview**: whether the app
 is live and at which version, its addresses, how much data it holds and who can use it. It starts
-nothing, so looking over many apps runs none of them. **Data** (`…/softn/data/<table>/<view>`) is
-the data manager described below; **Members** (`…/softn/members`, the owner alone) lists the
+nothing, so looking over many apps runs none of them. **Data** (`…/web/data/<table>/<view>`) is
+the data manager described below; **Members** (`…/web/members`, the owner alone) lists the
 people who can use the app, invites others, approves or removes them, and sets how people join
 (self-registration, approval, the role a new member gets): the same panels App Studio's Users &
 roles step has, here on the app's own page, where the Overview's "Members" and the Settings'
 "Who can use it" lead (roles themselves are still edited in App Studio);
-**Edit** (`…/softn/edit`) previews the app at desktop or phone
-width and changes it with AI Studio, the Visual Builder, a new `.softn` file or the source editor;
-**Domains** (`…/softn/domains`) holds whether it opens at the app's address, and its own domains;
-**Settings** (`…/softn/settings`, with `#settings-…` for each panel) chooses who can use it and what
+**Edit** (`…/web/edit`) previews the app at desktop or phone
+width and changes it with AI Studio, the Visual Builder, a new project ZIP or the source editor;
+**Domains** (`…/web/domains`) holds whether it opens at the app's address, and its own domains;
+**Settings** (`…/web/settings`, with `#settings-…` for each panel) chooses who can use it and what
 it may do. The apps list (`/apps`) is one table of every app with the same facts beside each
 (`GET /api/apps/summary`: the installed version, who can use it, the database's size, the connected
 domain), with filters for kind and status. While the app is unpublished, a change returned from an editor is
@@ -190,7 +202,7 @@ from its Data section (AddBackendPanel, lib/softnBackend), installed as its next
 draft for the owner to publish once the app is live:
 
 - **Design its database**: the database designer (components/design, lib/databaseDesign), full
-  screen at `…/softn/data?design=diagram` (or `=mermaid`; the older `=steps` opens the diagram).
+  screen at `…/web/data?design=diagram` (or `=mermaid`; the older `=steps` opens the diagram).
   It is an entity-relationship diagram maker that starts empty: nothing is predetermined and no
   example is offered. On the diagram (React Flow, laid out by Dagre: a crow's foot at the table
   with many rows, a bar at the one each belongs to, a ring for one that is optional; top to bottom
@@ -238,7 +250,7 @@ draft for the owner to publish once the app is live:
   and adding in one anyone may. Later changes are the source editor's or AI Studio's: the designer
   makes a backend once, and does not read one back.
 - **Add its backend from a file**: for an app built in two halves, as Coffee.Dating's hosting was (a
-  public `app.softn` with the page alone, and a private bundle with its `server/` folder): the
+  public app ZIP with the page alone, and a private bundle with its `server/` folder): the
   other file's server block, its `server/` folder (never the old host's `private/`, which may hold
   its key), the origins its page calls them at and the settings its backend reads (`config.app`,
   which the page can read too) are added; the page, its media and its own settings stay. The app
@@ -308,7 +320,7 @@ its field). Then:
   brought with the app's data (below) gives the plugin what it names from such a file, when the
   owner says to use it.
 
-**Bringing data** (Import in the Data section, or "Bring its data too" when adding an app from a `.softn` file).
+**Bringing data** (Import in the Data section, or "Bring its data too" when adding an app from an app ZIP).
 An app moved from SoftN's own hosting brings its database (`private/data/application.sqlite`) and,
 optionally, that host's `private/config.json`, for the key the data was kept under: of that file
 only `keyHex`, `cryptoDomains` and the app id are taken (the id must be this app's), and, when the
@@ -1144,7 +1156,7 @@ as their own.
   person's plan has lapsed) or `failed`.
 
 FormLogic asks the member in its own words, in its own sheet over the app; nothing is fetched until
-they agree. The files are then read exactly as a chosen `.softn` file is, by the importer and its
+they agree. The files then pass through the same importer as an uploaded project ZIP and its
 rules, so nothing an upload would be refused for is let in this way, and the new app is made in the
 person's own account, as an upload's is. The offering app is told how it went and nothing about the
 app that was made but its name.
@@ -1171,7 +1183,7 @@ softn.backend.call("formlogicAddApp", {op: "offer", from: "/api/projects/" + id 
 |---|---|
 | Show an app's existing forms and records in an editable dashboard | **Screens → Create connected dashboard**; see [Connected apps](CONNECTED_APPS.md). |
 | Add Aokie's calls, appointments and logs to an existing app | Share its forms through **Add from another app**, then use the Front desk route or Aokie dashboard template. |
-| Host a website or web app with its own pages, backend and database | **Create app → SoftN app**; see [SoftN apps](#softn-apps). |
+| Host a website or web app with its own pages, backend and database | Choose **Create app → Web starter** or upload a ZIP from **Apps → Import an app**. See [web apps](#web-apps). |
 | Build a custom interface with its own backend actions and database | **Screens → App hosting**; edit the starter or import a project. |
 | Let an AI author the project | Use `get_app_project` and `publish_app_project` through [MCP](MCP.md#portable-projects-and-aokie-via-mcp). |
 
@@ -1181,7 +1193,7 @@ softn.backend.call("formlogicAddApp", {op: "offer", from: "/api/projects/" + id 
 remains in your workspace until you delete it. Click its title in the form builder
 to rename it, or use **Rename** from the Forms card menu or list view.
 
-In the form builder, choose **More options → Download app project**. The `.softn`
+In the form builder, choose **More options → Download app project**. The ZIP
 archive includes a manifest, a main screen, and separate `.ui` and `.logic` files
 for each form. Blank forms export as empty editable screens without sample fields.
 To combine multiple forms, attach them to the same app and use App Studio's
@@ -1202,7 +1214,7 @@ For authenticated backend actions and shared SQLite storage, use App hosting bel
 
 1. Create or open the parent app, then open **App Studio → Screens → App hosting**.
 2. On **Interface**, edit the `.ui`, `.logic`, `.py` and `.json` client files, or use
-   **Import project** for a compatible `.softn`, ZIP or `hosting-project.json`.
+   **Import project** for a compatible project ZIP or `hosting-project.json`.
    Python client logic uses lower-case `.py` files and runs on the ZIPP Python
    engine (below). Uploads and the Visual Builder/AI Studio return path preserve
    those files, including native projects with a private JavaScript backend.
@@ -1341,7 +1353,7 @@ The routes use existing FormLogic session/JWT authentication. Cookie-authenticat
 | `PUT /api/apps/{id}/engine` | Owner only; `{engine: "zipp-web-python"\|"zipp-web"\|"host-js"\|null}` (null = the site default); 422 when the choice would never take effect |
 | `POST /api/app/{slug}/actions/{action}` | Action's access rule; JSON object input; returns `{result}`. An optional `X-FormLogic-Client-Engine: <id>;<revision>` that no longer matches answers `409 engine_changed` |
 
-The package is `{version:1, client:{"manifest.json":"…","ui/main.ui":"…"}, actions:{name:{source,access,mode}}}`. The editor imports client `.softn`/ZIP bundles or full `hosting-project.json` files. Client-only imports retain existing private actions for review. Public manifest metadata and permissions are rebuilt server-side; private directories and executable HTML/JavaScript files are rejected.
+The package is `{version:1, client:{"manifest.json":"…","ui/main.ui":"…"}, actions:{name:{source,access,mode}}}`. The editor imports client ZIP bundles or full `hosting-project.json` files. Client-only imports retain existing private actions for review. Public manifest metadata and permissions are rebuilt server-side; private directories and executable HTML/JavaScript files are rejected.
 
 For a first publication, send `expectedVersion: 0`; subsequent publications use
 the current deployment version returned by the owner GET. A deployment version
@@ -1381,7 +1393,7 @@ PHP needs the existing sandbox binaries, PDO SQLite, and writable `backend/stora
 
 | Action | Includes | Purpose |
 |---|---|---|
-| **Download client** | Public interface files | Edit or reuse the Softn client; live backend access still requires a compatible authenticated host. |
+| **Download client** | Public interface files | Edit or reuse the editable client; live backend access still requires a compatible authenticated host. |
 | **Save project copy** | Client and private action source | Restore or continue editing the project; no stored records are included. |
 | **Download database** | SQLite deployment and records, including private actions | Owner backup of the hosted project and its data. |
 
@@ -1432,11 +1444,11 @@ and other record creation. Do not treat request IDs as idempotency keys.
 ## Native app hosting (local preview)
 
 Use **App Studio → Screens → Hosting & app tools → Native app hosting** for an existing
-`.softn` project, with a `server` manifest, private `.logic` handlers and numbered SQLite
-migrations or with no backend at all (see [SoftN apps](#softn-apps)). This is separate from the
+editable project ZIP, with a `server` manifest, private `.logic` handlers and numbered SQLite
+migrations or with no backend at all (see [web apps](#web-apps)). This is separate from the
 named-action editor described above.
 
-1. Import the `.softn` file (or a ZIP containing exactly one app). Review its route count
+1. Import the project ZIP containing one app. Review its route count
    and files before installing. The imported project is an unsaved draft.
 2. Choose **Use the app’s own sign-in** to keep an existing account system, such as
    Coffee.Dating's phone-code sign-in. Choose **Require FormLogic membership** for apps
@@ -1455,7 +1467,7 @@ named-action editor described above.
    **New file** adds a file by name, **Remove** takes the open one out, and both stay in the draft
    until it is published. A migration that has run remains read-only. **New database change** adds
    the next numbered migration and lists it in the manifest, to evolve the schema.
-   A SoftN app's own page opens the same editor by itself, as **Source code** (its Edit section),
+   A web app's own page opens the same editor by itself, as **Source code** (its Edit section),
    since everything else this dialog holds is on that page.
 5. **Records** lets the owner browse, create, edit, and delete records in the app's SQLite tables.
    It is the data manager described above (the one the app's own page has, over the same API):
@@ -1608,7 +1620,7 @@ access or storage, the engine the server runs it on, the origins it may call, th
 permission, what it asks of FormLogic), a runtime from before v0.0.39, or a frame that answers
 `reopen`, is opened in a new frame, as every newer version was before.
 
-**An app of more than one page file.** A link from one page file of a SoftN app to another
+**An app of more than one page file.** A link from one page file of a web app to another
 (`<a href="about.html">`, or `location.href = "about.html"` in its code) opens that page in place,
 from SoftN v0.0.40's frame on (it says `places: 1` when it is ready); before it, the frame was taken
 to an address of this site, and the app was stopped. Another page file is a fresh run of the app on
@@ -1776,10 +1788,11 @@ when ready. For an app that inserts accounts into `users` after verifying its ow
 select **users → Record created**. If the app creates provisional users earlier, use its
 actual registration table/change and a trigger condition that reflects completed signup.
 
-The **Data & forms** tab lists the native SQLite tables alongside optional FormLogic forms.
-Search the table list and click a table to open its records. The same backend and database
-are also available in **Data & forms → Records → Backend code / Database records**, as well
-as Screens' hosting tools. Backend edits publish a new source
+In a hosted web app, open **Overview → Add a form** to create a form or attach an existing one.
+**Forms** and **Form records** then appear beside the web editor and the app's **Data** section.
+In an app created from forms, open **Forms → App database** for an imported project's SQLite
+tables and backend code. Select a table to browse its records. You can also reach the project
+from **Records → App backend & database** or **Screens → Hosting & app tools**. Backend edits publish a new source
 version while preserving records. The database viewer has desktop tables, mobile record cards, expandable details, refresh,
 50-row pagination and a filter limited to the current page. **Add record** creates an entry;
 **View → Edit record** loads its full editable values and provides save/delete controls.

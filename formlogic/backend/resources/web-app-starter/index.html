@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My app</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main>
+    <h1>My app</h1>
+    <form id="add-item">
+      <label for="title">New item</label>
+      <div class="entry">
+        <input id="title" name="title" maxlength="200" required>
+        <button type="button" disabled>Add item</button>
+      </div>
+    </form>
+    <p role="status" id="status">Loading items…</p>
+    <ul id="items" aria-label="Saved items"></ul>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

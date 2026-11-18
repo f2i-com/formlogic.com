@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { editorBundle } from '../../lib/appEditorArchive';
+import { downloadProjectZip } from '../../lib/downloadProjectZip';
 import { editorAiLabel, resolveDefaultLlm, resolveDefaultLlmTools, TOOLS_UNSUPPORTED } from '../../client-runtime/flows/aiDefault';
 import { EDITOR_AI_LIMITS, EDITOR_AI_TOOLS_VERSION, validateEditorAiToolRequest } from '../../client-runtime/flows/aiToolCalls';
 import { EDITOR_BRIDGE_PROTOCOL } from '../../lib/softn/protocol';
 import { getZippWasmBytes, hostZippFiles } from '../../lib/formlogic/zipp-bytes';
 import { editorTakesEngine, editorTakesSiteZipp } from './editorEngine';
-import { ArrowLeft, Check, Copy, Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Check, Copy, Download, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { EDITOR_AGENT_RUNS_VERSION, readAgentStatus, type EditorAgentStatus, type EditorBrief } from './editorAgent';
 
@@ -14,13 +15,14 @@ export type AppEditorKind = 'builder' | 'studio';
 
 
 /** Editor changes return to the owner's draft. Publishing still uses version-checked hosting APIs. */
-export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, applyLabel = 'Review changes' }: {
+export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, preview = false, applyLabel = 'Review changes' }: {
   kind: AppEditorKind; name: string; bundle: Uint8Array;
   onApply: (bytes: Uint8Array) => Promise<void>; onClose: () => void;
   /** Studio only: what its agent should build or change as soon as the app opens. */
   brief?: EditorBrief;
   /** The label of the action that returns the editor's changes. */
   applyLabel?: string;
+  preview?: boolean;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const port = useRef<MessagePort | null>(null);
@@ -28,6 +30,8 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
   const lock = useRef(false);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [canExportZip, setCanExportZip] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [aiPending, setAiPending] = useState(false);
   // Where Studio's agent is, from an editor that reports it (agentRuns); null from one that does not.
   const [agent, setAgent] = useState<EditorAgentStatus | null>(null);
@@ -54,14 +58,26 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
     if (!saveId || !port.current) return;
     try { port.current.postMessage({ kind: 'save-result', id: saveId, ok, ...(ok ? {} : { error }) }); } catch { /* the port is already gone; the editor's own timeout reports it */ }
   }
+  async function projectBytes() {
+    const bytes = await request('export');
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength > 80 * 1024 * 1024) throw new Error('The editor returned an invalid project.');
+    return bytes;
+  }
+  async function download() {
+    if (lock.current) return;
+    lock.current = true;
+    setDownloading(true);
+    setError('');
+    try { downloadProjectZip(await projectBytes(), name); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'The project ZIP could not be downloaded.'); }
+    finally { lock.current = false; setDownloading(false); }
+  }
   async function apply(saveId?: string) {
     if (!ready || aiPending || agentWorking) { acknowledgeSave(saveId, false, !ready ? 'The editor is not connected to FormLogic yet.' : 'AI is still editing the draft; wait for it to finish.'); return; }
     if (lock.current) { acknowledgeSave(saveId, false, 'A previous save is still being applied.'); return; }
     lock.current = true; setBusy(true); setError('');
     try {
-      const result = await request('export');
-      if (!(result instanceof Uint8Array) || result.byteLength > 80 * 1024 * 1024) throw new Error('The editor returned an invalid project.');
-      await onApply(result);
+      await onApply(await projectBytes());
       acknowledgeSave(saveId, true);
       onClose();
     } catch (reason) {
@@ -80,6 +96,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
     const aiRequests = new Map<string, AbortController>();
     const receive = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || event.origin !== location.origin || event.data?.kind !== 'formlogic-editor-ready' || event.data?.protocol !== EDITOR_BRIDGE_PROTOCOL || port.current) return;
+      setCanExportZip(event.data.projectZip === true);
       // Native tool calls (`aiTools`) are an optional capability on top of the bridge:
       // offered back only to an editor that announced it, so an older editor sees
       // exactly the handshake and the text-only requests it always did.
@@ -148,7 +165,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
         // editor before it ignores the key; the Builder has no AI and is not sent one.
         const aiLabel = kind === 'studio' ? await editorAiLabel() : null;
         if (disposed) return;
-        await request('open', { bytes: editorBundle(bundle), name, theme: document.documentElement.classList.contains("dark") ? "dark" : "light", saveLabel: applyLabel, ...(aiLabel ? { aiLabel } : {}), ...(sendBrief ? { brief } : {}) });
+        await request('open', { bytes: editorBundle(bundle), name, theme: document.documentElement.classList.contains("dark") ? "dark" : "light", saveLabel: applyLabel, ...(preview ? { preview: true } : {}), ...(aiLabel ? { aiLabel } : {}), ...(sendBrief ? { brief } : {}) });
         if (!disposed) setReady(true);
       })().catch(reason => { if (!disposed) setError(reason instanceof Error ? reason.message : 'The editor could not open this app.'); });
 
@@ -168,9 +185,24 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return createPortal(<div role="dialog" aria-modal="true" aria-label={kind === 'builder' ? 'Visual Builder' : 'AI Studio'} className="fixed inset-0 z-[1000] flex h-dvh flex-col bg-white text-slate-900 dark:bg-slate-950 dark:text-white">
-    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-3 dark:border-slate-700 sm:px-5">
-      <div className="flex min-w-0 items-center gap-3"><Button variant="ghost" disabled={busy} onClick={() => { if (!ready || window.confirm(agentWorking ? 'The AI is still building your app. Leave now and the work it has done so far is lost.' : `Return without applying editor changes? Use “${applyLabel}” to keep your work.`)) onClose(); }} leftIcon={<ArrowLeft className="h-4 w-4" />}>Back</Button><div className="min-w-0"><h2 className="truncate text-sm font-semibold">{kind === 'builder' ? 'Visual Builder' : 'AI Studio'} · {name}</h2><p className="text-xs text-slate-500 dark:text-slate-400">Edit and preview here, then choose “{applyLabel}”. The editor’s preview does not run your app’s backend; your app does.</p></div></div>
-      <Button disabled={!ready || busy || aiPending || agentWorking} isLoading={busy} onClick={() => void apply()} leftIcon={<Check className="h-4 w-4" />}>{applyLabel}</Button>
+    <header className="grid shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 border-b border-slate-200 px-2 py-2 dark:border-slate-700 sm:gap-x-4 sm:px-5">
+      <Button variant="ghost" title="Back to app" className="size-11 px-0 sm:w-auto sm:px-3" disabled={busy} onClick={() => {
+        if (!ready || window.confirm(agentWorking ? 'The AI is still building your app. Leave now and the work it has done so far is lost.' : `Return without applying editor changes? Use “${applyLabel}” to keep your work.`)) onClose();
+      }}>
+        <ArrowLeft className="size-4" aria-hidden="true" /><span className="sr-only sm:not-sr-only sm:ml-2">Back</span>
+      </Button>
+      <h2 className="min-w-0 leading-tight">
+        <span className="block truncate text-xs font-medium text-slate-500 dark:text-slate-400">{kind === 'builder' ? 'Visual Builder' : 'AI Studio'}</span>
+        <span className="block truncate text-sm font-semibold" title={name}>{name}</span>
+      </h2>
+      <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+        {!canExportZip && <Button variant="ghost" aria-label="Download project ZIP" title="Download this draft as a ZIP"
+          disabled={!ready || busy || downloading || aiPending || agentWorking} isLoading={downloading} onClick={() => void download()}>
+          <Download className="size-4" aria-hidden="true" /><span className="ml-2 hidden sm:inline">Download ZIP</span>
+        </Button>}
+        <Button disabled={!ready || busy || downloading || aiPending || agentWorking} isLoading={busy} onClick={() => void apply()} leftIcon={<Check className="h-4 w-4" />}>{applyLabel}</Button>
+      </div>
+      <p className="col-span-3 px-1 text-xs text-slate-600 dark:text-slate-400 sm:col-span-2 sm:col-start-2 sm:px-0">Preview the frontend here. Test the backend in your hosted app.</p>
     </header>
     {agent ? <AgentStatusBar status={agent} applyLabel={applyLabel} edit={brief?.kind === 'edit'} /> : aiPending && <p role="status" className="border-b border-slate-200 px-4 py-2 text-sm dark:border-slate-700">AI is editing your draft. Wait for it to finish, or choose Stop generating in Studio.</p>}
     {briefToPaste && <div role="note" className="flex flex-wrap items-center gap-3 border-b border-primary-200 bg-primary-50 px-4 py-2 text-sm text-primary-900 dark:border-primary-500/30 dark:bg-primary-950/40 dark:text-primary-100">
@@ -185,7 +217,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, a
     </div>}
     {error && <p role="alert" className="border-b border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">{error}</p>}
     <div className="relative min-h-0 flex-1">{!ready && !error && <p role="status" className="absolute inset-0 z-10 flex items-center justify-center bg-white dark:bg-slate-950">{brief && kind === 'studio' ? 'Opening AI Studio…' : 'Opening your app…'}</p>}{busy && <div className="absolute inset-0 z-10 bg-white/50 dark:bg-slate-950/50" />}
-      <iframe ref={frame} title={kind === 'builder' ? 'App visual editor' : 'App AI editor'} src={`/app-editors/${kind}/index.html?formlogicEditor=1`} className="h-full w-full border-0" />
+      <iframe ref={frame} title={kind === 'builder' ? 'App visual editor' : 'App AI editor'} src={`/app-editors/${kind}/index.html?formlogicEditor=1&webContainers=1`} className="h-full w-full border-0" />
     </div>
   </div>, document.body);
 }

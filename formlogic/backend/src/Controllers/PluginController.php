@@ -182,7 +182,7 @@ final class PluginController
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Throwable $e) {
             error_log('Plugin change failed: ' . $e->getMessage());
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'The plugin could not be installed: its SoftN runtime refused it. See the server log.'], 503);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'The plugin could not be installed: the sandbox runtime refused it. See the server log.'], 503);
         }
         try {
             $this->audit?->log($action, 'admin', $plugin['manifestId'], $request->getAttribute('userId'), \FormLogic\Helpers\IpResolver::fromEnvironment()->getClientIp($request),

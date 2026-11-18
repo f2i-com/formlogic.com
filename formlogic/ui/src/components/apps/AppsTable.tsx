@@ -9,10 +9,10 @@ import { ArrowDown, ArrowUp, Database, ExternalLink, Package, Settings, Trash2 }
 import { AppTile } from './AppTile';
 import { listedStatus } from '../../lib/appStatus';
 import { isDemoLocalId } from '../../lib/demoLocal';
-import { isSoftnApp, softnWorkspacePath } from '../../lib/softnApps';
+import { appClickPath, appDataLink, appSettingsPath } from '../../lib/appNavigation';
 import { cn, formatRelativeTime, parseServerDate } from '../../lib/utils';
-import { holds, who } from '../../lib/appFacts';
-import type { App, AppSummary } from '../../types/app';
+import { appTools, holds, who } from '../../lib/appFacts';
+import { viewerOwnsApp, type App, type AppSummary } from '../../types/app';
 
 type SortKey = 'name' | 'status' | 'changed';
 type Sort = { key: SortKey; dir: 'asc' | 'desc' } | null;
@@ -21,9 +21,7 @@ export interface AppsTableProps {
   /** By app id; an app without an entry shows what it says itself. */
   summaries: Record<string, AppSummary>;
   packNames: Record<string, string>;
-  canManage: (app: App) => boolean;
-  /** Where the owner manages the app (a SoftN app's page, or the App Studio). */
-  managePath: (app: App) => string;
+  userId: string | undefined;
   /** Left out where apps are only looked at (Home's short list): no app can be removed from there. */
   onDelete?: (app: App) => void;
   /** Home's short list is in the order it is given: its headings are not pressed to sort. */
@@ -40,7 +38,7 @@ const SORTS: readonly (readonly [string, string, Sort])[] = [
   ['status', 'Status', { key: 'status', dir: 'asc' }], ['changed-asc', 'Oldest change first', { key: 'changed', dir: 'asc' }],
 ];
 
-export function AppsTable({ apps, summaries, packNames, canManage, managePath, onDelete, sortable = true, footer }: AppsTableProps) {
+export function AppsTable({ apps, summaries, packNames, userId, onDelete, sortable = true, footer }: AppsTableProps) {
   // No sort chosen: the order the server gave, most recently changed first.
   const [sort, setSort] = useState<Sort>(null);
   const rows = useMemo(() => {
@@ -63,21 +61,20 @@ export function AppsTable({ apps, summaries, packNames, canManage, managePath, o
   /** What one app's row, or its card, says and leads to. */
   const facts = (app: App) => {
     const summary = summaries[app.id];
-    const softn = isSoftnApp(app);
-    const manage = canManage(app);
+    const manage = viewerOwnsApp(app, userId);
     const isLive = app.status === 'published';
     return {
-      softn, manage, isLive,
+      manage, isLive,
       status: listedStatus(app, summary),
       tone: isLive ? 'text-emerald-700 dark:text-emerald-400' : app.status === 'archived' ? 'text-slate-500 dark:text-slate-400' : 'text-amber-700 dark:text-amber-300',
       dot: isLive ? 'bg-emerald-500' : app.status === 'archived' ? 'bg-slate-400' : 'bg-amber-500',
       address: summary?.domain || `/app/${app.slug}`,
       openAt: summary?.domain ? `https://${summary.domain}` : `/app/${app.slug}`,
-      kind: isDemoLocalId(app.id) ? 'Browser only' : softn ? 'SoftN' : 'Forms',
+      kind: isDemoLocalId(app.id) ? 'Browser only' : appTools(app, summary).label,
       who: who(app, summary), holds: holds(app, summary),
-      to: manage ? managePath(app) : `/app/${app.slug}`,
-      hasData: manage && softn && summary?.tables != null,
-      settings: softn ? softnWorkspacePath(app.id, 'settings') : `/apps/${app.id}/settings`,
+      to: appClickPath(app, userId),
+      data: manage ? appDataLink(app, summary) : undefined,
+      settings: appSettingsPath(app),
     };
   };
   /**
@@ -89,7 +86,7 @@ export function AppsTable({ apps, summaries, packNames, canManage, managePath, o
     const empty = (place: number) => places?.[place] ? <span aria-hidden="true" data-empty-action className="inline-block h-8 w-8 flex-none" /> : null;
     return <>
     {f.isLive ? <a href={f.openAt} target="_blank" rel="noopener noreferrer" aria-label={`Open ${app.name}`} title="Open the app" className={button}><ExternalLink className="h-4 w-4" aria-hidden="true" /></a> : empty(0)}
-    {f.hasData ? <Link to={softnWorkspacePath(app.id, 'data')} aria-label={`Data of ${app.name}`} title="Data" className={button}><Database className="h-4 w-4" aria-hidden="true" /></Link> : empty(1)}
+    {f.data ? <Link to={f.data.to} aria-label={`Data of ${app.name}`} title={f.data.label} className={button}><Database className="h-4 w-4" aria-hidden="true" /></Link> : empty(1)}
     {f.manage ? <Link to={f.settings} aria-label={`Settings of ${app.name}`} title="Settings" className={button}><Settings className="h-4 w-4" aria-hidden="true" /></Link> : empty(2)}
     {f.manage && onDelete ? <button type="button" onClick={() => onDelete(app)} aria-label={`Remove ${app.name}`} title="Remove the app" className={cn(button, 'hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400')}><Trash2 className="h-4 w-4" aria-hidden="true" /></button> : empty(3)}
     </>;
@@ -97,7 +94,7 @@ export function AppsTable({ apps, summaries, packNames, canManage, managePath, o
   // Each app with what is shown of it, worked out once for the cards and the table.
   const listed = rows.map(app => [app, facts(app)] as const);
   // The places the table keeps: one for each action that any app in the list has.
-  const places = [listed.some(([, f]) => f.isLive), listed.some(([, f]) => f.hasData), listed.some(([, f]) => f.manage), !!onDelete && listed.some(([, f]) => f.manage)];
+  const places = [listed.some(([, f]) => f.isLive), listed.some(([, f]) => f.data), listed.some(([, f]) => f.manage), !!onDelete && listed.some(([, f]) => f.manage)];
   const kept = places.filter(Boolean).length;
   const totals = `${apps.length.toLocaleString()} app${apps.length === 1 ? '' : 's'} · ${live.toLocaleString()} live · ${(apps.length - live).toLocaleString()} not live`;
   // Under the rows: the counts, what the page gave in their place, or (null) nothing at all.
@@ -107,27 +104,29 @@ export function AppsTable({ apps, summaries, packNames, canManage, managePath, o
   return <div className="@container/list">
     {/* A phone: a card per app. Nothing scrolls sideways, and every action is a finger wide. */}
     <div className="@xl/list:hidden">
-      {sortable && <label className="mb-2 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">Sort by
+      {sortable && apps.length > 1 && <label className="mb-2 flex items-center justify-end gap-2 text-xs text-slate-500 dark:text-slate-400">Sort by
         <select value={chosen} onChange={event => setSort(SORTS.find(([id]) => id === event.target.value)?.[2] ?? null)}
-          className="h-10 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
+          className="min-h-10 min-w-0 rounded-lg border border-slate-300 bg-white px-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white max-sm:min-h-11">
           {SORTS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
         </select>
       </label>}
       <ul className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900/60">
         {listed.map(([app, f]) => {
           return <li key={app.id} className="border-b border-slate-100 px-3 py-2 last:border-b-0 dark:border-slate-800">
-            <div className="flex min-w-0 items-center gap-2">
-              <AppTile app={app} size="sm" className="h-7 w-7 flex-none rounded-md" />
-              <Link to={f.to} className="min-w-0 flex-1 truncate py-2.5 text-[15px] font-semibold text-slate-900 dark:text-white">{app.name}</Link>
-              <span className={cn('inline-flex flex-none items-center gap-1.5 text-xs font-medium', f.tone)}><span aria-hidden="true" className={cn('h-1.5 w-1.5 rounded-full', f.dot)} />{f.status}</span>
+            <div className="flex min-w-0 items-start gap-2.5">
+              <AppTile app={app} size="sm" className="mt-1.5 size-8 flex-none rounded-lg" />
+              <Link to={f.to} aria-label={app.name} aria-description={f.address} className="min-w-0 flex-1 rounded py-1 text-[15px] font-semibold leading-5 text-slate-900 focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-white">
+                <span className="block break-words">{app.name}</span>
+                <span aria-hidden="true" title={f.address} className="mt-0.5 block truncate font-mono text-[11px] font-normal text-slate-600 dark:text-slate-400">{f.address}</span>
+              </Link>
+              <span className={cn('mt-1.5 inline-flex flex-none items-center gap-1.5 text-xs font-medium', f.tone)}><span aria-hidden="true" className={cn('h-1.5 w-1.5 rounded-full', f.dot)} />{f.status}</span>
             </div>
-            <p className="mt-0.5 truncate font-mono text-xs text-slate-600 dark:text-slate-300">{f.address}</p>
-            <div className="mt-1 flex items-center gap-2">
-              {/* Each fact stays whole: the line breaks between facts, never inside "8 tables · 1.5 MB". */}
-              <p className="flex min-w-0 flex-1 flex-wrap gap-x-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
-                {[f.kind, f.who, f.holds, formatRelativeTime(app.updatedAt)].filter(Boolean).map(fact => <span key={fact} className="whitespace-nowrap">{fact}</span>)}
-              </p>
-              <span className="flex flex-none items-center">{actions(app, f, touch)}</span>
+            <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs leading-5 text-slate-600 dark:text-slate-300">
+              {[f.kind, f.who, f.holds].filter(Boolean).map(fact => <span key={fact}>{fact}</span>)}
+            </p>
+            <div className="mt-1 flex flex-wrap items-center justify-between gap-x-1">
+              <span className="text-xs text-slate-500 dark:text-slate-400">Updated {formatRelativeTime(app.updatedAt)}</span>
+              <span className="ml-auto flex flex-none items-center">{actions(app, f, touch)}</span>
             </div>
           </li>;
         })}
@@ -142,10 +141,10 @@ export function AppsTable({ apps, summaries, packNames, canManage, managePath, o
         <thead className="border-b border-slate-200 bg-slate-50 text-[11px] text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400">
           <tr>
             {heading('name', 'App', 'pl-3')}
-            <th scope="col" className="hidden w-[200px] px-2 font-semibold uppercase tracking-wider @5xl/list:table-cell">Address</th>
+            <th scope="col" className="hidden w-[104px] px-2 font-semibold uppercase tracking-wider @4xl/list:table-cell">App type</th>
             {heading('status', 'Status', 'w-[92px]')}
             <th scope="col" className="hidden w-32 px-2 font-semibold uppercase tracking-wider @5xl/list:table-cell">Who can use it</th>
-            <th scope="col" className="hidden w-[148px] px-2 font-semibold uppercase tracking-wider @3xl/list:table-cell">Data</th>
+            <th scope="col" className="hidden w-[164px] px-2 font-semibold uppercase tracking-wider @3xl/list:table-cell">Data</th>
             {heading('changed', 'Changed', 'w-20')}
             {/* As wide as its places: each is 32px, 2px apart, in a cell with 8px either side. */}
             <th scope="col" style={{ width: Math.max(1, kept) * 34 + 14 }} className="px-2 pr-3 text-right font-semibold uppercase tracking-wider"><span className="sr-only">Actions</span></th>
@@ -154,18 +153,22 @@ export function AppsTable({ apps, summaries, packNames, canManage, managePath, o
         <tbody>
           {listed.map(([app, f]) => {
             return <tr key={app.id} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-white/[0.03]">
-              <th scope="row" className="py-1 pl-3 pr-2 font-normal">
-                <div className="flex min-w-0 items-center gap-2">
-                  <AppTile app={app} size="sm" className="h-6 w-6 flex-none rounded-md" />
-                  <Link to={f.to} className="min-w-0 truncate font-semibold text-slate-900 hover:text-primary-700 dark:text-white dark:hover:text-primary-300">{app.name}</Link>
-                  <span className="flex-none rounded bg-slate-100 px-1 text-[10px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{f.kind}</span>
-                  {packNames[app.id] && <span className="hidden min-w-0 items-center gap-1 truncate text-[11px] text-slate-500 dark:text-slate-400 2xl:inline-flex"><Package className="h-3 w-3 flex-none" aria-hidden="true" /><span className="truncate">{packNames[app.id]}</span></span>}
+              <th scope="row" className="py-2 pl-3 pr-2 font-normal">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <AppTile app={app} size="sm" className="size-8 flex-none rounded-lg" />
+                  <div className="min-w-0">
+                    <Link to={f.to} title={app.name} className="block truncate rounded text-sm font-semibold text-slate-900 hover:text-primary-700 focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-white dark:hover:text-primary-300">{app.name}</Link>
+                    <div className="flex min-w-0 items-center gap-2 text-[11px] leading-4 text-slate-600 dark:text-slate-400">
+                      <span className="truncate font-mono" title={f.address}>{f.address}</span>
+                      {packNames[app.id] && <span title={packNames[app.id]} className="hidden min-w-0 items-center gap-1 truncate @5xl/list:inline-flex"><Package className="size-3 flex-none" aria-hidden="true" /><span className="truncate">{packNames[app.id]}</span></span>}
+                    </div>
+                  </div>
                 </div>
               </th>
-              <td className="hidden px-2 @5xl/list:table-cell"><span className="block truncate font-mono text-xs text-slate-600 dark:text-slate-300">{f.address}</span></td>
+              <td className="hidden px-2 text-slate-600 dark:text-slate-300 @4xl/list:table-cell">{f.kind}</td>
               <td className="truncate px-2"><span className={cn('inline-flex items-center gap-1.5 font-medium', f.tone)}><span aria-hidden="true" className={cn('h-1.5 w-1.5 rounded-full', f.dot)} />{f.status}</span></td>
               <td className="hidden truncate px-2 text-slate-700 dark:text-slate-300 @5xl/list:table-cell">{f.who}</td>
-              <td className="hidden truncate px-2 text-slate-700 dark:text-slate-300 @3xl/list:table-cell">{f.holds}</td>
+              <td className="hidden break-words px-2 text-slate-700 dark:text-slate-300 @3xl/list:table-cell">{f.holds}</td>
               <td className="truncate px-2 text-slate-500 dark:text-slate-400">{formatRelativeTime(app.updatedAt)}</td>
               <td className="py-0.5 pl-2 pr-2 text-right"><span className="inline-flex items-center justify-end gap-0.5">{actions(app, f, small, places)}</span></td>
             </tr>;

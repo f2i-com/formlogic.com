@@ -17,6 +17,16 @@ const FILES: Record<string, string> = {
 const project = (files: Record<string, string> = FILES): NativeProject => ({ version: 3, files, assets: { 'assets/logo.png': 'AA==' }, access: 'members', home: true });
 
 describe('a project’s source files', () => {
+  it('keeps component sources and their runnable modules together in the SoftN editors', () => {
+    for (const path of ['src/Board.jsx', 'pages/Home.vue', '__softn_generated__/pages/Home.vue.js', '__softn_generated__/vendor/vue.js']) {
+      expect(sourceLockReason(path, FILES)).toContain('Visual Builder');
+      expect(sourceRemoveProblem(path, FILES, null)).toContain('Visual Builder');
+      expect(newSourceProblem(path, FILES)).toContain('AI Studio');
+    }
+    expect(sourceGroupOf('src/Board.jsx')).toBe('pages');
+    expect(sourceGroupOf('__softn_generated__/src/Board.jsx.js')).toBe('generated');
+    expect(sourceLockReason('src/board.js', FILES)).toBeNull();
+  });
   it('lists every file once, in groups by what it is for', () => {
     const groups = groupSourceFiles(FILES);
     expect(groups.map(group => [group.label, group.files])).toEqual([
@@ -168,7 +178,9 @@ describe('a project’s source files', () => {
     expect(nextMigrationPath(FILES)).toBe('server/migrations/011.sql');
     expect(nextMigrationPath({ 'manifest.json': '{}' })).toBe('server/migrations/001.sql');
     expect(nextMigrationPath({ 'server/migrations/0001_users.sql': '', 'server/migrations/0002_orders.sql': '' })).toBe('server/migrations/0003.sql');
-    expect(nextMigrationPath({ 'server/migrations/init.sql': '' })).toBe('server/migrations/001.sql');
+    expect(nextMigrationPath({ 'server/migrations/init.sql': '' })).toBe('server/migrations/init_001.sql');
+    expect(nextMigrationPath({ 'server/migrations/init_009.sql': '' })).toBe('server/migrations/init_010.sql');
+    expect(nextMigrationPath({ 'server/migrations/999.sql': '' })).toBe('server/migrations/999_001.sql');
   });
 
   it('adds a database change and lists it in the manifest, since one that is not listed never runs', () => {
@@ -202,6 +214,12 @@ describe('a project’s source files', () => {
     expect(made.project.files['manifest.json']).toBe(MANIFEST);
     expect(made.project.files['pages/about.html']).toContain('<Stack');
     expect(newSourceText('a.js')).toContain('//');
+    for (const format of [{ engine: 2 }, { container: true }]) {
+      const app = project();
+      app.files = { ...app.files, 'manifest.json': JSON.stringify({ ...format, main: 'index.html' }) };
+      expect(withSourceFile(app, 'about.html').project.files['about.html']).toContain('<main><h1>New page</h1></main>');
+    }
+    expect(withSourceFile(project(), 'about.html').project.files['about.html']).toContain('<Stack');
     expect(newSourceText('a.py')).toContain('#');
     expect(newSourceText('a.css')).toContain('/*');
     expect(newSourceText('a.json')).toBe('{}\n');

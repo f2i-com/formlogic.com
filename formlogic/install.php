@@ -105,11 +105,11 @@ if ($installerDenied !== null) {
         echo json_encode(['success' => false, 'message' => $installerDenied]);
     } else {
         header('Content-Type: text/html; charset=utf-8');
-        echo '<!doctype html><meta charset="utf-8"><title>Installer disabled</title>'
+        echo '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Installer disabled</title><style>pre{overflow-x:auto}code{overflow-wrap:anywhere}</style>'
             . '<body style="font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#0f172a">'
             . '<h1 style="font-size:1.4rem">Installer disabled</h1><p>'
             . htmlspecialchars($installerDenied, ENT_QUOTES) . '</p>'
-            . $installerDeniedExtraHtml . '</body>';
+            . $installerDeniedExtraHtml . '</body></html>';
     }
     exit;
 }
@@ -1436,7 +1436,7 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
   .badge-fail { background: #fee2e2; color: #991b1b; }
   .badge-warn { background: #fef9c3; color: #854d0e; }
   .badge-skip { background: #f1f5f9; color: #475569; }
-  .help-text { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+  .help-text { font-size: 13px; color: #475569; margin-top: 4px; }
   .form-group { margin-bottom: 16px; }
   .form-group label { display: block; font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 4px; }
   .form-group input { width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; transition: border-color 0.15s; }
@@ -1470,6 +1470,28 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
   .checkbox-group { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   .checkbox-group input[type="checkbox"] { width: auto; }
   .checkbox-group label { font-weight: normal; margin-bottom: 0; }
+  .check-label { display: none; }
+  .btn:focus-visible { outline: 2px solid #4f46e5; outline-offset: 3px; }
+  .card pre { overflow-x: auto; }
+  .card { overflow-wrap: anywhere; }
+  .btn-group { flex-wrap: wrap; }
+  @media (max-width: 540px) {
+    .container { padding: 24px 12px; }
+    .logo { margin-bottom: 20px; }
+    .card { padding: 16px; margin-bottom: 14px; }
+    .form-row { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .form-group input { min-height: 44px; font-size: 16px; }
+    .btn { min-height: 44px; }
+    .checks thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .checks tbody { display: block; }
+    .checks tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px 8px; padding: 10px 0; border-top: 1px solid #e2e8f0; }
+    table.checks td { padding: 0; border: 0; }
+    .checks td:first-child { grid-column: 1; grid-row: 1; font-weight: 600; }
+    .checks td:last-child { grid-column: 2; grid-row: 1; }
+    .checks td:nth-child(2), .checks td:nth-child(3) { grid-column: 1 / -1; }
+    .check-label { display: inline; font-weight: 500; color: #475569; }
+  }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 </style>
 </head>
 <body>
@@ -1537,8 +1559,8 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
       <p style="margin-top:10px;color:#64748b;font-size:14px;">Checking requirements...</p>
     </div>
     <div id="req-results" class="hidden">
-      <table class="checks">
-        <thead><tr><th>Requirement</th><th>Required</th><th>Current</th><th>Status</th></tr></thead>
+      <table class="checks" role="table" aria-label="System requirement results">
+        <thead><tr><th scope="col">Requirement</th><th scope="col">Required</th><th scope="col">Current</th><th scope="col">Status</th></tr></thead>
         <tbody id="req-tbody"></tbody>
       </table>
       <div id="req-message" style="margin-top:16px;"></div>
@@ -1941,8 +1963,8 @@ function checkRequirements() {
       const badgeText = check.pass ? 'Pass' : 'Fail';
       tr.innerHTML = `
         <td>${esc(check.label)}</td>
-        <td style="color:#64748b">${esc(check.required)}</td>
-        <td>${esc(check.current)}${check.help ? '<div class="help-text">' + esc(check.help) + '</div>' : ''}</td>
+        <td style="color:#64748b"><span class="check-label" aria-hidden="true">Required </span>${esc(check.required)}</td>
+        <td><span class="check-label" aria-hidden="true">Current </span>${esc(check.current)}${check.help ? '<div class="help-text">' + esc(check.help) + '</div>' : ''}</td>
         <td><span class="badge ${badgeClass}">${badgeText}</span></td>
       `;
       tbody.appendChild(tr);

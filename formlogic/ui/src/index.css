@@ -238,9 +238,10 @@
     }
   }
 
-  /* Smoother scrolling */
-  html {
-    scroll-behavior: smooth;
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
   }
 
   /* Selection color — follows the active accent token in both themes */

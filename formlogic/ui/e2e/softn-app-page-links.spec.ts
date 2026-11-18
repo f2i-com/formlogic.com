@@ -134,12 +134,12 @@ test('a link between a SoftN app’s page files opens the page in place, and the
   }
 
   // The preview inside the app's own page follows the links too, and that page keeps its address.
-  await page.goto(`/apps/${created.id}/softn/edit`);
+  await page.goto(`/apps/${created.id}/web/edit`);
   const preview = page.getByTestId('softn-app-preview').frameLocator(FRAME);
   await expect(preview.getByText('Home page', { exact: true })).toBeVisible({ timeout: 60_000 });
   await preview.getByRole('link', { name: 'About this app' }).click();
   await expect(preview.getByText('About page', { exact: true })).toBeVisible({ timeout: 30_000 });
-  expect(new URL(page.url()).pathname).toBe(`/apps/${created.id}/softn/edit`);
+  expect(new URL(page.url()).pathname).toBe(`/apps/${created.id}/web/edit`);
   await place(page, '');
 
   expect(problems).toEqual([]);

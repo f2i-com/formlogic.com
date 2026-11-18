@@ -999,17 +999,30 @@ class AccountBackupTest extends TestCase
             $this->markTestSkipped('Prepare the native runtime and set FORMLOGIC_NODE_BIN.');
         }
         $backup = self::makeService([], $native);
-        $native->install($this->app1, self::nativeProject(), 0);
+        $installed = $native->install($this->app1, self::nativeProject(), 0);
+        // A release before the host configuration was reserved accepted it as a source file.
+        $installed['files']['private/config.json'] = '{"keyHex":"earlier-host-fixture"}';
+        $projectFile = end($this->nativeStorages) . '/' . hash('sha256', $this->app1) . '/project.json';
+        file_put_contents($projectFile, json_encode($installed, JSON_THROW_ON_ERROR));
 
         $zipPath = $backup->exportSource($this->userId, 'app', $this->app1);
         try {
             $zip = new \ZipArchive();
             $this->assertTrue($zip->open($zipPath) === true);
             $manifest = json_decode((string) $zip->getFromName('manifest.json'), true);
+            $entry = "native/{$this->app1}/project.json";
+            $source = json_decode((string) $zip->getFromName($entry), true);
             $zip->close();
             $this->assertFalse($manifest['includesHostSecrets']);
-            $this->assertArrayHasKey("native/{$this->app1}/project.json", $manifest['entries']);
+            $this->assertArrayHasKey($entry, $manifest['entries']);
+            $this->assertArrayNotHasKey('private/config.json', $source['files']);
             $this->assertArrayNotHasKey("native/{$this->app1}/host-config.json", $manifest['entries']);
+            // Restore an archive an older host produced. Its real key would be supplied by a
+            // privileged recovery entry; the obsolete copy in its source is discarded.
+            $this->replaceZipEntry($zipPath, $entry, json_encode($installed, JSON_THROW_ON_ERROR), true);
+            $restored = $backup->importAccount($zipPath, $this->userId);
+            $this->assertSame(NativeAppService::CRYPTO_REISSUED, $restored['nativeApps'][0]['cryptoMaterial']);
+            $this->assertArrayNotHasKey('private/config.json', $native->project($restored['nativeApps'][0]['appId'])['files']);
         } finally {
             @unlink($zipPath);
         }

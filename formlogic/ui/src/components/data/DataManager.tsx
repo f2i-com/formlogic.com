@@ -4,7 +4,7 @@
 //
 // The page gives it its height. On a wide screen it is as tall as the box it is mounted in, and
 // the table list and the rows scroll inside it; narrower, it flows with the page.
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Database } from 'lucide-react';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
@@ -15,6 +15,7 @@ import { rememberPageSize, rememberedPageSize, type DataView, type TableInfo } f
 import { muted, strong } from './styles';
 import { TableList } from './TableList';
 import { TableWorkspace } from './TableWorkspace';
+import { useViewport } from './useViewport';
 
 export interface DataManagerProps {
   appId: string;
@@ -39,6 +40,8 @@ export interface DataManagerProps {
   onNavigate: (table: string | undefined, view: DataView, query?: string, options?: { replace?: boolean }) => void;
   /** What the Import view shows (the page passes its existing import panel). Without one there is no Import view. */
   importPanel?: ReactNode;
+  /** A next step for an installed backend with no user tables. */
+  emptyAction?: ReactNode;
   /** Classes for the outer box, over its own. */
   className?: string;
 }
@@ -48,7 +51,9 @@ interface Loaded { appId: string; key: string; data?: NativeDataSummary; error?:
 
 const shell = 'flex min-w-0 flex-col bg-white text-[13px] leading-snug text-slate-800 dark:bg-slate-950 dark:text-slate-200 lg:h-full lg:min-h-0';
 
-export function DataManager({ appId, appSlug, version, readOnly = false, table, view = 'browse', query = '', onNavigate, importPanel, className }: DataManagerProps) {
+export function DataManager({ appId, appSlug, version, readOnly = false, table, view = 'browse', query = '', onNavigate, importPanel, emptyAction, className }: DataManagerProps) {
+  const frame = useRef<HTMLDivElement>(null);
+  const viewport = useViewport(frame);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [reloads, setReloads] = useState(0);
   // Each table's structure, fetched once for this version of the app.
@@ -87,7 +92,7 @@ export function DataManager({ appId, appSlug, version, readOnly = false, table, 
   const onState = useCallback((patch: Partial<BrowseState>, options?: { replace?: boolean }) => go(current, view, { ...state, ...patch }, options), [go, current, view, state]);
 
   if (!data) {
-    return <div className={cn(shell, 'p-3', className)}>
+    return <div ref={frame} className={cn(shell, 'p-3', className)}>
       {loaded?.appId === appId && loaded.key === key && loaded.error
         ? <LoadFailure compact title="The app’s tables could not be loaded" message={loaded.error} onRetry={recount} />
         : <p role="status" className={cn('py-8 text-center text-xs', muted)}>Loading the tables…</p>}
@@ -95,7 +100,7 @@ export function DataManager({ appId, appSlug, version, readOnly = false, table, 
   }
 
   if (data.backend === false || data.installed === false || tables.length === 0 || current === undefined) {
-    return <div className={cn(shell, 'p-4', className)}>
+    return <div ref={frame} className={cn(shell, 'p-4', className)}>
       <div className="flex items-start gap-3">
         <Database className={cn('mt-0.5 h-5 w-5 flex-none', muted)} aria-hidden="true" />
         <div className="min-w-0">
@@ -107,7 +112,8 @@ export function DataManager({ appId, appSlug, version, readOnly = false, table, 
             <p className={cn('mt-1', muted)}>Its tables appear here once it is published.</p>
           </> : <>
             <p className={cn('font-semibold', strong)}>No tables yet</p>
-            <p className={cn('mt-1', muted)}>The app makes them the first time it runs.{data.summary?.hiddenTables ? ` ${data.summary.hiddenTables === 1 ? '1 system table is' : `${data.summary.hiddenTables.toLocaleString()} system tables are`} not shown.` : ''}</p>
+            <p className={cn('mt-1', muted)}>Tables appear here when the backend creates them.{data.summary?.hiddenTables ? ` ${data.summary.hiddenTables === 1 ? '1 system table is' : `${data.summary.hiddenTables.toLocaleString()} system tables are`} not shown.` : ''}</p>
+            {emptyAction}
           </>}
         </div>
       </div>
@@ -123,11 +129,11 @@ export function DataManager({ appId, appSlug, version, readOnly = false, table, 
     if (offset !== state.offset) onState({ offset }, { replace: true });
   };
 
-  return <div className={cn(shell, 'lg:flex-row', className)}>
+  return <div ref={frame} className={cn(shell, viewport === 'desktop' && 'lg:flex-row', className)}>
     {/* A table opened from the list shows all of it: no search, no filter, its own order, from the first row, none open. */}
-    <TableList tables={tables} current={current} bytes={data.summary?.bytes} hiddenTables={data.summary?.hiddenTables} onPick={name => go(name, view, NOTHING)} />
+    <TableList compact={viewport !== 'desktop'} tables={tables} current={current} bytes={data.summary?.bytes} hiddenTables={data.summary?.hiddenTables} onPick={name => go(name, view, NOTHING)} />
     {open
-      ? <TableWorkspace key={current} appId={appId} appSlug={appSlug} version={version} table={open} tables={tables} view={view}
+      ? <TableWorkspace key={current} viewport={viewport} appId={appId} appSlug={appSlug} version={version} table={open} tables={tables} view={view}
           readOnly={readOnly || !!data.readOnly} structure={structures[scope + current]} onStructure={onStructure}
           state={state} limit={limit} onLimit={onLimit} importPanel={importPanel}
           onView={next => go(current, next, state)} onState={onState}

@@ -213,6 +213,28 @@ class AiChatToolLoopTest extends TestCase
         $this->assertSame(1, (int) $stmt->fetchColumn());
     }
 
+    public function testHostedCreateTurnChoosesTheRequestedFrameworkAndHandsItToStudio(): void
+    {
+        $stub = new StubToolLoopAiService([
+            self::toolCallsRound([['build_vue', 'create_softn_app', ['name' => 'Book club', 'request' => 'Preview my reading list', 'template' => 'vue']]]),
+            self::finalRound('Your starter is ready.'),
+        ]);
+        $response = $this->chat($this->controller($stub), ['tools' => true, 'messages' => [['role' => 'user', 'content' => 'Make a Vue reading app.']]]);
+        $this->assertSame(200, $response['status']);
+        $made = json_decode(self::toolReplies($stub->payloads[1])['build_vue'], true);
+        $this->assertSame('Book club', $made['app']['name']);
+        $appId = $made['app']['id'];
+        $native = new \FormLogic\Services\NativeAppService();
+        try {
+            $this->assertSame(1, $made['version'], $made['next']);
+            $this->assertSame('Preview my reading list', $made['request']);
+            $this->assertStringContainsString('/web', $made['workspaceUrl']);
+            $this->assertArrayHasKey('App.vue', $native->get($appId)['files']);
+        } finally {
+            $native->remove($appId);
+        }
+    }
+
     public function testFlkCallersRequestingToolsGetTypedRefusal(): void
     {
         $apiKeys = new \FormLogic\Services\ApiKeyService(self::$mysql);

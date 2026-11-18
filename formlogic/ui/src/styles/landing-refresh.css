@@ -23,6 +23,19 @@
 .lv2 .lv2-hero__actions, .lv2 .lv2-hero__proof { justify-content: center; }
 .lv2 .lv2-hero__proof { color: var(--lv2-body); font-size: 13px; }
 .lv2 .lv2-hero__proof svg { color: var(--lv2-label); }
+.lv2 .lv2-hero__guide { display: inline-flex; min-height: 44px; align-items: center; gap: 8px; margin-top: 8px; color: var(--lv2-label); font-weight: 600; font-size: 14px; }
+.lv2 .lv2-hero__guide:hover { text-decoration: underline; text-underline-offset: 3px; }
+@media (min-width: 1024px) {
+  .lv2 .lv2-hero__inner { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: clamp(32px, 5vw, 76px); align-items: center; padding-block: clamp(64px, 7vw, 112px); }
+  .lv2 .lv2-hero__copy { text-align: left; }
+  .lv2 .lv2-hero__copy h1 { font-size: clamp(48px, 4.4vw, 68px); margin: 0 0 22px; }
+  .lv2 .lv2-hero__actions, .lv2 .lv2-hero__proof { justify-content: flex-start; }
+}
+.lv2 .lv2-cta__text { min-width: 0; }
+@media (max-width: 640px) {
+  .lv2 .lv2-cta__inner { display: grid; justify-items: start; gap: 20px; }
+  .lv2 .lv2-cta__text h2 { margin: 0; }
+}
 .lv2 .lv2-hero .lv2-btn--ghost { color: var(--lv2-ink); border: 1px solid var(--lv2-line); background: var(--lv2-band); border-radius: 8px; }
 .lv2 .lv2-proof-strip { color: var(--lv2-ink); border-color: var(--lv2-line); padding: 28px 0 40px; }
 .lv2 .lv2-proof-strip strong { color: var(--lv2-ink); font-size: 28px; }

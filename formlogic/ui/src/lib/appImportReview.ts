@@ -49,7 +49,7 @@ export function reviewAppArchive(bytes: Uint8Array): { review: AppImportReview; 
       return typeof manifest.main === 'string' && /\.(ui|html)$/.test(manifest.main) && archive[root + manifest.main] ? [{ manifest, root }] : [];
     } catch { return []; }
   });
-  if (candidates.length !== 1) throw new Error(candidates.length ? 'This archive contains several apps. Export one .softn app to import.' : 'No app manifest that names a page of the app as its main (a .html or .ui file) was found.');
+  if (candidates.length !== 1) throw new Error(candidates.length ? 'This archive contains several apps. Export one app per project ZIP.' : 'No app manifest that names a page of the app as its main (a .html or .ui file) was found.');
   const { manifest, root } = candidates[0];
   const files = Object.fromEntries(Object.entries(archive).filter(([path]) => path.startsWith(root)).map(([path, data]) => [path.slice(root.length), data]));
   const names = Object.keys(files);

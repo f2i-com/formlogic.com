@@ -12,6 +12,7 @@ use FormLogic\Services\ChatToolGrantService;
 use FormLogic\Services\ChatToolsContext;
 use FormLogic\Services\ChatToolsService;
 use FormLogic\Services\DesktopCommandService;
+use FormLogic\Services\UserAiSettingsService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -44,6 +45,7 @@ class ChatToolsController
         private ?ApiKeyService $apiKeyService = null,
         private ?AuditService $auditService = null,
         private ?LoggerInterface $logger = null,
+        private ?UserAiSettingsService $preferences = null,
     ) {}
 
     /** POST /api/ai/chat-tool-grant {instanceId?} → {"data":{grantToken, expiresAt}}. */
@@ -160,8 +162,32 @@ class ChatToolsController
             return $this->jsonError($response, 'The grant belongs to another account.', 403, 'grant_user_mismatch');
         }
 
-        // Execute AS THE GRANTING USER (account-wide, subset-restricted); audit every execution.
-        $grantUserId = $grant['userId'];
+        return $this->executeForUser($request, $response, $grant['userId'], $tool, $input, ['instanceId' => $grant['desktopInstanceId']]);
+    }
+
+    /** Called by the signed-in browser. The model supplies only a tool name and its arguments. */
+    public function executeCustom(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) return $this->jsonError($response, 'Authentication required', 401);
+        if (($blocked = $this->blockIfDemo($request, $response, 'Tool actions are disabled in the shared demo.')) !== null) return $blocked;
+        $body = $request->getParsedBody();
+        $prefs = $this->preferences?->get((string) $userId);
+        if (!is_array($body) || ($prefs['aiSource'] ?? null) !== 'custom'
+            || !isset($prefs['customToolConnection']) || $prefs['customToolConnection'] !== ($body['connection'] ?? null)) {
+            return $this->jsonError($response, 'Enable workspace tools for this provider in AI settings.', 403, 'custom_tools_disabled');
+        }
+        $tool = $body['tool'] ?? null;
+        $input = $body['input'] ?? [];
+        if (!is_string($tool) || $tool === '' || !is_array($input)) return $this->jsonError($response, 'A tool name and arguments are required.', 400);
+        if ($prefs['chatToolMode'] === 'confirm' && ($body['approved'] ?? false) !== true && !ChatToolsService::runsWithoutConfirmation($tool, $input)) {
+            return $this->jsonError($response, 'Approve this action in chat before it runs.', 409, 'approval_required');
+        }
+        return $this->executeForUser($request, $response, (string) $userId, $tool, $input, ['source' => 'custom']);
+    }
+
+    private function executeForUser(Request $request, Response $response, string $grantUserId, string $tool, array $input, array $audit): Response
+    {
         $ip = $this->ip($request);
         $ctx = new ChatToolsContext(
             userId: $grantUserId,
@@ -192,7 +218,7 @@ class ChatToolsController
             $this->audit('chat.tool_execute', $grantUserId, $request, ['tool' => $tool, 'ok' => false, 'message' => 'unexpected']);
             return $this->jsonError($response, 'The tool failed unexpectedly. Please try again.', 500, 'tool_failed');
         }
-        $this->audit('chat.tool_execute', $grantUserId, $request, ['tool' => $tool, 'ok' => true, 'instanceId' => $grant['desktopInstanceId']]);
+        $this->audit('chat.tool_execute', $grantUserId, $request, ['tool' => $tool, 'ok' => true] + $audit);
         return $this->jsonResponse($response, ['data' => $data]);
     }
 

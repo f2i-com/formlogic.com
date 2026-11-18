@@ -1,4 +1,22 @@
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect } from 'react';
+
+/** Align a bookmarked section after React mounts and as the two demo lists arrive. */
+export function useLandingFragment() {
+  useLayoutEffect(() => {
+    const id = window.location.hash.slice(1);
+    if (!id) return;
+    const align = () => document.getElementById(id)?.scrollIntoView?.({ behavior: 'instant' });
+    align();
+    const observer = new MutationObserver(align);
+    document.querySelectorAll('.lv2-demo-band').forEach(band => observer.observe(band, { childList: true }));
+    const controller = new AbortController();
+    const stop = () => { observer.disconnect(); controller.abort(); };
+    for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown', 'hashchange']) {
+      window.addEventListener(event, stop, { signal: controller.signal, passive: true });
+    }
+    return stop;
+  }, []);
+}
 
 /**
  * Landing-v2 chrome: the marketing page's display face (Geist + Geist Mono),

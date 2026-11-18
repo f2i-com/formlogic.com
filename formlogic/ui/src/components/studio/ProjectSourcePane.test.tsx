@@ -17,6 +17,7 @@ let root: Root;
 let container: HTMLDivElement;
 let latest: NativeProject;
 const notices: string[] = [];
+const openBuilder = vi.fn();
 
 const MANIFEST = JSON.stringify({ id: 'a', main: 'index.html', server: { entry: 'server/main.logic', database: { kind: 'private-sqlite', migrations: ['server/migrations/001.sql'] } } });
 const INSTALLED: Record<string, string> = {
@@ -29,7 +30,7 @@ function Harness({ start, installed, readOnly = false }: { start: NativeProject;
   const [draft, setDraft] = useState(start);
   const [file, setFile] = useState('');
   return <ProjectSourcePane appId="app1" project={draft} installed={installed} readOnly={readOnly} file={file} onFile={setFile}
-    onEdit={next => { latest = next; setDraft(next); }} onNotice={message => notices.push(message)} />;
+    onEdit={next => { latest = next; setDraft(next); }} onNotice={message => notices.push(message)} onOpenBuilder={openBuilder} />;
 }
 async function mount(props: { start?: NativeProject; installed?: Record<string, string> | null; readOnly?: boolean } = {}) {
   latest = props.start ?? project();
@@ -41,6 +42,16 @@ const fileButton = (path: string) => rail().querySelector<HTMLButtonElement>(`bu
 const button = (label: string) => [...container.querySelectorAll('button')].find(node => node.textContent === label);
 const editor = () => container.querySelector<HTMLElement>('[data-testid="editor"]')!;
 const click = (node: Element | undefined | null) => act(async () => (node as HTMLElement).click());
+it('opens a component in Builder with its source preserved for preview', async () => {
+  const source = '<template><h1>Dashboard</h1></template>';
+  await mount({ start: project({ ...INSTALLED, 'src/App.vue': source }) });
+  await click(fileButton('src/App.vue'));
+  expect(container.querySelector('textarea')?.value).toBe(source);
+  expect(container.querySelector('textarea')?.readOnly).toBe(true);
+  await click(button('Open Visual Builder'));
+  expect(openBuilder).toHaveBeenCalledOnce();
+});
+
 async function type(field: HTMLInputElement | HTMLTextAreaElement, value: string) {
   await act(async () => {
     Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')!.set!.call(field, value);

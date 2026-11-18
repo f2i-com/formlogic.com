@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Wand2, Loader2, Save, Sparkles, PanelRightClose, PanelRightOpen, FileCode2, FilePlus2, LayoutTemplate, FolderUp, Atom } from 'lucide-react';
+import { useLocation, useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft, ExternalLink, Wand2, Loader2, Save, Sparkles, PanelRightClose, PanelRightOpen, FileCode2, FilePlus2, LayoutTemplate, FolderUp, Atom } from 'lucide-react';
 import { api } from '../lib/api';
 import { SiteChatWidget } from '../components/chat/SiteChatWidget';
 import { useChatDockOffset } from '../components/chat/useChatDockOffset';
 import { Button } from '../components/ui/Button';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { ScreenFilesEditor } from '../components/custom-screen/ScreenFilesEditor';
+import { useScreenPreview } from '../components/custom-screen/useScreenPreview';
 import { readUploadedScreenFiles } from '../components/custom-screen/screenFileUpload';
 import { AppCustomScreenRuntime } from '../components/custom-screen/AppCustomScreenRuntime';
 import { bundleScreenFiles, type ScreenFile } from '../lib/screenCompile';
@@ -99,8 +100,13 @@ function toFiles(cs: CustomScreen): ScreenFile[] {
 export default function AppHomeStudio() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   // Platform-admin acting mode: widget previews render no record data.
   const acting = useAdminActing();
+  const leaveEditor = () => {
+    if (location.key === 'default') navigate(acting ? `/admin/apps/${appId}/settings` : `/apps/${appId}/studio/screens`, { replace: true });
+    else navigate(-1);
+  };
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [forms, setForms] = useState<AppRuntimeForm[]>([]);
@@ -121,7 +127,7 @@ export default function AppHomeStudio() {
   const [compileError, setCompileError] = useState<string | null>(null);
   // AI panel is opt-in (default: just the editor), independent of whether the local AI is enabled.
   const [showAi, setShowAi] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(true);
+  const { previewOpen, showEditor, previewLabel, togglePreview } = useScreenPreview();
   const previewTimer = useRef<number | undefined>(undefined);
   // The trust the preview runs with. Opening a home is not adopting it, and neither is typing in
   // it: an imported one keeps the trust the server stored for it, so it stays visual-only (its
@@ -305,34 +311,34 @@ export default function AppHomeStudio() {
           Widget previews show no data — record data is not visible to platform admins. Layout, widgets and code remain fully editable.
         </div>
       )}
-      <div className="flex items-center gap-3 px-4 h-14 shrink-0 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-        <button onClick={() => { if (dirty) setConfirmLeave(true); else navigate(-1); }} className="text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white cursor-pointer" aria-label="Back">
+      <div className="flex min-w-0 items-center gap-1 px-2 h-14 shrink-0 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 sm:gap-3 sm:px-4">
+        <button onClick={() => { if (dirty) setConfirmLeave(true); else leaveEditor(); }} className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 dark:text-slate-400 dark:hover:bg-slate-800 cursor-pointer" aria-label="Back">
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-gray-900 dark:text-white truncate">Custom App</span>
-            <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">Beta</span>
+            <h1 className="font-semibold text-gray-900 dark:text-white truncate"><span className="sm:hidden">App home</span><span className="hidden sm:inline">Custom App</span></h1>
+            <span className="hidden sm:inline text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">Beta</span>
           </div>
           <p className="text-[11px] leading-tight text-gray-500 dark:text-slate-400 truncate hidden sm:block">
             {name ? `A coded home screen for “${name}”` : 'A coded home screen for this app'} — HTML, CSS &amp; TypeScript over the app SDK
           </p>
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPreviewOpen((v) => !v)} leftIcon={previewOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />} title={previewOpen ? 'Hide preview' : 'Show preview'}>
-            <span className="hidden sm:inline">{previewOpen ? 'Hide preview' : 'Preview'}</span>
+        <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
+          <Button variant="outline" size="sm" onClick={togglePreview} aria-expanded={previewOpen} leftIcon={previewOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}>
+            {previewLabel}
           </Button>
           {hasScreen && !dirty && slug && !acting && (
-            <Button variant="outline" size="sm" onClick={() => window.open(`/app/${slug}`, '_blank', 'noopener,noreferrer')}>Open app</Button>
+            <Button variant="outline" size="sm" aria-label="Open app" title="Open app" onClick={() => window.open(`/app/${slug}`, '_blank', 'noopener,noreferrer')} leftIcon={<ExternalLink className="h-4 w-4" />}><span className="hidden sm:inline">Open app</span></Button>
           )}
           <Button size="sm" onClick={save} disabled={!hasScreen || saving || !dirty} leftIcon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}>Save</Button>
         </div>
       </div>
 
       <div className={`flex-1 min-h-0 grid grid-cols-1 ${previewOpen ? 'lg:grid-cols-2' : ''}`}>
-        <div className="min-h-0 flex flex-col border-r border-gray-200 dark:border-slate-800">
+        <div className={`min-h-0 min-w-0 flex-col border-gray-200 dark:border-slate-800 lg:border-r ${showEditor ? 'flex' : 'hidden'}`}>
           {(files.length > 0 || (showLegacyAi && showAi)) && (
-          <div className="p-4 space-y-3 border-b border-gray-200 dark:border-slate-800">
+          <div className="max-h-[36%] shrink-0 overflow-y-auto p-4 space-y-3 border-b border-gray-200 dark:border-slate-800">
             {showLegacyAi && showAi ? (
               <>
                 <div className="flex items-center justify-between">
@@ -361,7 +367,7 @@ export default function AppHomeStudio() {
                 <Sparkles className="h-3.5 w-3.5" /> Generate with AI
               </button>
             ) : files.length > 0 ? (
-              <p className="text-xs text-gray-500 dark:text-slate-400">Build the app across files (HTML / CSS / TypeScript) on the left — it uses the app SDK over this app's {forms.length} form{forms.length === 1 ? '' : 's'}. Or connect an external AI via MCP (Settings → Connect an AI).</p>
+              <p className="text-xs text-gray-500 dark:text-slate-400">Edit HTML, CSS and TypeScript files with access to this app’s {forms.length} form{forms.length === 1 ? '' : 's'} through the app SDK.</p>
             ) : null}
           </div>
           )}
@@ -504,7 +510,7 @@ export default function AppHomeStudio() {
               ) : (
                 <div className="h-full flex items-center justify-center text-center px-6">
                   <p className="text-sm text-gray-500 dark:text-slate-400">
-                    {files.length === 0 ? 'Pick a starting point on the left — the live preview appears here.' : 'Edit the files on the left — the live preview appears here.'}
+                    {files.length === 0 ? 'Choose a starting point in the editor to preview your screen.' : 'Your preview will appear as the source files compile.'}
                   </p>
                 </div>
               )}
@@ -517,7 +523,7 @@ export default function AppHomeStudio() {
       <ConfirmDialog
         isOpen={confirmLeave}
         onClose={() => setConfirmLeave(false)}
-        onConfirm={() => { setConfirmLeave(false); navigate(-1); }}
+        onConfirm={() => { setConfirmLeave(false); leaveEditor(); }}
         title="Discard unsaved changes?"
         message="This home screen has unsaved changes. Leaving will discard them."
         confirmLabel="Discard changes"

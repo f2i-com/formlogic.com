@@ -102,7 +102,7 @@ export function SoftnDirectoryApprove() {
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-4 sm:p-6">
       <header>
-        <p className="text-xs font-semibold uppercase tracking-wider text-primary-600 dark:text-primary-300">{draft.target ? 'A new version for the SoftN directory' : 'Publish to the SoftN directory'}</p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-primary-600 dark:text-primary-300">{draft.target ? 'A new version for the app directory' : 'Publish to the app directory'}</p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900 dark:text-white">{draft.target ? (draft.target.name ?? draft.target.slug) : (draft.listing.name ?? 'Untitled app')}</h1>
         <p className="mt-2 text-sm text-gray-600 dark:text-slate-300">{STATUS_WORDS[draft.status]}</p>
       </header>
@@ -168,7 +168,7 @@ export function SoftnDirectoryApprove() {
         </section>
       ) : (
         <div className="flex flex-wrap items-center gap-3">
-          {canApprove && <Button onClick={() => void approve()} isLoading={working} leftIcon={<ShieldCheck className="h-4 w-4" />}>{draft.target ? 'Publish this version' : 'Publish to the SoftN directory'}</Button>}
+          {canApprove && <Button onClick={() => void approve()} isLoading={working} leftIcon={<ShieldCheck className="h-4 w-4" />}>{draft.target ? 'Publish this version' : 'Publish to the app directory'}</Button>}
           {draft.status === 'uncertain' && !draft.appChanged && <Button variant="outline" onClick={() => void approve(true)} isLoading={working}>I checked: try again</Button>}
           <Link className="text-sm text-gray-600 underline dark:text-slate-300" to={draft.previewUrl}>Try the app first</Link>
         </div>

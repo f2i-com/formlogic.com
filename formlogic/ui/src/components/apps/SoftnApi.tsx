@@ -104,7 +104,7 @@ export function SoftnApi({ app, access, manifest, version, dirty, readOnly }: {
               ? <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">This is the shared demo: its apps&rsquo; backends do not run here, so nothing can be sent.</p>
               : served.length === 0
                 ? <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">The app has no route this server can call.</p>
-                : <TryIt app={app} routes={served} chosen={chosen} onChoose={setChosen} onSent={() => setSent(n => n + 1)} />}
+                : <TryIt key={JSON.stringify([app.id, app.slug, version])} app={app} routes={served} chosen={chosen} onChoose={setChosen} onSent={() => setSent(n => n + 1)} />}
           </Panel>
           <RecentCalls appId={app.id} sent={sent} />
         </div>
@@ -191,6 +191,10 @@ type Answer = {
   error?: string;
 };
 
+const emptyDraft = { query: '', body: '', authorization: '', 'idempotency-key': '' };
+type DraftPart = keyof typeof emptyDraft;
+type LiveRequest = { method: string; path: string; query: Record<string, string>; headers: Record<string, string>; body: unknown };
+
 /**
  * One call to the live app, as its owner: a route, its query and its body, each checked before it
  * is sent. A route that can change the app's data asks first. What came back is shown as it came:
@@ -200,39 +204,63 @@ function TryIt({ app, routes, chosen, onChoose, onSent }: { app: App; routes: Ap
   const route = routes.find(candidate => routeKey(candidate) === chosen) ?? routes[0];
   const key = routeKey(route);
   // What was typed for each route, kept while the section is open.
-  const [texts, setTexts] = useState<Record<string, { query: string; body: string }>>({});
-  const text = texts[key] ?? { query: '', body: '' };
-  const type = (part: 'query' | 'body', value: string) => setTexts(all => ({ ...all, [key]: { ...(all[key] ?? { query: '', body: '' }), [part]: value } }));
+  const [texts, setTexts] = useState<Record<string, typeof emptyDraft>>({});
+  const text = texts[key] ?? emptyDraft;
+  const headerCount = [text.authorization, text['idempotency-key']].filter(Boolean).length;
   // What was wrong belongs to the route it was found in: another route, however it was chosen (the list here, or a
   // row's Try it), has none of it.
-  const [problemOf, setProblemOf] = useState<{ key: string; part: 'query' | 'body'; message: string } | null>(null);
+  const [problemOf, setProblemOf] = useState<{ key: string; part: DraftPart; message: string } | null>(null);
   const problem = problemOf?.key === key ? problemOf : null;
-  const setProblem = (found: { part: 'query' | 'body'; message: string } | null) => setProblemOf(found && { key, ...found });
-  const [asking, setAsking] = useState<{ query: Record<string, string>; body: unknown } | null>(null);
+  const type = (part: DraftPart, value: string) => {
+    setTexts(all => ({ ...all, [key]: { ...(all[key] ?? emptyDraft), [part]: value } }));
+    if (problem?.part === part) setProblemOf(null);
+  };
+  const headerFields = useRef<HTMLDetailsElement>(null);
+  const invalid = (part: DraftPart, message: string) => {
+    setProblemOf({ key, part, message });
+    if ((part === 'authorization' || part === 'idempotency-key') && headerFields.current) headerFields.current.open = true;
+    document.getElementById('api-try-' + part)?.focus();
+    return null;
+  };
+  const [asking, setAsking] = useState<LiveRequest | null>(null);
+  if (asking && routeKey(asking) !== key) setAsking(null);
   const [sending, setSending] = useState(false);
   const [answer, setAnswer] = useState<Answer | null>(null);
   const hasBody = route.method !== 'GET';
   const writes = routeWrites(route);
 
-  const checked = (): { query: Record<string, string>; body: unknown } | null => {
+  const checked = (): LiveRequest | null => {
     const query = checkQuery(text.query);
-    if (!query.ok) { setProblem({ part: 'query', message: query.error }); return null; }
+    if (!query.ok) return invalid('query', query.error);
     const body = hasBody ? checkBody(text.body) : { ok: true as const, value: {} };
-    if (!body.ok) { setProblem({ part: 'body', message: body.error }); return null; }
-    setProblem(null);
-    return { query: query.value, body: body.value };
+    if (!body.ok) return invalid('body', body.error);
+    // NativeAppController limits these values by their UTF-8 byte length.
+    const headers: Record<string, string> = {};
+    const utf8 = new TextEncoder();
+    if (text.authorization) {
+      if (utf8.encode(text.authorization).length > 4096) return invalid('authorization', 'Authorization can contain up to 4,096 bytes.');
+      headers.authorization = text.authorization;
+    }
+    if (text['idempotency-key']) {
+      if (utf8.encode(text['idempotency-key']).length > 255) return invalid('idempotency-key', 'Idempotency-Key can contain up to 255 bytes.');
+      headers['idempotency-key'] = text['idempotency-key'];
+    }
+    setProblemOf(null);
+    return { path: route.path, method: route.method, query: query.value, headers, body: body.value };
   };
 
-  const send = async (ready: { query: Record<string, string>; body: unknown }) => {
+  const send = async (ready: LiveRequest) => {
     setSending(true);
     const started = performance.now();
-    const result = await api.runNativeRequest(app.slug, { path: route.path, method: route.method, query: ready.query, headers: {}, body: ready.body });
+    const result = await api.runNativeRequest(app.slug, ready);
     const took = performance.now() - started;
     setSending(false);
     setAsking(null);
     const answered = result.data?.result;
     if (answered && typeof answered.status === 'number') setAnswer({ route: key, status: answered.status, body: answered.body, took });
-    else if (result.transportFailure) setAnswer({ route: key, status: 0, took, error: 'The call could not be sent. Check your connection and try again.' });
+    else if (result.transportFailure) setAnswer({ route: key, status: 0, took, error: writes
+      ? 'The connection ended before an answer arrived. Check the app’s data or recent calls before sending this write again.'
+      : 'The call could not be sent. Check your connection and try again.' });
     else setAnswer({ route: key, status: result.status ?? 0, took, error: result.error || 'The server did not answer.' });
     onSent();
   };
@@ -247,7 +275,7 @@ function TryIt({ app, routes, chosen, onChoose, onSent }: { app: App; routes: Ap
   const shown = answer && answer.error === undefined ? answerText(answer.body) : null;
   return <div>
     <label htmlFor="api-try-route" className="text-xs font-medium text-slate-600 dark:text-slate-300">Route</label>
-    <select id="api-try-route" value={key} onChange={event => { onChoose(event.target.value); setProblem(null); }}
+    <select id="api-try-route" value={key} onChange={event => { onChoose(event.target.value); setProblemOf(null); }}
       className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 font-mono text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:h-11 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
       {routes.map(option => <option key={routeKey(option)} value={routeKey(option)}>{routeKey(option)}</option>)}
     </select>
@@ -263,6 +291,21 @@ function TryIt({ app, routes, chosen, onChoose, onSent }: { app: App; routes: Ap
         placeholder='{"title": "Buy milk"}' aria-invalid={problem?.part === 'body' || undefined} aria-describedby={problem?.part === 'body' ? 'api-try-problem' : undefined}
         className={cn(field, 'mt-1 min-h-[6.5rem] resize-y py-2', problem?.part === 'body' && 'border-red-400 dark:border-red-500/60')} />
     </>}
+    <details ref={headerFields} className="mt-3 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
+      <summary className="cursor-pointer text-xs font-medium text-slate-700 dark:text-slate-200">
+        Request headers{headerCount > 0 && ` (${headerCount})`}
+      </summary>
+      <label htmlFor="api-try-authorization" className="mt-3 block text-xs font-medium text-slate-600 dark:text-slate-300">Authorization</label>
+      <input id="api-try-authorization" type="password" autoComplete="off" spellCheck={false} value={text.authorization} onChange={event => type('authorization', event.target.value)}
+        placeholder="Bearer …" aria-invalid={problem?.part === 'authorization' || undefined} aria-describedby={problem?.part === 'authorization' ? 'api-try-problem' : 'api-try-auth-help'}
+        className={cn(field, 'mt-1 h-9')} />
+      <p id="api-try-auth-help" className={cn(HELP, 'mt-1')}>Enter the full value your app expects, including any prefix.</p>
+      <label htmlFor="api-try-idempotency-key" className="mt-3 block text-xs font-medium text-slate-600 dark:text-slate-300">Idempotency-Key</label>
+      <input id="api-try-idempotency-key" autoComplete="off" spellCheck={false} value={text['idempotency-key']} onChange={event => type('idempotency-key', event.target.value)}
+        placeholder="item-create-1" aria-invalid={problem?.part === 'idempotency-key' || undefined} aria-describedby={problem?.part === 'idempotency-key' ? 'api-try-problem' : 'api-try-idempotency-help'}
+        className={cn(field, 'mt-1 h-9')} />
+      <p id="api-try-idempotency-help" className={cn(HELP, 'mt-1')}>Reuse the same key when retrying a request if your backend supports it.</p>
+    </details>
     {problem && <p id="api-try-problem" role="alert" className="mt-2 text-xs leading-5 text-red-700 dark:text-red-300">{problem.message}</p>}
 
     <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">

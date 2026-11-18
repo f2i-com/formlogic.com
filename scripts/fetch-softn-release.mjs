@@ -451,9 +451,19 @@ export async function verifyArchive(zip, { sidecarDigest, paths, archiveName }) 
   // every engine copy is the primary, except the one path that holds the variant when the
   // release records one — and that path may hold nothing else.
   const copies = [];
+  const sums = zippTree.get('RELEASE-SHA256SUMS')?.toString().split(/\r?\n/) ?? [];
   for (const [name, entry] of entries) {
     if (!isZippEngineWasm(entry.data)) continue;
     const digest = sha256(entry.data);
+    // Web containers and embedded editors share two specialized builds. Only their
+    // installed paths and the matching upstream release checksums qualify.
+    const tier = /^hosted-runtime\/assets\/container-runtime\/[0-9a-f]{12}\/engines\/zipp-(javascript-lite|typescript)\.wasm$/.exec(name)?.[1];
+    if (tier) {
+      const bundle = `zipp-${zipp.version}-${tier === 'typescript' ? 'javascript-typescript' : tier}.wasm`;
+      if (!sums.some(line => line.trim().split(/\s+\*?/).join(' ') === `${digest} ${bundle}`)) throw new ReleaseError(`${name} differs from ${bundle} in the ZIPP release checksums.`);
+      copies.push(name);
+      continue;
+    }
     if (digest === expected.sha256) {
       if (webVariant && name === WEB_ENGINE_PATH) throw new ReleaseError(`${name} holds the ZIPP ${zipp.release} engine (${digest.slice(0, 12)}), not the web variant (${webVariant.sha256.slice(0, 12)}) softn-release.json records there; a variant is the same source built again, not the same bytes named twice.`);
     } else if (webVariant && digest === webVariant.sha256) {

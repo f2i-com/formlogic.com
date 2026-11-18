@@ -14,7 +14,7 @@ namespace FormLogic\Services;
  *    own agent is taught by, for JavaScript and for Python logic (scripts/softn-guide.mjs, from a
  *    checkout of softn.com; committed).
  *  - SoftN's reference, resources/softn-knowledge.json: every component with its props, and the
- *    published guides (scripts/softn-knowledge.mjs, from the installed Softn release's Studio;
+ *    published guides (scripts/softn-knowledge.mjs, from the installed sandbox release's Studio;
  *    written when the release is installed, not committed).
  *
  * A text that is missing is said to be missing, by name, with the others still served: an AI is
@@ -189,24 +189,24 @@ class SoftnKnowledge
     public function start(int $limit = self::FULL_LIMIT): string
     {
         $own = @file_get_contents($this->file('softn-on-formlogic.md'));
-        $out = [is_string($own) && $own !== '' ? rtrim($own) : '# SoftN apps on FormLogic' . "\n\n" . 'FormLogic\'s own page about hosting SoftN apps is missing from this server (resources/softn-on-formlogic.md).'];
+        $out = [is_string($own) && $own !== '' ? rtrim($own) : '# Hosting a web app on FormLogic' . "\n\n" . 'FormLogic\'s own page about hosting web apps is missing from this server (resources/softn-on-formlogic.md).'];
         $guide = $this->guide();
         $knowledge = $this->knowledge();
         $more = ['## What else to read', 'Ask get_softn_guide for a topic:'];
         if ($guide !== null) {
             [, $sections] = self::sections((string) $guide['javascript']);
-            $more[] = '- `language` — SoftN\'s own guide, "How to build a SoftN app": pages, expressions, events, binding, control flow, logic, data, the private backend, and a complete example. READ IT BEFORE WRITING A FILE. Its sections, each also a topic of its own (`language#<section>`): ' . implode(', ', array_column($sections, 'id')) . '.';
+            $more[] = '- `language` — the classic project guide: pages, expressions, events, binding, control flow, logic, data, the private backend, and a complete example. Use it for a project that has classic markup. Its sections, each also a topic of its own (`language#<section>`): ' . implode(', ', array_column($sections, 'id')) . '.';
             if (is_string($guide['python'] ?? null)) $more[] = '- `language-python` — the same guide for an app whose page logic is Python (`.py`); the backend stays JavaScript.';
         } else {
-            $more[] = '- (SoftN\'s guide to the language is missing from this server: resources/softn-guide.json.)';
+            $more[] = '- (The classic markup guide is missing from this server: resources/softn-guide.json.)';
         }
         if ($knowledge !== null) {
             $more[] = '- `components` — every component, one line each. lookup_softn_components {names} then gives a component\'s props, events and a usage line: look one up before you use it.';
             $more[] = '- A published guide by its name, or one section of it (`ui-language#bindings`):';
             $more[] = $this->docIndex();
-            if ($this->release() !== null) $more[] = 'The reference is that of Softn ' . $this->release() . ', the release this site runs.';
+            if ($this->release() !== null) $more[] = 'Sandbox reference version ' . $this->release() . ', the release this site runs.';
         } else {
-            $more[] = '- (SoftN\'s component reference and published guides are not installed on this server: scripts/softn-knowledge.mjs writes them from the installed Softn release.)';
+            $more[] = '- (The classic component reference and published guides are not installed on this server: scripts/softn-knowledge.mjs writes them from the installed sandbox release.)';
         }
         $out[] = implode("\n", $more);
         $text = implode("\n\n", $out);
@@ -232,15 +232,15 @@ class SoftnKnowledge
         if ($asked === 'components') {
             $index = $this->componentIndex();
             return $index === ''
-                ? ['ok' => false, 'text' => 'SoftN\'s component reference is not installed on this server.']
-                : ['ok' => true, 'text' => "# SoftN components\nCapitalised tags in a page. Look one up with lookup_softn_components before using it: its props are not guessable.\n\n" . $index];
+                ? ['ok' => false, 'text' => 'The classic component reference is not installed on this server.']
+                : ['ok' => true, 'text' => "# Classic components\nCapitalised tags in a page. Look one up with lookup_softn_components before using it: its props are not guessable.\n\n" . $index];
         }
 
         if (in_array($asked, ['language', 'languagejavascript', 'languagepython', 'python', 'guide'], true)) {
             $guide = $this->guide();
             $python = $asked === 'languagepython' || $asked === 'python';
             $text = $guide === null ? null : ($python ? ($guide['python'] ?? null) : $guide['javascript']);
-            if (!is_string($text)) return ['ok' => false, 'text' => 'SoftN\'s guide to the language is missing from this server (resources/softn-guide.json).'];
+            if (!is_string($text)) return ['ok' => false, 'text' => 'The classic markup guide is missing from this server (resources/softn-guide.json).'];
             $as = $python ? 'language-python' : 'language';
             if ($section === '') return ['ok' => true, 'text' => self::whole($as, $text, $limit)];
             [, $sections] = self::sections($text);
@@ -250,7 +250,7 @@ class SoftnKnowledge
         }
 
         $knowledge = $this->knowledge();
-        if ($knowledge === null) return ['ok' => false, 'text' => 'There is no topic "' . mb_substr($name, 0, 60) . '" here: the topics are language, language-python and components. SoftN\'s published guides are not installed on this server.'];
+        if ($knowledge === null) return ['ok' => false, 'text' => 'There is no topic "' . mb_substr($name, 0, 60) . '" here: the topics are language, language-python and components. The published sandbox guides are not installed on this server.'];
         $page = null;
         foreach ($knowledge['docs'] as $candidate) {
             if (!is_array($candidate) || !is_string($candidate['slug'] ?? null)) continue;
@@ -279,7 +279,7 @@ class SoftnKnowledge
     public function components(array $names): array
     {
         $knowledge = $this->knowledge();
-        if ($knowledge === null) return ['ok' => false, 'text' => 'SoftN\'s component reference is not installed on this server.'];
+        if ($knowledge === null) return ['ok' => false, 'text' => 'The classic component reference is not installed on this server.'];
         $byNorm = [];
         foreach (array_keys($knowledge['components']) as $name) $byNorm[self::norm((string) $name)] = (string) $name;
         $found = $unknown = [];

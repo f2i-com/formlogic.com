@@ -36,7 +36,9 @@ const app = (id: string, more: Partial<AppListItem> = {}): AppListItem => ({
   id, name: `App ${id}`, slug: `app-${id}`, ownerId: 'u1', status: 'published', publishedVersion: 1, settings: { softnApp: true }, theme: {}, navConfig: [],
   createdAt: '2026-11-01 00:00:00', updatedAt: '2026-11-10 00:00:00', canManage: true, formCount: 0, ...more,
 }) as AppListItem;
-const summary = (tables: number, bytes: number): AppSummary => ({ installed: true, backend: true, tables, bytes, access: 'members', members: 0 }) as unknown as AppSummary;
+const summary = (tables: number, bytes: number): AppSummary => ({
+  softn: true, installed: true, version: 2, backend: true, tables, bytes, access: 'members', members: 0, domain: null,
+});
 
 let root: Root;
 let container: HTMLDivElement;
@@ -73,7 +75,7 @@ describe('Home for an owner who hosts apps and has no forms', () => {
 
   it('says how the apps stand, in the page’s one sentence', async () => {
     await show();
-    expect(container.querySelector('[aria-live="polite"]')?.textContent).toBe('1 of 2 apps are live, holding 11 tables (1.9 MB).');
+    expect(container.querySelector('[aria-live="polite"]')?.textContent).toBe('1 of 2 apps is live. 11 tables across your apps (1.9 MB).');
   });
 
   it('lists the apps as the Apps page does, with what each holds, and no way to remove one from here', async () => {
@@ -82,10 +84,10 @@ describe('Home for an owner who hosts apps and has no forms', () => {
     const rows = Array.from(container.querySelectorAll('table tbody tr')).map((row) => row.textContent ?? '');
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain('App 1');
-    expect(rows[0]).toContain('Live v1');
+    expect(rows[0]).toContain('Live v2');
     expect(rows[0]).toContain('8 tables');
     expect(rows.join(' ')).not.toContain('0 forms');
-    expect(container.querySelector('a[aria-label="Data of App 1"]')?.getAttribute('href')).toBe('/apps/1/softn/data');
+    expect(container.querySelector('a[aria-label="Data of App 1"]')?.getAttribute('href')).toBe('/apps/1/web/data');
     expect(container.querySelector('button[aria-label^="Remove "]')).toBeNull();
   });
 

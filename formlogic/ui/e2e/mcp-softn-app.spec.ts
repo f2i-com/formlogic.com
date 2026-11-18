@@ -24,6 +24,7 @@ const BUILDER = ['apps:read', 'apps:write', 'forms:read', 'forms:write', 'screen
 
 let headers: Record<string, string> = {};
 let created: string[] = [];
+let connections: string[] = [];
 /** The MCP client: a context of its own with no cookies, as an AI outside the browser has none (and the endpoint takes only the bearer token). */
 let mcp: APIRequestContext;
 
@@ -38,7 +39,9 @@ async function login(context: BrowserContext) {
 async function connect(context: BrowserContext, scopes: string[]): Promise<string> {
   const made = await context.request.post('/api/mcp/tokens', { headers, data: { scopes, ttl: 3600, idle: 900 } });
   expect(made.ok(), await made.text()).toBe(true);
-  return (await made.json()).token as string;
+  const connection = await made.json() as { id: string; token: string };
+  connections.push(connection.id);
+  return connection.token;
 }
 
 /** One tool call over MCP: what it answered (JSON where it is JSON), and whether the tool said it failed. */
@@ -56,19 +59,66 @@ async function tool(request: APIRequestContext, token: string, name: string, arg
 /** The files of the worked example, from the page an AI is given: each `path` line followed by its fenced block. */
 function exampleFiles(): Record<string, string> {
   const page = readFileSync('../backend/resources/softn-on-formlogic.md', 'utf8').replace(/\r\n/g, '\n');
-  const section = page.slice(page.indexOf('## A page and its backend, complete'), page.indexOf('## When the app is already live'));
+  const section = page.slice(page.indexOf('## A classic page and its backend, complete'), page.indexOf('## When the app is already live'));
   const files: Record<string, string> = {};
   for (const match of section.matchAll(/^`([\w./-]+)`[^\n]*:\n\n```\w*\n([\s\S]*?)\n```/gm)) files[match[1]] = `${match[2]}\n`;
   return files;
 }
 
 test.describe('a SoftN app built over MCP', () => {
-  test.beforeEach(async ({ context, baseURL }) => { created = []; await login(context); mcp = await apiRequest.newContext({ baseURL }); });
+  test.beforeEach(async ({ context, baseURL }) => { created = []; connections = []; await login(context); mcp = await apiRequest.newContext({ baseURL }); });
   test.afterEach(async ({ context }) => {
     await mcp.dispose();
+    for (const id of connections) expect((await context.request.delete(`/api/mcp/tokens/${id}`, { headers })).ok()).toBe(true);
     for (const id of created) {
       const r = await context.request.delete(`/api/apps/${id}`, { headers }).catch((e: Error) => e);
       if (r instanceof Error || !r.ok()) console.log('CLEANUP FAILED: app', id, 'was not deleted:', r instanceof Error ? r.message : r.status());
+    }
+  });
+
+  test('an MCP assistant discovers and creates all three editable web starters with the granted tools', async ({ context }) => {
+    const token = await connect(context, [...BUILDER, 'responses:read', 'responses:write', 'connector:command']);
+    const rpc = async (credential: string, method: string, params = {}) => {
+      const r = await mcp.post('/api/mcp', { headers: { Authorization: `Bearer ${credential}` }, data: { jsonrpc: '2.0', id: 1, method, params } });
+      expect(r.ok()).toBe(true);
+      return (await r.json()).result;
+    };
+    const hello = await rpc(token, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'framework-test', version: '1' } });
+    expect(hello.serverInfo.name).toBe('FormLogic');
+    expect(hello.instructions).toContain('"react"');
+    const catalog = (await rpc(token, 'tools/list')).tools;
+    const readOnly = Object.fromEntries(catalog.map((t: { name: string; annotations: { readOnlyHint: boolean } }) => [t.name, t.annotations.readOnlyHint]));
+    expect(readOnly).toMatchObject({ get_started: true, list_app_roles: true, create_app_role: false, desktop_status: true, connector_command: false });
+    expect(catalog.find((t: { name: string }) => t.name === 'create_softn_app').inputSchema.properties.template.enum).toEqual(expect.arrayContaining(['javascript', 'react', 'vue']));
+    const names = catalog.map((t: { name: string }) => t.name);
+    expect(names).toEqual(expect.arrayContaining(['update_native_app_files', 'list_native_app_records', 'change_native_app_record', 'desktop_status', 'connector_command']));
+    const limited = await connect(context, ['apps:read', 'apps:write']);
+    const limitedNames = (await rpc(limited, 'tools/list')).tools.map((t: { name: string }) => t.name);
+    expect(limitedNames).not.toContain('create_softn_app');
+    expect(limitedNames).not.toContain('change_native_app_record');
+    expect((await tool(mcp, limited, 'create_softn_app', { name: 'Unavailable', request: '', template: 'react' })).failed).toBe(true);
+    for (const [template, source] of [['javascript', 'app.js'], ['react', 'App.jsx'], ['vue', 'App.vue']]) {
+      const made = await tool(mcp, token, 'create_softn_app', { template, name: 'MCP ' + template, request: 'Start a new app' });
+      expect(made.failed).toBe(false);
+      const appId = made.data.app.id;
+      created.push(appId);
+      expect(made.data.version, made.data.next).toBe(1);
+      const read = await tool(mcp, token, 'get_native_app_project', { appId, files: [source, 'manifest.json'] });
+      expect(read.data.sources[source].length).toBeGreaterThan(20);
+      expect(JSON.parse(read.data.sources['manifest.json']).main).toBe('index.html');
+      expect(read.data.files).toContain('server/main.logic');
+      if (template !== 'javascript') {
+        const heading = template === 'react' ? 'Rounds completed' : 'Pages read';
+        const nextSource = read.data.sources[source].replace(heading, 'Session total');
+        expect(nextSource).not.toBe(read.data.sources[source]);
+        const change = await tool(mcp, token, 'update_native_app_files', { appId, expectedVersion: 1, files: { [source]: nextSource } });
+        expect(change.failed, change.text).toBe(false);
+        const generated = '__softn_generated__/' + source + '.js';
+        const version = await tool(mcp, token, 'get_native_app_project', { appId, files: [source, generated] });
+        expect(version.data.version).toBe(2);
+        expect(version.data.sources[source]).toBe(nextSource);
+        expect(version.data.sources[generated]).toContain('Session total');
+      }
     }
   });
 
@@ -80,7 +130,7 @@ test.describe('a SoftN app built over MCP', () => {
     // What the connection is told before it writes anything.
     const start = await tool(request, token, 'get_softn_guide');
     expect(start.failed, start.text).toBe(false);
-    expect(start.data.guide).toContain('# SoftN apps on FormLogic');
+    expect(start.data.guide).toContain('# Hosting a web app on FormLogic');
     expect(start.data.guide).toContain('`language`');
     const backend = await tool(request, token, 'get_softn_guide', { topic: 'language#backend' });
     expect(backend.data.guide).toContain('softn.sql.execute');

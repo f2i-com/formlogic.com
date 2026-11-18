@@ -1066,7 +1066,7 @@ class ApiClient {
   /**
    * Read the CSRF token from the non-HttpOnly cookie set by the server.
    */
-  private getCsrfToken(): string | null {
+  getCsrfToken(): string | null {
     const match = document.cookie.match(/(?:^|;\s*)formlogic_csrf=([^;]*)/);
     return match ? decodeURIComponent(match[1]) : null;
   }
@@ -2421,8 +2421,8 @@ class ApiClient {
     return this.request(`/apps/${encodeURIComponent(id)}/native/calls?limit=${encodeURIComponent(String(limit))}`);
   }
   /** A new SoftN app's first version: the server's working starter, named after the app. Refused once anything is installed. */
-  async installNativeStarter(id: string): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
-    return this.request(`/apps/${encodeURIComponent(id)}/native/starter`, { method: 'POST', body: '{}' });
+  async installNativeStarter(id: string, template: import('./softnApps').WebStarterTemplate = 'javascript'): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/starter`, { method: 'POST', body: JSON.stringify({ template }) });
   }
   /** The app's phone sign-in codes: which plugin sends them, and the owner's settings for it (never a secret). */
   async getAppSignInCodes(id: string): Promise<ApiResponse<AppSignInCodes>> {
@@ -2833,7 +2833,7 @@ class ApiClient {
   // manually-generated token would lose apps/forms/screens access. When nothing extra is
   // requested we omit `scopes` entirely, so the request (and the resulting token) is unchanged
   // from before extraScopes existed.
-  async createMcpToken(appId?: string, creator = false, connectorAccess = false, extraScopes: string[] = []): Promise<ApiResponse<{ token: string; expiresAt: string; idleTimeout: number; mcpUrl: string }>> {
+  async createMcpToken(appId?: string, creator = false, connectorAccess = false, extraScopes: string[] = []): Promise<ApiResponse<{ id: string; token: string; expiresAt: string; idleTimeout: number; mcpUrl: string }>> {
     const BASE_SCOPES = ['apps:read', 'apps:write', 'forms:read', 'forms:write', 'screens:write'];
     const scopes = (connectorAccess || extraScopes.length > 0)
       ? Array.from(new Set([...BASE_SCOPES, ...(connectorAccess ? ['connector:command'] : []), ...extraScopes]))
@@ -6411,6 +6411,7 @@ export interface AiUsageInfo {
 
 /** The signed-in user's AI settings (GET/PUT /api/ai/preferences), normalized client-side. */
 export interface AiPreferencesState {
+  customToolConnection?: string;
   aiSource: AiSourceSetting;
   desktopProviderId: string | null;
   desktopModel: string | null;
@@ -6426,6 +6427,7 @@ export interface AiPreferencesState {
 
 /** PUT /api/ai/preferences body — usage is server-owned and never sent. */
 export interface AiPreferencesInput {
+  customToolConnection?: string | null;
   aiSource: AiSourceSetting;
   desktopProviderId: string | null;
   desktopModel: string | null;
@@ -6459,6 +6461,7 @@ function normalizeAiPreferences(raw: unknown): AiPreferencesState {
     desktopProviderId: nullableTrimmedString(inner.desktopProviderId),
     desktopModel: nullableTrimmedString(inner.desktopModel),
     customProviderId: nullableTrimmedString(inner.customProviderId),
+    ...(typeof inner.customToolConnection === 'string' ? { customToolConnection: inner.customToolConnection } : {}),
     chatToolMode: inner.chatToolMode === 'confirm' ? 'confirm' : 'auto',
     desktopReasoning: nullableTrimmedString(inner.desktopReasoning),
     ...(inner.siteAiActions === false ? { siteAiActions: false } : {}),

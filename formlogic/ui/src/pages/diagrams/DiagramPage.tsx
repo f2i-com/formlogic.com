@@ -10,6 +10,7 @@ import { cn } from '../../lib/utils';
 import { useReturnTo } from '../../hooks/useReturnTo';
 import { formatDateTimeInZone, useAccountTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
+import { LoadFailure } from '../../components/ui/LoadFailure';
 import type { Blueprint } from '../../types/blueprints';
 import { DiagramCanvas } from './DiagramCanvas';
 
@@ -42,7 +43,8 @@ export default function DiagramPage() {
   const createdRef = useRef<string | null>(null);
   const createPromiseRef = useRef<Promise<string | null> | null>(null);
   const [diagram, setDiagram] = useState<Blueprint | null>(() => (isNew ? draftBlueprint() : null));
-  const [missing, setMissing] = useState(false);
+  const [issue, setIssue] = useState<{ missing: boolean; message?: string } | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [renaming, setRenaming] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const nameRef = useRef('Untitled diagram');
@@ -84,9 +86,11 @@ export default function DiagramPage() {
     const res = await api.getBlueprint(diagramId);
     if (res.data?.blueprint) {
       setDiagram(res.data.blueprint);
+    } else if (res.status === 404) {
+      setDiagram(null);
+      setIssue({ missing: true });
     } else {
-      setMissing(true);
-      toast.error('Diagram not found', typeof res.error === 'string' ? res.error : undefined);
+      toast.error('Could not refresh the diagram', res.error);
     }
   }, [diagramId, isNew, navigate]);
 
@@ -97,7 +101,7 @@ export default function DiagramPage() {
   if (lastParam !== diagramId) {
     setLastParam(diagramId);
     setDiagram(isNew ? draftBlueprint() : null);
-    setMissing(false);
+    setIssue(null);
   }
 
   // A fresh /diagrams/new visit starts un-persisted again (ref writes belong in effects).
@@ -114,12 +118,12 @@ export default function DiagramPage() {
     void api.getBlueprint(diagramId).then((res) => {
       if (cancelled) return;
       if (res.data?.blueprint) setDiagram(res.data.blueprint);
-      else setMissing(true);
+      else setIssue({ missing: res.status === 404, message: res.error });
     });
     return () => {
       cancelled = true;
     };
-  }, [diagramId, isNew]);
+  }, [diagramId, isNew, attempt]);
 
   // dvh, not vh (audit FL-26): mobile browser chrome shrinks the visual viewport —
   // 100vh clipped the bottom of the workspace behind the URL bar.
@@ -127,7 +131,7 @@ export default function DiagramPage() {
   // height (less the demo bar when there is one), and on a phone stops at the bottom
   // navigation. Subtracting a 4rem header that is not there left a dead band under the canvas.
   return (
-    <div className="flex h-[calc(100dvh-var(--fl-mobile-nav-h)-var(--fl-demo-banner-h,0px))] min-h-0 flex-col md:h-[calc(100dvh-var(--fl-demo-banner-h,0px))]">
+    <div className="flex h-[calc(100dvh-var(--fl-mobile-nav-h)-var(--fl-system-top,0px)-var(--fl-demo-banner-h,0px))] min-h-0 flex-col md:h-[calc(100dvh-var(--fl-nav-top,0px)-var(--fl-nav-bottom,0px)-var(--fl-system-top,0px)-var(--fl-demo-banner-h,0px))]">
       {/* @container/bar: the Timeline's word gives way to its icon by the bar's own width. */}
       <div className="@container/bar flex flex-none items-center gap-1.5 border-b border-gray-200 bg-white px-2 py-1.5 dark:border-slate-700/60 dark:bg-slate-900 sm:gap-3 sm:px-4 sm:py-2">
         <Link
@@ -140,11 +144,12 @@ export default function DiagramPage() {
         <button
           type="button"
           onClick={() => setShowHistory((open) => !open)}
-          title="Build timeline"
+          title={diagram?.id ? 'Build timeline' : 'Available after the first saved change'}
           aria-label="Toggle the build timeline"
           aria-pressed={showHistory}
+          disabled={!diagram?.id}
           className={cn(
-            'order-last ml-auto inline-flex flex-none items-center justify-center gap-1 rounded-lg px-2 py-1 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 max-sm:min-h-11 max-sm:min-w-11',
+            'order-last ml-auto inline-flex flex-none items-center justify-center gap-1 rounded-lg px-2 py-1 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50 max-sm:min-h-11 max-sm:min-w-11',
             showHistory
               ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300'
               : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white',
@@ -181,17 +186,17 @@ export default function DiagramPage() {
               }}
               className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white max-sm:min-h-11 sm:max-w-md"
             />
-          ) : (
+          ) : diagram ? (
             <button
               type="button"
-              title={diagram ? `${diagram.name} (press to rename)` : undefined}
-              aria-label={diagram ? `Rename diagram ${diagram.name}` : undefined}
-              onClick={() => { if (diagram) setRenaming(true); }}
+              title={`${diagram.name} (press to rename)`}
+              aria-label={`Rename diagram ${diagram.name}`}
+              onClick={() => setRenaming(true)}
               className="min-w-0 truncate rounded px-1 py-0.5 text-left hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:hover:bg-slate-800 max-sm:min-h-11"
             >
-              {diagram?.name ?? (missing ? 'Not found' : 'Loading…')}
+              {diagram.name}
             </button>
-          )}
+          ) : <span>Diagram</span>}
         </span>
       </div>
       <div className="relative flex min-h-0 flex-1 bg-gray-50 dark:bg-slate-950">
@@ -218,13 +223,15 @@ export default function DiagramPage() {
             />
           </ReactFlowProvider>
         ) : (
-          <div className="flex h-full items-center justify-center">
-            {missing ? (
-              <p className="text-sm text-gray-400 dark:text-slate-500">
-                This diagram doesn't exist (or isn't yours). <Link to="/diagrams/all" className="text-primary-600 underline dark:text-primary-300">Back to Diagrams</Link>
+          <div className="flex h-full items-center justify-center px-4">
+            {issue?.missing ? (
+              <p role="status" className="max-w-sm text-center text-sm text-gray-600 dark:text-slate-300">
+                This diagram could not be found. <Link to="/diagrams/all" className="text-primary-700 underline dark:text-primary-300">Back to Diagrams</Link>
               </p>
+            ) : issue ? (
+              <LoadFailure title="Couldn’t load the diagram" message={issue.message} onRetry={() => { setIssue(null); setAttempt(n => n + 1); }} />
             ) : (
-              <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+              <span role="status" aria-label="Loading diagram"><Loader2 aria-hidden="true" className="h-5 w-5 animate-spin text-gray-400" /></span>
             )}
           </div>
         )}
@@ -263,16 +270,23 @@ function BuildTimeline({ blueprintId, semanticRevision, onClose }: { blueprintId
   const [history, setHistory] = useState<Array<{
     changeSetId: string; origin: string; createdAt: string;
     semanticRevision: number | null; operations: Array<{ type: string; targetId: string | null }>;
-  }>>([]);
+  }> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
     void api.listBlueprintHistory(blueprintId).then((res) => {
-      if (!cancelled) setHistory(res.data?.history ?? []);
+      if (cancelled) return;
+      if (!res.data || res.error) setError(res.error || 'Please try again.');
+      else {
+        setError(null);
+        setHistory(res.data.history);
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [blueprintId, semanticRevision]);
+  }, [blueprintId, semanticRevision, attempt]);
 
   // Desktop: a rail at the canvas's left. Phones (audit FL-26): a sheet over the foot of the
   // canvas, as the selection's panel is, so the canvas keeps the screen's width.
@@ -293,7 +307,11 @@ function BuildTimeline({ blueprintId, semanticRevision, onClose }: { blueprintId
           <X className="h-4 w-4" aria-hidden="true" />
         </button>
       </div>
-      {history.length === 0 ? (
+      {error ? (
+        <LoadFailure compact title="Couldn’t load the timeline" message={error} onRetry={() => { setError(null); setHistory(null); setAttempt(n => n + 1); }} />
+      ) : history === null ? (
+        <p role="status" className="text-xs text-gray-500 dark:text-slate-400">Loading changes…</p>
+      ) : history.length === 0 ? (
         <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">No changes yet — every edit (yours and the AI's) lands here.</p>
       ) : (
         <ol className="space-y-1.5">

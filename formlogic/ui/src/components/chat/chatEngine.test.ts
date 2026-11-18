@@ -475,8 +475,8 @@ describe('normalizeToolActivity', () => {
 
   it('links a new SoftN app to its workspace, carrying the request AI Studio is to build', () => {
     expect(
-      normalizeToolActivity({ type: 'tool_result', name: 'create_softn_app', status: 'done', result: { app: { id: 'a-7', name: 'Recipes', slug: 'recipes' }, version: 1, request: 'A recipe box with favourites.', workspaceUrl: '/apps/a-7/softn' } })
-    ).toMatchObject({ label: 'Create your SoftN app', link: { kind: 'softnApp', id: 'a-7', brief: 'A recipe box with favourites.' } });
+      normalizeToolActivity({ type: 'tool_result', name: 'create_softn_app', status: 'done', result: { app: { id: 'a-7', name: 'Recipes', slug: 'recipes' }, version: 1, request: 'A recipe box with favourites.', workspaceUrl: '/apps/a-7/web' } })
+    ).toMatchObject({ label: 'Create your web app', link: { kind: 'softnApp', id: 'a-7', brief: 'A recipe box with favourites.' } });
     // No request: the workspace still opens, without anything to build.
     const bare = normalizeToolActivity({ type: 'tool_result', name: 'create_softn_app', status: 'done', result: { app: { id: 'a-8' }, request: '' } });
     expect(bare?.link).toEqual({ kind: 'softnApp', id: 'a-8' });
@@ -485,7 +485,7 @@ describe('normalizeToolActivity', () => {
 
   it('links a change to a SoftN app to its workspace, as a request for AI Studio to carry out on the app as it is', () => {
     expect(
-      normalizeToolActivity({ type: 'tool_result', name: 'edit_softn_app', status: 'done', result: { app: { id: 'a-7', name: 'Recipes' }, version: 4, request: 'Add a dark theme.', edit: true, workspaceUrl: '/apps/a-7/softn' } })
+      normalizeToolActivity({ type: 'tool_result', name: 'edit_softn_app', status: 'done', result: { app: { id: 'a-7', name: 'Recipes' }, version: 4, request: 'Add a dark theme.', edit: true, workspaceUrl: '/apps/a-7/web' } })
     ).toMatchObject({ label: 'Hand the change to AI Studio', link: { kind: 'softnApp', id: 'a-7', brief: 'Add a dark theme.', edit: true } });
   });
 
@@ -800,6 +800,15 @@ describe('sendChatTurn inside the limits', () => {
     const { messages } = sentBody(fetchFn);
     expect(messages.length).toBeLessThanOrEqual(50);
     expect(messages.at(-1)).toEqual(prompt);
+  });
+
+  it('passes the framework-specific creation tools to the Create app conversation', async () => {
+    const fetchFn = vi.fn(async () => siteReply());
+    await sendChatTurn(turn({ pageContext: { kind: 'createApp' } }), prefsDeps(prefs(), { fetchFn }));
+    const body = sentBody(fetchFn);
+    expect(body).toMatchObject({ tools: true });
+    expect(body.messages.at(-1)?.content).toContain('create_softn_app');
+    expect(body.messages.at(-1)?.content).toContain('vue');
   });
 
   it('trims after the page context is added, so the hint is counted and kept', async () => {

@@ -14,7 +14,7 @@ test('Coffee.Dating native import, ZIPP backend and database administration', as
   await page.getByText('Hosting & app tools', { exact: true }).click();
   await page.getByRole('button', { name: 'Native app hosting', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Native app hosting', exact: true });
-  await expect(dialog.getByRole('button', { name: 'Import .softn project', exact: true })).toBeEnabled();
+  await expect(dialog.getByRole('button', { name: 'Import project ZIP', exact: true })).toBeEnabled();
   await dialog.getByLabel('Import native app', { exact: true }).setInputFiles(resolve('../../../coffee_dating/Coffee-Dating-Cafe-0.5.0.softn'));
   await expect(dialog.getByRole('heading', { name: 'Coffee.Dating', exact: true })).toBeVisible();
   await expect(dialog.getByRole('combobox', { name: 'Visitor access', exact: true })).toHaveValue('application');
@@ -42,7 +42,7 @@ test('Coffee.Dating native import, ZIPP backend and database administration', as
   await page.goto(`/apps/${app.id}/studio/data`);
   const database = page.getByRole('region', { name: 'App database tables', exact: true });
   await expect(database.getByRole('button', { name: /^Browse .* records$/ })).toHaveCount(28);
-  await expect(page.getByRole('navigation', { name: 'App Studio sections', exact: true })).toContainText('28 database tables');
+  await expect(database).toContainText('28 SQLite tables');
   await expect(page.getByText('No forms yet', { exact: true })).toHaveCount(0);
   await database.getByRole('searchbox', { name: 'Search database tables', exact: true }).fill('users');
   await database.getByRole('button', { name: 'Browse users records', exact: true }).click();

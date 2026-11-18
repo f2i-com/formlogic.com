@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
@@ -8,6 +9,7 @@ import { Mail, CheckCircle2, AlertCircle } from 'lucide-react';
 import { usePublicConfig } from '../hooks/usePublicConfig';
 
 export function ForgotPassword() {
+  useDocumentTitle('Password recovery');
   const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState(false);
@@ -35,13 +37,13 @@ export function ForgotPassword() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-transparent flex items-center justify-center p-6 relative overflow-hidden">
+    <main className="min-h-[100dvh] bg-gray-50 dark:bg-transparent flex items-center justify-center p-4 sm:p-6 relative overflow-hidden">
       {/* Brand background treatment shared with Login/Signup */}
       <div className="absolute top-0 right-0 w-96 h-96 bg-primary-500/10 rounded-full blur-[120px] pointer-events-none" aria-hidden="true" />
       <div className="absolute bottom-0 left-0 w-72 h-72 bg-primary-500/10 rounded-full blur-[100px] pointer-events-none" aria-hidden="true" />
       <div className="w-full max-w-[400px] relative z-10">
         <div className="flex justify-center mb-8"><Link to="/"><Logo size="lg" /></Link></div>
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5 sm:p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20">
           {!emailConfigured ? (
             // Email isn't set up on this instance (e.g. a fresh self-host with no SMTP), so an
             // automated reset link can't be sent. Point the user at the support address instead.
@@ -118,7 +120,7 @@ export function ForgotPassword() {
           )}
         </div>
       </div>
-    </div>
+    </main>
   );
 }
 

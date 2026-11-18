@@ -1327,6 +1327,7 @@ class MySQLConnection
                 custom_provider_id VARCHAR(128) NULL,
                 chat_tool_mode VARCHAR(8) NOT NULL DEFAULT 'auto',
                 desktop_reasoning VARCHAR(16) NULL,
+                custom_tool_connection CHAR(64) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -2881,6 +2882,9 @@ class MySQLConnection
         // Per-user default reasoning effort for the Codex/ChatGPT desktop connector.
         if ($pdo->query("SHOW COLUMNS FROM user_ai_settings LIKE 'desktop_reasoning'")->rowCount() === 0) {
             $pdo->exec('ALTER TABLE user_ai_settings ADD COLUMN desktop_reasoning VARCHAR(16) NULL AFTER chat_tool_mode');
+        }
+        if ($pdo->query("SHOW COLUMNS FROM user_ai_settings LIKE 'custom_tool_connection'")->rowCount() === 0) {
+            $pdo->exec('ALTER TABLE user_ai_settings ADD COLUMN custom_tool_connection CHAR(64) NULL');
         }
 
         // Tenant-scoped idempotency keys (audit FL-08): these gates were globally UNIQUE on

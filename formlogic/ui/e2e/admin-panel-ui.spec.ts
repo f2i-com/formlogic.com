@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+test.use({ serviceWorkers: 'block' });
+
 // Browser-only fixtures: no notices, account changes, or upgrades reach a real server.
 const user = { id: 'admin-preview', email: 'admin@example.test', name: 'Site administrator', isAdmin: true, mfaEnabled: true };
 const account = { id: 'user-preview', email: 'lance@example.test', name: 'Lance', plan: 'free', isAdmin: false, isDemo: false, online: true, apps: [], forms: [], flows: [], createdAt: '2026-09-01' };
@@ -54,9 +56,16 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
           await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
           await page.getByRole('button', { name: 'Discard changes', exact: true }).click();
           await expect(price).toHaveValue('5.00');
-          await page.getByRole('navigation', { name: 'Platform settings' }).getByRole('link', { name: 'Usage limits' }).click();
+          const platform = page.getByRole('navigation', { name: 'Platform settings' });
+          const choose = async (id: string, label: string) => {
+            const picker = platform.getByRole('combobox', { name: 'Platform setting' });
+            if (await picker.isVisible()) await picker.selectOption(id);
+            else await platform.getByRole('link', { name: label, exact: true }).click();
+          };
+          await choose('allowances', 'Usage limits');
           await expect(page.getByRole('heading', { name: 'AI & credits allowances' })).toBeInViewport();
-          await page.getByRole('navigation', { name: 'Platform settings' }).getByRole('link', { name: 'Plans & AI' }).click();
+          await choose('plans', 'Plans & AI');
+          await expect(page.getByRole('heading', { name: 'Plans & bring your own AI' })).toBeVisible();
         }
         await page.screenshot({ path: testInfo.outputPath(`${label.replaceAll(' ', '-')}.png`), fullPage: true });
       }

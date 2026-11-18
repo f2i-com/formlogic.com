@@ -4,9 +4,8 @@
 // page. Here the .zip of a build becomes that project, and a new app is made from one.
 import { strFromU8, unzipSync } from 'fflate';
 import { api } from './api';
-import { NATIVE_LIMITS, type NativeProject } from './nativeHosting';
+import { NATIVE_LIMITS, type NativeProject, type NativeProjectBytes } from './nativeHosting';
 import { useAppStore } from '../stores/appStore';
-import type { App } from '../types/app';
 
 /**
  * A built file a JavaScript app keeps, by path (the server holds uploads to the same rule,
@@ -128,6 +127,41 @@ function unpack(zip: Uint8Array, wanted: ZipEntry[], label: string): Uint8Array[
   });
 }
 
+export type AppArchiveKind = 'editable' | 'site' | 'pack' | 'application-package';
+
+/** Route by the outer project's contents before handing it to its own validator.
+ * A marketplace pack may itself carry editable projects and HTML: its install review comes first. */
+export async function appArchiveKind(file: File): Promise<AppArchiveKind> {
+  if (file.size > ARCHIVE_BYTES) throw new Error('Choose a ZIP under 80 MB.');
+  const zip = new Uint8Array(await file.arrayBuffer());
+  const entries = listEntries(zip, file.name);
+  const names = new Set(entries.map(entry => entry.path));
+  const manifests = entries.filter(entry => entry.path === 'manifest.json' || entry.path.endsWith('/manifest.json'));
+  const root = manifests.find(entry => entry.path === 'manifest.json');
+  // Read a bounded amount of metadata. Actual code and assets are opened by the chosen importer.
+  const candidates = root ? [root] : manifests;
+  if (candidates.length > 24) throw new Error('Choose one app or a FormLogic export to import.');
+  for (const entry of candidates) {
+    if (entry.size > 200000) {
+      if (entry === root && names.has('pack.json')) return names.has('install.json') && !names.has('signature.json') ? 'pack' : 'application-package';
+      if (entry === root && !names.has('index.html')) return 'pack';
+      continue;
+    }
+    let manifest: Record<string, unknown> | null;
+    const bytes = unpack(zip, [entry], file.name)[0];
+    try { manifest = record(JSON.parse(strFromU8(bytes))); } catch { continue; }
+    if (!manifest) continue;
+    if (entry === root && manifest.kind === 'formlogic.applicationPackage') return 'application-package';
+    if (entry === root && ('packMeta' in manifest || ('formatVersion' in manifest && 'forms' in manifest))) return 'pack';
+    if (manifest.site) return 'site';
+    if ('main' in manifest || 'server' in manifest || 'engine' in manifest) return 'editable';
+  }
+  // An unsigned application-package archive can omit manifest.json. The server validates its pack.json.
+  if (names.has('pack.json') && (names.has('signature.json') || !entries.some(entry => /(^|\/)index\.html$/.test(entry.path)))) return 'application-package';
+  if (entries.some(e => /(^|\/)index\.html$/.test(e.path) || /(^|\/)package\.json$/.test(e.path))) return 'site';
+  return root ? 'pack' : 'editable';
+}
+
 function base64(bytes: Uint8Array): string {
   let binary = '';
   for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
@@ -175,6 +209,9 @@ function builtSite(entries: ZipEntry[], name: string): Plan {
     .sort((a, b) => depth(a.path) - depth(b.path) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   if (!pages.length) throw new Error('This zip has no index.html: zip the folder your build made (dist or build).');
   const root = pages[0].path.slice(0, -'index.html'.length);
+  if (entries.some(entry => /(^|\/)(?:private\/config\.json|(?:server|backend)\/.*\.(?:logic|sql|[cm]?[jt]s|py))$/i.test(entry.path))) {
+    throw new Error('This ZIP contains a private backend. Include its project manifest to import the backend, or upload only the public build folder.');
+  }
   return {
     manifest: `${JSON.stringify({ name, version: '1.0.0', site: { entry: 'index.html' } }, null, 2)}\n`,
     text: [],
@@ -188,7 +225,7 @@ function builtSite(entries: ZipEntry[], name: string): Plan {
  * back as the project it was. Every refusal names the file it is about, and the limits are the
  * server's, read here first so a zip it would refuse makes no app.
  */
-export async function importSiteBuild(file: File, name: string, notes: string[] = []): Promise<NativeProject> {
+export async function importSiteBuild(file: File, name: string, notes: string[] = []): Promise<NativeProjectBytes> {
   if (file.size > ARCHIVE_BYTES) throw new Error(`${file.name} is larger than a build's zip can be (${ARCHIVE_BYTES / MB} MB).`);
   let zip: Uint8Array;
   // A file moved or deleted since it was chosen cannot be read, and the browser's own words for that name no file.
@@ -428,20 +465,27 @@ async function removeApp(id: string): Promise<boolean> {
  * taken back: without its build it has nothing to show, and no starter stands in for one.
  * `warnings`: what in the build will not work when hosted (siteBuildWarnings).
  */
-export async function createSiteApp(name: string, file: File): Promise<{ app: App; warnings: string[] }> {
+export async function createSiteApp(name: string, file: File) {
   // The demo keeps its apps in this browser; a hosted app runs on the server, so nothing is created.
   if (api.isDemoMode()) throw new Error(SITE_NEEDS_ACCOUNT);
   const named = name.trim();
   if (!named) throw new Error('Give the app a name.');
   const notes: string[] = [];
   const project = await importSiteBuild(file, named, notes);
+  return createSiteProject(named, project, notes);
+}
+
+/** Install a validated build, including an optional private backend, as one operation. */
+export async function createSiteProject(named: string, project: NativeProject, notes: string[]) {
   // Kept as a SoftN app's project is, so it is one to the workspace, the app list and the server.
   const app = await useAppStore.getState().createApp({ name: named, settings: { softnApp: true } });
   if (!app) throw new Error(useAppStore.getState().error || 'Could not create the app. Please try again.');
   let failure: string | null = null;
+  let saved = project;
   try {
     const result = await api.saveNativeProject(app.id, project, 0, { how: 'upload' });
     if (result.error || !result.data) failure = result.error || 'The app\'s files could not be saved. Please try again.';
+    else saved = result.data.project;
   } catch (reason) {
     failure = reason instanceof Error && reason.message ? reason.message : 'The app\'s files could not be saved. Please try again.';
   }
@@ -449,5 +493,5 @@ export async function createSiteApp(name: string, file: File): Promise<{ app: Ap
     if (await removeApp(app.id)) throw new Error(failure);
     throw new Error(`${failure} An empty app named ${app.name} was left in Apps: delete it there before trying again.`);
   }
-  return { app, warnings: [...notes, ...siteBuildWarnings(project)] };
+  return { app, project: saved, warnings: [...notes, ...siteBuildWarnings(project)] };
 }

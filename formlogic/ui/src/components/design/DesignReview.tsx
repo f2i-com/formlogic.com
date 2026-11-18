@@ -9,10 +9,13 @@ import { ApiChoice } from './designParts';
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-export function DesignReview({ design, problems, access, onChange, onFix, onClose, onCreate, creating, waiting, error }: {
+export type BackendClient = 'web' | 'classic' | 'site';
+
+export function DesignReview({ design, problems, access, client, onChange, onFix, onClose, onCreate, creating, waiting, error }: {
   design: DatabaseDesign;
   problems: DesignProblem[];
   access?: 'members' | 'application';
+  client: BackendClient;
   onChange: (design: DatabaseDesign) => void;
   /** Go to what a problem is about. */
   onFix: (problem: DesignProblem) => void;
@@ -51,9 +54,12 @@ export function DesignReview({ design, problems, access, onChange, onFix, onClos
           <p className="mb-2 font-mono text-sm font-semibold text-slate-900 dark:text-white">{table.name || 'unnamed'}</p>
           <ApiChoice design={design} table={table} onChange={api => onChange({ ...design, tables: design.tables.map(other => other.id === table.id ? { ...other, api } : other) })} />
         </li>)}</ul>
-        <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
-          The page calls them at <span className="break-all font-mono text-xs">{STARTER_ORIGIN}{routes[0]?.path ?? '/api/…'}</span> with <span className="font-mono text-xs">softn.net.fetch</span>; each answers JSON: a list as <span className="font-mono text-xs">rows</span>, one row as <span className="font-mono text-xs">row</span>. AI Studio can connect the page to them.
-        </p>
+        {routes.length > 0 && <p className="mt-3 break-words text-sm leading-6 text-slate-600 dark:text-slate-300">
+          {client === 'web' ? <>In a page module, <code>import {'{ api }'} from 'softn:api'</code> and call <code>api.fetch</code> with the route path, such as <code>{routes[0].path}</code>.</>
+            : client === 'site' ? <>Use the page’s <code>fetch</code> with the route path, such as <code>{routes[0].path}</code>.</>
+            : <>Call <code>softn.net.fetch</code> with the declared API address, such as <code>{STARTER_ORIGIN}{routes[0].path}</code>.</>}
+          {' '}Choose each route’s HTTP method in the request options. The API tab lets you try your routes after saving.
+        </p>}
 
         <details className="mt-4 rounded-xl border border-slate-200 dark:border-slate-700">
           <summary className="flex min-h-11 cursor-pointer items-center gap-2 px-3 text-sm font-medium text-slate-800 dark:text-slate-100"><FileCode2 className="h-4 w-4 text-slate-400" aria-hidden="true" />What is made</summary>

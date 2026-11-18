@@ -104,11 +104,11 @@ describe('a computer\'s listing', () => {
   });
 
   it('cancels a turn with keepalive, so it is sent as the page closes', async () => {
-    const fetchMock = vi.fn(async () => json({ cancelled: true }));
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(json({ cancelled: true }));
     vi.stubGlobal('fetch', fetchMock);
     await api.cancelDesktopAiRequest('req-1');
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(new URL(url, 'http://localhost').pathname).toBe('/api/desktop/ai/requests/req-1/cancel');
-    expect([init.method, init.keepalive]).toEqual(['POST', true]);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(new URL(url instanceof Request ? url.url : url, 'http://localhost').pathname).toBe('/api/desktop/ai/requests/req-1/cancel');
+    expect(init).toMatchObject({ method: 'POST', keepalive: true });
   });
 });

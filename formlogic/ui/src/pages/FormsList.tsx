@@ -1071,8 +1071,8 @@ export function FormsList() {
             <Button variant="outline" size="sm" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />} aria-label="Templates" title="Install or manage templates">
               <span className="hidden @2xl/header:inline">Templates</span>
             </Button>
-            <Button onClick={openNewForm} size="sm" leftIcon={<Plus className="h-4 w-4" />} aria-label="New form" title="New form">
-              <span className="hidden @lg/header:inline">New form</span>
+            <Button onClick={selectedAppId ? () => navigate(`/apps/${selectedAppId}/studio/data`) : openNewForm} size="sm" leftIcon={<Plus className="h-4 w-4" />} aria-label={selectedAppId ? 'Add a form in App Studio' : 'New form'} title={selectedAppId ? 'Add a form in App Studio' : 'New form'}>
+              <span className="hidden @lg/header:inline">{selectedAppId ? 'Add app form' : 'New form'}</span>
             </Button>
           </div>
         }
@@ -1303,11 +1303,19 @@ export function FormsList() {
                     />
                   ) : filtersActive ? (
                     clearFiltersEmptyState
+                  ) : selectedApp ? (
+                    <EmptyState
+                      icon={Inbox}
+                      title="This app has no forms yet"
+                      description={`Choose which forms belong to ${selectedApp.name}.`}
+                      className={EMPTY_SHELL_CLASS}
+                      action={<Button onClick={() => navigate(`/apps/${selectedApp.id}/forms`)}>Manage app forms</Button>}
+                    />
                   ) : (
                     <EmptyState
                       icon={Inbox}
-                      title="No forms yet"
-                      description="Create your first form from scratch, or start faster with a ready-made template."
+                      title={forms.length ? 'No standalone forms' : 'No forms yet'}
+                      description={forms.length ? 'Open an app above to see its forms, or create a standalone form here.' : 'Create your first form from scratch, or start with a template.'}
                       className={EMPTY_SHELL_CLASS}
                       action={
                         <div className="flex flex-wrap items-center justify-center gap-2">

@@ -14,9 +14,10 @@ import { DATA_VIEWS, VIEW_LABELS, count, resolveRow, rowId, type DataView, type 
 import { StructureView } from './StructureView';
 import { focusRing, line, muted, smallButton, strong } from './styles';
 import { useTablePage } from './useTablePage';
-import { useViewport } from './useViewport';
+import type { Viewport } from './useViewport';
 
 interface TableWorkspaceProps {
+  viewport: Viewport;
   appId: string;
   appSlug?: string;
   version: number;
@@ -46,10 +47,9 @@ interface TableWorkspaceProps {
   onChanged(): void;
 }
 
-export function TableWorkspace({ appId, appSlug, version, table, tables, view, readOnly: readOnlyProp, structure, onStructure, state, limit, onLimit, importPanel, onView, onState, onOpenTable, onRows, onChanged }: TableWorkspaceProps) {
+export function TableWorkspace({ viewport, appId, appSlug, version, table, tables, view, readOnly: readOnlyProp, structure, onStructure, state, limit, onLimit, importPanel, onView, onState, onOpenTable, onRows, onChanged }: TableWorkspaceProps) {
   const base = useId();
   const name = table.name;
-  const viewport = useViewport();
   // Import is the page's own panel: without one there is no such view.
   const views = importPanel ? DATA_VIEWS : DATA_VIEWS.filter(each => each !== 'import');
   const shown = views.includes(view) ? view : 'browse';
@@ -114,8 +114,8 @@ export function TableWorkspace({ appId, appSlug, version, table, tables, view, r
   return <section aria-label={`Table ${name}`} className="flex min-w-0 flex-1 flex-col lg:min-h-0">
     <div className={cn('flex min-h-10 flex-none flex-wrap items-center gap-x-2.5 gap-y-1 border-b px-3 py-[5px]', line)}>
       {/* Below a wide screen the picker above already names the table and counts its rows: the heading is there for a screen reader, and the room goes to the tabs and Add row. */}
-      <h2 className={cn('min-w-0 max-w-full truncate font-mono text-sm font-semibold max-lg:sr-only', strong)} title={name}>{name}</h2>
-      <span className={cn('text-xs max-lg:sr-only', muted)}>{[typeof rows === 'number' ? count(rows, 'row') : '', typeof columns === 'number' ? count(columns, 'column') : ''].filter(Boolean).join(' · ')}</span>
+      <h2 className={cn('min-w-0 max-w-full truncate font-mono text-sm font-semibold', viewport !== 'desktop' && 'sr-only', strong)} title={name}>{name}</h2>
+      <span className={cn('text-xs', viewport !== 'desktop' && 'sr-only', muted)}>{[typeof rows === 'number' ? count(rows, 'row') : '', typeof columns === 'number' ? count(columns, 'column') : ''].filter(Boolean).join(' · ')}</span>
       {readOnly && <span className="rounded border border-slate-300 px-1.5 py-px text-[11px] font-medium text-slate-600 dark:border-slate-600 dark:text-slate-300">Read-only</span>}
       {/* The tabs scroll sideways if they ever outgrow their line; Add row moves to the next one when there is no room beside them. */}
       <div role="tablist" aria-label="Table views" className="flex min-w-0 max-w-full gap-0.5 overflow-x-auto sm:ml-1.5" onKeyDown={onTabKey}>

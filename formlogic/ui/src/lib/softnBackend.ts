@@ -23,6 +23,21 @@ export interface SoftnBackend {
  */
 export const STARTER_ORIGIN = 'https://app.example';
 
+/** A first editable API with no tables. Preserve any private files already in the project. */
+export function customApiProject(project: NativeProject): NativeProject {
+  let entry = 'server/main.logic';
+  for (let n = 2; Object.hasOwn(project.files, entry); n++) entry = `server/main-${n}.logic`;
+  return withBackend(project, {
+    server: {
+      entry, requires: { apiVersion: 1, capabilities: ['sql'] },
+      database: { kind: 'private-sqlite', migrations: [] },
+      routes: [{ method: 'GET', path: '/api/status', handler: 'appStatus', transaction: 'read', authorization: 'anonymous' }],
+    },
+    config: { server: { allowedOrigins: [STARTER_ORIGIN] } },
+    files: { [entry]: 'function appStatus(req) {\n  return { status: 200, body: { status: "ok" } };\n}\n' },
+  });
+}
+
 const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
 function manifestOf(project: NativeProject): Record<string, unknown> {

@@ -12,7 +12,7 @@ import { Button } from '../ui/Button';
 import { BottomSheet } from '../ui/BottomSheet';
 import { designProblems, designRoutes, readDesign, EMPTY_DESIGN, tableById, type DatabaseDesign, type DesignProblem } from '../../lib/databaseDesign';
 import { DesignDiagram } from './DesignDiagram';
-import { DesignReview } from './DesignReview';
+import { DesignReview, type BackendClient } from './DesignReview';
 import { MermaidView } from './MermaidView';
 import { SqlImport } from './SqlImport';
 import { TableEditor } from './TableEditor';
@@ -28,10 +28,11 @@ function readKept(appId: string): DatabaseDesign | null {
   catch { return null; }
 }
 
-export function DatabaseDesigner({ appId, appName, access, mode, onMode, onClose, onCreate, waiting }: {
+export function DatabaseDesigner({ appId, appName, access, client = 'classic', mode, onMode, onClose, onCreate, waiting }: {
   appId: string;
   appName: string;
   access?: 'members' | 'application';
+  client?: BackendClient;
   mode: DesignerMode;
   onMode: (mode: DesignerMode) => void;
   onClose: () => void;
@@ -151,7 +152,7 @@ export function DatabaseDesigner({ appId, appName, access, mode, onMode, onClose
 
     {importing && <SqlImport design={design} access={access} onClose={() => setImporting(false)}
       onApply={(next, said) => { change(next); setSelected(null); setImporting(false); setNotice(said); if (mode !== 'diagram') onMode('diagram'); }} />}
-    {reviewing && <DesignReview design={design} problems={problems} access={access} onChange={change} onFix={fix} onClose={() => setReviewing(false)}
+    {reviewing && <DesignReview design={design} problems={problems} access={access} client={client} onChange={change} onFix={fix} onClose={() => setReviewing(false)}
       onCreate={() => void create()} creating={creating} waiting={waiting} error={error} />}
   </div>;
 }

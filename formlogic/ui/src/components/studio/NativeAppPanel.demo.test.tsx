@@ -65,7 +65,7 @@ it('the server’s readOnly shows the project without import, editors, publishin
   expect(note()).toContain('read-only');
   expect(document.querySelector('[role="alert"]')).toBeNull();
   expect(document.querySelector('input[aria-label="Import native app"]')).toBeNull();
-  expect(button('Import .softn project')).toBeUndefined();
+  expect(button('Import project ZIP')).toBeUndefined();
   expect(button('Open Visual Builder')).toBeUndefined();
   expect(button('Open AI Studio')).toBeUndefined();
   expect(button('Publish changes')).toBeUndefined();
@@ -121,7 +121,7 @@ it('an owner keeps every control', async () => {
   getProject.mockResolvedValue({ data: { available: true, ready: true, preflight: { ok: true, checks: [] }, project: project(2), readOnly: false } });
   await mount();
   expect(note()).toBe('');
-  expect(button('Import .softn project')).toBeDefined();
+  expect(button('Import project ZIP')).toBeDefined();
   expect(button('Open Visual Builder')).toBeDefined();
   expect(button('Publish changes')).toBeDefined();
   expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.disabled).toBe(false);

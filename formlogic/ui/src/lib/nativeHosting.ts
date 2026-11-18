@@ -227,11 +227,13 @@ export interface NativeStructure { table: string; rows: number; columns: NativeS
  * HTML pages), page logic (.js, or .logic; .py), stylesheets, JSON, seed data, and a backend's
  * .logic and .sql. All of it is text the app's frame or runner is handed, never a file this site serves.
  */
-const SOURCE_KINDS = /\.(html|ui|js|logic|py|css|json|sql|xdb)$/;
-const SOURCE_PATH = /^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|logic|py|css|json|sql|xdb)$/;
+const SOURCE_KINDS = /\.(html|ui|js|jsx|vue|mjs|ts|logic|py|css|json|sql|xdb)$/;
+const isHostConfig = (path: string) => path.toLowerCase() === 'private/config.json';
+const SOURCE_PATH = /^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|jsx|vue|mjs|ts|logic|py|css|json|sql|xdb)$/;
 /** Why a name cannot be a source file of a hosted project, or null when it can: the rule an upload is held to. */
 export function sourceNameProblem(path: string): string | null {
-  if (!SOURCE_KINDS.test(path)) return 'A source file ends in .html, .ui, .js, .logic, .py, .css, .json, .sql or .xdb.';
+  if (isHostConfig(path)) return 'This name is reserved for the host key file. Choose it separately when importing a database.';
+  if (!SOURCE_KINDS.test(path)) return 'A source file ends in .html, .ui, .js, .jsx, .vue, .mjs, .ts, .logic, .py, .css, .json, .sql or .xdb.';
   if (!SOURCE_PATH.test(path) || path.includes('..')) return 'A file name is letters, digits, - _ and . with folders before it (pages/about.html), and never two dots together.';
   return null;
 }
@@ -261,8 +263,8 @@ export function backendProblem(manifest: Record<string, unknown>, files: Record<
   const requires = record(server?.requires);
   const database = record(server?.database);
   const lead = 'This app\'s backend is not one FormLogic runs';
-  const needs = 'FormLogic runs a SoftN backend whose manifest.json server block has "requires": { "apiVersion": 1, "capabilities": [...] }, an "entry" under server/ ending in .logic, and "database": { "kind": "private-sqlite" }.';
-  if (!server || requires?.apiVersion !== 1) return `${lead}: it was written for another SoftN host. ${needs}`;
+  const needs = 'A hosted backend needs a project whose manifest.json server block has "requires": { "apiVersion": 1, "capabilities": [...] }, an "entry" under server/ ending in .logic, and "database": { "kind": "private-sqlite" }.';
+  if (!server || requires?.apiVersion !== 1) return `${lead}: its API version is unsupported. ${needs}`;
   // JSON reads 1.0 as 1 here, but the server reads it as a fraction and refuses it.
   if (typeof files['manifest.json'] === 'string' && /"apiVersion"\s*:\s*1[.eE]/.test(files['manifest.json'])) return `${lead}: write its "apiVersion" as 1, a whole number.`;
   const entry = server.entry;
@@ -273,8 +275,17 @@ export function backendProblem(manifest: Record<string, unknown>, files: Record<
   if (unknown.length) return `${lead}: it asks for ${unknown.map(String).join(', ')}, which this host does not offer (it offers ${NATIVE_CAPABILITIES.join(', ')}).`;
   if (record(server.sync)?.enabled) return `${lead}: it turns on server sync, which this host does not offer.`;
   if (database?.kind !== 'private-sqlite') return `${lead}: it needs "database": { "kind": "private-sqlite" }. ${needs}`;
-  const missing = (Array.isArray(database.migrations) ? database.migrations : []).find(path => typeof path !== 'string' || !path.startsWith('server/migrations/') || !path.endsWith('.sql') || !(path in files));
-  if (missing !== undefined) return `${lead}: its migration ${String(missing)} is not a server/migrations/….sql file in the app.`;
+  const migrations = database.migrations ?? [];
+  if (!Array.isArray(migrations)) return `${lead}: server.database.migrations must be a list of SQL files under server/migrations/.`;
+  const seen = new Set<string>();
+  for (const path of migrations) {
+    if (typeof path !== 'string') return `${lead}: each migration must name a SQL file under server/migrations/.`;
+    if (!path.startsWith('server/migrations/') || !path.endsWith('.sql') || !Object.hasOwn(files, path)) {
+      return `${lead}: its migration ${path} is not a server/migrations/….sql file in the app.`;
+    }
+    if (seen.has(path)) return `${lead}: ${path} is listed more than once in server.database.migrations.`;
+    seen.add(path);
+  }
   return null;
 }
 
@@ -285,19 +296,26 @@ export function backendProblem(manifest: Record<string, unknown>, files: Record<
 export async function importNativeProject(file: File): Promise<NativeProjectBytes> {
   const { files, review } = reviewAppArchive(new Uint8Array(await file.arrayBuffer()));
   // FormLogic's own named backend actions belong to a Forms app's App Studio.
-  if (review.backend === 'actions') throw new Error('This file is a FormLogic app project with backend actions, not a SoftN app. Add it to a Forms app instead: open its App Studio, then Screens → Hosting & app tools.');
+  if (review.backend === 'actions') throw new Error('This project uses named backend actions. Import it from your Forms app in App Studio → Screens → Hosting & app tools.');
   const source: Record<string,string> = {};
   const assets: Record<string,string> = {};
+  const sourceDecoder = new TextDecoder('utf-8', { fatal: true });
   // The server's limits, read here first so a file it would refuse makes no app.
   let total = 0;
   for (const [path, bytes] of Object.entries(files)) {
+    // A previous host's key can accompany a database import, separately from its source.
+    if (isHostConfig(path)) continue;
     if (path.endsWith('.py') && PRIVATE_TREE.test(path)) throw new Error('Python is a client logic language; the app backend stays JavaScript.');
     // .xdb is the app's seed data: JSON text kept with it.
     if (SOURCE_KINDS.test(path)) {
       if (!SOURCE_PATH.test(path) || path.includes('..')) throw new Error(`${path}: this host keeps file names made of letters, digits, '-', '_' and '.' (never two dots together). Rename it and try again.`);
       if (bytes.length > NATIVE_LIMITS.sourceFileBytes) throw new Error(`${path} is larger than this host keeps (1.5 MB per source file).`);
       if (path.startsWith('server/migrations/') && path.endsWith('.sql') && bytes.length > NATIVE_LIMITS.migrationBytes) throw new Error(`${path} is larger than a migration may be (1 MB). Split it into two migrations.`);
-      source[path] = strFromU8(bytes);
+      try {
+        source[path] = sourceDecoder.decode(bytes);
+      } catch {
+        throw new Error(`${path} is not UTF-8 text. Save the source file as UTF-8 and import it again.`);
+      }
     } else if (path.startsWith('assets/')) {
       if (path.includes('..')) throw new Error(`${path}: this host keeps file names without two dots together. Rename it and try again.`);
       if (!HOSTED_MEDIA.test(path)) throw new Error(`${path} cannot be hosted with this app: its media can be pictures (PNG, JPEG, GIF, WebP, AVIF, ICO, BMP, SVG, HDR, EXR), sound (MP3, WAV, Ogg, Opus, AAC, FLAC, M4A), video (MP4, WebM), fonts (WOFF, WOFF2, TTF, OTF), 3D models (glTF, GLB, BIN, OBJ, STL, FBX), WebAssembly modules (WASM), and WGSL, text and Markdown files.`);
@@ -312,7 +330,7 @@ export async function importNativeProject(file: File): Promise<NativeProjectByte
       // a backend's data, and nothing under the private tree is ever advised into assets/, which
       // every visitor is sent.
       if (MEDIA_BY_KIND.test(path) && !PRIVATE_TREE.test(path) && !path.startsWith('site/') && !path.includes('..') && HOSTED_MEDIA.test(`assets/${path}`)) throw new Error(`${path} is a kind of file this host cannot keep with an app where it is: an app's pictures, sound, video, fonts, models and WebAssembly modules go under assets/. Move it to assets/${path}, change what names it (manifest.json's "icon", or the page that uses it), and try again.`);
-      throw new Error(`${path} is a kind of file this host cannot keep with an app. Remove it from the .softn file and try again.`);
+      throw new Error(`${path} is a kind of file this host cannot keep with an app. Remove it from the project ZIP and try again.`);
     } else continue;
     total += bytes.length;
   }
@@ -337,7 +355,7 @@ export async function importNativeProject(file: File): Promise<NativeProjectByte
  * file's bytes are needed: a project from its owner's page has them read first (withMediaBytes).
  */
 export function exportNativeProject(project: NativeProjectBytes): Uint8Array {
-  const files: Record<string, Uint8Array> = Object.fromEntries(Object.entries(project.files).map(([path, source]) => [path, strToU8(source)]));
+  const files: Record<string, Uint8Array> = Object.fromEntries(Object.entries(project.files).filter(([path]) => !isHostConfig(path)).map(([path, source]) => [path, strToU8(source)]));
   for (const [path, encoded] of Object.entries(project.assets)) files[path] = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
   return zipSync(files);
 }

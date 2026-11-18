@@ -376,6 +376,21 @@ describe('send path', () => {
     });
   });
 
+  it('starts a new Create app brief in its own thread and retains the old one', async () => {
+    await renderWidget('/apps/new');
+    await openPanel();
+    await send('summarise this existing project');
+    const oldTurn = h.sendChatTurn.mock.calls[0][0] as SendChatTurnOptions;
+    await act(async () => useUIStore.setState({ chatLaunch: { text: 'Make a Vue app', newThread: true } }));
+    await flush();
+    const newTurn = h.sendChatTurn.mock.calls[1][0] as SendChatTurnOptions;
+    expect(newTurn.pageContext).toEqual({ kind: 'createApp' });
+    expect(newTurn.messages).toEqual([{ role: 'user', content: 'Make a Vue app' }]);
+    expect(newTurn.threadId).not.toBe(oldTurn.threadId);
+    expect((await getChatStore('u1').listMessages(oldTurn.threadId)).messages[0].content).toBe('summarise this existing project');
+    expect(useUIStore.getState().chatLaunch).toBeNull();
+  });
+
   it('appends the user message + streamed assistant reply to the store and transcript', async () => {
     await renderWidget();
     await openPanel();

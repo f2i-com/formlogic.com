@@ -68,7 +68,7 @@ export function AdminAppPaymentsCard() {
       className="@container"
       title="App payments"
       icon={<Wallet className="h-4 w-4" />}
-      description="SoftN apps can charge their visitors a few cents (a download, say) from a balance the visitors top up through this site's PayPal. The money is the site's, so only administrators' apps take payments. Payments also need the Plans switch above, and are off whenever BETA_MODE is on."
+      description="Hosted web apps can charge their visitors a few cents (a download, say) from a balance the visitors top up through this site's PayPal. The money is the site's, so only administrators' apps take payments. Payments also need the Plans switch above, and are off whenever BETA_MODE is on."
     >
       <div className="space-y-4" data-testid="admin-app-payments">
         <Switch label="Apps may take payments" description="Each app's owner still turns them on for their app, at prices up to what it declares." checked={draft.enabled} onChange={(on) => setDraft({ ...draft, enabled: on })} />

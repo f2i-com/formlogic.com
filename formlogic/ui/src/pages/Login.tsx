@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
@@ -13,6 +14,7 @@ import { welcomeStyle } from '../lib/appWelcome';
 import { AppWelcomeBanner, AppWelcomePanel } from '../components/auth/AppWelcome';
 
 export function Login() {
+  useDocumentTitle('Sign in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
@@ -132,7 +134,7 @@ export function Login() {
       )}
 
       {/* Right panel - Form */}
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-8">
+      <main className="min-w-0 flex-1 flex items-center justify-center p-6 sm:p-8">
         <div className="w-full max-w-[400px]">
           {welcome ? (
             <AppWelcomeBanner welcome={welcome} mode="login" className={split ? 'lg:hidden' : undefined} />
@@ -280,7 +282,7 @@ export function Login() {
             </Link>
           </p>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

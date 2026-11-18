@@ -1,15 +1,6 @@
-// The create-app entry (/apps/new): choose what to make — forms & data, a website or web app
-// (a hosted SoftN app), an app the person already has (a .softn file), or a JavaScript app they
-// have built (the .zip of its build) — then name it and land straight in its editor: creating and
-// editing share ONE surface (owner direction).
-//
-// AI readiness is checked in the background. Creation stays available while
-// optional connection controls expand in place, preserving the app draft.
-// Deliberately minimal: attaching existing forms happens in the studio's Data
-// step, companion apps are created from an app's Forms manager.
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { AppWindow, ArrowRight, Boxes, Braces, Check, ClipboardList, FileUp, HardDrive, Package, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { AppWindow, ArrowRight, Boxes, Check, ChevronDown, ClipboardList, FileUp, HardDrive, Package, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -17,7 +8,7 @@ import { Textarea } from '../../components/ui/Textarea';
 import { ConnectAiDoors } from '../../components/ai/ConnectAiDoors';
 import { VaultSetupWizard } from '../../components/vault/VaultSetupWizard';
 import { VaultUnlockDialog } from '../../components/vault/VaultUnlockDialog';
-import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
+import { getAiReadiness, type AiReadiness } from '../../client-runtime/flows/aiDefault';
 import { useAppStore } from '../../stores/appStore';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
@@ -27,50 +18,43 @@ import { useFocusIfInView } from '../../hooks/useFocusIfInView';
 import type { AppFormPrivacyDefault, AppKind } from '../../types/app';
 import { SoftnCreateForm } from './SoftnCreateForm';
 import { SiteCreateForm } from '../../components/apps/SiteCreateForm';
+import { WebAppStarter } from './WebAppStarter';
+import { CreateAppChat } from './CreateAppChat';
 
-type Build = 'forms' | 'softn' | 'upload' | 'site';
-
-/** The four things a person can make here, each with what it is in a sentence. */
-const BUILDS: ReadonlyArray<readonly [Build, string, string, typeof ClipboardList]> = [
-  ['forms', 'Forms & data', 'Collect records with forms, then add screens, automations and roles.', ClipboardList],
-  ['softn', 'Website or web app', 'Your own pages and logic, with a backend and database if it needs one. Built with SoftN.', AppWindow],
-  ['upload', 'Bring an app you have', 'Upload a SoftN app (.softn) and host it here, with or without its own backend.', FileUp],
-  ['site', 'JavaScript app', 'Upload a web app you have already built: the zip of its dist or build folder.', Braces],
-];
-
-/** What each choice leads to, under the heading. */
-const LEADS: Record<Build, string> = {
-  forms: 'Name it and step into the App Studio — a guided, skippable builder for data, screens, automations and access. Everything is editable later.',
-  softn: 'A website or web app with its own pages, hosted here. Build it with AI, or start from a working app and edit it visually.',
-  upload: 'Drop in a .softn file: it is checked as you choose it, keeps its own name unless you give it another, and opens ready to preview and publish.',
-  site: 'Built with Vite, React, Vue, Svelte or another tool? Name the app and upload the zip of the folder your build made: it is hosted here as it is, and opens running.',
+type Build = 'web' | 'forms' | 'upload';
+const builds = [
+  { type: 'web', label: 'Web app', hint: 'JavaScript, React or Vue', icon: AppWindow },
+  { type: 'forms', label: 'Forms app', hint: 'Forms and responses', icon: ClipboardList },
+  { type: 'upload', label: 'Upload ZIP', hint: 'Bring an existing app', icon: FileUp },
+] as const;
+const headings = {
+  web: ['Start with a web app', 'Choose a framework and open a working starter in your editor.'],
+  forms: ['Create a forms app', 'Name your app, then design the first form people will fill out.'],
+  upload: ['Upload an app ZIP', 'Choose an editable project or a browser-ready site with an index.html file.'],
 };
 
 export function AppCreateStart() {
   const navigate = useNavigate();
   const createApp = useAppStore((s) => s.createApp);
   const isDemo = useAuthStore((s) => !!s.user?.isDemo);
-  const [aiReady, setAiReady] = useState(false);
-  const [aiChecked, setAiChecked] = useState(false);
-  const [aiReason, setAiReason] = useState<string | null>(null);
-  // What the person makes: a forms & data app (the App Studio), a website or web app (a hosted
-  // SoftN app, with or without a backend of its own), an app they already have, uploaded, or a
-  // JavaScript app they have built, uploaded as the zip of its build.
-  // /apps/new?type=softn opens on the second, ?type=upload on the third, ?type=site on the fourth.
+  const [ai, setAi] = useState<AiReadiness | null>(null);
+  const aiReady = ai?.ready === true;
   const [searchParams] = useSearchParams();
   const requested = searchParams.get('type');
-  const [build, setBuild] = useState<Build>(requested === 'softn' || requested === 'upload' || requested === 'site' ? requested : 'forms');
+  const [manualStarted, setManualStarted] = useState(false);
+  const build: Build = requested === 'site' || requested === 'upload' ? 'upload'
+    : requested === 'forms' || (!requested && isDemo) ? 'forms' : 'web';
+  const showChat = aiReady && !isDemo && (requested === 'chat' || (!requested && !manualStarted));
   const [rechecking, setRechecking] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [formPrivacy, setFormPrivacy] = useState<AppFormPrivacyDefault>('plain');
   const [creating, setCreating] = useState(false);
   const createLock = useRef(false);
+  const [destination, setDestination] = useState<'form' | 'studio'>('form');
   const [appKind, setAppKind] = useState<AppKind>('internal');
   const [showVaultSetup, setShowVaultSetup] = useState(false);
   const [showVaultUnlock, setShowVaultUnlock] = useState(false);
-  // The name is asked for at once where it is in view (beside the choice, on a wide screen); on a
-  // phone the page opens at its top, at the choice, where autoFocus took it down to the field.
   const nameField = useRef<HTMLInputElement>(null);
   useFocusIfInView(nameField, build);
 
@@ -79,15 +63,9 @@ export function AppCreateStart() {
   useEffect(() => {
     let cancelled = false;
     void getAiReadiness().then(
-      (res) => {
-        if (cancelled) return;
-        setAiReady(res.ready);
-        setAiReason(res.ready ? null : res.reason ?? null);
-        setAiChecked(true);
-
-      },
+      (res) => { if (!cancelled) setAi(res); },
       () => {
-        if (!cancelled) { setAiReady(false); setAiChecked(true); }
+        if (!cancelled) setAi({ ready: false });
       }
     );
     return () => {
@@ -100,12 +78,10 @@ export function AppCreateStart() {
     setRechecking(true);
     try {
       const res = await getAiReadiness({ fresh: true });
-      setAiReady(res.ready);
-      setAiReason(res.ready ? null : res.reason ?? null);
+      setAi(res);
       if (quiet) return;
       if (res.ready) {
-        toast.success('AI connected', 'Your default AI is ready — the studio can now plan and build with you.');
-
+        toast.success('AI connected', 'Create with AI is ready.');
       } else {
         toast.info('Not connected yet', res.reason ?? 'No usable default AI was found.');
       }
@@ -116,10 +92,11 @@ export function AppCreateStart() {
     }
   };
 
-  const create = async () => {
+  const create = async (next: 'form' | 'studio') => {
     const trimmed = name.trim();
     if (!trimmed || createLock.current) return;
     createLock.current = true;
+    setDestination(next);
     setCreating(true);
     try {
 
@@ -152,8 +129,7 @@ export function AppCreateStart() {
         settings: { defaultFormPrivacy: formPrivacy, appKind },
       });
       if (app) {
-        // Brand-new apps land on the studio's Overview (the /studio redirect).
-        navigate(`/apps/${app.id}/studio`);
+        navigate(next === 'form' ? `/apps/${app.id}/studio/data?new=form` : `/apps/${app.id}/studio`);
         return;
       }
       toast.error('Creation failed', useAppStore.getState().error || 'Could not create the app. Please try again.');
@@ -171,76 +147,56 @@ export function AppCreateStart() {
         title="Create app"
         back={{ onClick: () => navigate('/apps'), label: 'Back to apps' }}
       />
-      {/* The page starts at the left, on the title's line, as every workspace page does. On a wide
-          screen the choice of what to make stands beside the form it leads to, so both are in
-          view; narrower, the form follows the choice at a readable width. */}
-      <div className="w-full max-w-3xl px-4 pb-32 pt-4 sm:px-6 sm:pb-16 xl:grid xl:max-w-none xl:grid-cols-[minmax(0,24rem)_minmax(0,46rem)] xl:items-start xl:gap-x-6">
-        {(
-          <>
-            <div className="min-w-0">
-            <h2 className="flex items-center gap-2.5 text-xl font-semibold tracking-tight text-gray-900 dark:text-white">
-              <Boxes className="h-5 w-5 text-primary-600 dark:text-primary-300" />
-              What do you want to make?
-            </h2>
-            <fieldset className="mt-4">
-              <legend className="sr-only">What kind of app</legend>
-              {/* A row each on a phone, so the form is in reach without a long scroll; cards two
-                  by two above that; rows again where they stand in a column beside the form. */}
-              <div className="grid gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-1 xl:gap-2">
-                {BUILDS.map(([value, label, hint, Icon]) => (
-                  <label key={value} className={cn('flex cursor-pointer items-start gap-3 rounded-2xl border p-3 transition has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary-500 sm:flex-col sm:gap-2 sm:p-4 xl:flex-row xl:gap-3 xl:p-3', build === value ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-500/15 dark:bg-primary-500/10' : 'border-gray-200 bg-white hover:border-gray-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600')}>
-                    <input type="radio" name="app-build" value={value} checked={build === value} disabled={creating} onChange={() => setBuild(value)} className="sr-only" />
-                    <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', build === value ? 'bg-primary-600 text-primary-foreground dark:bg-primary-500' : 'bg-gray-100 text-gray-500 dark:bg-slate-800 dark:text-slate-300')}><Icon className="h-5 w-5" aria-hidden="true" /></span>
-                    <span className="min-w-0">
-                      <span className="block text-sm font-semibold text-gray-900 dark:text-white">{label}</span>
-                      <span className="mt-0.5 block text-xs leading-5 text-gray-500 dark:text-slate-400 sm:mt-1">{hint}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-            <p className="mt-5 max-w-2xl text-sm leading-relaxed text-gray-500 dark:text-slate-400">{LEADS[build]}</p>
-
-            {!aiReady && build !== 'upload' && build !== 'site' && <details className="mt-4 rounded-xl border border-gray-200 dark:border-slate-700 p-4">
-              <summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-slate-200">Optional: connect an AI copilot</summary>
-              <div className="mt-4"><ConnectAiDoors onConnected={() => recheck(true)} /></div>
-              <Button className="mt-3" variant="secondary" onClick={() => void recheck()} isLoading={rechecking} leftIcon={<RefreshCw className="h-4 w-4" />}>Check connection</Button>
-            </details>}
-            </div>
-            <section className="mt-5 rounded-2xl border border-gray-200/80 bg-white p-5 shadow-sm dark:border-slate-700/60 dark:bg-slate-900 sm:p-6 xl:col-start-2 xl:row-span-2 xl:row-start-1 xl:mt-0">
-              {isDemo && (
-                <div className="mb-5 flex items-start gap-3 rounded-xl border border-primary-200/80 bg-primary-50/70 p-3 text-primary-800 dark:border-primary-500/20 dark:bg-primary-500/10 dark:text-primary-200">
-                  <HardDrive className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                  <p className="text-xs leading-5">
-                    <span className="font-semibold">Private demo project.</span> This app is saved in this browser&apos;s IndexedDB and never uploaded to the shared server.
-                  </p>
-                </div>
-              )}
-              {build === 'site' ? <SiteCreateForm disabled={isDemo} /> : build !== 'forms' ? <SoftnCreateForm key={build} uploadOnly={build === 'upload'} aiReady={aiChecked ? aiReady : null} aiReason={aiReason} onAiRecheck={() => recheck(true)} disabled={isDemo} /> : <div className="space-y-4">
-                <fieldset>
-                  <legend className="mb-2 text-sm font-semibold text-gray-700 dark:text-slate-200">What are you building?</legend>
-                  <div className="grid grid-cols-2 gap-2">
-                    {([['internal', 'Internal tool'], ['client', 'Client portal'], ['public', 'Public intake'], ['custom', 'Custom app']] as const).map(([value, label]) => (
-                      <label key={value} className={cn('flex min-h-12 cursor-pointer items-center gap-2 rounded-xl border p-3 text-sm', appKind === value ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300' : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300')}>
-                        <input type="radio" name="app-kind" value={value} checked={appKind === value} disabled={creating} onChange={() => setAppKind(value)} />{label}
-                      </label>
-                    ))}
+      {showChat ? <CreateAppChat prefs={ai?.prefs} /> : <div className="@container/create mx-auto w-full max-w-5xl px-4 pb-24 pt-4 sm:px-6 sm:pt-6"
+        onPointerDownCapture={() => { if (!requested && !ai) setManualStarted(true); }}
+        onKeyDownCapture={() => { if (!requested && !ai) setManualStarted(true); }}>
+        <div className="grid items-start gap-3 @3xl/create:grid-cols-[12rem_minmax(0,1fr)] @3xl/create:gap-6">
+        <nav aria-label="App creation methods" className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-900/70 @3xl/create:grid-cols-1 @3xl/create:gap-1.5 @3xl/create:border-0 @3xl/create:bg-transparent @3xl/create:p-0 @3xl/create:dark:bg-transparent">
+          {builds.map(({type, label, hint, icon: Icon}) => <Link key={type} to={`?type=${type}`} replace preventScrollReset
+            aria-current={build === type ? 'page' : undefined}
+            className={cn('flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-lg border border-transparent px-1 text-sm focus-visible:outline-2 focus-visible:outline-primary-500 @3xl/create:justify-start @3xl/create:gap-3 @3xl/create:px-3 @3xl/create:py-3', build === type
+              ? 'border-slate-200 bg-white text-primary-800 shadow-sm dark:border-primary-500/40 dark:bg-primary-500/10 dark:text-primary-200'
+              : 'text-slate-600 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800')}>
+            <Icon className="size-4 shrink-0" aria-hidden="true" />
+            <span className="min-w-0"><span className="block font-semibold">{label}</span>
+              <span className="mt-0.5 hidden text-xs text-slate-600 dark:text-slate-400 @3xl/create:block">{hint}</span>
+            </span>
+          </Link>)}
+        </nav>
+        <section aria-labelledby="create-method-title" className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm @xl/create:p-6 dark:border-slate-700 dark:bg-slate-900">
+          <header className="mb-5">
+            <h2 id="create-method-title" className="text-2xl font-semibold tracking-tight text-slate-950 dark:text-white">{headings[build][0]}</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400">{headings[build][1]}</p>
+          </header>
+          {isDemo && <p className="mb-4 rounded-xl bg-primary-50 p-3 text-sm text-primary-800 dark:bg-primary-500/10 dark:text-primary-200">
+            {build === 'forms' ? 'Demo projects are saved in this browser.' : 'Sign up to host a web app, or try a forms app in this browser.'}
+          </p>}
+          {requested === 'site' ? <SiteCreateForm disabled={isDemo} /> : build === 'upload' ? <SoftnCreateForm disabled={isDemo} />
+            : build === 'web' ? <WebAppStarter disabled={isDemo} /> : <form className="space-y-5" onSubmit={event => { event.preventDefault(); void create('form'); }}>
+                <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
+                  <div>
+                    <label htmlFor="new-app-name" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">
+                      App name
+                    </label>
+                    <Input
+                      id="new-app-name"
+                      ref={nameField}
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      required
+                      placeholder="e.g. Workshop requests"
+                      disabled={creating}
+                      maxLength={120}
+                    />
                   </div>
-                </fieldset>
-                <div>
-                  <label htmlFor="new-app-name" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">
-                    App name
-                  </label>
-                  <Input
-                    id="new-app-name"
-                    ref={nameField}
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') void create(); }}
-                    placeholder="e.g. Plumbing Operations, Client Portal"
-                    disabled={creating}
-                    maxLength={120}
-                  />
+                  <div>
+                    <label htmlFor="new-app-kind" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">App type</label>
+                    <select id="new-app-kind" value={appKind} onChange={event => setAppKind(event.target.value as AppKind)} disabled={creating}
+                      className="min-h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus-visible:outline-2 focus-visible:outline-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
+                      <option value="internal">Internal tool</option><option value="client">Client portal</option>
+                      <option value="public">Public intake</option><option value="custom">Custom app</option>
+                    </select>
+                  </div>
                 </div>
                 <div>
                   <label htmlFor="new-app-desc" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">
@@ -250,16 +206,21 @@ export function AppCreateStart() {
                     id="new-app-desc"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="One or two sentences — shown to members and used by the AI when planning."
-                    rows={3}
+                    placeholder="What will people use this app for?"
+                    rows={2}
                     disabled={creating}
-                    className="min-h-24 resize-none"
+                    className="min-h-16 resize-y"
                   />
                 </div>
-                <fieldset>
-                  <legend className="mb-2 block text-xs font-semibold text-gray-600 dark:text-slate-300">
-                    How should client data be protected?
-                  </legend>
+                <details className="group/privacy rounded-xl border border-slate-200 dark:border-slate-700">
+                  <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-800 focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-slate-200 [&::-webkit-details-marker]:hidden">
+                    <ShieldCheck aria-hidden="true" className="size-4 shrink-0 text-slate-500 dark:text-slate-400" />
+                    Form privacy
+                    <span className="ml-auto text-right text-xs text-slate-600 dark:text-slate-300">{isDemo ? 'Browser-local' : formPrivacy === 'private' ? 'End-to-end encrypted' : 'Standard'}</span>
+                    <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-slate-500 group-open/privacy:rotate-180" />
+                  </summary>
+                <fieldset className="border-t border-slate-200 p-3 dark:border-slate-700">
+                  <legend className="sr-only">How should client data be protected?</legend>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label
                       className={cn(
@@ -330,54 +291,45 @@ export function AppCreateStart() {
                       </span>
                     </label>
                   </div>
-                  {formPrivacy === 'private' && !isDemo && (
-                    <p className="mt-2 text-[11px] leading-5 text-amber-700 dark:text-amber-300">
-                      This can&apos;t be undone: once a form is private it stays private. File uploads,
-                      camera and linked-record questions aren&apos;t available on private forms, and you&apos;ll
-                      need your vault unlocked to read the answers. Existing forms you attach are unchanged.
-                    </p>
-                  )}
                 </fieldset>
-                <div className="flex items-center justify-end">
-                  <Button onClick={() => void create()} isLoading={creating} disabled={!name.trim()} rightIcon={<ArrowRight className="h-4 w-4" />}>
-                    Create and open the studio
+                </details>
+                {formPrivacy === 'private' && !isDemo && (
+                  <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+                    New forms stay private permanently. Unlock your vault to read their answers. Private forms
+                    support text and other standard questions. File uploads, camera and linked records require standard forms.
+                  </p>
+                )}
+                <div className="flex flex-col gap-2 border-t border-slate-200 pt-4 @xl/create:flex-row @xl/create:items-center @xl/create:justify-end dark:border-slate-700">
+                  <Button type="submit" className="@xl/create:order-last" isLoading={creating && destination === 'form'} disabled={creating || !name.trim()} rightIcon={<ArrowRight className="h-4 w-4" />}>
+                    Create and add a form
+                  </Button>
+                  <Button type="button" variant="ghost" isLoading={creating && destination === 'studio'} disabled={creating || !name.trim()} onClick={() => void create('studio')}>
+                    Create and open workspace
                   </Button>
                 </div>
-              </div>}
-              {build !== 'forms' && isDemo && <p className="mt-3 text-xs text-gray-500 dark:text-slate-400">Websites and web apps are hosted on the server, so they are available after sign-up.</p>}
-            </section>
-
-            {/* Starting from a ready-made app was invisible at the moment someone
-                decided to create one — the marketplace was only reachable from the
-                sidebar's Advanced tools or the Apps header's Import button. */}
-            <div className="mt-5 rounded-2xl border border-dashed border-gray-300 p-4 dark:border-white/15 xl:col-start-1 xl:row-start-2">
-              <p className="text-sm font-semibold text-gray-800 dark:text-slate-200">Or start from something that already works</p>
-              <p className="mt-1 max-w-md text-xs leading-5 text-gray-500 dark:text-slate-400">
-                Install a ready-made app from the Marketplace and edit it, instead of building from
-                an empty studio. Already have forms? Attach them in Data &amp; forms once the app exists.
-              </p>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="mt-3"
-                onClick={() => navigate('/packs')}
-                leftIcon={<Package className="h-4 w-4" />}
-              >
-                Browse the Marketplace
-              </Button>
+              </form>}
+        </section>
+        <div className="flex flex-wrap items-start justify-between gap-3 text-sm text-slate-600 @3xl/create:col-start-2 dark:text-slate-400">
+          <Link to="/packs" className="inline-flex min-h-10 items-center gap-2 hover:underline"><Package className="size-4" />Browse the Marketplace</Link>
+          {aiReady && !isDemo && <Link to="?type=chat" className="inline-flex min-h-10 items-center gap-1.5 text-sm font-medium text-primary-700 hover:underline dark:text-primary-300"><Sparkles className="size-4" />Create with AI</Link>}
+          {ai && !aiReady && !isDemo && build !== 'upload' && <details className="group min-w-0 open:basis-full">
+            <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 hover:underline"><Sparkles className="size-4" />Connect AI</summary>
+            <div className="mt-2 rounded-xl border border-slate-200 p-4 dark:border-slate-700"><ConnectAiDoors onConnected={() => recheck(true)} />
+              <Button className="mt-3" variant="secondary" onClick={() => void recheck()} isLoading={rechecking} leftIcon={<RefreshCw className="size-4" />}>Check connection</Button>
             </div>
-          </>
-        )}
-      </div>
+          </details>}
+        </div>
+        </div>
+      </div>}
       <VaultSetupWizard
         isOpen={showVaultSetup}
         onClose={() => setShowVaultSetup(false)}
-        onComplete={() => void create()}
+        onComplete={() => void create(destination)}
       />
       <VaultUnlockDialog
         isOpen={showVaultUnlock}
         onClose={() => setShowVaultUnlock(false)}
-        onUnlocked={() => void create()}
+        onUnlocked={() => void create(destination)}
         title="Unlock your vault to create this app"
       />
     </div>

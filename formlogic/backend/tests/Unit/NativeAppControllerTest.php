@@ -103,6 +103,24 @@ final class NativeAppControllerTest extends TestCase
         $this->assertSame('dark', $manifest['config']['theme'], 'the rest of the manifest is untouched');
     }
 
+    public function testWebFormatSurvivesTheRuntimeGetWithOnlyPublicFiles(): void
+    {
+        [$controller] = $this->recordingFixture([
+            'manifest.json' => '{"engine":2,"main":"index.html","files":{"server":["server/main.logic"],"assets":["src/App.jsx","server/migrations/001.sql"]}}',
+            'index.html' => '<main>Notes</main>', 'src/App.jsx' => 'export default "Notes";',
+            '__softn_generated__/private/Hidden.vue.js' => 'hidden',
+        ]);
+        $request = (new ServerRequestFactory())->createServerRequest('GET', '/');
+        $response = $controller->runtime($request, new Response(), ['slug' => 'notes']);
+        $this->assertSame(200, $response->getStatusCode());
+        $client = self::body($response)['project']['client'];
+        $manifest = json_decode($client['manifest.json'], true);
+        $this->assertTrue($manifest['container']);
+        $this->assertArrayNotHasKey('engine', $manifest);
+        $this->assertSame(['assets' => ['src/App.jsx']], $manifest['files']);
+        $this->assertArrayNotHasKey('__softn_generated__/private/Hidden.vue.js', $client);
+    }
+
     public function testTheRuntimeGetCarriesTheEngineTheServerDecided(): void
     {
         [$controller] = $this->fixture('application');
@@ -406,6 +424,42 @@ final class NativeAppControllerTest extends TestCase
         $this->assertSame($generic, self::body($controller->manage($this->request('GET', true), new Response(), ['id' => 'notes']))['message'], 'the public demo is not an operator');
     }
 
+    public function testHostedEditorSavesWebDatabaseChangesAgainstTheInstalledVersion(): void
+    {
+        $this->storage = sys_get_temp_dir() . '/formlogic-native-controller-' . bin2hex(random_bytes(8));
+        $native = new NativeAppService($this->storage, dirname(__DIR__, 2) . '/resources/softn-native', getenv('FORMLOGIC_NODE_BIN') ?: null);
+        if (!$native->available()) $this->markTestSkipped('Requires a prepared native runtime.');
+        [$controller] = $this->fixture('members', $native);
+        $save = fn (array $draft, int $version, string $user = 'owner') => $controller->manage(
+            $this->request('PUT', false, $user)->withParsedBody(['project' => $draft, 'expectedVersion' => $version]),
+            new Response(), ['id' => 'notes']
+        );
+        $draft = NativeAppService::starterProject('Notes', 'notes');
+        $manifest = json_decode($draft['files']['manifest.json'], true, flags: JSON_THROW_ON_ERROR);
+        $manifest['main'] = 'index.html';
+        $manifest['engine'] = 2;
+        $draft['files']['index.html'] = '<main>Notes</main>';
+        unset($draft['files']['ui/main.ui']);
+        $draft['files']['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR);
+        $this->assertSame(200, $save($draft, 0)->getStatusCode());
+
+        $newPath = 'server/migrations/000.sql';
+        $draft['files'][$newPath] = 'ALTER TABLE items ADD COLUMN tag TEXT;';
+        $manifest['server']['database']['migrations'][] = $newPath;
+        $draft['files']['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR);
+        $this->assertSame(404, $save($draft, 1, 'viewer')->getStatusCode());
+        $refused = $save($draft, 1);
+        $this->assertSame(400, $refused->getStatusCode());
+        $this->assertStringContainsString('sorts before', self::body($refused)['message']);
+        $this->assertSame(1, $native->project('notes')['version']);
+        $draft['files']['server/migrations/002.sql'] = $draft['files'][$newPath];
+        unset($draft['files'][$newPath]);
+        $manifest['server']['database']['migrations'] = ['server/migrations/001.sql', 'server/migrations/002.sql'];
+        $draft['files']['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR);
+        $this->assertSame(2, self::body($save($draft, 1))['project']['version']);
+        $this->assertSame(409, $save($draft, 1)->getStatusCode());
+    }
+
     /** The installation root of app notes under a fresh temporary storage. */
     private function installation(): string
     {
@@ -582,6 +636,26 @@ final class NativeAppControllerTest extends TestCase
         $this->assertStringContainsString('<Text>Notes</Text>', $installed['files']['ui/main.ui']);
     }
 
+    public function testJavaScriptStarterInstallsAWebProjectWithTheEditableSourceAndDatabase(): void
+    {
+        $native = $this->createMock(NativeAppService::class);
+        $native->expects($this->once())->method('install')->willReturnCallback(function (string $id, array $project, int $version): array {
+            $this->assertSame(0, $version);
+            $manifest = json_decode($project['files']['manifest.json'], true, flags: JSON_THROW_ON_ERROR);
+            $this->assertSame([2, 'index.html'], [$manifest['engine'], $manifest['main']]);
+            $this->assertStringContainsString('<h1>Notes</h1>', $project['files']['index.html']);
+            $this->assertArrayHasKey('app.js', $project['files']);
+            $this->assertArrayHasKey('styles.css', $project['files']);
+            $this->assertArrayNotHasKey('ui/main.ui', $project['files']);
+            $this->assertArrayHasKey($manifest['server']['entry'], $project['files']);
+            $this->assertArrayHasKey($manifest['server']['database']['migrations'][0], $project['files']);
+            return ['version' => 1] + $project;
+        });
+        [$controller] = $this->fixture('members', $native);
+        $request = $this->request('POST')->withParsedBody(['template' => 'javascript']);
+        $this->assertSame(200, $controller->manage($request, new Response(), ['id' => 'notes', 'operation' => 'starter'])->getStatusCode());
+    }
+
     public function testTheStarterIsOnlyForASoftnApp(): void
     {
         $native = $this->createMock(NativeAppService::class);
@@ -589,7 +663,34 @@ final class NativeAppControllerTest extends TestCase
         [$controller] = $this->fixture('members', $native, []);
         $response = $controller->manage($this->request('POST'), new Response(), ['id' => 'notes', 'operation' => 'starter']);
         $this->assertSame(400, $response->getStatusCode());
-        $this->assertStringContainsString('SoftN app', self::body($response)['message']);
+        $this->assertStringContainsString('web app', self::body($response)['message']);
+    }
+
+    public function testEachFrameworkStarterInstallsWithOnlyItsOwnLibraryAndMatchingPreview(): void
+    {
+        foreach (['react' => 'App.jsx', 'vue' => 'App.vue'] as $framework => $source) {
+            $native = $this->createMock(NativeAppService::class);
+            $native->expects($this->once())->method('install')->willReturnCallback(function (string $id, array $project, int $version) use ($framework, $source): array {
+                NativeAppService::validateProject($project);
+                $files = $project['files'];
+                $manifest = json_decode($files['manifest.json'], true, flags: JSON_THROW_ON_ERROR);
+                $this->assertSame(0, $version);
+                $this->assertSame([2, 'Notes', 'index.html'], [$manifest['engine'], $manifest['name'], $manifest['main']]);
+                $this->assertContains($source, $manifest['files']['logic']);
+                $this->assertStringContainsString('<h1>Notes</h1>', $files['index.html']);
+                $this->assertArrayHasKey("vendor/$framework.js", $files);
+                $this->assertCount(1, array_filter(array_keys($files), static fn ($path) => str_starts_with($path, 'vendor/')));
+                $this->assertStringContainsString(hash('sha256', $source . "\0" . $files[$source]), $files["__softn_generated__/$source.js"]);
+                $this->assertArrayHasKey($manifest['server']['entry'], $files);
+                $this->assertArrayHasKey($manifest['server']['database']['migrations'][0], $files);
+                $this->assertArrayNotHasKey('ui/main.ui', $files);
+                return ['version' => 1] + $project;
+            });
+            [$controller] = $this->fixture('members', $native);
+            $request = $this->request('POST')->withParsedBody(['template' => $framework]);
+            $response = $controller->manage($request, new Response(), ['id' => 'notes', 'operation' => 'starter']);
+            $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        }
     }
 
     public function testTheSharedDemoCannotInstallAStarter(): void
@@ -746,6 +847,11 @@ final class NativeAppControllerTest extends TestCase
             $this->assertSame([$status, 'application/json', ['error' => true, 'message' => $message]], [$refused->getStatusCode(), $refused->getHeaderLine('Content-Type'), self::body($refused)], json_encode($query));
             $this->assertFalse($refused->hasHeader('Content-Disposition'));
         }
+        $created = $controller->manage($this->request('POST')->withParsedBody([
+            'table' => 'plain', 'action' => 'create', 'values' => ['id' => 1],
+        ]), new Response(), ['id' => 'notes', 'operation' => 'records']);
+        $this->assertSame(200, $created->getStatusCode(), 'A refused export must release its read snapshot before the next write.');
+        $this->assertSame([['id' => 1]], self::body($this->records($controller, ['table' => 'plain']))['rows']);
     }
 
     public function testAnExportThatALimitCutSaysSoInAHeader(): void

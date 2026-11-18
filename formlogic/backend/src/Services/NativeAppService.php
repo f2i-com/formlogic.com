@@ -55,6 +55,8 @@ use PDO;
  */
 class NativeAppService
 {
+    public const STARTER_TEMPLATES = ['javascript', 'react', 'vue', 'classic'];
+    public const UNKNOWN_STARTER = 'Choose a Vanilla JS, React, Vue or classic starter.';
     public const CRYPTO_RESTORED = 'restored';
     public const CRYPTO_REISSUED = 'reissued';
 
@@ -135,9 +137,9 @@ class NativeAppService
      * frame or its runner is handed; none is ever served as a file of this site. The app page's
      * import reads the same list first (ui/src/lib/nativeHosting.ts).
      */
-    public const SOURCE_PATH = '~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|logic|py|css|json|sql|xdb)$~D';
+    public const SOURCE_PATH = '~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|jsx|vue|mjs|ts|logic|py|css|json|sql|xdb)$~D';
     /** Said where a file of another kind is refused. */
-    public const SOURCE_KINDS = 'An app\'s source files are .html or .ui pages, .js or .logic page logic (.py for Python), .css, .json, .xdb seed data, and a backend\'s server/….logic and server/migrations/….sql; pictures, sound and other media go under assets/.';
+    public const SOURCE_KINDS = 'An app\'s source files are .html or .ui pages, .js, .jsx, .vue, .mjs, .ts or .logic source (.py for Python), .css, .json, .xdb seed data, and a backend\'s server/….logic and server/migrations/….sql; pictures, sound and other media go under assets/.';
     public const MAX_SOURCE_FILE_BYTES = 1500000;
     public const MAX_MIGRATION_BYTES = 1000000;
     public const MAX_MEDIA_FILES = 1000;
@@ -458,6 +460,7 @@ class NativeAppService
      */
     public function restore(string $appId, array $project, ?string $databaseSnapshot, ?array $hostConfig): array
     {
+        $project = self::portableProject($project);
         [$files, $decoded, $manifest, $capabilities] = self::validateProject($project);
         // An app with no backend runs nothing on this server: it needs no runner to be restored.
         if (array_key_exists('server', $manifest) && !$this->available()) throw new RuntimeException('Prepare the native app runtime before restoring native apps');
@@ -876,11 +879,11 @@ class NativeAppService
         return array_merge($env, ['NODE_NO_WARNINGS' => '1'], $host);
     }
 
-    private function runBounded(array $command, int $seconds): ?array
+    private function runBounded(array $command, int $seconds, ?array $environment = null): ?array
     {
         if (!function_exists('proc_open')) return null;
         $out = tempnam(sys_get_temp_dir(), 'fl-preflight-');
-        $process = @proc_open($command, [0 => ['pipe', 'r'], 1 => ['file', $out, 'w'], 2 => ['file', $out, 'a']], $pipes, null, null, ['bypass_shell' => true]);
+        $process = @proc_open($command, [0 => ['pipe', 'r'], 1 => ['file', $out, 'w'], 2 => ['file', $out, 'a']], $pipes, null, $environment, ['bypass_shell' => true]);
         if (!is_resource($process)) { @unlink($out); return null; }
         fclose($pipes[0]);
         $deadline = microtime(true) + $seconds;
@@ -1346,7 +1349,26 @@ class NativeAppService
     public static function clientFiles(array $project): array
     {
         $files = is_array($project['files'] ?? null) ? $project['files'] : [];
-        return array_filter($files, static fn($path) => !preg_match('~^(server|backend|private)/~i', $path) && !str_ends_with($path, '.sql'), ARRAY_FILTER_USE_KEY);
+        $publicPath = static fn($path) => !is_string($path) || !preg_match('~^(?:__softn_generated__/)?(?:server|backend|private)/|\.sql$~i', $path);
+        $client = array_filter($files, $publicPath, ARRAY_FILTER_USE_KEY);
+        $manifest = is_string($client['manifest.json'] ?? null) ? json_decode($client['manifest.json']) : null;
+        if (is_object($manifest)) {
+            $changed = property_exists($manifest, 'server') || ($manifest->engine ?? null) === 2;
+            // The runtime and public directory remove engine preferences (the host owns
+            // that choice). Preserve SoftN's format declaration under its canonical alias.
+            if (($manifest->engine ?? null) === 2) $manifest->container = true;
+            unset($manifest->server);
+            if (is_object($manifest->files ?? null)) {
+                if (property_exists($manifest->files, 'server')) { unset($manifest->files->server); $changed = true; }
+                foreach ($manifest->files as $group => $paths) {
+                    if (!is_array($paths)) continue;
+                    $public = array_values(array_filter($paths, $publicPath));
+                    if ($public !== $paths) { $manifest->files->{$group} = $public; $changed = true; }
+                }
+            }
+            if ($changed) $client['manifest.json'] = json_encode($manifest, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        }
+        return $client;
     }
 
     /**
@@ -1367,6 +1389,13 @@ class NativeAppService
 
     /** Source inspection requires owner authorization at the controller. Keys and database contents are never included. */
     public function get(string $appId): ?array
+    {
+        $project = $this->readInstalledProject($appId);
+        return $project === null ? null : self::portableProject($project);
+    }
+
+    /** History identifies older installations by the digest of their original, complete source. */
+    private function readInstalledProject(string $appId): ?array
     {
         $file = $this->root($appId) . '/project.json';
         if (!is_file($file)) return null;
@@ -1407,6 +1436,7 @@ class NativeAppService
         if ($lock === null) return null;
         try {
             $runtime = $this->runtimeCache($root);
+            $runtime['project'] = self::portableProject($runtime['project']);
             // Opened while the lock is held: an update cannot replace or remove this pack before it is
             // being read, and what is read is the pack the project it was admitted for names.
             if ($openMedia) {
@@ -1436,7 +1466,7 @@ class NativeAppService
         if ($lock === null) return null;
         try {
             $runtime = $this->runtimeCache($root);
-            return $runtime['project'] + ['assets' => (object) $runtime['kept']];
+            return self::portableProject($runtime['project']) + ['assets' => (object) $runtime['kept']];
         }
         finally { flock($lock, LOCK_UN); fclose($lock); }
     }
@@ -1740,7 +1770,7 @@ class NativeAppService
         $file = $root . self::RUNTIME_CACHE . '/client-' . $key . '.json';
         if (is_file($file)) {
             $cached = json_decode((string) @file_get_contents($file), true);
-            if (is_array($cached['project'] ?? null)) return $cached['project'];
+            if (is_array($cached['project'] ?? null)) return self::portableProject($cached['project']);
         }
         return $this->get($appId);
     }
@@ -2065,6 +2095,26 @@ class NativeAppService
         return is_array($manifest) && array_key_exists('server', $manifest);
     }
 
+    /** Early uploads could include an earlier host's key file among the author's source. */
+    public static function portableFiles(array $files): array
+    {
+        foreach (array_keys($files) as $path) {
+            if (self::isHostConfig((string) $path)) unset($files[$path]);
+        }
+        return $files;
+    }
+
+    public static function isHostConfig(string $path): bool
+    {
+        return strcasecmp($path, 'private/config.json') === 0;
+    }
+
+    public static function portableProject(array $project): array
+    {
+        if (is_array($project['files'] ?? null)) $project['files'] = self::portableFiles($project['files']);
+        return $project;
+    }
+
     /**
      * The identity an installation runs under: its manifest's id. SoftN makes the id optional and
      * most apps declare none; such an app keeps the one its installation already has ($configured,
@@ -2093,10 +2143,16 @@ class NativeAppService
      */
     public static function validateProject(array $project): array
     {
+        if (isset($project['access']) && !in_array($project['access'], ['members', 'application'], true)) {
+            throw new InvalidArgumentException('Project access must be "members" or "application".');
+        }
         $files = $project['files'] ?? null;
         if (!is_array($files) || count($files) > self::MAX_SOURCE_FILES || !is_string($files['manifest.json'] ?? null)) throw new InvalidArgumentException('Include the app manifest and at most ' . self::MAX_SOURCE_FILES . ' source files');
         $bytes = 0;
         foreach ($files as $path => $source) {
+            if (is_string($path) && self::isHostConfig($path)) {
+                throw new InvalidArgumentException('private/config.json is a host key file. Remove it from the project source. Use the data import to bring an existing host key.');
+            }
             // `.xdb` is an app's seed data (its local collections), JSON text the app is shipped with.
             // `.html`, `.js` and `.css` are a SoftN app's pages, page logic and stylesheets as SoftN has
             // written them since its HTML pages (`.ui` and `.logic` before): text the app's frame is
@@ -2202,6 +2258,9 @@ class NativeAppService
         // What the app asks of FormLogic itself (App AI, payments): FormLogic's sections, held to
         // their rules here so a malformed one is refused at install with the reason.
         AppFormlogicManifest::validate($manifest);
+        if (($manifest['engine'] ?? null) === 2 || ($manifest['container'] ?? null) === true) {
+            self::checkComponentModules($files);
+        }
         if (!array_key_exists('server', $manifest)) {
             // Client only. A private tree with no server block to run it would be source no runtime
             // ever starts, kept as if it were a backend: refused, so the owner adds the block.
@@ -2210,13 +2269,23 @@ class NativeAppService
             }
             return [$files, $decoded, $manifest, []];
         }
-        $server =is_array($manifest['server']) ? $manifest['server'] : [];
-        if (($server['requires']['apiVersion'] ?? null) !== 1 || !is_string($server['entry'] ?? null) || !isset($files[$server['entry']]) || !str_starts_with($server['entry'], 'server/') || !str_ends_with($server['entry'], '.logic')) throw new InvalidArgumentException('Include a server API v1 .logic entry');
-        $capabilities = $server['requires']['capabilities'] ?? null;
-        if (!is_array($capabilities) || array_diff($capabilities, ['sql', 'crypto', 'time', 'trusted-client-ip', 'transaction-scope', 'photos']) || ($server['sync']['enabled'] ?? false)) throw new InvalidArgumentException('Unsupported native capabilities');
-        if (($server['database']['kind'] ?? null) !== 'private-sqlite') throw new InvalidArgumentException('This host requires private SQLite storage');
-        foreach ($server['database']['migrations'] ?? [] as $migration) {
-            if (!is_string($migration) || !str_starts_with($migration, 'server/migrations/') || !str_ends_with($migration, '.sql') || !isset($files[$migration])) throw new InvalidArgumentException('A declared migration is missing');
+        // Preserve the JSON distinction between an object and a list, including {} and [].
+        try { $server = json_decode($files['manifest.json'], false, 64, JSON_THROW_ON_ERROR)->server; }
+        catch (\JsonException $unreadable) { throw new InvalidArgumentException('manifest.json contains a property this host cannot read (' . $unreadable->getMessage() . ').'); }
+        if (($server->requires->apiVersion ?? null) !== 1 || !is_string($server->entry ?? null) || !isset($files[$server->entry]) || !str_starts_with($server->entry, 'server/') || !str_ends_with($server->entry, '.logic')) throw new InvalidArgumentException('Include a server API v1 .logic entry');
+        $capabilities = $server->requires->capabilities ?? null;
+        if (!is_array($capabilities) || array_filter($capabilities, static fn ($cap) => !in_array($cap, ['sql', 'crypto', 'time', 'trusted-client-ip', 'transaction-scope', 'photos'], true)) || ($server->sync->enabled ?? false)) throw new InvalidArgumentException('Unsupported native capabilities');
+        if (($server->database->kind ?? null) !== 'private-sqlite') throw new InvalidArgumentException('This host requires private SQLite storage');
+        $migrations = $server->database->migrations ?? [];
+        if (!is_array($migrations)) throw new InvalidArgumentException('server.database.migrations must be a list of SQL files under server/migrations/.');
+        $seen = [];
+        foreach ($migrations as $migration) {
+            if (!is_string($migration) || !str_starts_with($migration, 'server/migrations/') || !str_ends_with($migration, '.sql') || !preg_match(self::SOURCE_PATH, $migration) || str_contains($migration, '..')) {
+                throw new InvalidArgumentException('A declared migration must name an existing SQL file under server/migrations/.');
+            }
+            if (isset($seen[$migration])) throw new InvalidArgumentException("{$migration} is listed more than once in server.database.migrations.");
+            if (!isset($files[$migration])) throw new InvalidArgumentException("{$migration} is listed in server.database.migrations but is missing from the project.");
+            $seen[$migration] = true;
         }
         return [$files, $decoded, $manifest, $capabilities];
     }
@@ -2255,7 +2324,7 @@ class NativeAppService
      *
      * @return array{home: bool, version: int, files: array<string, string>, assets: array<string, string>, access: string}
      */
-    public static function starterProject(string $appName, string $appId): array
+    public static function starterProject(string $appName, string $appId, string $template = 'classic'): array
     {
         $starter = json_decode((string) file_get_contents(dirname(__DIR__, 2) . '/resources/native-app-starter.json'), true, 64, JSON_THROW_ON_ERROR);
         $name = trim(preg_replace('/\s+/u', ' ', $appName) ?? '');
@@ -2263,11 +2332,37 @@ class NativeAppService
         $manifest = json_decode($starter['files']['manifest.json'], true, 64, JSON_THROW_ON_ERROR);
         $manifest['name'] = $name;
         $manifest['id'] = 'formlogic.app.' . preg_replace('/[^a-zA-Z0-9._-]/', '', $appId);
+        if ($template !== 'classic' && in_array($template, self::STARTER_TEMPLATES, true)) {
+            $manifest['engine'] = 2;
+            $manifest['main'] = 'index.html';
+            unset($starter['files']['ui/main.ui']);
+            $directory = dirname(__DIR__, 2) . '/resources/web-app-starter/';
+            if ($template === 'javascript') {
+                $manifest['files'] = ['ui' => ['index.html'], 'logic' => ['app.js']];
+                foreach (['index.html', 'app.js', 'styles.css'] as $file) {
+                    $source = file_get_contents($directory . $file);
+                    if ($source === false) throw new RuntimeException('The JavaScript starter files are missing from this installation.');
+                    $starter['files'][$file] = $source;
+                }
+            } else {
+                // Source, local framework library and matching preview module, as exported by the editors.
+                $snapshot = file_get_contents($directory . $template . '.json');
+                if ($snapshot === false) throw new RuntimeException('The selected starter is missing from this installation.');
+                $component = json_decode($snapshot, true, 64, JSON_THROW_ON_ERROR);
+                $manifest['files'] = $component['manifest']['files'];
+                $manifest['description'] = $component['manifest']['description'];
+                $manifest['config'] += $component['manifest']['config'];
+                $starter['files'] += $component['files'];
+            }
+            $starter['files']['index.html'] = str_replace('My app', htmlspecialchars($name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), $starter['files']['index.html']);
+        } elseif ($template === 'classic') {
+            // Classic markup reads braces as expressions, so they cannot be interpolated into the heading.
+            $heading = trim(str_replace(['<', '>', '{', '}', '&', '"', '`'], '', $name));
+            if ($heading !== '') $starter['files']['ui/main.ui'] = str_replace('<Text>My app</Text>', '<Text>' . $heading . '</Text>', $starter['files']['ui/main.ui']);
+        } else {
+            throw new InvalidArgumentException(self::UNKNOWN_STARTER);
+        }
         $starter['files']['manifest.json'] = json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-        // The heading is markup text: characters the .ui language reads as markup or an
-        // expression are left out rather than escaped, so the name can never become code.
-        $heading = trim(str_replace(['<', '>', '{', '}', '&', '"', '`'], '', $name));
-        if ($heading !== '') $starter['files']['ui/main.ui'] = str_replace('<Text>My app</Text>', '<Text>' . $heading . '</Text>', $starter['files']['ui/main.ui']);
         return ['home' => true, 'version' => 0, 'files' => $starter['files'], 'assets' => $starter['assets'] ?? [], 'access' => $starter['access'] ?? 'members'];
     }
 
@@ -2290,6 +2385,50 @@ class NativeAppService
         return $stage === '' ? $message : "{$message} ({$stage})";
     }
 
+    /** Run only for changed, uncompiled source. The editors themselves already export matching modules. */
+    public function compileComponentSources(array $sources): array
+    {
+        $input = tempnam(sys_get_temp_dir(), 'fl-components-');
+        if ($input === false) throw new RuntimeException('Could not prepare the component source.');
+        try {
+            $data = json_encode($sources, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            if (file_put_contents($input, $data) !== strlen($data)) throw new RuntimeException('Could not write the component source.');
+            $command = [$this->nodeBinary(), '--experimental-vm-modules', '--no-warnings', '--max-old-space-size=192', dirname(__DIR__, 2) . '/bin/compile-components.mjs', $input];
+            $process = $this->runBounded($command, 15, self::nodeEnvironment(getenv() ?: [], []));
+            $answer = json_decode($process['stdout'] ?? '', true);
+            if (is_string($answer['error'] ?? null)) throw new InvalidArgumentException($answer['error']);
+            if (($process['exit'] ?? -1) !== 0 || array_keys($answer['compiled'] ?? []) !== array_keys($sources)) {
+                throw new RuntimeException('The source compiler could not complete. Check the installed Studio and Node runtime, or save the component in Studio or Builder.');
+            }
+            return $answer['compiled'];
+        } finally {
+            @unlink($input);
+        }
+    }
+
+    /** The editors bind generated JavaScript to its original filename and UTF-8 source. */
+    private static function checkComponentModules(array $files, ?array $previous = null): void
+    {
+        $header = "// Generated by SoftN from component source.\n";
+        $digestLine = $header . '// SoftN source SHA-256: ';
+        foreach ($files as $path => $source) {
+            if (!preg_match('~\.(?:jsx|vue)$~iD', $path) || preg_match('~^(?:server|backend|private|__softn_generated__)/~i', $path)) continue;
+            $modulePath = '__softn_generated__/' . $path . '.js';
+            $module = $files[$modulePath] ?? '';
+            if (!str_starts_with($module, $header)) continue;
+            if (str_starts_with($module, $digestLine)) {
+                if ($previous !== null) continue; // Already checked by validateProject before taking the install lock.
+                $text = str_starts_with($source, "\xEF\xBB\xBF") ? substr($source, 3) : $source;
+                if (str_starts_with($module, $digestLine . hash('sha256', $path . "\0" . $text) . "\n")) continue;
+            } else {
+                // Older exports have no digest. Detect an edit that carries its exact previous module
+                // forward. A historical version is still restorable as a whole.
+                if ($previous === null || !isset($previous[$path]) || $previous[$path] === $source || ($previous[$modulePath] ?? null) !== $module) continue;
+            }
+            throw new InvalidArgumentException($path . ' has changed since its JavaScript was generated. Open the project in AI Studio or Visual Builder and save it again.');
+        }
+    }
+
     /**
      * The migrations the installed version ran on this app's database: each must stay listed and
      * unchanged in an update, or the host refuses to start (its ledger holds their checksums).
@@ -2309,13 +2448,22 @@ class NativeAppService
             if (is_string($path) && preg_match('~(\d+)[^/]*\.sql$~', $path, $number)) $highest = max($highest, (int) $number[1]);
         }
         $next = 'server/migrations/' . str_pad((string) ($highest + 1), 3, '0', STR_PAD_LEFT) . '.sql';
+        $lastApplied = max($applied);
+        $suggestion = strcmp($next, $lastApplied) > 0 ? "such as {$next}" : "with a filename that sorts after {$lastApplied}";
         foreach ($applied as $path) {
             if (!is_string($path) || !isset($oldFiles[$path])) continue;
             if (!isset($newFiles[$path]) || !in_array($path, $listed, true)) {
-                throw new InvalidArgumentException("{$path} has already run on this app's database, so the new version must keep it, listed in manifest.json. Put it back and add changes as a new migration, such as {$next}.");
+                throw new InvalidArgumentException("{$path} has already run on this app's database, so the new version must keep it, listed in manifest.json. Put it back and add changes as a new migration, {$suggestion}.");
             }
             if ($newFiles[$path] !== $oldFiles[$path]) {
-                throw new InvalidArgumentException("{$path} has already run on this app's database, so it cannot change. Put it back as it was and add the change as a new migration, such as {$next} (for a new column: ALTER TABLE … ADD COLUMN …).");
+                throw new InvalidArgumentException("{$path} has already run on this app's database, so it cannot change. Put it back as it was and add the change as a new migration, {$suggestion} (for a new column: ALTER TABLE … ADD COLUMN …).");
+            }
+        }
+        // The runners sort paths bytewise. An inserted path before the applied
+        // prefix would execute at a different point on a clean installation.
+        foreach (array_diff($listed, $applied) as $path) {
+            if (strcmp($path, $lastApplied) < 0) {
+                throw new InvalidArgumentException("{$path} sorts before the applied migration {$lastApplied}. Give the new migration a filename that sorts after {$lastApplied} so a new install applies the same changes in the same order.");
             }
         }
     }
@@ -2353,7 +2501,7 @@ class NativeAppService
     public static function importedKey(string $json): array
     {
         $config = json_decode($json, true);
-        if (!is_array($config)) throw new InvalidArgumentException('That key file is not the JSON configuration a SoftN host keeps (private/config.json).');
+        if (!is_array($config)) throw new InvalidArgumentException('That key file is not the JSON configuration the app host keeps (private/config.json).');
         $keyHex = is_string($config['keyHex'] ?? null) ? strtolower($config['keyHex']) : '';
         if (!preg_match('/^[0-9a-f]{64}$/D', $keyHex)) throw new InvalidArgumentException('That configuration holds no key (keyHex, 64 hexadecimal characters).');
         $domains = $config['cryptoDomains'] ?? null;
@@ -2403,12 +2551,12 @@ class NativeAppService
                 if ($object['type'] !== 'table') continue;
                 // A virtual table has no pages of its own, whatever its CREATE statement says (and
                 // a real table may say "virtual" in a comment or a value).
-                if ((int) $object['rootpage'] <= 0) { $problem = "That database has a virtual table ({$name}), which a SoftN app may not have."; break; }
+                if ((int) $object['rootpage'] <= 0) { $problem = "That database has a virtual table ({$name}), which the app host does not support."; break; }
                 if (str_starts_with(strtolower($name), 'sqlite_')) {
                     if (!in_array(strtolower($name), self::SQLITE_OWN, true)) { $problem = "That database has a table named as SQLite's own ({$name}), which SQLite never makes."; break; }
                     continue;
                 }
-                if (str_starts_with($name, '_') && !in_array($name, ['_migrations', '_request_limits', self::RECORD_OUTBOX], true)) { $problem = "That database has a table the host keeps for itself ({$name}), which is not a SoftN host's."; break; }
+                if (str_starts_with($name, '_') && !in_array($name, ['_migrations', '_request_limits', self::RECORD_OUTBOX], true)) { $problem = "That database has a table the host keeps for itself ({$name}), which does not belong to this host."; break; }
                 $tables[$name] = true;
             }
             if ($problem === null) {
@@ -2428,7 +2576,7 @@ class NativeAppService
             if (is_string($migration) && is_string($files[$migration] ?? null)) $wanted[$migration] = hash('sha256', $files[$migration]);
         }
         if ($ledger === [] && array_diff(array_keys($tables), ['_migrations', '_request_limits', self::RECORD_OUTBOX]) !== []) {
-            throw new InvalidArgumentException('That database has tables but no record of the migrations that made them (_migrations), so it was not kept by a SoftN host.');
+            throw new InvalidArgumentException('That database has tables but no record of the migrations that made them (_migrations), so it was not created by a compatible app host.');
         }
         foreach ($ledger as $row) {
             $name = (string) $row['name'];
@@ -2514,7 +2662,7 @@ class NativeAppService
             $this->resolveJournal($root);
             $this->assertNotRecoveryRequired($root, 'Restore the app database before installing another update');
             $this->assertCanRestoreDatabase($database);
-            $old = $this->get($appId);
+            $old = $this->readInstalledProject($appId);
             if (($old['version'] ?? 0) !== $expectedVersion) throw new RuntimeException('The project changed. Reload before importing.', 409);
             // An app that had a backend or a database keeps its identity: its data and keys are
             // held to it. One that had neither kept nothing under it, so it may take a new one.
@@ -2528,6 +2676,9 @@ class NativeAppService
             // version to those migrations, and only a server block can list them.
             if ($old && self::hasBackend($old) && !array_key_exists('server', $manifest) && (json_decode($old['files']['manifest.json'], true)['server']['database']['migrations'] ?? []) !== [] && is_file($database)) {
                 throw new InvalidArgumentException('This app has a backend whose database migrations have already run, so a version without its server block cannot replace it. Keep the server block (its migrations listed), or create a new app for a version with no backend.');
+            }
+            if ($old && ($origin['how'] ?? '') !== 'rollback' && (($manifest['engine'] ?? null) === 2 || ($manifest['container'] ?? null) === true)) {
+                self::checkComponentModules($files, $old['files']);
             }
             if ($old) self::assertMigrationsKept($old['files'], $files);
             $this->stageProject($staging, array_merge(self::runnerFiles($files, $manifest, $identity), $decoded));
@@ -2561,6 +2712,10 @@ class NativeAppService
             // by and its record written as pending. rollForward() keeps it and rollBack() removes
             // it, both by the journal. Never throws: a history that cannot be written does not
             // stop the install (that one version is then not kept, and the log says so).
+            // Source-only saves keep the settings of the installed app. History receives the
+            // same effective settings that will be promoted with this version.
+            $project['home'] = ($project['home'] ?? $old['home'] ?? false) === true;
+            $project['access'] ??= $old['access'] ?? 'members';
             NativeAppVersions::prepare($root, $operation, $old, $project, $files, $decoded, $expectedVersion + 1, $origin);
             $this->advance($root, $journal, 'config-changed');
             $config = json_decode($originalConfig, true, 64, JSON_THROW_ON_ERROR);
@@ -2601,10 +2756,7 @@ class NativeAppService
                 if (($health['status'] ?? 500) !== 200) throw new RuntimeException(self::startupFailure((string) ($health['body']['diagnostic'] ?? '')), 422);
             }
             $this->advance($root, $journal, 'migrated');
-            // Saying nothing about who may enter keeps what the app has: a publish that omits
-            // it must not open a members-only app to everyone. A new app defaults to members.
-            $access = $project['access'] ?? $old['access'] ?? 'members';
-            $saved = ['home' => ($project['home'] ?? false) === true, 'version' => $expectedVersion + 1, 'updatedAt' => gmdate('c'), 'files' => $files, 'assets' => $assets, 'access' => $access === 'members' ? 'members' : 'application'];
+            $saved = ['home' => $project['home'], 'version' => $expectedVersion + 1, 'updatedAt' => gmdate('c'), 'files' => $files, 'assets' => $assets, 'access' => $project['access']];
             $this->writeExact($root . '/project.json', json_encode($saved, JSON_THROW_ON_ERROR), 0600);
             $this->afterStep($root, 'project-written');
             $this->advance($root, $journal, 'metadata-promoted');
@@ -2874,27 +3026,9 @@ class NativeAppService
             // The database is checked again under the lock: settling an unfinished first install
             // removes it, and opening it here would create an empty one in its place.
             if (!$dispatch || !flock($dispatch, LOCK_EX | LOCK_NB) || !is_file($path) || self::linkedDatabase($path)) return 0;
-            $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-            $db->exec('PRAGMA busy_timeout=1500');
-            if (!$db->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_formlogic_record_events'")->fetchColumn()) return 0;
-            $events = $db->query('SELECT * FROM _formlogic_record_events ORDER BY created_at, rowid LIMIT ' . max(1, min(500, $limit)))->fetchAll();
-            $ack = $db->prepare('DELETE FROM _formlogic_record_events WHERE id=?');
-            $readRow = static function (string $table, string $column, mixed $value) use ($db): ?array {
-                if (!preg_match('/^[A-Za-z][A-Za-z0-9_]{0,62}$/D', $table) || !preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,62}$/D', $column) || (!is_string($value) && !is_int($value))) return null;
-                try {
-                    $statement = $db->prepare('SELECT * FROM "' . $table . '" WHERE "' . $column . '" = ? LIMIT 1');
-                    $statement->execute([$value]);
-                    $row = $statement->fetch();
-                    return is_array($row) ? $row : null;
-                } catch (\PDOException) {
-                    return null;
-                }
-            };
-            foreach ($events as $event) {
-                $deliver($event['id'], $event['event_name'], json_decode($event['data_json'], true, 64, JSON_THROW_ON_ERROR), json_decode($event['bindings_json'], true, 64, JSON_THROW_ON_ERROR), $readRow);
-                $ack->execute([$event['id']]);
-            }
-            return count($events);
+            $store = NativeRecordStore::open($path);
+            try { return $store->dispatchEvents($deliver, $limit); }
+            finally { $store->close(); }
         } finally {
             foreach ([$dispatch, $manage] as $lock) if (is_resource($lock)) { flock($lock, LOCK_UN); fclose($lock); }
         }
@@ -3124,14 +3258,13 @@ class NativeAppService
             $path = $root . '/private/data/application.sqlite';
             if (!is_file($path)) throw new RuntimeException(self::hasBackend($project ?? []) ? 'App database not found' : 'This app has no database', 404);
             self::assertOwnDatabase($path);
-            $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
             $stream = null;
+            $store = NativeRecordStore::open($path, readSnapshot: true);
             try {
-                $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=1500; BEGIN');
                 // In memory up to PHP's two megabytes, then a temporary file that goes when the stream is closed.
                 $stream = fopen('php://temp', 'w+b');
                 if ($stream === false) throw new RuntimeException('The export could not be started');
-                $truncated = (new NativeRecordStore($db))->export($stream, $table, $format, $options);
+                $truncated = $store->export($stream, $table, $format, $options);
                 rewind($stream);
                 return ['stream' => $stream, 'truncated' => $truncated];
             } catch (\Throwable $error) {
@@ -3139,7 +3272,7 @@ class NativeAppService
                 throw $error;
             } finally {
                 // Closed before the lock is given up: an installer that takes it next may replace the file.
-                $db = null;
+                $store->close();
             }
         } finally { flock($lock, LOCK_UN); fclose($lock); }
     }
@@ -3167,11 +3300,10 @@ class NativeAppService
         try {
             $path = $root . '/private/data/application.sqlite';
             if (!is_file($path) || self::linkedDatabase($path)) return $glance;
-            $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $store = NativeRecordStore::open($path, readSnapshot: true, busyTimeout: 250);
             try {
-                $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=250');
-                $tables = count((new NativeRecordStore($db))->tables());
-            } finally { $db = null; }
+                $tables = count($store->tables());
+            } finally { $store->close(); }
             clearstatcache(true, $path);
             return ['tables' => $tables, 'bytes' => (int) filesize($path)] + $glance;
         } catch (\PDOException) {
@@ -3367,8 +3499,9 @@ class NativeAppService
             $path = $root . '/private/data/application.sqlite';
             if (!is_file($path)) throw new RuntimeException('App database not found', 404);
             self::assertOwnDatabase($path);
-            $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-            return (new NativeRecordStore($db, self::revisionKey($root . '/private/config.json')))->operate($input, $subscriptions);
+            $store = NativeRecordStore::open($path, self::revisionKey($root . '/private/config.json'));
+            try { return $store->operate($input, $subscriptions); }
+            finally { $store->close(); }
         } finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
@@ -3381,19 +3514,23 @@ class NativeAppService
         $path = $root . '/private/data/application.sqlite';
         if (!is_file($path)) throw new RuntimeException('App database not found', 404);
         self::assertOwnDatabase($path);
-        $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-        $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=1500; BEGIN');
-        $store = new NativeRecordStore($db);
-        if ($table === null) {
-            $answer = ['installed' => true, 'tables' => $store->tables()];
-            if (!empty($options['summary'])) {
-                $overview = $store->overview();
-                clearstatcache(true, $path);
-                // The database's file, as glance() measures it for the apps list.
-                $answer['summary'] = ['tables' => $overview['tables'], 'bytes' => (int) filesize($path), 'hiddenTables' => $overview['hiddenTables']];
+        $store = NativeRecordStore::open($path, readSnapshot: true);
+        try {
+            if ($table === null) {
+                $answer = ['installed' => true, 'tables' => $store->tables()];
+                if (!empty($options['summary'])) {
+                    $overview = $store->overview();
+                    clearstatcache(true, $path);
+                    // The database's file, as glance() measures it for the apps list.
+                    $answer['summary'] = ['tables' => $overview['tables'], 'bytes' => (int) filesize($path), 'hiddenTables' => $overview['hiddenTables']];
+                }
+                return $answer;
             }
-            return $answer;
+            return ($options['view'] ?? null) === 'structure' ? $store->structure($table) : $store->browse($table, $offset, $options);
+        } finally {
+            // An error or a reference held by the driver can outlive the request.
+            // Release this read snapshot before the next edit needs its write lock.
+            $store->close();
         }
-        return ($options['view'] ?? null) === 'structure' ? $store->structure($table) : $store->browse($table, $offset, $options);
     }
 }

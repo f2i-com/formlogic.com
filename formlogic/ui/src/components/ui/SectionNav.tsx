@@ -96,6 +96,7 @@ export function SectionNav({ label, items, current, end, className }: {
             <Link
               key={value}
               to={to}
+              tabIndex={0}
               replace={replace}
               state={state}
               aria-current={current === value ? 'page' : undefined}

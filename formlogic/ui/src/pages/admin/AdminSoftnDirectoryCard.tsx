@@ -30,7 +30,7 @@ export function AdminSoftnDirectoryCard() {
         setSettings(r.data);
         setUrl(r.data.url ?? '');
       } else {
-        setLoadError(r.error || 'Could not load the SoftN directory setting');
+        setLoadError(r.error || 'Could not load the app directory setting');
       }
     });
     return () => { cancelled = true; };
@@ -46,18 +46,18 @@ export function AdminSoftnDirectoryCard() {
     }
     setSettings(r.data);
     setUrl(r.data.url ?? '');
-    toast.success(r.data.url ? `Publishing to ${r.data.url}` : 'Publishing to a SoftN directory is off');
+    toast.success(r.data.url ? `Publishing to ${r.data.url}` : 'App directory publishing is off');
   };
 
   return (
     <Panel
-      title="SoftN directory"
+      title="App directory"
       icon={<Globe className="h-4 w-4" />}
       actions={settings && <Badge variant={settings.url ? 'success' : 'default'}>{settings.url ? 'On' : 'Off'}</Badge>}
     >
       <div className="space-y-3">
         <p className="text-xs leading-5 text-gray-500 dark:text-slate-400">
-          Lets this site’s people publish their hosted SoftN apps to a public SoftN directory, where anyone can play them and
+          Lets this site’s people publish their hosted apps to a public app directory, where anyone can play them and
           read their source. Their AI agents can prepare a draft over MCP, but only the app’s owner publishes it, by approving
           it on its own page. Leave it empty to keep it off.
         </p>
@@ -65,7 +65,7 @@ export function AdminSoftnDirectoryCard() {
           <>
             <div className="flex flex-wrap items-end gap-2">
               <div className="min-w-0 flex-1 basis-56">
-                <Input label="Directory address" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://softn.com" disabled={saving} />
+                <Input label="Directory address" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://directory.example.com" disabled={saving} />
               </div>
               <Button className="max-sm:min-h-11" onClick={() => void save(url.trim() || null)} isLoading={saving} disabled={(url.trim() || null) === settings.url}>Save</Button>
               {settings.url && <Button className="max-sm:min-h-11" variant="outline" onClick={() => void save(null)} disabled={saving}>Turn off</Button>}

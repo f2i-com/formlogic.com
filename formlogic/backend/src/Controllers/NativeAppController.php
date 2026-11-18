@@ -108,8 +108,11 @@ class NativeAppController
             // for an app with nothing installed (install() refuses expectedVersion 0 otherwise).
             if (($args['operation'] ?? '') === 'starter') {
                 // A forms app hosts a project from App Studio; the starter would take over its address.
-                if (empty($app['settings']['softnApp'])) throw new \InvalidArgumentException('The starter is only for a SoftN app. Add a project to this app from its App Studio instead.');
-                $installed = $this->native->install($app['id'], NativeAppService::starterProject((string) $app['name'], (string) $app['id']), 0, null,
+                if (empty($app['settings']['softnApp'])) throw new \InvalidArgumentException('This starter is for a web app. Add a project to a forms app from its App Studio.');
+                $body = $request->getParsedBody();
+                $template = is_array($body) ? ($body['template'] ?? 'classic') : 'classic';
+                if (!is_string($template)) throw new \InvalidArgumentException(NativeAppService::UNKNOWN_STARTER);
+                $installed = $this->native->install($app['id'], NativeAppService::starterProject((string) $app['name'], (string) $app['id'], $template), 0, null,
                     ['by' => (string) $app['ownerId'], 'how' => 'page', 'summary' => 'Started from the working starter']);
                 return ['project' => $installed] + $this->engineAfterInstall($app['id'], RuntimeEngineService::languagesOf(NativeAppService::clientFiles($installed)));
             }

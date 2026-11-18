@@ -80,7 +80,7 @@ test.describe('the data manager of a SoftN app', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     const appId = await appWithRows(context);
     const requests = recordRequests(page);
-    await page.goto(`/apps/${appId}/softn/data`);
+    await page.goto(`/apps/${appId}/web/data`);
     const data = dataSection(page);
 
     // The table list says how many rows each table holds; the first table is open on its first page.
@@ -100,7 +100,7 @@ test.describe('the data manager of a SoftN app', () => {
     // The next page, at an address of its own.
     await data.getByRole('button', { name: 'Next page', exact: true }).click();
     await expect(pagerText(page)).toHaveText(`Rows 26–${ROWS} of ${ROWS}`);
-    await expect(page).toHaveURL(/\/softn\/data\/items\?offset=25$/);
+    await expect(page).toHaveURL(/\/web\/data\/items\?offset=25$/);
     expect(await titles(page)).toEqual(Array.from({ length: 5 }, (_, i) => title(i + 26)));
 
     // A column heading orders the table, from the first page: once for smallest first, again for largest.
@@ -109,7 +109,7 @@ test.describe('the data manager of a SoftN app', () => {
     await expect(grid(page).locator('thead th[aria-sort="ascending"]')).toHaveText(/title/);
     await heading.click();
     await expect(grid(page).locator('thead th[aria-sort="descending"]')).toHaveText(/title/);
-    await expect(page).toHaveURL(/\/softn\/data\/items\?sort=title&dir=desc$/);
+    await expect(page).toHaveURL(/\/web\/data\/items\?sort=title&dir=desc$/);
     await expect(grid(page).locator('tbody td[data-column="title"]').first()).toHaveText(title(ROWS));
 
     // The search finds rows by what any column holds, and keeps the focus while it does.
@@ -175,14 +175,14 @@ test.describe('the data manager of a SoftN app', () => {
     test.setTimeout(180_000);
     await page.setViewportSize({ width: 1280, height: 800 });
     const appId = await appWithRows(context);
-    await page.goto(`/apps/${appId}/softn/data/items`);
+    await page.goto(`/apps/${appId}/web/data/items`);
     const data = dataSection(page);
     await expect(pagerText(page)).toHaveText(`Rows 1–25 of ${ROWS}`);
     const requests = recordRequests(page);
 
     // Structure, at its own address, without the list of tables or the rows being asked for again.
     await data.getByRole('tab', { name: 'Structure', exact: true }).click();
-    await expect(page).toHaveURL(/\/softn\/data\/items\/structure$/);
+    await expect(page).toHaveURL(/\/web\/data\/items\/structure$/);
     const structure = data.getByRole('tabpanel');
     await expect(structure.locator('tbody tr').nth(0)).toContainText(/id\s*INTEGER[\s\S]*Primary/);
     await expect(structure.locator('tbody tr').nth(1)).toContainText(/title\s*TEXT/);
@@ -190,7 +190,7 @@ test.describe('the data manager of a SoftN app', () => {
 
     // Export links to the file itself. It is fetched here with the page's own session.
     await data.getByRole('tab', { name: 'Export', exact: true }).click();
-    await expect(page).toHaveURL(/\/softn\/data\/items\/export$/);
+    await expect(page).toHaveURL(/\/web\/data\/items\/export$/);
     const link = data.locator('a[href*="export="]').first();
     await expect(link).toHaveAttribute('href', new RegExp(`/api/apps/${appId}/native/records\\?table=items&export=csv$`));
     const file = await context.request.get((await link.getAttribute('href'))!);
@@ -204,7 +204,7 @@ test.describe('the data manager of a SoftN app', () => {
 
     // Back in Browse the rows are as they were left.
     await data.getByRole('tab', { name: 'Browse', exact: true }).click();
-    await expect(page).toHaveURL(/\/softn\/data\/items$/);
+    await expect(page).toHaveURL(/\/web\/data\/items$/);
     await expect(pagerText(page)).toHaveText(`Rows 1–25 of ${ROWS}`);
   });
 
@@ -216,7 +216,7 @@ test.describe('the data manager of a SoftN app', () => {
         await login(context);
         const appId = await appWithRows(context);
         const page = await context.newPage();
-        await page.goto(`/apps/${appId}/softn/data/items`);
+        await page.goto(`/apps/${appId}/web/data/items`);
         const data = dataSection(page);
         const cards = data.getByRole('list', { name: 'Rows of items' }).getByRole('listitem');
         await expect(cards).toHaveCount(25);

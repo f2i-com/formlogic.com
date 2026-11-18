@@ -1,8 +1,8 @@
 # Editable app packs
 
-The live catalogue reads pack folders on each request. The 29 bundled business packs contain 32 editable Softn workspaces and retain their 188 forms, linked records, roles, reports and automations. Installation creates an owned **draft** app; publish it and configure membership in App Studio before sharing it.
+The live catalogue reads pack folders on each request. The 29 bundled business packs contain 32 editable app workspaces and retain their 188 forms, linked records, roles, reports and automations. Installation creates an owned **draft** app; publish it and configure membership in App Studio before sharing it.
 
-The Softn workspace provides navigation, search, recent records, record details and a getting-started guide. **Dashboard & reports** opens the pack's specialist dashboard. Form rendering, specialist tools and existing reports continue to use FormLogic's components. Aokie's calls, SMS and voice services require OAIY, a configured phone and approved connector grants; installing a pack does not place calls or send messages.
+The app workspace provides navigation, search, recent records, record details and a getting-started guide. **Dashboard & reports** opens the pack's specialist dashboard. Form rendering, specialist tools and existing reports continue to use FormLogic's components. Aokie's calls, SMS and voice services require OAIY, a configured phone and approved connector grants; installing a pack does not place calls or send messages.
 
 ## Add or change a pack
 
@@ -45,7 +45,7 @@ my-pack/
 
 `install.json` uses the existing Pack v1 format: `packMeta`, `forms`, `apps`, optional `flows` and `flowBindings`. Its ID/version must match `pack.json`. Use `@pack:<form-id>` references for relationships; installation resolves these to new IDs. `apps[].packAppId` must match the `projects` map. An app with a project may have an empty `forms` list.
 
-Start by copying one of the bundled folders. Their schemas include the real fields, dashboards, roles, reports and bindings. A form can use `logicScriptFile: "server/forms/validate-request.logic"` to load its submission script from a separate file. Form databases are provisioned by FormLogic from these definitions; no second copy of those records is created for the Softn workspace.
+Start by copying one of the bundled folders. Their schemas include the real fields, dashboards, roles, reports and bindings. A form can use `logicScriptFile: "server/forms/validate-request.logic"` to load its submission script from a separate file. Form databases are provisioned by FormLogic from these definitions; no second copy of those records is created for the app workspace.
 
 Optional `screenshots` metadata is an array of `{label,url}` entries referencing `/api/packs/screenshots/<filename>.png` (also JPG/WebP). Place images in `backend/storage/pack-screenshots/`. Bundled images show the retained specialist dashboards.
 
@@ -71,7 +71,7 @@ Edit these projects in **App Studio → Screens → Hosting & app tools → App 
 
 ## Native apps with routes and SQLite migrations
 
-A folder can instead contain a complete native Softn project. Its `manifest.json` declares the server `.logic` entry, routes, capabilities and private SQLite migrations. Use this `formlogic.json`:
+A folder can instead contain a complete native app project. Its `manifest.json` declares the server `.logic` entry, routes, capabilities and private SQLite migrations. Use this `formlogic.json`:
 
 ```json
 {
@@ -89,11 +89,11 @@ A working example is in [`formlogic/backend/tests/fixtures/pack-projects/native-
 
 ## Download and move projects
 
-**Download app sources** on a folder pack's detail page creates an installable ZIP with a Pack v1 `manifest.json` and a `.softn` archive for each app under `projects/`. It also includes `pack.json`, `install.json` and the unpacked source folders: operators can extract it under `storage/pack-projects/<pack-id>/` and edit it there. After editing live folders, download a fresh ZIP to rebuild its installation manifest; the manifest inside an older ZIP is a snapshot.
+**Download app sources** on a folder pack's detail page creates an installable ZIP with a Pack v1 `manifest.json` and a project ZIP for each app under `projects/`. It also includes `pack.json`, `install.json` and the unpacked source folders: operators can extract it under `storage/pack-projects/<pack-id>/` and edit it there. After editing live folders, download a fresh ZIP to rebuild its installation manifest; the manifest inside an older ZIP is a snapshot.
 
 1. Import the outer ZIP through FormLogic's pack importer to install all forms, roles, reports, flows and app projects together.
-2. Open an individual `.softn` file in Builder or Studio to edit the interface. Connected workspaces require their installed FormLogic host to access live records.
-3. Import a named-action `.softn` into **App hosting** to retain its private actions. Import native `.softn` projects through **Native app hosting** to retain routes, migrations and application sign-in.
+2. Open an individual project ZIP in Builder or Studio to edit the interface. Connected workspaces require their installed FormLogic host to access live records.
+3. Import a named-action project ZIP into **App hosting** to retain its private actions. Import native project ZIPs through **Native app hosting** to retain routes, migrations and application sign-in.
 
 Archives contain source and schema definitions, **not existing responses, database rows, credentials or member accounts**. Review capabilities when installing. Server package verification policies and connector grant review continue to apply. To combine apps around existing records, use FormLogic's shared-form and integration composition tools rather than installing a second independent copy.
 

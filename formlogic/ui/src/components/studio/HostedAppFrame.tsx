@@ -5,7 +5,7 @@ import { api } from "../../lib/api";
 import { workspaceBridge } from "../../lib/softn/workspaceBridge";
 import { NATIVE_PROTOCOL } from "../../lib/softn/protocol";
 import { engineIdentity, engineNeedsBytes, getEngineBytes, hostZippFiles } from "../../lib/formlogic/zipp-bytes";
-import { announcedIdentity, chooseFrameEngine, frameSource, sameIdentity } from "../../lib/formlogic/frameEngine";
+import { announcedIdentity, chooseFrameEngine, frameSource, sameIdentity, usesWebContainer } from "../../lib/formlogic/frameEngine";
 
 import { nativeAppStorage, nativeFrameAppId, NativeStorageError, isNativeStorageScope, onNativeStorageChange, SMALL_STORAGE_LIMITS, type NativeStorageLimits, type NativeStorageScope } from "../../lib/nativeAppStorage";
 import { NATIVE_IN_FLIGHT_RETRY_SECONDS, nativeRefusal, nativeTooManyRequests } from "../../lib/nativeRefusal";
@@ -207,6 +207,7 @@ export function HostedAppFrame({
   const mountClient = override?.client ?? client;
   const mountVersion = override?.version ?? version;
   const mountNative = native ? (override?.native ?? native) : undefined;
+  const webContainer = useMemo(() => Boolean(mountNative) && usesWebContainer(mountClient), [mountNative, mountClient]);
   const blocked = generation !== admission || (!!mountNative && !scopeAllowed(mountNative)) ||
     (!mountNative && !workspaceOnly && !isHostedAdmissionCurrent(hosted, slug));
   const engineId = current?.id ?? "";
@@ -468,7 +469,12 @@ export function HostedAppFrame({
       // `null` means the document that was mounted cannot serve what was asked for — the host
       // document, whose shell did not announce host-js — and there is nothing to fall back to on it.
       const runsSiteZipp = event.data.zippGlue === 1;
-      const chosen = chooseFrameEngine(engineId ? { id: engineId } : undefined, event.data.engines, engineIdentity, runsSiteZipp);
+      if (webContainer !== (event.data.webContainer === 1)) {
+        clearTimeout(timeout);
+        setError("Update the hosted runtime to open this app format.");
+        return;
+      }
+      const chosen = webContainer ? "web-container" : chooseFrameEngine(engineId ? { id: engineId } : undefined, event.data.engines, engineIdentity, runsSiteZipp);
       // A frame built with this page's ZIPP runs these bytes on the glue it carries, as it always did.
       // One built with another ZIPP that runs the site's own (SoftN v0.0.36 on, ready's `zippGlue: 1`)
       // is sent this site's glue and torch package from its ZIPP folder with the bytes, so it runs the
@@ -476,7 +482,7 @@ export function HostedAppFrame({
       // working for as long as its ZIPP is the runtime's. Any other frame is out of date.
       const sameZipp = chosen !== null && sameIdentity(announcedIdentity(event.data, chosen), engineIdentity(chosen));
       const siteZipp = chosen !== null && !sameZipp && runsSiteZipp && engineNeedsBytes(chosen);
-      if (chosen === null || (!sameZipp && !siteZipp)) {
+      if (chosen === null || (!webContainer && !sameZipp && !siteZipp)) {
         clearTimeout(timeout);
         setError("This app runtime is out of date. Please update the hosted app runtime and reload.");
         return;
@@ -487,7 +493,7 @@ export function HostedAppFrame({
       // hashed and no bytes are put in `init`. The frame never asks for bytes it would then have
       // to decide what to do with.
       let zippWasm: ArrayBuffer | undefined;
-      if (engineNeedsBytes(chosen)) {
+      if (!webContainer && engineNeedsBytes(chosen)) {
         try {
           zippWasm = await getEngineBytes(chosen);
         } catch (reason) {
@@ -607,6 +613,12 @@ export function HostedAppFrame({
         }
         if (counted) inFlight++;
         try {
+          if (webContainer && action === "containerEngine") {
+            const installed = engineIdentity("zipp-web-python");
+            if (typeof installed !== "object" || installed.sha256 !== input.sha256) throw new Error("The full engine and hosted runtime need matching releases.");
+            reply({ result: await getEngineBytes("zipp-web-python") });
+            return;
+          }
           if (storage && action === "nativeStorage") {
             if (input.operation === "batch" && !acknowledgedStorage) throw new Error("This app runtime does not support acknowledged storage batches.");
             // The trusted auth generation and mount are checked BEFORE the
@@ -749,6 +761,7 @@ export function HostedAppFrame({
           // object here would arrive as "[object Object]" and be refused. A shell from before the
           // handshake ignores the key and runs what it always ran.
           engine: chosen,
+          ...(webContainer ? { python: !engineId || engineId === "zipp-web-python" } : {}),
           // Clone the public bytes; never transfer/detach the page's cache. The key is ABSENT,
           // not undefined, for an engine that needs none: a structured clone carries an explicit
           // undefined across, and the host document must not be sent an engine field at all.
@@ -786,7 +799,7 @@ export function HostedAppFrame({
       if (invalidateMount.current === invalidate) invalidateMount.current = null;
       if (recovery.current?.key === frameKey) recovery.current = null;
     };
-  }, [slug, mountClient, mountVersion, mountNative, storageEpoch, engineId, engineRevision, admission, blocked, decided, frameKey, mountBase, hosted, workspaceOnly, actorRefused, hostedAdmissionId, plugin]);
+  }, [slug, mountClient, mountVersion, mountNative, webContainer, storageEpoch, engineId, engineRevision, admission, blocked, decided, frameKey, mountBase, hosted, workspaceOnly, actorRefused, hostedAdmissionId, plugin]);
   // A newer version to hand to the frame on screen, once: when it arrives, or when the app it is for
   // has drawn. A frame that cannot be handed one answers `reopen` here, at once.
   const onScreen = shownKey === frameKey;
@@ -797,11 +810,12 @@ export function HostedAppFrame({
     // A version for another engine than this frame runs on is never handed to it. (This mount's
     // engine: the props', or the one a refused action had the frame reopened on.)
     if ((update.engine?.id ?? "") !== engineId || (update.engine?.revision ?? "") !== engineRevision) { onUpdateRef.current?.(update.version, "reopen"); return; }
+    if (mountNative && usesWebContainer(update.client) !== webContainer) { onUpdateRef.current?.(update.version, "reopen"); return; }
     // The frame opened with this very version: an earlier frame of this mount took it, or the
     // server's new engine decision brought it (the override).
     if ((taken.current?.base === mountBase && taken.current.version === update.version) || (!taken.current && mountVersion === update.version)) { onUpdateRef.current?.(update.version, "taken"); return; }
     if (!handUpdate.current?.(update)) onUpdateRef.current?.(update.version, "reopen");
-  }, [update, onScreen, blocked, actorRefused, frameKey, mountBase, engineId, engineRevision, mountVersion]);
+  }, [update, onScreen, blocked, actorRefused, frameKey, mountBase, engineId, engineRevision, mountVersion, mountNative, webContainer]);
   // Every engine: the first load is the frame starting, a second is the document being replaced
   // under it. Counted per frame, so a remount (new source, reset data, a new engine) starts over.
   const countLoad = () => {
@@ -879,7 +893,7 @@ export function HostedAppFrame({
           // The document the SERVER's decision needs, chosen before the frame loads because it is
           // the document that decides the shell's policy. `frameKey` carries the engine id, so a
           // decision that changes builds a new frame on the right document rather than reusing one.
-          src={frameSource(engineId)}
+          src={frameSource(engineId, webContainer)}
           // The containment, for EVERY engine and unchanged by any of them. Scripts and nothing
           // else: the frame keeps an opaque origin, so it has none of this origin's cookies,
           // storage or DOM, and no popups, top-level navigation, forms or downloads. Host

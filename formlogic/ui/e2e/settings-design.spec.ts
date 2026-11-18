@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test';
 
+// Keep mocked account endpoints in the page's route handler across reloads.
+test.use({ serviceWorkers: 'block' });
+
 // The page's sections are links under its header (not tabs): each is an address in the #hash, the
 // open one is marked aria-current="page", and all five stay in the page with only the open one
 // on show. Each section's address is the hash its tab had.
@@ -8,7 +11,8 @@ const SECTIONS = [['Account', 'profile'], ['Workspace', 'appearance'], ['AI & de
 for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
   test(`Settings sections ${width}px ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
-    await page.addInitScript(theme => localStorage.setItem('formlogic-ui-storage', JSON.stringify({ state: { theme, sidebarCollapsed: false }, version: 0 })), theme);
+    const edge = theme === 'light' ? 'top' : 'bottom';
+    await page.addInitScript(state => localStorage.setItem('formlogic-ui-storage', JSON.stringify({ state, version: 1 })), { theme, sidebarEdge: edge });
     const errors: string[] = [];
     const writes: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -28,6 +32,13 @@ for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
     const title = page.getByRole('heading', { name: 'Settings', exact: true, level: 1 });
     await expect(link('Account')).toHaveAttribute('aria-current', 'page');
     await expect(page.getByRole('tablist')).toHaveCount(0);
+    const finder = page.getByRole('searchbox', { name: 'Find a setting' });
+    await finder.fill('authenticator');
+    await expect(page.getByRole('search', { name: 'Account settings' }).getByRole('link', { name: /Two-factor authentication/ })).toBeVisible();
+    await finder.press('Enter');
+    await expect(page).toHaveURL(/#two-factor$/);
+    await expect(page.locator('#two-factor')).toBeFocused();
+    await link('Account').click();
     await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Unsaved profile draft');
     await expect(page.getByText('You have unsaved profile changes.', { exact: true })).toBeVisible();
     for (const [label, hash] of SECTIONS) {
@@ -71,15 +82,24 @@ for (const width of [1440, 768, 390]) for (const theme of ['light', 'dark']) {
     // A long section links to its panels; a panel lands in view, below the sticky header.
     await link('Your data').click();
     const backup = page.getByRole('heading', { name: 'Backup & restore', exact: true });
-    const belowTheHeader = async () => (await backup.boundingBox())!.y >= (await page.locator('header').first().boundingBox())!.height;
-    await page.getByRole('navigation', { name: 'Your data on this page' }).getByRole('link', { name: 'Backup & restore', exact: true }).click();
+    const belowTheHeader = async () => {
+      const rect = (await page.getByRole('main').locator('header').first().boundingBox())!;
+      return (await backup.boundingBox())!.y >= rect.y + rect.height - 1;
+    };
+    const jumps = page.getByRole('navigation', { name: 'Your data on this page' });
+    await expect(jumps).toBeVisible();
+    if (await jumps.getByRole('combobox').isVisible()) {
+      await jumps.getByRole('combobox').selectOption('backup');
+    } else {
+      await jumps.getByRole('link', { name: 'Backup & restore', exact: true }).click();
+    }
     await expect(page).toHaveURL(/#backup$/);
     await expect(backup).toBeInViewport();
-    expect(await belowTheHeader()).toBe(true);
+    await expect.poll(belowTheHeader).toBe(true);
     await page.reload();
     await expect(link('Your data')).toHaveAttribute('aria-current', 'page');
     await expect(backup).toBeInViewport();
-    expect(await belowTheHeader()).toBe(true);
+    await expect.poll(belowTheHeader).toBe(true);
     // The addresses other pages hold: each opens its section, with the panel it names in view.
     for (const [hash, label] of [['ai', 'AI & devices'], ['local-runtime', 'AI & devices'], ['linked-desktops', 'AI & devices'], ['security', 'Security'], ['api-keys', 'Security'], ['your-data', 'Your data'], ['backup', 'Your data']] as const) {
       await page.goto(`/settings#${hash}`);

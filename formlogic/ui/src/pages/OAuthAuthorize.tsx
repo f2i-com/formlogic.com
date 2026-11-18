@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
@@ -38,6 +39,7 @@ const SCOPE_LABELS: Record<string, string> = {
  * - The redirect host is displayed prominently (anti-phishing).
  */
 export function OAuthAuthorize() {
+  useDocumentTitle('Review connection request');
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -282,16 +284,16 @@ export function OAuthAuthorize() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-transparent flex items-center justify-center p-6">
+    <main className="min-h-[100dvh] bg-gray-50 dark:bg-transparent flex items-center justify-center p-4 sm:p-6">
       <div className="w-full max-w-md">
         <div className="flex justify-center mb-8">
           <Link to="/"><Logo size="lg" /></Link>
         </div>
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5 sm:p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20">
           {body}
         </div>
       </div>
-    </div>
+    </main>
   );
 }
 

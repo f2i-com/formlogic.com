@@ -6,7 +6,7 @@ import { MarketplaceLayout } from '../components/layout/MarketplaceLayout';
 import { PageBody } from '../components/layout/PageBody';
 import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { parseServerDate, cn } from '../lib/utils';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import {
   ArrowLeft,
   ArrowRight,
@@ -39,7 +39,6 @@ import { useFormStore } from '../stores/formStore';
 import { useAppStore } from '../stores/appStore';
 import { useAuthStore } from '../stores/authStore';
 import { useInstalledNodeStore } from '../stores/installedNodeStore';
-import { useMarketplaceChrome } from '../lib/marketplaceChrome';
 import { deferEffect } from '../lib/deferredEffect';
 
 type PackDetail = CatalogPack & {
@@ -59,7 +58,8 @@ function PackDetailContent() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
-  useMarketplaceChrome();
+  const { search } = useLocation();
+  const galleryUrl = '/packs' + search;
   // Send anonymous visitors to sign in (preserving where they were) instead of
   // letting install/rate dead-end on an auth error.
   const goSignIn = useCallback(
@@ -369,7 +369,7 @@ function PackDetailContent() {
   // page. The two differ in layout alone: every control below is the same one in both.
   const workspace = !!user;
   // The workspace Header's way back to the catalogue (the public page has its own breadcrumb).
-  const backToTemplates = { onClick: () => navigate('/packs'), label: 'Back to templates' };
+  const backToTemplates = { onClick: () => navigate(galleryUrl), label: 'Back to templates' };
 
   if (loading) {
     return (
@@ -390,14 +390,14 @@ function PackDetailContent() {
               onRetry={() => { setLoadError(null); void loadPackDetail(); }}
             />
             <div className="mt-4 text-center">
-              <Button variant="outline" onClick={() => navigate('/packs')}>Back to templates</Button>
+              <Button variant="outline" onClick={() => navigate(galleryUrl)}>Back to templates</Button>
             </div>
           </div>
         ) : (
           <div className="text-center">
             <Package className="mx-auto mb-3 h-12 w-12 text-gray-400 opacity-50" />
-            <p className="text-lg font-medium text-gray-600 dark:text-slate-400">Template not found</p>
-            <Button variant="outline" className="mt-4" onClick={() => navigate('/packs')}>
+            <h1 className="text-xl font-semibold text-gray-900 dark:text-slate-100">Template not found</h1>
+            <Button variant="outline" className="mt-4" onClick={() => navigate(galleryUrl)}>
               Back to templates
             </Button>
           </div>
@@ -414,7 +414,7 @@ function PackDetailContent() {
   // Server-computed trust level (spec §30.1) — never derived on the client.
   const trust = pack.trustLevel || (pack.official ? 'official' : 'community');
   // The public page sets its small print in the marketing mono face; the workspace keeps its own.
-  const mono = workspace ? 'tabular-nums' : 'fl-mono';
+  const mono = workspace ? 'tabular-nums' : 'font-mono';
   // A finger's height for the workspace's buttons on a phone.
   const touch = workspace ? 'max-sm:min-h-11' : undefined;
 
@@ -507,7 +507,7 @@ function PackDetailContent() {
   // What's inside — the actual forms and apps this pack installs
   const insideHeading = workspace
     ? 'mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400'
-    : 'fl-mono mb-2.5 text-[11px] uppercase tracking-[0.2em] text-gray-400 dark:text-slate-500';
+    : 'font-mono mb-2.5 text-[11px] uppercase tracking-[0.2em] text-gray-400 dark:text-slate-500';
   const insideLists = (
     <>
       {appNames.length > 0 && (
@@ -741,7 +741,8 @@ function PackDetailContent() {
                 {pack.tags.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {pack.tags.map((tag) => (
-                      <span key={tag} className="rounded-md bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-slate-800 dark:text-slate-300">{tag}</span>
+                      <Link key={tag} to={{ pathname: '/packs', search: new URLSearchParams({ tag }).toString() }}
+                        className="inline-flex min-h-9 max-w-full items-center rounded-md bg-gray-100 px-2 text-xs text-gray-700 hover:underline dark:bg-slate-800 dark:text-slate-300"><span className="wrap-anywhere">{tag}</span></Link>
                     ))}
                   </div>
                 )}
@@ -755,7 +756,7 @@ function PackDetailContent() {
                 </dl>
                 {pack.folderSource && (
                   <p className="mt-3 text-xs leading-5 text-gray-500 dark:text-slate-400">
-                    Includes an editable app workspace, linked forms and record storage. Install to create your own copy, then customise its screens, backend actions, forms and automations in App Studio. The source download includes each app as a .softn project and the complete installation package.
+                    Includes an editable app workspace, linked forms and record storage. Install to create your own copy, then customise its screens, backend actions, forms and automations in App Studio. The source download includes each editable app as a project ZIP and the complete installation package.
                   </p>
                 )}
               </Panel>
@@ -795,48 +796,27 @@ function PackDetailContent() {
   return (
     <MarketplaceLayout>
       {bundledPreview && <p role="status" className="mx-auto max-w-4xl px-6 pt-5 text-sm text-slate-600 dark:text-slate-300">Bundled starter preview. Connect to the live marketplace to install this app.</p>}
-      {/* Breadcrumb */}
-      <div className="border-b border-gray-100 dark:border-slate-800/60 bg-white/85 dark:bg-slate-950/75 backdrop-blur-xl">
-        <div className="fl-mono mx-auto flex h-12 max-w-4xl items-center gap-2 px-4 text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 sm:px-6">
-          <Link
-            to="/packs"
-            className="inline-flex items-center gap-1.5 rounded transition-colors hover:text-gray-900 dark:hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-            Marketplace
-          </Link>
-          <span className="text-gray-300 dark:text-slate-700">/</span>
-          <span className="truncate normal-case tracking-normal font-medium text-gray-900 dark:text-white">{pack.name}</span>
-        </div>
-      </div>
-
-      {/* Header, on the landing page's blueprint-grid backdrop */}
-      <div className="relative overflow-hidden">
-        <div
-          className="fl-grid pointer-events-none absolute inset-0"
-          style={{
-            maskImage: 'radial-gradient(ellipse 70% 95% at 50% 0%, #000 0%, transparent 75%)',
-            WebkitMaskImage: 'radial-gradient(ellipse 70% 95% at 50% 0%, #000 0%, transparent 75%)',
-          }}
-        />
-        <div className="pointer-events-none absolute -top-24 left-1/2 h-[320px] w-[700px] -translate-x-1/2 rounded-full bg-primary-600/10 opacity-70 blur-[110px]" />
-
-        <div className="relative mx-auto max-w-4xl px-4 pt-10 pb-6 sm:px-6">
-          <div className="flex items-start gap-5">
-            <span
-              className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 text-4xl leading-none shadow-sm"
-              aria-hidden="true"
-            >
-              <PackIcon icon={pack.icon} className="h-8 w-8 text-primary-500" emojiClassName="text-4xl leading-none" />
+      <nav aria-label="Breadcrumb" className="mx-auto flex max-w-4xl items-center gap-2 px-4 pt-5 text-sm text-slate-600 dark:text-slate-400 sm:px-6">
+        <Link to={galleryUrl} className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded font-medium text-primary-700 hover:underline dark:text-primary-300">
+          <ArrowLeft className="size-4" aria-hidden="true" /> Marketplace
+        </Link>
+        <ChevronRight className="size-3.5 shrink-0" aria-hidden="true" />
+        <span className="truncate" aria-current="page">{pack.name}</span>
+      </nav>
+      <header>
+        <div className="mx-auto max-w-4xl px-4 pb-5 pt-3 sm:px-6 sm:pt-5">
+          <div className="flex items-start gap-3 sm:gap-4">
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300 sm:size-14" aria-hidden="true">
+              <PackIcon icon={pack.icon} className="size-5 sm:size-7" emojiClassName="text-2xl" />
             </span>
             <div className="min-w-0 flex-1">
               {pack.category && (
-                <p className="fl-mono mb-1.5 text-[11px] uppercase tracking-[0.2em] text-primary-600 dark:text-primary-400">
+                <p className="font-mono mb-1.5 text-[11px] uppercase tracking-[0.2em] text-primary-600 dark:text-primary-400">
                   {pack.category}
                 </p>
               )}
-              <h1 className="fl-display text-3xl text-gray-900 dark:text-white sm:text-4xl">{pack.name}</h1>
-              <div className="fl-mono mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-gray-500 dark:text-slate-400">
+              <h1 className="wrap-anywhere text-3xl font-semibold leading-tight tracking-[-0.04em] text-slate-950 dark:text-white sm:text-4xl">{pack.name}</h1>
+              <div className="font-mono mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-gray-500 dark:text-slate-400">
                 <span className="inline-flex items-center gap-1.5">
                   <User className="h-3.5 w-3.5" aria-hidden="true" />
                   {pack.publisherName || 'Unknown'}
@@ -855,40 +835,35 @@ function PackDetailContent() {
             </div>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div className="mx-auto max-w-4xl space-y-6 px-4 pb-12 sm:px-6">
-        {/* Dashboard preview(s) — one per app, aspect-true, click to enlarge */}
-        <PackScreenshots
-          shots={shots}
-          maxHeight="max-h-[420px]"
-        />
-
+      <div className="mx-auto max-w-4xl space-y-5 px-4 pb-12 sm:px-6">
+        {pack.description && <p className="max-w-[75ch] whitespace-pre-line wrap-anywhere text-base leading-relaxed text-slate-700 dark:text-slate-300">{pack.description}</p>}
         {/* Stats + install. Zero-value social proof stays hidden: no star row or
             download count until the pack has actually been rated/installed. */}
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 sm:p-5">
           {pack.ratingCount > 0 && (
             <div className="flex items-center gap-2">
               {renderStars(Math.round(pack.avgRating))}
-              <span className="fl-mono text-sm font-medium text-gray-700 dark:text-slate-300">
+              <span className="font-mono text-sm font-medium text-gray-700 dark:text-slate-300">
                 {pack.avgRating.toFixed(1)}
               </span>
-              <span className="fl-mono text-xs text-gray-400 dark:text-slate-500">
+              <span className="font-mono text-xs text-gray-400 dark:text-slate-500">
                 ({plural(pack.ratingCount, 'rating')})
               </span>
             </div>
           )}
           {pack.downloadCount > 0 && (
-            <div className="fl-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
+            <div className="font-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
               <Download className="h-4 w-4" aria-hidden="true" />
               <span>{plural(pack.downloadCount, 'install')}</span>
             </div>
           )}
-          <div className="fl-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
+          <div className="font-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
             <FileText className="h-4 w-4" aria-hidden="true" />
             <span>{plural(pack.formCount, 'form')}</span>
           </div>
-          <div className="fl-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
+          <div className="font-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
             <LayoutGrid className="h-4 w-4" aria-hidden="true" />
             <span>{plural(pack.appCount, 'app')}</span>
           </div>
@@ -900,30 +875,16 @@ function PackDetailContent() {
           </div>
         </div>
 
-        {pack.folderSource && <p className="rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm leading-6 text-primary-950 dark:border-primary-800 dark:bg-primary-950/40 dark:text-primary-100">Includes an editable app workspace, linked forms and record storage. Install to create your own copy, then customise its screens, backend actions, forms and automations in App Studio. The source download includes each app as a .softn project and the complete installation package.</p>}
+        {pack.folderSource && <p className="rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm leading-6 text-primary-950 dark:border-primary-800 dark:bg-primary-950/40 dark:text-primary-100">Includes an editable app workspace, linked forms and record storage. Install to create your own copy, then customise its screens, backend actions, forms and automations in App Studio. The source download includes each editable app as a project ZIP and the complete installation package.</p>}
         {consentPanel}
 
-        {/* Description */}
-        {pack.description && (
-          <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 sm:p-5">
-            <h2 className="font-semibold text-gray-900 dark:text-white">About</h2>
-            <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-gray-600 dark:text-slate-400">
-              {pack.description}
-            </p>
-            {pack.tags.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {pack.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="fl-mono rounded-full border border-gray-200 dark:border-slate-700 px-2 py-0.5 text-[11px] text-gray-500 dark:text-slate-400"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        <PackScreenshots shots={shots} maxHeight="max-h-[420px]" />
+        {pack.tags.length > 0 && <div className="flex flex-wrap gap-2" aria-label="Related templates">
+          {pack.tags.map(tag => <Link key={tag} to={{ pathname: '/packs', search: new URLSearchParams({ tag }).toString() }}
+            className="inline-flex min-h-9 max-w-full items-center rounded-md border border-slate-200 px-2.5 text-sm text-slate-700 hover:border-primary-400 hover:text-primary-700 dark:border-slate-700 dark:text-slate-300 dark:hover:text-primary-300">
+            <span className="wrap-anywhere">{tag}</span>
+          </Link>)}
+        </div>}
 
         {(appNames.length > 0 || formTitles.length > 0) && (
           <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 sm:p-5">

@@ -44,11 +44,16 @@ final class CreateSoftnAppToolTest extends TestCase
         $this->assertSame(['softnApp' => true], $created['input']['settings']);
         $this->assertCount(1, $installs);
         $this->assertSame(0, $installs[0]['expected']);
-        $this->assertSame('Recipe box', json_decode($installs[0]['project']['files']['manifest.json'], true)['name']);
+        $files = $installs[0]['project']['files'];
+        $manifest = json_decode($files['manifest.json'], true, flags: JSON_THROW_ON_ERROR);
+        $this->assertSame(['Recipe box', 2, 'index.html'], [$manifest['name'], $manifest['engine'], $manifest['main']]);
+        $this->assertStringContainsString('<h1>Recipe box</h1>', $files['index.html']);
+        $this->assertStringContainsString("api.fetch('/api/items'", $files['app.js']);
+        $this->assertArrayHasKey($manifest['server']['entry'], $files);
         $this->assertSame(['id' => 'app-1', 'name' => 'Recipe box', 'slug' => 'recipe-box'], $data['app']);
         $this->assertSame(1, $data['version']);
         $this->assertSame('A recipe box with favourites and a shopping list.', $data['request']);
-        $this->assertSame('/apps/app-1/softn', $data['workspaceUrl']);
+        $this->assertSame('/apps/app-1/web', $data['workspaceUrl']);
         $this->assertStringContainsString('AI Studio', $data['next']);
         $this->assertSame([['create_softn_app', ['appId' => 'app-1', 'version' => 1]]], $audits);
     }
@@ -58,7 +63,7 @@ final class CreateSoftnAppToolTest extends TestCase
         [$tools] = $this->tools();
         $data = $tools->call('create_softn_app', ['name' => 'Recipes', 'request' => 'A recipe box.'], new ChatToolsContext('owner', source: 'mcp'));
         $this->assertStringContainsString('update_native_app_files', $data['next']);
-        $this->assertStringContainsString('/apps/app-1/softn', $data['next']);
+        $this->assertStringContainsString('/apps/app-1/web', $data['next']);
         $this->assertStringNotContainsString('do not change its files yourself', $data['next']);
     }
 

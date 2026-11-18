@@ -110,7 +110,7 @@ describe('app management navigation', () => {
   // nine links — so the only per-app control on the card opened a directory.
   it('shows a cog action on app cards and opens App settings', async () => {
     await renderAt('/apps', <AppsDashboard />);
-    const manage = container.querySelector<HTMLButtonElement>('button[aria-label="Manage Plumbing Operations"]');
+    const manage = container.querySelector<HTMLAnchorElement>('a[aria-label="Manage Plumbing Operations"]');
     expect(manage).not.toBeNull();
 
     await act(async () => { manage!.click(); });
@@ -121,13 +121,13 @@ describe('app management navigation', () => {
   it('opens a SoftN app\'s own settings from its card', async () => {
     fixtures.apps = [{ ...app, settings: { ...app.settings, softnApp: true } }];
     await renderAt('/apps', <AppsDashboard />);
-    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Manage Plumbing Operations"]')!.click(); });
-    expect(routeRef.current).toBe('/apps/app-1/softn/settings');
+    await act(async () => { container.querySelector<HTMLAnchorElement>('a[aria-label="Manage Plumbing Operations"]')!.click(); });
+    expect(routeRef.current).toBe('/apps/app-1/web/settings');
   });
 
   describe('the table', () => {
-    const softn: App = { ...app, id: 'app-2', name: 'Booking Desk', slug: 'booking-desk', publishedVersion: 1, settings: { ...app.settings, softnApp: true }, updatedAt: '2026-07-25 00:00:00' };
-    const draft: App = { ...app, id: 'app-3', name: 'Tide Chart', slug: 'tide-chart', status: 'draft', settings: { ...app.settings, softnApp: true }, updatedAt: '2026-07-23 00:00:00' };
+    const softn: App = { ...app, id: 'app-2', name: 'Booking Desk', slug: 'booking-desk', formCount: 0, publishedVersion: 1, settings: { ...app.settings, softnApp: true }, updatedAt: '2026-07-25 00:00:00' };
+    const draft: App = { ...app, id: 'app-3', name: 'Tide Chart', slug: 'tide-chart', formCount: 0, status: 'draft', settings: { ...app.settings, softnApp: true }, updatedAt: '2026-07-23 00:00:00' };
     const rows = () => [...container.querySelectorAll('tbody tr')].map(row => row.textContent ?? '');
     const press = async (name: string) => act(async () => { [...container.querySelectorAll('button')].find(b => b.textContent?.trim() === name)!.click(); });
     beforeEach(() => {
@@ -154,25 +154,43 @@ describe('app management navigation', () => {
       expect(rows()[2]).toContain('Draft');
       expect(rows()[2]).toContain('Anyone');
       expect(rows()[2]).toContain('In each browser');
-      expect(container.textContent).toContain('3 apps · 2 live · 1 not live');
+      expect(container.textContent).toContain('3 apps · 2 live');
     });
 
     it('leads from a row to the app\'s page, its data and its settings', async () => {
       await renderAt('/apps', <AppsDashboard />);
       await act(async () => {});
       const hrefs = (label: string) => container.querySelector(`a[aria-label="${label}"]`)?.getAttribute('href');
-      expect([...container.querySelectorAll('tbody th a')].map(a => a.getAttribute('href'))).toEqual(['/apps/app-2/softn', '/apps/app-1/studio', '/apps/app-3/softn']);
-      expect(hrefs('Data of Booking Desk')).toBe('/apps/app-2/softn/data');
-      expect(hrefs('Settings of Booking Desk')).toBe('/apps/app-2/softn/settings');
+      expect([...container.querySelectorAll('tbody th a')].map(a => a.getAttribute('href'))).toEqual(['/apps/app-2/web', '/apps/app-1/studio', '/apps/app-3/web']);
+      expect(hrefs('Data of Booking Desk')).toBe('/apps/app-2/web/data');
+      expect(hrefs('Data of Plumbing Operations')).toBe('/apps/app-1/records');
+      expect(hrefs('Settings of Booking Desk')).toBe('/apps/app-2/web/settings');
       expect(hrefs('Settings of Plumbing Operations')).toBe('/apps/app-1/settings');
       // An app that keeps its data in each browser has no data to open here.
       expect(hrefs('Data of Tide Chart')).toBeUndefined();
       expect(hrefs('Open Booking Desk')).toBe('https://booking.example.com');
     });
 
+    it('finds mixed apps under both tools and opens their available data', async () => {
+      fixtures.apps = [{ ...draft, formCount: 1 }, { ...app, formCount: 0, navConfig: [{ kind: 'link', url: 'records', displayName: 'Records', isVisible: true, sortOrder: 0 }] }];
+      fixtures.summaries[app.id] = { installed: true, backend: true, tables: 1, bytes: null };
+      await renderAt('/apps?kind=forms', <AppsDashboard />);
+      expect(rows()).toHaveLength(2);
+      const [browser, companion] = container.querySelectorAll('tbody tr');
+      expect(browser.textContent).toContain('Web + forms');
+      expect(browser.textContent).toContain('1 form');
+      expect(browser.querySelector('a[aria-label="Data of Tide Chart"]')?.getAttribute('href')).toBe('/apps/app-3/records');
+      expect(companion.textContent).toContain('Web + forms');
+      expect(companion.textContent).toContain('1 table');
+      expect(companion.querySelector('a[aria-label="Data of Plumbing Operations"]')?.getAttribute('href')).toBe('/apps/app-1/studio/data');
+      await press('Web apps');
+      expect(rows()).toHaveLength(2);
+    });
+
     it('filters by kind and status, and finds an app by its own domain', async () => {
       await renderAt('/apps', <AppsDashboard />);
       await act(async () => {});
+      await press('Filters');
       await press('Forms');
       expect(rows().map(row => row.includes('Plumbing Operations'))).toEqual([true]);
       await press('All kinds');
@@ -187,6 +205,19 @@ describe('app management navigation', () => {
       });
       expect(rows()).toHaveLength(1);
       expect(rows()[0]).toContain('Booking Desk');
+    });
+
+    it('restores shared filter URLs, separates archived apps from drafts, and preserves other parameters on reset', async () => {
+      fixtures.apps = [softn, draft, { ...draft, id: 'archived-app', name: 'Old bookings', status: 'archived' }];
+      await renderAt('/apps?kind=softn&status=draft&from=home', <AppsDashboard />);
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toContain('Tide Chart');
+      await press('Archived');
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toContain('Old bookings');
+      await press('Clear filters');
+      expect(rows()).toHaveLength(3);
+      expect(routeRef.current).toBe('/apps?from=home');
     });
 
     it('sorts by a heading, and says so to a screen reader', async () => {

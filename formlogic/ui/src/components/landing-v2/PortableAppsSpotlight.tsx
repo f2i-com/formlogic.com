@@ -1,43 +1,29 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, ArrowUpRight, FileText, Layers3, Database, Download, ShieldCheck } from 'lucide-react';
+import { AppWindow, ArrowRight, Braces, ClipboardList } from 'lucide-react';
 import { HostedAppPreview } from './HostedAppPreview';
-import { SectionLabel } from './shared';
 
-const steps = [
-  { Icon: FileText, title: 'Start with what you need', body: 'Create a form, choose a template, or bring an app you already have: a Softn project, or the zip of a web app you have built.' },
-  { Icon: Layers3, title: 'Design your app', body: 'Combine forms into an editable project. Shape the screens and interactions with our Softn app engine.' },
-  { Icon: Database, title: 'Connect and host', body: "Add private .logic backend actions and store records in your app's own SQLite database. Preview, publish and invite your members." },
-  { Icon: Download, title: 'Keep building, anywhere', body: 'Download your client source, save the full editable project, or export a snapshot of your database.' },
+const paths = [
+  { icon: ClipboardList, title: 'Build with forms', text: 'Connect submissions to records, dashboards and staff screens.', to: '/apps/new?type=forms' },
+  { icon: AppWindow, title: 'Design a web app', text: 'Edit your app in Studio or Builder and preview the changes.', to: '/apps/new?type=web' },
+  { icon: Braces, title: 'Upload a web app', text: 'Bring a ZIP of your JavaScript files or your React or Vue build.', to: '/apps/new?type=upload' },
 ];
 
 export function PortableAppsSpotlight() {
-  return <section className="lv2-section lv2-band--alt" id="portable-apps" aria-labelledby="portable-title">
-    <div className="lv2-container">
-      <div className="fl-portable">
+  return (
+    <section className="lv2-hosting" id="portable-apps" aria-labelledby="portable-title">
+      <div className="lv2-container lv2-hosting__layout">
         <div>
-          <SectionLabel both>From an idea to a working app</SectionLabel>
-          <h2 className="lv2-h2" id="portable-title">Your screens.<br />Your logic. Your app.</h2>
-          <p className="lv2-lead">Build an app your team can use, with an interface you can change and a backend that keeps the work moving. FormLogic brings the project, hosting and data together.</p>
-          <div className="fl-hosting-path" aria-label="How a hosted app works">
-            <div><Layers3 size={20} aria-hidden="true" /><strong>App interface</strong><span>Softn, or your own build</span></div>
-            <ArrowRight size={18} aria-hidden="true" />
-            <div><ShieldCheck size={20} aria-hidden="true" /><strong>Private actions</strong><span>FormLogic API</span></div>
-            <ArrowRight size={18} aria-hidden="true" />
-            <div><Database size={20} aria-hidden="true" /><strong>Your records</strong><span>App SQLite database</span></div>
+          <h2 id="portable-title" className="lv2-guide-title">Build an app for your team.</h2>
+          <p className="lv2-guide-intro">Choose how to start. Add a private API and SQLite database when your app needs shared records.</p>
+          <div className="lv2-hosting__paths">
+            {paths.map(({icon: Icon, title, text, to}) => <Link key={to} to={to}>
+              <Icon size={20} aria-hidden="true" /><div><h3>{title}</h3><p>{text}</p></div>
+              <ArrowRight size={16} aria-hidden="true" />
+            </Link>)}
           </div>
-          <p className="fl-portable__note">Already built it? A web app made with React, Vue, Svelte, Angular or plain HTML and JavaScript is uploaded as the zip of its build and hosted as an app of its own, with a private backend and database when it needs them.</p>
-          <p className="fl-portable__credit">Powered by <a href="https://softn.com" target="_blank" rel="noopener noreferrer">Softn <ArrowUpRight size={14} aria-hidden="true" /></a>, our app-building engine. Keep the editable source and make the experience your own.</p>
-          <Link to="/signup" className="fl-hosting-cta">Start building <ArrowRight size={17} aria-hidden="true" /></Link>
         </div>
-        <ol className="fl-portable__steps" aria-label="From form to hosted app">
-          {steps.map(({ Icon, title, body }, index) => <li key={title}>
-            <span className="fl-portable__icon"><Icon size={22} aria-hidden="true" /></span>
-            <div><span className="fl-portable__number">0{index + 1}</span><h3>{title}</h3><p>{body}</p></div>
-          </li>)}
-        </ol>
+        <HostedAppPreview />
       </div>
-      <HostedAppPreview />
-      <p className="fl-hosting-note">Already have forms? Portable exports start with local records. Connect their submissions to backend actions when you want shared data; existing form responses are not automatically moved. Hosted apps are available to their owner and active members. A web app you upload runs in a sandbox of its own and reaches only its own files and backend, so the fonts and scripts it uses belong in the build.</p>
-    </div>
-  </section>;
+    </section>
+  );
 }

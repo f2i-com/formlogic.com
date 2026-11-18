@@ -21,7 +21,7 @@ try {
   throw new Error(`The Softn checkout and formlogic/ui/vendor/zipp-wasm must hold the same ZIPP release. ${syncHint} ${error.message}`);
 }
 await access(new URL('node_modules/vite/bin/vite.js', engine));
-const core = spawnSync(process.execPath, [npm, 'run', 'build', '-w', '@softn/core', '-w', '@softn/components'], { cwd: fileURLToPath(engine), stdio: 'inherit' });
+const core = spawnSync(process.execPath, [npm, 'run', 'build', '-w', '@softn/core', '-w', '@softn/components', '-w', '@softn/container'], { cwd: fileURLToPath(engine), stdio: 'inherit' });
 if (core.status !== 0) process.exit(core.status || 1);
 const built = spawnSync(process.execPath, [fileURLToPath(new URL('node_modules/vite/bin/vite.js', engine)), 'build', 'apps/formlogic-host', '--config', 'apps/formlogic-host/vite.config.ts'], { cwd: fileURLToPath(engine), stdio: 'inherit' });
 if (built.status !== 0) process.exit(built.status || 1);

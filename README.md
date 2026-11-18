@@ -3,7 +3,7 @@
 <p align="center"><strong>Build forms and business apps with a backend, a database and the AI you choose.</strong></p>
 
 <p align="center">
-  Create forms, dashboards, portals and automations in one workspace. Import an existing app, edit its interface and backend, and manage its SQLite records without leaving FormLogic. Build editable apps with <strong>Softn</strong>, host them on FormLogic, and connect <strong>OAIY</strong> for AI and local services. Add <strong>Aokie</strong> when calls, messages and appointments belong in the same app.
+  Create forms, dashboards, portals and automations in one workspace. Import an existing app, edit its interface and backend, and manage its SQLite records without leaving FormLogic. Build or import <strong>JavaScript, React or Vue</strong> apps, and connect <strong>OAIY</strong> for AI and local services. Add <strong>Aokie</strong> when calls, messages and appointments belong in the same app.
 </p>
 
 <p align="center">
@@ -32,12 +32,12 @@
 
 ## From a form to a connected app
 
-**Install an editable app.** The 29 business packs now include 32 Softn workspaces, their linked forms, record stores, roles, reports and workflows. Download the complete source ZIP or customise an installed copy in App Studio. Operators can add or change pack folders without rebuilding the site. Packs can also carry native `.logic` routes and SQLite migrations. [Pack folders and project format](docs/PACK_PROJECTS.md).
+**Install an editable app.** The 29 business packs now include 32 editable app workspaces, their linked forms, record stores, roles, reports and workflows. Download the complete source ZIP or customise an installed copy in App Studio. Operators can add or change pack folders without rebuilding the site. Packs can also carry native `.logic` routes and SQLite migrations. [Pack folders and project format](docs/PACK_PROJECTS.md).
 
 1. **Start with your data.** Create a form visually, use AI, or choose a marketplace starter.
 2. **Build the workspace.** Add screens, dashboards, reports, branding, members and roles in App Studio.
 3. **Connect the work.** Use flows and scripts to turn submissions and device events into the next action.
-4. **Make it your own.** Import an editable `.softn` project, open the embedded Visual Builder or AI Studio, and host its private `.logic` backend and SQLite database.
+4. **Make it your own.** Import an editable project ZIP, open the embedded Visual Builder or AI Studio, and host its private `.logic` backend and SQLite database.
 5. **Share the same records.** Add forms to another app without copying the data, or move a complete integration after reviewing its permissions.
 
 <table>
@@ -58,7 +58,7 @@
 
 ## Your app, from interface to database
 
-Bring an existing Softn project or start in FormLogic. Keep its interface, backend source, records and automations together, and download the editable project when you want to take it elsewhere.
+Bring an existing app ZIP or start in FormLogic. For a site built elsewhere, upload the browser-ready files, including `index.html`. Keep its interface, backend source, records and automations together, and download the editable project when you want to take it elsewhere.
 
 | Work on… | In FormLogic |
 |---|---|
@@ -98,7 +98,7 @@ Editor changes return to a draft. Publishing preserves existing records; editor 
 | Layer | What it owns | What it unlocks |
 |---|---|---|
 | **FormLogic** | Forms, records, apps, access control, flows, hosting and APIs | A shared backend and operational workspace |
-| **[Softn](https://github.com/f2i-com/softn.com)** | Portable app projects, Visual Builder, AI Studio and runtime | Editable `.softn` projects and integrated app tools |
+| **App sandbox** | Portable projects, Visual Builder, AI Studio and runtime | Host JavaScript, React or Vue apps and download a project ZIP |
 | **OAIY** (paired desktop, separate repository) | Local models, services, supervised plugins, hardware connectors and headless flow execution | Local capability with cloud visibility—even when the browser is closed |
 | **Aokie** | Bluetooth phone control, live call audio, speech and durable call/SMS events | A phone receptionist whose conversations become structured business work |
 
@@ -173,7 +173,7 @@ Compose KPI, bar, line, area, pie, donut, table, record-list and activity widget
 
 ### Client apps and private backend logic
 
-- **Softn clients** combine `.ui` interfaces and `.logic` behavior in an editable app project.
+- **Classic project clients** combine `.ui` interfaces and `.logic` behavior in an editable app project.
 - **Native app hosting** runs private `.logic` route handlers in ZIPP with declared SQLite migrations.
 - **JavaScript apps** host a web app you have already built: upload the zip of a React, Vue, Svelte, Angular or plain HTML and JavaScript build, and it runs as an app of its own with the same private backend and SQLite database. [How they are hosted, and their limits](docs/JAVASCRIPT_APPS.md).
 - **Hosted backend actions** provide an alternative named-action format with permission-checked, transactional SQLite record operations.
@@ -204,7 +204,7 @@ FormLogic defaults to free access and bring-your-own AI. Your provider may charg
 ### Portable by design
 
 - Export forms and responses as familiar files.
-- Download an editable `.softn` client, or export a signed `.formlogic` package or JSON pack.
+- Download an editable client ZIP, or export a signed `.formlogic` package or JSON pack.
 - Host custom apps with private backend actions and a separate app database.
 - Downloaded clients contain interface code, not account credentials or an offline copy of the backend.
 - Review capabilities and trust level before importing a package.
@@ -341,7 +341,7 @@ For local development, Vite keeps requests on `/api` and proxies to `http://127.
 | Builder & flows | dnd-kit, XYFlow, Monaco, ZIPP WASM and Web Workers |
 | API | PHP 8.2+, Slim 4, PHP-DI and Monolog |
 | Data | MySQL for platform metadata, SQLite response databases per form and a separate SQLite database per hosted app |
-| Portable apps | Softn interfaces and client logic, a sandboxed host frame and private backend actions |
+| Portable apps | Web interfaces and client logic, a sandboxed host frame and private backend actions |
 | Sandboxed scripting | ZIPP in a browser worker and a bounded server sandbox, including hosted `.logic` actions |
 | Desktop | Tauri v2 and Rust; Windows UI plus a headless runtime |
 | Aokie | Rust, WinUSB, Bluetooth HFP/SCO/MAP, ONNX speech and a versioned JSON-RPC plugin contract |
@@ -419,7 +419,7 @@ Security controls include server-enforced RBAC, HttpOnly session cookies, CSRF p
 | [Desktop pairing (historical)](docs/FORMLOGIC_DESKTOP.md) | How the paired-desktop contract was designed; the app itself is now OAIY |
 | [Custom app platform](docs/CUSTOM_APP_PLATFORM.md) | App logic, custom screens, SDK, connectors and domains |
 | [Connected apps](docs/CONNECTED_APPS.md) | Portable dashboards, sharing forms, Aokie integration and MCP setup |
-| [Hosted apps](docs/HOSTED_APPS.md) | Softn clients, private `.logic` actions, SQLite storage and deployment |
+| [Hosted apps](docs/HOSTED_APPS.md) | Editable web apps, private `.logic` actions, SQLite storage and deployment |
 | [AI setup and plans](docs/FREE_PLANS_AND_AI_SETUP.md) | Bring-your-own AI, optional support and administrator controls |
 | [Package format](docs/PACK_FORMAT.md) | Signed `.formlogic` packages, manifests and trust |
 | [Native runtime](docs/NATIVE_RUNTIME_TAURI.md) | Deep links, signed manifests, connectors and offline queue |

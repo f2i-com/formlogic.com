@@ -4,7 +4,7 @@ import {
   nameProblem, newField, newLink, newTable, readDesign, singular, snakeName, withJoin, withoutLink, withoutTable, type DatabaseDesign,
 } from './databaseDesign';
 import { readMermaid, toMermaid } from './mermaidErd';
-import { backendProblem } from './nativeHosting';
+import { backendProblem, type NativeProject } from './nativeHosting';
 import { withBackend } from './softnBackend';
 import { importSql } from './sqlSchema';
 import { BOOKINGS_SQLSERVER, POSTS_MERMAID, SHOP_MYSQL, TASKS_SQLITE } from './__fixtures__/schemas';
@@ -213,7 +213,8 @@ describe('what a design makes', () => {
     const handlers = designRoutes(twins).map(route => route.handler);
     expect(new Set(handlers).size).toBe(handlers.length);
     expect(handlers).toContain('addToBoxes');
-    for (const tables of [{ fields: [field('a')], list: [field('b')] }, { item_2: [field('a')], item2: [field('b')] }]) {
+    const pairs: Array<Parameters<typeof design>[0]> = [{ fields: [field('a')], list: [field('b')] }, { item_2: [field('a')], item2: [field('b')] }];
+    for (const tables of pairs) {
       const logic = backendLogic(design(tables));
       const declared = [...logic.matchAll(/^function (\w+)\(/gm)].map(match => match[1]);
       expect(new Set(declared).size, Object.keys(tables).join(' and ')).toBe(declared.length);
@@ -276,7 +277,7 @@ describe('what a design makes', () => {
   });
 
   it('is a backend this host runs, added to a page that has none', () => {
-    const page = { version: 3, files: { 'manifest.json': '{"id":"app.one","main":"index.html"}', 'index.html': '<App/>' }, assets: {} };
+    const page: NativeProject = { version: 3, access: 'application', files: { 'manifest.json': '{"id":"app.one","main":"index.html"}', 'index.html': '<App/>' }, assets: {} };
     const next = withBackend(page, designedBackend(shop));
     const manifest = JSON.parse(next.files['manifest.json']);
     expect(backendProblem(manifest, next.files)).toBeNull();

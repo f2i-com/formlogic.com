@@ -26,6 +26,9 @@ import {
   LayoutDashboard,
   Workflow,
   Lock,
+  Mail,
+  Type,
+  CircleDot,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -45,6 +48,7 @@ import {
 } from '@dnd-kit/sortable';
 import { cn } from '../lib/utils';
 import { Button } from '../components/ui/Button';
+import { LoadFailure } from '../components/ui/LoadFailure';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DeleteFieldDialog } from '../components/builder/DeleteFieldDialog';
 import { IconPicker } from '../components/ui/IconPicker';
@@ -66,7 +70,7 @@ import { resolveBuilderChrome, type BuilderChromeTier } from '../components/buil
 import { BUILDER_FLOWS_W, BUILDER_SETTINGS_W, resolveBuilderLayout, sameResolvedBuilderLayout, type ResolvedBuilderLayout } from '../components/builder/builderLayout';
 import { FORM_SUBMITTED_EVENT } from '../components/builder/formFlowBindingsSerialize';
 import { demoApplyFormBindingOverlay, isDemoLocalId } from '../lib/demoLocal';
-import { flushDebouncedSave, flushFormSaves, discardPendingFormSaves, useFormStore } from '../stores/formStore';
+import { flushDebouncedSave, flushFormSaves, discardPendingFormSaves, hasItsFields, useFormStore } from '../stores/formStore';
 import { useVaultStore } from '../stores/vaultStore';
 import { VaultUnlockDialog } from '../components/vault/VaultUnlockDialog';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
@@ -80,6 +84,12 @@ import { FIELD_TYPE_INFO, type FormField, type FieldType, type CustomScreen } fr
 import { publicUnfillableFieldLabels } from '../lib/publicForm';
 
 type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | 'publishPack' | 'screen' | 'softn' | null;
+
+const firstQuestions = [
+  { type: 'short_text', icon: Type, label: 'Short text' },
+  { type: 'email', icon: Mail, label: 'Email address' },
+  { type: 'multiple_choice', icon: CircleDot, label: 'Multiple choice' },
+] as const;
 
 /**
  * Serialize the current form into a single-form PackData so it can be published to the
@@ -419,16 +429,17 @@ export default function FormBuilder() {
   } = useFormStore();
   const isSaving = useFormStore((s) => formId ? !!s.savingFormIds[formId] : false);
   const hasSaveError = useFormStore((s) => (formId ? (s.saveErrors[formId]?.length ?? 0) > 0 : false));
+  const storageMode = useFormStore((s) => s.storageMode);
   const retrySaves = useCallback(() => {
     if (!formId) return;
     void flushFormSaves(formId).then(({ ok }) => {
       if (ok) {
-        toast.success('Saved', browserLocalForm ? 'All changes are saved in this browser.' : 'All changes are on the server now.');
+        toast.success('Saved', browserLocalForm || storageMode === 'local' ? 'All changes are saved in this browser.' : 'All changes are on the server now.');
       } else {
         toast.error('Still not saved', 'Check your connection and try again.');
       }
     });
-  }, [browserLocalForm, formId]);
+  }, [browserLocalForm, formId, storageMode]);
   // FL-SAVE-001: edits sync on a debounce, so closing/reloading the tab inside that window
   // (or with a failed save outstanding) silently discards them - warn before unload.
   useEffect(() => {
@@ -440,7 +451,6 @@ export default function FormBuilder() {
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [isSaving, hasSaveError]);
-  const storageMode = useFormStore((s) => s.storageMode);
   // Subscribe to this form's history so the undo/redo buttons re-render as it changes.
   const fieldHistory = useFormStore((s) => (formId ? s.fieldHistory[formId] : undefined));
   const canUndo = (fieldHistory?.past.length ?? 0) > 0;
@@ -503,14 +513,17 @@ export default function FormBuilder() {
   // bouncing a valid still-loading form to /forms. Gating on the id makes
   // loadFinished false for any id whose load hasn't resolved yet.
   const [loadedFor, setLoadedFor] = useState<string>();
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const cachedForm = formId ? getForm(formId) : undefined;
+  const needsQuestions = !!cachedForm && !hasItsFields(cachedForm);
   useEffect(() => {
     if (!formId) return;
     let cancelled = false;
-    loadFullForm(formId).finally(() => {
+    loadFullForm(formId, { force: needsQuestions }).finally(() => {
       if (!cancelled) setLoadedFor(formId);
     });
     return () => { cancelled = true; };
-  }, [formId, loadFullForm]);
+  }, [formId, needsQuestions, loadFullForm, loadAttempt]);
   const loadFinished = loadedFor === formId;
 
   // First-run onboarding routes "AI" here as ?ai=1 — the chat is the AI surface now
@@ -549,7 +562,10 @@ export default function FormBuilder() {
     setSelectedField(first.id);
   }, [belowMd, builderLayout, loadFinished, formId, isMobile, getForm, paletteOpenPref, setSelectedField]);
 
-  const form = formId ? getForm(formId) : undefined;
+  // The list may already hold a summary. Editing it before the detail request
+  // finishes lets that response overwrite the first question the owner adds.
+  const form = loadFinished ? cachedForm : undefined;
+  const editable = !!form && !needsQuestions;
   useDocumentTitle(form ? `${form.title} — Builder` : 'Form Builder');
 
   // Local title state to avoid calling updateForm on every keystroke
@@ -702,9 +718,11 @@ export default function FormBuilder() {
   }, [setSelectedField, setSettingsCollapsed]);
 
   // Open the Fields palette inline when the measured width allows it, otherwise as a sheet.
+  const paletteSearch = useRef<HTMLInputElement>(null);
   const openPalette = useCallback(() => {
     setPaletteOpenPref(true);
     if (builderLayout.palette === 'hidden') setPaletteSheetOpen(true);
+    else paletteSearch.current?.focus();
   }, [builderLayout.palette, setPaletteOpenPref]);
 
   // Toolbar dock toggles — flip a panel and, on a narrow desktop, keep at most two
@@ -803,9 +821,9 @@ export default function FormBuilder() {
   // Keyboard shortcuts
   const handleSave = useCallback(() => {
     if (!form) return;
-    updateForm(form.id, { status: form.status });
-    toast.success('Saved', 'Form saved successfully');
-  }, [form, updateForm]);
+    flushTitle();
+    retrySaves();
+  }, [form, flushTitle, retrySaves]);
 
   // Open Preview in a NEW TAB, in context: a fresh app-context lookup on each click (shared
   // mechanism) — one published app opens the app runtime at this form, several ask which,
@@ -899,7 +917,7 @@ export default function FormBuilder() {
     { key: 'r', description: 'Add rating field', action: () => handleAddField('rating') },
   ], [handleSave, handlePreview, handleDuplicateSelected, handleDeleteSelected, handleUndo, handleRedo, handleNavigateFields, handleMoveField, handleAddField, setSelectedField]);
 
-  useKeyboardShortcuts({ shortcuts });
+  useKeyboardShortcuts({ shortcuts, enabled: editable });
 
   const closeOverflowMenu = useCallback((restoreFocus = true) => {
     setShowOverflowMenu(false);
@@ -1076,6 +1094,12 @@ export default function FormBuilder() {
         )}
       </div>
     );
+  }
+  if (!editable) {
+    return <div className="mx-auto max-w-xl p-6"><LoadFailure title="Couldn’t load the form questions" onRetry={() => {
+      setLoadedFor(undefined);
+      setLoadAttempt(attempt => attempt + 1);
+    }} /></div>;
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -1449,7 +1473,7 @@ export default function FormBuilder() {
             />
             {/* Own scroll, independent of the canvas */}
             <div className="flex-1 overflow-y-auto">
-              <FieldPalette onAddField={handleAddField} isPrivate={isPrivateForm} />
+              <FieldPalette onAddField={handleAddField} isPrivate={isPrivateForm} inputRef={paletteSearch} />
             </div>
           </aside>
         )}
@@ -1517,25 +1541,30 @@ export default function FormBuilder() {
             <div className="flex-1 overflow-y-auto p-3 pb-24 md:p-4 md:pb-24">
               <div>
                 {form.fields.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-gray-300 px-4 py-10 text-center dark:border-slate-700">
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
-                      This form has no fields yet
+                  <section aria-labelledby="first-question-title" className="mx-auto max-w-3xl rounded-2xl border border-slate-200 bg-white px-4 py-6 shadow-sm sm:p-7 dark:border-slate-700 dark:bg-slate-900">
+                    <h3 id="first-question-title" className="text-xl font-semibold tracking-tight text-gray-900 dark:text-white">
+                      Add your first question
                     </h3>
-                    <p className="mx-auto mt-1 max-w-md text-sm text-gray-500 dark:text-slate-400">
-                      {builderLayout.palette === 'inline'
-                        ? 'Choose a kind of field from the list on the left, or describe the form to the assistant.'
-                        : 'Add a field to choose its kind, or describe the form to the assistant.'}
+                    <p className="mt-1 text-sm text-gray-600 dark:text-slate-400">
+                      Choose how people should answer, then write your question.
                     </p>
-                    <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                      <Button onClick={openPalette} variant="outline" leftIcon={<Plus className="h-4 w-4" />} className="max-sm:min-h-11">
-                        Add field
+                    <div className="mt-5 flex flex-wrap gap-2">
+                      {firstQuestions.map(({ type, icon: Icon, label }) => (
+                        <button key={type} type="button" onClick={() => handleAddField(type)} aria-label={`Add ${label.toLowerCase()} field`}
+                          className="flex min-h-12 grow items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-3 text-left text-sm font-medium text-slate-800 hover:border-primary-400 hover:bg-primary-50 focus-visible:outline-2 focus-visible:outline-primary-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-primary-500/10">
+                          <Icon aria-hidden="true" className="size-4 shrink-0 text-primary-600 dark:text-primary-300" />{label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+                      <Button onClick={openPalette} variant="ghost" size="sm" leftIcon={<Plus className="h-4 w-4" />}>
+                        Browse all fields
                       </Button>
-                      <Button onClick={() => { useUIStore.getState().setChatOpen(true); useUIStore.getState().setChatMinimized(false); }} className="max-sm:min-h-11">
-                        <Sparkles className="mr-2 h-4 w-4 text-primary-foreground/90" />
+                      <Button variant="ghost" size="sm" onClick={() => { useUIStore.getState().setChatOpen(true); useUIStore.getState().setChatMinimized(false); }} leftIcon={<Sparkles className="h-4 w-4" />}>
                         Chat with AI
                       </Button>
                     </div>
-                  </div>
+                  </section>
                 ) : (
                   <DndContext
                     sensors={sensors}

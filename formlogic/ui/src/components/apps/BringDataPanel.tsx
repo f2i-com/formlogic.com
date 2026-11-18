@@ -17,8 +17,9 @@ function listed(items: string[]): string {
   return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
-export function BringDataPanel({ appId, disabled = false, waiting, onImported }: {
+export function BringDataPanel({ appId, manifestId, disabled = false, waiting, onImported }: {
   appId: string;
+  manifestId?: string;
   disabled?: boolean;
   /** Why it cannot be done just now (an unpublished draft open, say), shown instead of the button. */
   waiting?: string | null;
@@ -26,6 +27,7 @@ export function BringDataPanel({ appId, disabled = false, waiting, onImported }:
 }) {
   const [database, setDatabase] = useState<File | null>(null);
   const [config, setConfig] = useState<File | null>(null);
+  const [keyReady, setKeyReady] = useState(true);
   /** The plugin that would send the app's codes with what the chosen key file holds, by name, and the settings it would take from it; null when it holds none. */
   const [codes, setCodes] = useState<{ plugin: string; settings: string[] } | null>(null);
   const [useCodes, setUseCodes] = useState(true);
@@ -37,24 +39,25 @@ export function BringDataPanel({ appId, disabled = false, waiting, onImported }:
   const chosen = useRef<File | null>(null);
 
   const chooseConfig = async (file: File | null) => {
-    setConfig(file); setCodes(null); setError('');
+    setConfig(file); setCodes(null); setError(''); setKeyReady(!file); setUseCodes(true);
     chosen.current = file;
     if (!file) return;
-    const info = await readKeyFile(file);
-    if ('error' in info) { setConfig(null); setError(info.error); return; }
+    const info = await readKeyFile(file, manifestId);
+    if (chosen.current !== file) return;
+    if ('error' in info) { setError(info.error); return; }
     // What the plugin sending this app's codes takes from such a file, if it is there.
     const data = (await api.getAppSignInCodes(appId)).data;
+    if (chosen.current !== file) return;
+    setKeyReady(true);
     const plugin = data?.plugin;
-    if (!plugin || !data) return;
-    let held: boolean;
-    try { held = holdsSignInSettings(JSON.parse(await file.text()), data.imports); } catch { held = false; }
+    if (!plugin || !data || !holdsSignInSettings(info.config, data.imports)) return;
     // Named as the owner's own settings call them: what of the file the plugin would take.
     const settings = data.fields.filter(field => field.key in data.imports).map(field => field.label);
-    if (held && chosen.current === file) setCodes({ plugin: plugin.name, settings });
+    setCodes({ plugin: plugin.name, settings });
   };
 
   const bring = async () => {
-    if (!database) return;
+    if (!database || !keyReady || working) return;
     setConfirming(false); setWorking(true); setError('');
     const result = await api.importNativeData(appId, database, config, codes !== null && useCodes);
     setWorking(false);
@@ -65,9 +68,12 @@ export function BringDataPanel({ appId, disabled = false, waiting, onImported }:
 
   return <div className="space-y-3 text-sm">
     <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-      Moving an app here from SoftN&apos;s own hosting? Bring its database (<code>private/data/application.sqlite</code>) and, so what it sealed or keyed still reads, the key file it was kept under (<code>private/config.json</code>). Stop the old site first, so the copy is complete.
+      Moving an app here from another host? Bring its database (<code>private/data/application.sqlite</code>) and, so what it sealed or keyed still reads, the key file it was kept under (<code>private/config.json</code>). Stop the old site first, so the copy is complete.
     </p>
-    <input ref={databaseInput} type="file" accept=".sqlite,.db,.sqlite3,application/vnd.sqlite3,application/x-sqlite3" className="hidden" aria-label="Choose the app database" onChange={event => { setDatabase(event.target.files?.[0] ?? null); setError(''); event.target.value = ''; }} />
+    <input ref={databaseInput} type="file" accept=".sqlite,.db,.sqlite3,application/vnd.sqlite3,application/x-sqlite3" className="hidden" aria-label="Choose the app database" onChange={event => {
+      if (database) void chooseConfig(null);
+      setDatabase(event.target.files?.[0] ?? null); event.target.value = '';
+    }} />
     <input ref={configInput} type="file" accept=".json,application/json" className="hidden" aria-label="Choose the key file" onChange={event => { void chooseConfig(event.target.files?.[0] ?? null); event.target.value = ''; }} />
     <div className="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="secondary" leftIcon={<Database className="h-4 w-4" />} disabled={disabled || working} onClick={() => databaseInput.current?.click()}>{database ? 'Another database' : 'Choose the database'}</Button>
@@ -76,6 +82,7 @@ export function BringDataPanel({ appId, disabled = false, waiting, onImported }:
     <div className="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="ghost" leftIcon={<KeyRound className="h-4 w-4" />} disabled={disabled || working} onClick={() => configInput.current?.click()}>{config ? 'Another key file' : 'Add its key file (optional)'}</Button>
       {config && <span className="break-all text-xs text-slate-600 dark:text-slate-300">{config.name}</span>}
+      {config && <Button size="sm" variant="ghost" disabled={disabled || working} onClick={() => void chooseConfig(null)}>Remove key file</Button>}
     </div>
     {codes !== null && <label className="flex items-start gap-2 text-xs leading-5 text-slate-600 dark:text-slate-300">
       <input type="checkbox" className="mt-0.5" checked={useCodes} onChange={event => setUseCodes(event.target.checked)} disabled={disabled || working} />
@@ -84,7 +91,7 @@ export function BringDataPanel({ appId, disabled = false, waiting, onImported }:
     {!config && database && <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">Without its key file the app keeps the key it has here: codes being sent at the move, and anything else the old site sealed, will not read. Accounts, profiles and messages are not sealed.</p>}
     {error && <p role="alert" className="rounded-lg bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
     {waiting ? <p className="text-xs leading-5 text-amber-700 dark:text-amber-300">{waiting}</p>
-      : <Button size="sm" onClick={() => setConfirming(true)} disabled={disabled || !database} isLoading={working}>Bring this data</Button>}
+      : <Button size="sm" onClick={() => setConfirming(true)} disabled={disabled || !database || !keyReady} isLoading={working}>Bring this data</Button>}
     <ConfirmDialog
       isOpen={confirming}
       onClose={() => setConfirming(false)}

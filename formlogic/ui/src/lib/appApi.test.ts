@@ -12,7 +12,7 @@ describe('the routes of an app', () => {
   it('reads each route as the app host serves it', () => {
     const api = apiOf(manifest({
       entry: 'server/main.logic',
-      database: { kind: 'private-sqlite', migrations: ['server/migrations/001.sql', 'server/migrations/002.sql'] },
+      database: { kind: 'private-sqlite', migrations: ['server/migrations/002.sql', 'server/migrations/001.sql'] },
       routes: [
         { path: '/api/items', method: 'GET', handler: 'listItems', transaction: 'read', authorization: 'anonymous' },
         { path: '/api/items', method: 'POST', handler: 'createItem', transaction: 'write', authorization: 'anonymous' },
@@ -37,6 +37,8 @@ describe('the routes of an app', () => {
       { path: '/api/items', method: 'PATCH', handler: 'patch' },
       { path: '/api/backup', method: 'GET', handler: 'backup', authorization: 'host-token' },
       { path: '/api/items?all=1', method: 'GET', handler: 'all' },
+      { path: '/api/meta', method: 'GET', handler: 'metadata' },
+      { path: '/api/meta', method: 'POST', handler: 'saveMetadata' },
     ] }))!;
     const address = 'This server routes addresses under /api/ made of letters, digits, hyphens, underscores and slashes.';
     expect(api.routes.map(route => route.unserved)).toEqual([
@@ -44,6 +46,8 @@ describe('the routes of an app', () => {
       'This server takes GET, POST, PUT and DELETE only.',
       'It asks for a host key, which this server does not hold.',
       address,
+      'The host reserves GET /api/meta for its runtime metadata. Choose another address for this handler.',
+      null,
     ]);
     expect(whoMayCall(api.routes[2], 'application')).toBe('No one here');
   });

@@ -63,7 +63,7 @@ function Page({ version, readOnly, waiting, backend }: { version: number; readOn
 }
 async function mount(at = '', props: Partial<{ version: number; readOnly: boolean; waiting: string | null; backend: boolean }> = {}) {
   const all = { version: 4, readOnly: false, waiting: null, backend: true, ...props };
-  await act(async () => root.render(<MemoryRouter initialEntries={[`/apps/app-1/softn/history${at}`]}><Routes><Route path="/apps/:appId/softn/*" element={<Page {...all} />} /></Routes></MemoryRouter>));
+  await act(async () => root.render(<MemoryRouter initialEntries={[`/apps/app-1/web/history${at}`]}><Routes><Route path="/apps/:appId/web/*" element={<Page {...all} />} /></Routes></MemoryRouter>));
   await act(async () => {});
 }
 const button = (text: RegExp) => [...document.body.querySelectorAll('button')].find(node => text.test(node.textContent ?? '')) as HTMLButtonElement | undefined;
@@ -126,7 +126,7 @@ describe('the list', () => {
     await mount();
     expect(mocks.getNativeVersions).toHaveBeenCalledWith('app-1');
     const links = versionLinks();
-    expect(links.map(link => link.getAttribute('href'))).toEqual(['/apps/app-1/softn/history/4', '/apps/app-1/softn/history/3', '/apps/app-1/softn/history/2', '/apps/app-1/softn/history/1']);
+    expect(links.map(link => link.getAttribute('href'))).toEqual(['/apps/app-1/web/history/4', '/apps/app-1/web/history/3', '/apps/app-1/web/history/2', '/apps/app-1/web/history/1']);
     expect(links[0].textContent).toContain('Version 4');
     expect(links[0].textContent).toContain('Current');
     expect(links[0].textContent).toContain('Changed by an AI over MCP · You');
@@ -296,7 +296,7 @@ describe('removing a version from the history', () => {
     await act(async () => {});
     expect(mocks.removeNativeVersion).toHaveBeenCalledWith('app-1', 2);
     expect(dialog()).toBeNull();
-    expect(versionLinks().map(link => link.getAttribute('href'))).toEqual(['/apps/app-1/softn/history/4', '/apps/app-1/softn/history/3', '/apps/app-1/softn/history/1']);
+    expect(versionLinks().map(link => link.getAttribute('href'))).toEqual(['/apps/app-1/web/history/4', '/apps/app-1/web/history/3', '/apps/app-1/web/history/1']);
     expect(container.querySelector('[role="status"]')!.textContent).toContain('Version 2 was removed from the history. The app as it is now was not changed.');
     expect(onRestored).not.toHaveBeenCalled();
   });
@@ -321,7 +321,7 @@ describe('removing a version from the history', () => {
     await act(async () => inDialog('Remove from history').click());
     await act(async () => {});
     expect(mocks.removeNativeVersion).toHaveBeenCalledWith('app-1', 2);
-    expect(address()).toBe('/apps/app-1/softn/history');
+    expect(address()).toBe('/apps/app-1/web/history');
   });
 
   it('is the way out for a damaged version, which cannot be gone back to', async () => {
@@ -352,7 +352,7 @@ describe('one version', () => {
     mocks.getNativeVersionDetail.mockResolvedValue({ data: detailOf(four().versions[2], 4) });
     await mount();
     await follow(versionLinks()[2]);
-    expect(address()).toBe('/apps/app-1/softn/history/2');
+    expect(address()).toBe('/apps/app-1/web/history/2');
     expect(mocks.getNativeVersionDetail).toHaveBeenCalledWith('app-1', 2);
     const differs = container.querySelector('section[aria-label="What differs from the app now"]')!;
     expect(differs.querySelector('h3')!.textContent).toBe('What differs from the app now (version 4)');
@@ -365,7 +365,7 @@ describe('one version', () => {
     for (const link of differs.querySelectorAll('a')) expect(link.className).toContain('min-h-11');
     // On a phone the list gives way to the version, with a way back to it.
     expect(container.querySelector('ul[aria-label="Versions"]')!.closest('section')!.className).toContain('max-lg:hidden');
-    expect([...container.querySelectorAll('a')].find(link => link.textContent === 'All versions')!.getAttribute('href')).toBe('/apps/app-1/softn/history');
+    expect([...container.querySelectorAll('a')].find(link => link.textContent === 'All versions')!.getAttribute('href')).toBe('/apps/app-1/web/history');
     expect(container.textContent).toContain('Pinned versions are kept past the newest 30.');
   });
 
@@ -374,7 +374,7 @@ describe('one version', () => {
     mocks.getNativeVersionFile.mockImplementation(async (_id: string, version: number, path: string) => ({ data: { current: 4, version, path, text: version === 2 ? 'function list() {\n  return all();\n}\n' : 'function list() {\n  return open();\n}\n' } }));
     await mount('/2');
     await follow([...container.querySelectorAll('section[aria-label="What differs from the app now"] a')].find(link => link.textContent === 'server/main.logic')!);
-    expect(address()).toBe('/apps/app-1/softn/history/2?file=server%2Fmain.logic');
+    expect(address()).toBe('/apps/app-1/web/history/2?file=server%2Fmain.logic');
     expect(mocks.getNativeVersionFile.mock.calls).toEqual([['app-1', 2, 'server/main.logic'], ['app-1', 4, 'server/main.logic']]);
     const compare = container.querySelector('[data-testid="softn-history-file"]')!;
     const [before, after] = [...compare.querySelectorAll('[role="group"]')];
@@ -463,10 +463,10 @@ describe('going back', () => {
     // From the version this section was looking at, so one published meanwhile is not gone back over unseen.
     expect(mocks.restoreNativeVersion).toHaveBeenCalledWith('app-1', 2, 4);
     expect(onRestored).toHaveBeenCalledWith({ version: 5, restored: 2, databaseAhead: [] });
-    expect(address()).toBe('/apps/app-1/softn/history');
+    expect(address()).toBe('/apps/app-1/web/history');
     const said = container.querySelector('[role="status"]')!;
     expect(said.textContent).toContain('The app is as it was in version 2 again, saved as version 5.');
-    expect(said.querySelector('a')!.getAttribute('href')).toBe('/apps/app-1/softn/edit');
+    expect(said.querySelector('a')!.getAttribute('href')).toBe('/apps/app-1/web/edit');
     expect(mocks.getNativeVersions.mock.calls.length).toBeGreaterThan(1);
   });
 
@@ -535,7 +535,7 @@ describe('going back', () => {
     await act(async () => {});
     expect(dialog()!.querySelector('[role="alert"]')!.textContent).toBe('The app is now at version 5. Reload and look again before going back.');
     expect(onRestored).not.toHaveBeenCalled();
-    expect(address()).toBe('/apps/app-1/softn/history/2');
+    expect(address()).toBe('/apps/app-1/web/history/2');
   });
 
   it('waits while the page has unpublished changes, and offers nothing to change in the read-only demo', async () => {

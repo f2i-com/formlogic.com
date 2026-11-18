@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
@@ -14,6 +15,7 @@ import { joiningNote, welcomeStyle } from '../lib/appWelcome';
 import { AppWelcomeBanner, AppWelcomePanel } from '../components/auth/AppWelcome';
 
 export function Signup() {
+  useDocumentTitle('Create an account');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -124,7 +126,7 @@ export function Signup() {
       )}
 
       {/* Right panel - Form */}
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-8">
+      <main className="min-w-0 flex-1 flex items-center justify-center p-6 sm:p-8">
         <div className="w-full max-w-[400px]">
           {welcome ? (
             <AppWelcomeBanner welcome={welcome} mode="signup" className={split ? 'lg:hidden' : undefined} />
@@ -227,7 +229,7 @@ export function Signup() {
             </Link>
           </p>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

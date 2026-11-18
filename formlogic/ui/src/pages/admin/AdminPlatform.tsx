@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Activity, Archive, LogOut, Megaphone, RefreshCw, Wrench } from 'lucide-react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Activity, Archive, ChevronRight, LogOut, Megaphone, RefreshCw, Wrench } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { Panel, PANEL_COLUMNS } from '../../components/ui/Panel';
+import { Panel } from '../../components/ui/Panel';
 import { api, type MaintenanceStatus, type ScheduledBackupRun } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { cn } from '../../lib/utils';
@@ -19,15 +20,20 @@ import { AdminError, AdminSpinner } from './adminUi';
 import { HELP, ROW_BOX } from '../../components/ui/listLook';
 import { useAdminQuery } from './useAdminQuery';
 
-// The page's parts, in the order they stand on it: the id a link lands on, and its name in the
-// line of links at the top.
-const PARTS = [
-  ['plans', 'Plans & AI'], ['app-engine', 'App engine'], ['plugins', 'Plugins'], ['softn-directory', 'SoftN directory'],
-  ['availability', 'Site availability'], ['notices', 'Notices'], ['backups', 'Backups'], ['allowances', 'Usage limits'],
-  ['app-ai', 'AI for apps'], ['app-payments', 'App payments'],
+const GROUPS = [
+  { label: 'Plans & billing', parts: [['plans', 'Plans & AI'], ['allowances', 'Usage limits'], ['app-payments', 'App payments']] },
+  { label: 'App hosting', parts: [['app-engine', 'App engine'], ['app-ai', 'AI for apps'], ['plugins', 'Plugins'], ['app-directory', 'App directory']] },
+  { label: 'Site operations', parts: [['availability', 'Site availability'], ['notices', 'Notices'], ['backups', 'Backups']] },
 ] as const;
-/** Around a part drawn by its own card: where a link lands, clear of the sticky header. */
-const PART = 'min-w-0 scroll-mt-24';
+
+/** Delay mounting a panel until first opened, then retain its form drafts across navigation. */
+function PlatformPane({ id, active, children }: { id: string; active: string; children: ReactNode }) {
+  const open = id === active;
+  const [visited, setVisited] = useState(open);
+  if (open && !visited) setVisited(true);
+  if (!open && !visited) return null;
+  return <div hidden={!open} id={id} tabIndex={-1} className="min-w-0 scroll-mt-24 rounded-xl focus-visible:outline-2 focus-visible:outline-primary-500">{children}</div>;
+}
 const TEXT_FIELD = 'block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
 const SELECT_FIELD = 'min-h-9 max-w-full rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 max-sm:min-h-11';
 
@@ -38,6 +44,11 @@ const SELECT_FIELD = 'min-h-9 max-w-full rounded-lg border border-gray-300 bg-wh
  */
 export function AdminPlatform() {
   const tz = useAdminTimezone();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const requested = location.hash.slice(1);
+  const part = requested === 'softn-directory' ? 'app-directory' : requested;
+  const active = GROUPS.some(group => group.parts.some(([id]) => id === part)) ? part : 'plans';
   const [status, setStatus] = useState<MaintenanceStatus | null>(null);
   const [online, setOnline] = useState<number>(0);
   const [message, setMessage] = useState('');
@@ -154,53 +165,45 @@ export function AdminPlatform() {
     } finally { setRetracting(null); }
   };
 
-  // A link to one card (/admin/platform#app-ai, from an app's AI settings): the cards are drawn after
-  // the page loads, so the browser's own jump to the fragment finds nothing. Go to the card once the
-  // page has its cards, and again as the cards above it fill in, until the person scrolls themselves.
-  const loaded = status !== null;
   useEffect(() => {
-    const target = window.location.hash.slice(1);
-    if (!loaded || target === '') return;
-    let stopped = false;
-    const stop = () => { stopped = true; };
-    const go = () => { if (!stopped) document.getElementById(target)?.scrollIntoView?.({ block: 'start' }); };
-    const timers = [0, 300, 900, 1800].map((after) => window.setTimeout(go, after));
-    const inputs = ['wheel', 'touchmove', 'keydown', 'mousedown'] as const;
-    inputs.forEach((name) => window.addEventListener(name, stop, { passive: true }));
-    return () => {
-      timers.forEach((timer) => window.clearTimeout(timer));
-      inputs.forEach((name) => window.removeEventListener(name, stop));
-    };
-  }, [loaded]);
-
-  // A silent failure must not render the default "maintenance off" state.
-  if (status === null) {
-    return loadError
-      ? <AdminError message={loadError} onRetry={load} />
-      : <AdminSpinner label="Loading platform status" />;
-  }
+    if (!requested) return;
+    if (document.activeElement?.matches('nav[aria-label="Platform settings"] select')) return;
+    const target = document.getElementById(active);
+    target?.focus({ preventScroll: true });
+    const top = target?.getBoundingClientRect().top;
+    if (top !== undefined && (top < 0 || top >= window.innerHeight)) target?.scrollIntoView?.({ block: 'start' });
+  }, [active, requested, location.key]);
 
   return (
-    <div>
-      {/* The page is long: one line of links to its parts, each an address a link elsewhere can use
-          (/admin/platform#app-ai). Plain anchors: the browser goes to the part named. On a phone
-          the line stays one line and scrolls sideways, to the screen's edges, as the sections'
-          row above it does: wrapped, ten finger-tall links would be three rows before the page. */}
-      <nav aria-label="Platform settings" className="scrollbar-hide flex gap-x-4 gap-y-1 text-xs max-sm:-mx-4 max-sm:overflow-x-auto max-sm:px-4 sm:flex-wrap">
-        {PARTS.map(([id, label]) => <a key={id} href={`#${id}`} className="inline-flex flex-none items-center whitespace-nowrap font-medium text-primary-700 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-300 max-sm:min-h-11">{label}</a>)}
-      </nav>
+    <div className="@container/platform">
+      <div className="grid items-start gap-4 @3xl/platform:grid-cols-[13rem_minmax(0,1fr)] @5xl/platform:grid-cols-[15rem_minmax(0,1fr)]">
+        <nav aria-label="Platform settings" className="min-w-0 @3xl/platform:sticky @3xl/platform:top-[calc(var(--fl-workspace-header-h,4rem)+var(--fl-nav-top,0px)+var(--fl-system-top,0px)+.75rem)]">
+          <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 @3xl/platform:hidden">
+            Platform setting
+            <select value={active} onChange={event => navigate({ hash: '#' + event.target.value })}
+              className="mt-1 block min-h-11 w-full cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus-visible:outline-2 focus-visible:outline-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+              {GROUPS.map(group => <optgroup key={group.label} label={group.label}>{group.parts.map(([id,label]) => <option key={id} value={id}>{label}</option>)}</optgroup>)}
+            </select>
+          </label>
+          <div className="hidden max-h-[calc(100dvh-var(--fl-workspace-header-h,4rem)-var(--fl-nav-top,0px)-var(--fl-nav-bottom,0px)-var(--fl-system-top,0px)-2rem)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900 @3xl/platform:block">
+            {GROUPS.map(group => <div key={group.label} className="border-b border-slate-200 py-2 first:pt-0 last:border-0 last:pb-0 dark:border-slate-700">
+              <p className="px-2.5 py-1 text-xs font-semibold text-slate-500 dark:text-slate-400">{group.label}</p>
+              {group.parts.map(([id,label]) => <Link key={id} to={{ hash: '#' + id }} aria-current={id === active ? 'page' : undefined}
+                className={cn('flex min-h-9 items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-primary-500',
+                  id === active ? 'bg-primary-50 font-semibold text-primary-800 dark:bg-primary-950/60 dark:text-primary-200' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800')}>
+                {label}{id === active && <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />}
+              </Link>)}
+            </div>)}
+          </div>
+        </nav>
+        <div className="min-w-0">
+        <PlatformPane id="plans" active={active}><AdminPlansCard /></PlatformPane>
+        <PlatformPane id="app-engine" active={active}><AdminEnginePolicyCard /></PlatformPane>
+        <PlatformPane id="plugins" active={active}><AdminPluginsCard /></PlatformPane>
+        <PlatformPane id="app-directory" active={active}><span id="softn-directory" /><AdminSoftnDirectoryCard /></PlatformPane>
 
-      {/* The parts fill the page's width in as many columns as fit, each as tall as what it holds:
-          one column on a phone, two on a laptop, three on a wide screen. The two that end in a
-          table (AI for apps, App payments) come last and take every column. */}
-      <div className={cn('mt-3', PANEL_COLUMNS)}>
-        <div id="plans" className={PART}><AdminPlansCard /></div>
-        <div id="app-engine" className={PART}><AdminEnginePolicyCard /></div>
-        <div id="plugins" className={PART}><AdminPluginsCard /></div>
-        <div id="softn-directory" className={PART}><AdminSoftnDirectoryCard /></div>
-
-        <Panel
-          id="availability"
+        <PlatformPane id="availability" active={active}>
+        {status === null ? (loadError ? <AdminError message={loadError} onRetry={load} /> : <AdminSpinner label="Loading platform status" />) : <Panel
           title="Maintenance mode"
           icon={<Wrench className="h-4 w-4" />}
           description="Closes the whole site (dashboards, APIs and embedded forms show your message). Administrators keep full access."
@@ -237,10 +240,11 @@ export function AdminPlatform() {
               </Button>
             </div>
           </div>
-        </Panel>
+        </Panel>}
+        </PlatformPane>
 
+        <PlatformPane id="notices" active={active}>
         <Panel
-          id="notices"
           title="Broadcast a message"
           icon={<Megaphone className="h-4 w-4" />}
           description={<>Pops up as a toast on users&apos; dashboards. <strong>Signed-in now</strong> reaches current sessions (expires in an hour); <strong>all users</strong> stays live for a week so everyone sees it once.</>}
@@ -294,9 +298,10 @@ export function AdminPlatform() {
             )}
           </div>
         </Panel>
+        </PlatformPane>
 
+        <PlatformPane id="backups" active={active}>
         <Panel
-          id="backups"
           title="Scheduled backups"
           icon={<Archive className="h-4 w-4" />}
           description={<>Nightly site backup: one restorable zip per account + a full database dump, kept for the retention window. Restore an account from its page in <strong>Users</strong>.</>}
@@ -337,9 +342,11 @@ export function AdminPlatform() {
           </div>
         </Panel>
 
-        <div id="allowances" className={PART}><AdminAllowancesCard /></div>
-        <div id="app-ai" className={cn(PART, '[column-span:all]')}><AdminAppAiCard /></div>
-        <div id="app-payments" className={cn(PART, '[column-span:all]')}><AdminAppPaymentsCard /></div>
+        </PlatformPane>
+        <PlatformPane id="allowances" active={active}><AdminAllowancesCard /></PlatformPane>
+        <PlatformPane id="app-ai" active={active}><AdminAppAiCard /></PlatformPane>
+        <PlatformPane id="app-payments" active={active}><AdminAppPaymentsCard /></PlatformPane>
+        </div>
       </div>
 
       <ConfirmDialog

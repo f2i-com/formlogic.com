@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import type { CatalogPack } from '../src/lib/api';
+test.use({ serviceWorkers: 'block' });
 const starterCatalog = JSON.parse(readFileSync(new URL('../src/data/starter-catalog.json', import.meta.url), 'utf8')) as CatalogPack[];
 const pack = { ...starterCatalog.find(p => p.slug === 'aokie-receptionist')!, versions: [] };
 for (const mode of ['public', 'signed-in', 'demo']) {
@@ -14,8 +15,11 @@ for (const mode of ['public', 'signed-in', 'demo']) {
         const url = new URL(route.request().url());
         const path = url.pathname.replace(/^.*\/api/, '');
         if (path === '/auth/me') return route.fulfill({ status: mode === 'public' ? 401 : 200, json: mode === 'public' ? { message: 'Sign in' } : { user: { id: 'packs-review', email: 'review@example.test', name: 'Reviewer', isDemo: mode === 'demo' } } });
-        if (path === '/packs/catalog') return route.fulfill({ json: { packs: url.searchParams.get('search') === 'no-match' ? [] : [pack], totalPages: 1, total: 1 } });
-        if (path === '/packs/catalog/facets') return route.fulfill({ json: { categories: [], tags: [] } });
+        if (path === '/packs/catalog') {
+          const found = url.searchParams.get('search') !== 'no-match';
+          return route.fulfill({ json: { packs: found ? [pack] : [], totalPages: found ? 2 : 1, total: found ? 13 : 0 } });
+        }
+        if (path === '/packs/catalog/facets') return route.fulfill({ json: { categories: [{ name: 'Business apps', count: 13 }], tags: [{ name: 'calls', count: 13 }] } });
         if (path === '/packs/catalog/aokie-receptionist') return route.fulfill({ json: { pack } });
         if (path === '/packs/catalog/aokie-receptionist/ratings') return route.fulfill({ json: { ratings: [], total: 0 } });
         if (path === '/packs/catalog/missing-template') return route.fulfill({ status: 404, json: { message: 'Not found' } });
@@ -24,7 +28,7 @@ for (const mode of ['public', 'signed-in', 'demo']) {
       const workspaceNavigation = width >= 768 ? page.getByRole('navigation', { name: 'Workspace', exact: true }) : page.getByRole('navigation').filter({ has: page.getByRole('link', { name: 'Home', exact: true }) });
       await page.goto('/packs');
       if (mode === 'public') {
-        await expect(page.getByRole('heading', { name: 'Install a working business app' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Template library' })).toBeVisible();
         await expect(page.getByRole('navigation', { name: 'Workspace', exact: true })).toHaveCount(0);
       } else {
         // Inside the workspace the catalogue is a workspace page: the Header names it.
@@ -32,25 +36,37 @@ for (const mode of ['public', 'signed-in', 'demo']) {
         await expect(workspaceNavigation).toHaveCount(1);
         await expect(page.locator('footer')).toHaveCount(0);
       }
-      await page.getByRole('searchbox', { name: 'Search packs' }).or(page.getByRole('textbox', { name: 'Search packs' })).fill('no-match');
-      await expect(page.getByText('No apps found', { exact: true })).toBeVisible();
-      await page.getByRole('button', { name: 'Clear', exact: true }).click();
-      const card = page.getByRole('button').filter({ hasText: pack.name }).first();
+      const search = page.getByRole('searchbox', { name: 'Search templates' });
+      await search.fill('no-match');
+      await expect(page.getByText('No matching templates', { exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+      await search.fill('aokie');
+      await page.getByRole('combobox', { name: 'Sort by' }).selectOption('name');
+      await page.getByRole('combobox', { name: 'Category' }).selectOption('Business apps');
+      await page.getByRole('combobox', { name: 'Tag', exact: true }).selectOption('calls');
+      await expect(page.getByRole('combobox', { name: 'Category' })).toHaveValue('');
+      await page.getByRole('button', { name: 'Next', exact: true }).click();
+      await expect(page.getByText('Page 2 of 2')).toBeVisible();
+      const resultsUrl = new URL(page.url());
+      expect([...resultsUrl.searchParams]).toEqual([['q', 'aokie'], ['sort', 'name'], ['tag', 'calls'], ['page', '2']]);
+      const card = page.getByRole('link', { name: pack.name, exact: true });
       await expect(card).toBeVisible();
-      await expect(page.locator('[aria-label="Loading apps"]')).toHaveCount(0);
+      await expect(page.locator('[aria-label="Loading templates"]')).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath('gallery.png'), fullPage: true });
       await card.click();
-      await expect(page).toHaveURL(/\/packs\/aokie-receptionist$/);
+      await expect(page).toHaveURL(new URL('/packs/aokie-receptionist' + resultsUrl.search, resultsUrl).href);
       await expect(page.getByRole('heading', { name: pack.name, exact: true })).toBeVisible();
       await expect(page.getByText('Published Invalid Date')).toHaveCount(0);
       if (mode !== 'public') await expect(workspaceNavigation).toHaveCount(1);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath('detail.png'), fullPage: true });
       // The public page leads back by its breadcrumb, the workspace page by its Header.
-      if (mode === 'public') await page.getByRole('link', { name: 'Marketplace', exact: true }).last().click();
+      if (mode === 'public') await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Marketplace' }).click();
       else await page.getByRole('button', { name: 'Back to templates', exact: true }).click();
-      await expect(page).toHaveURL(/\/packs$/);
+      await expect(page).toHaveURL(resultsUrl.href);
+      await expect(search).toHaveValue('aokie');
+      await expect(page.getByText('Page 2 of 2')).toBeVisible();
       await page.goto('/packs/missing-template');
       await expect(page.getByText('Template not found', { exact: true })).toBeVisible();
       if (mode !== 'public') await expect(workspaceNavigation).toHaveCount(1);

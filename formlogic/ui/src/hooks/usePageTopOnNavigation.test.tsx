@@ -4,7 +4,7 @@
 // page it was pressed on.
 import { act, useEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { MemoryRouter, Route, Routes, useNavigate, type NavigateFunction } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate, type NavigateFunction, type NavigateOptions, type To } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePageTopOnNavigation } from './usePageTopOnNavigation';
 import { MobileNav } from '../components/layout/MobileNav';
@@ -49,7 +49,7 @@ afterEach(async () => {
   useAuthStore.setState({ user: null });
 });
 
-const to = async (where: Parameters<NavigateFunction>[0], options?: Parameters<NavigateFunction>[1]) => {
+const to = async (where: To | number, options?: NavigateOptions) => {
   await act(async () => { void (typeof where === 'number' ? go(where) : go(where, options)); });
 };
 
@@ -65,7 +65,7 @@ describe('a page the person goes to opens at its top', () => {
   });
 
   it('from any link to another page: an app opened from far down the apps page, the bar\'s other places', async () => {
-    await to('/apps/a1/softn/data');
+    await to('/apps/a1/web/data');
     await act(async () => { container.querySelector<HTMLAnchorElement>('a[href="/forms"]')!.click(); });
     expect(scrollTo).toHaveBeenCalledTimes(2);
   });
@@ -81,12 +81,12 @@ describe('a page the person goes to opens at its top', () => {
   });
 
   it('leaves a move within the SoftN app page, which opens its sections from their tops itself, and not a move to another app', async () => {
-    await to('/apps/a1/softn/data');
+    await to('/apps/a1/web/data');
     scrollTo.mockClear();
-    await to('/apps/a1/softn/history/7');
-    await to('/apps/a1/softn');
+    await to('/apps/a1/web/history/7');
+    await to('/apps/a1/web');
     expect(scrollTo).not.toHaveBeenCalled();
-    await to('/apps/a2/softn');
+    await to('/apps/a2/web');
     expect(scrollTo).toHaveBeenCalledTimes(1);
     await to('/apps/a2/settings');
     expect(scrollTo).toHaveBeenCalledTimes(2);

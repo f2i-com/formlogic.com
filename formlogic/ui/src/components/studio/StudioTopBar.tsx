@@ -1,11 +1,6 @@
-// What the App Studio adds to the page's Header and to its row of sections:
-//   StudioHeaderActions  search, App settings, Ask AI, Open app and Publish, at the header's right;
-//   StudioStateLine      whether the app is live, whether the last change was saved and what is
-//                        waiting to be published, at the right end of the section row.
-// The studio used to draw a top bar of its own in place of the Header. It now stands in the same
-// frame as every other page that manages an app, so the two pieces live here.
+// Workspace header actions and the save/release status in its section bar.
 import { useLocation, useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, Loader2, MoreHorizontal, Play, Rocket, RotateCcw, Search, Settings, Sparkles } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, MoreHorizontal, Play, Rocket, RotateCcw, Search, Sparkles } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { useUIStore } from '../../stores/uiStore';
 import { cn } from '../../lib/utils';
@@ -58,12 +53,6 @@ export function StudioHeaderActions({
   // "Open app" carries the current studio step so the runtime's draft-preview
   // Back button returns exactly here.
   const openRuntime = () => navigate(`/app/${app.slug}`, { state: returnToState(location.pathname, 'App Studio') });
-  // Real settings, not the directory: this button used to open `?tab=manage`, a grid
-  // of nine tiles, so the studio's only control called "Manage app" opened a menu
-  // rather than any app setting.
-  const openSettings = () => navigate(`/apps/${app.id}/settings`, {
-    state: returnToState(location.pathname, 'App Studio'),
-  });
   const openChat = () => {
     setChatMinimized(false);
     setChatOpen(true);
@@ -76,8 +65,8 @@ export function StudioHeaderActions({
         type="button"
         onClick={onOpenAppMenu}
         aria-haspopup="dialog"
-        aria-label={`${app.name} — app menu`}
-        title="App menu"
+        aria-label={`${app.name} — app actions`}
+        title="App actions"
         className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-gray-200/80 text-gray-600 transition-colors hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 @2xl/header:hidden dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
       >
         <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
@@ -88,7 +77,6 @@ export function StudioHeaderActions({
           words yield first. */}
       <div className="hidden min-w-0 items-center gap-2 @2xl/header:flex">
         <IconAction icon={Search} label="Search App Studio" title="Search App Studio (Ctrl+K)" onClick={onOpenCommandPalette} />
-        <ActionButton icon={Settings} label="App settings" onClick={openSettings} variant="ghost" tier="manage" />
         {aiAvailable && (
           <ActionButton icon={Sparkles} label="Ask AI" srLabel="Ask AI about this app" onClick={openChat} variant="ghost" accent tier="askAi" />
         )}
@@ -188,8 +176,6 @@ export function StudioStateLine({
           {changes.count} {changes.count === 1 ? 'change' : 'changes'} to publish
         </button>
       )}
-      {/* The pill already says Draft: these words join it once the row has room for them. */}
-      {!published && !changes.everPublished && <span className="hidden shrink-0 @7xl/studio:inline">Not published yet</span>}
       {browserOnly && <span className="shrink-0">Saved in this browser</span>}
       {publish.waiting && (
         <Button
@@ -218,7 +204,6 @@ export function StudioStateLine({
 const LABEL_TIER = {
   openApp: { label: 'hidden whitespace-nowrap @4xl/header:inline-flex', icon: 'flex @4xl/header:hidden' },
   askAi: { label: 'hidden whitespace-nowrap @5xl/header:inline-flex', icon: 'flex @5xl/header:hidden' },
-  manage: { label: 'hidden whitespace-nowrap @5xl/header:inline-flex', icon: 'flex @5xl/header:hidden' },
 } as const;
 
 /**

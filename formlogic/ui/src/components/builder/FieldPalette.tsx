@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { HelpCircle, Search } from 'lucide-react';
+import { useMemo, useRef, useState, type RefObject } from 'react';
+import { HelpCircle, Search, X } from 'lucide-react';
 import { FIELD_TYPE_INFO, type FieldType } from '../../types/form';
 import { ICON_MAP } from './fieldIcons';
 
@@ -23,8 +23,14 @@ const FIELD_PRESETS: Array<{ preset: string; type: FieldType; label: string; ico
 const PRIVATE_BLOCKED_TYPES = new Set<FieldType>(['file_upload', 'linked_record']);
 const PRIVATE_BLOCKED_PRESETS = new Set(['camera']);
 
-export function FieldPalette({ onAddField, isPrivate = false }: { onAddField: (type: FieldType, preset?: string) => void; isPrivate?: boolean }) {
+export function FieldPalette({ onAddField, isPrivate = false, inputRef }: {
+  onAddField: (type: FieldType, preset?: string) => void;
+  isPrivate?: boolean;
+  inputRef?: RefObject<HTMLInputElement | null>;
+}) {
   const [query, setQuery] = useState('');
+  const localSearch = useRef<HTMLInputElement>(null);
+  const searchInput = inputRef ?? localSearch;
 
   const fieldsByCategory = useMemo(
     () => {
@@ -63,6 +69,10 @@ export function FieldPalette({ onAddField, isPrivate = false }: { onAddField: (t
     })).filter((group) => group.fields.length > 0);
   }, [fieldsByCategory, query]);
 
+  const onlyMatch = searching && grouped.length === 1 && grouped[0].fields.length === 1 ? grouped[0].fields[0] : undefined;
+  const canAdd = (field: { type: FieldType; preset?: string }) =>
+    !isPrivate || !(PRIVATE_BLOCKED_TYPES.has(field.type) || PRIVATE_BLOCKED_PRESETS.has(field.preset ?? ''));
+
   return (
     <div className="space-y-4 p-3">
       <div className="relative">
@@ -70,16 +80,33 @@ export function FieldPalette({ onAddField, isPrivate = false }: { onAddField: (t
         {/* On a phone the box is a finger tall and its text 16 px: smaller, and iOS zooms the
             page in when the box takes the cursor. */}
         <input
+          ref={searchInput}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={event => {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === 'Escape' && query) {
+              event.preventDefault();
+              event.stopPropagation();
+              setQuery('');
+            }
+            if (event.key === 'Enter' && onlyMatch && canAdd(onlyMatch)) {
+              event.preventDefault();
+              if (!event.repeat) onAddField(onlyMatch.type, onlyMatch.preset);
+            }
+          }}
           placeholder="Search fields"
           aria-label="Search field types"
-          className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-1.5 pl-8 pr-2.5 text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:min-h-11 max-sm:text-base"
+          className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-1.5 pl-8 pr-9 text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:min-h-11 max-sm:text-base"
         />
+        {query && <button type="button" aria-label="Clear field search" onClick={() => { setQuery(''); searchInput.current?.focus(); }}
+          className="absolute inset-y-0 right-0 grid w-9 place-items-center rounded-r-lg text-gray-500 hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-slate-400 dark:hover:text-white">
+          <X aria-hidden="true" className="size-4" />
+        </button>}
       </div>
-      {grouped.length === 0 && (
-        <p className="text-xs text-gray-500 dark:text-slate-400">No fields match "{query}".</p>
-      )}
+      <div role="status" className="empty:hidden text-xs text-gray-600 dark:text-slate-400">
+        {grouped.length === 0 ? `No fields match “${query}”.` : onlyMatch && canAdd(onlyMatch) ? `Press Enter to add ${onlyMatch.label}.` : null}
+      </div>
       {grouped.map(({ category, title, fields }) => (
         <div key={category}>
           <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">
@@ -88,7 +115,7 @@ export function FieldPalette({ onAddField, isPrivate = false }: { onAddField: (t
           <div className={searching ? 'grid grid-cols-1 gap-1.5' : 'grid grid-cols-2 gap-1.5'}>
             {fields.map((field) => {
               const IconComponent = ICON_MAP[field.icon] || HelpCircle;
-              const blocked = isPrivate && (PRIVATE_BLOCKED_TYPES.has(field.type) || (field.preset ? PRIVATE_BLOCKED_PRESETS.has(field.preset) : false));
+              const blocked = !canAdd(field);
               return (
                 <button
                   key={field.preset ?? field.type}

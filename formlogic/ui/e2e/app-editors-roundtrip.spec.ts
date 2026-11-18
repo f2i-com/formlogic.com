@@ -75,7 +75,7 @@ async function openHosting(page: Page, appId: string) {
   await page.getByRole('button', { name: 'Native app hosting', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Native app hosting', exact: true });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Import .softn project', exact: true })).toBeEnabled({ timeout: 60000 }); // ready
+  await expect(dialog.getByRole('button', { name: 'Import project ZIP', exact: true })).toBeEnabled({ timeout: 60000 }); // ready
   return dialog;
 }
 
@@ -121,13 +121,13 @@ test.describe('embedded editors: round trip and live conflict', () => {
 
       // A backend this host does not run is refused by the native import with its reason.
       await dialog.getByLabel('Import native app').setInputFiles({ name: 'other-host.softn', mimeType: 'application/zip', buffer: otherHostBundle() });
-      await expect(dialog.getByRole('alert')).toContainText('This app\'s backend is not one FormLogic runs: it was written for another SoftN host.');
+      await expect(dialog.getByRole('alert')).toContainText('its API version is unsupported');
 
       // 1. Import the starter project through the file input and install it (version 1).
       await dialog.getByLabel('Import native app').setInputFiles({ name: 'starter.softn', mimeType: 'application/zip', buffer: starterBundle() });
       await expect(dialog.getByText('Imported as a draft', { exact: false })).toBeVisible({ timeout: 15000 });
       await dialog.getByRole('button', { name: 'Install app project', exact: true }).click();
-      await expect(dialog.getByText('Installed. The app uses its private SQLite database', { exact: false })).toBeVisible({ timeout: 60000 });
+      await expect(dialog.getByText('Version 1 is installed.', { exact: true })).toBeVisible({ timeout: 60000 });
       expect((await nativeProject(context, app.id))!.version).toBe(1);
 
       // 2. Visual Builder edit, handed back as an acknowledged, unpublished draft.
@@ -157,10 +157,13 @@ test.describe('embedded editors: round trip and live conflict', () => {
       const studio = page.getByRole('dialog', { name: 'AI Studio', exact: true });
       await expect(studio.getByRole('button', { name: 'Review changes', exact: true })).toBeEnabled({ timeout: 90000 });
       const studioFrame = page.frameLocator('iframe[title="App AI editor"]');
+      const hostDownload = studio.getByRole('button', { name: 'Download project ZIP', exact: true });
+      const downloadAction = await hostDownload.isVisible() ? hostDownload : studioFrame.getByRole('button', { name: 'Download ZIP', exact: true });
       const [exported] = await Promise.all([
         page.waitForEvent('download', { timeout: 30000 }),
-        studioFrame.getByTitle('Export bundle: download the project as a .softn file').click(),
+        downloadAction.click(),
       ]);
+      expect(exported.suggestedFilename()).toMatch(/\.zip$/);
       const studioBundle = unzipSync(new Uint8Array(readFileSync(await exported.path())));
       expect(Buffer.from(studioBundle['ui/main.ui']).toString('utf8')).toContain('Save round-trip item');
       await openStudioAiPanel(studioFrame);
@@ -180,7 +183,7 @@ test.describe('embedded editors: round trip and live conflict', () => {
 
       // 4. Publish: both edits land in version 2 and the live hosted run shows them.
       await dialog.getByRole('button', { name: 'Publish changes', exact: true }).click();
-      await expect(dialog.getByText('Installed. The app uses its private SQLite database', { exact: false })).toBeVisible({ timeout: 60000 });
+      await expect(dialog.getByText('Version 2 is installed.', { exact: true })).toBeVisible({ timeout: 60000 });
       const published = (await nativeProject(context, app.id))!;
       expect(published.version).toBe(2);
       expect(published.files['ui/main.ui']).toContain('Save round-trip item');
@@ -203,10 +206,11 @@ test.describe('embedded editors: round trip and live conflict', () => {
       expect(Object.keys(exportedFiles).sort()).toEqual(Object.keys(published.files).sort()); // source and media only
       await page.keyboard.press('Escape');
       const twinDialog = await openHosting(page, twin.id);
-      await twinDialog.getByLabel('Import native app').setInputFiles({ name: `${app.slug}.softn`, mimeType: 'application/zip', buffer: readFileSync(exportedPath) });
+      expect(download.suggestedFilename()).toMatch(/\.zip$/);
+      await twinDialog.getByLabel('Import native app').setInputFiles({ name: download.suggestedFilename(), mimeType: 'application/zip', buffer: readFileSync(exportedPath) });
       await expect(twinDialog.getByText('Imported as a draft', { exact: false })).toBeVisible({ timeout: 15000 });
       await twinDialog.getByRole('button', { name: 'Install app project', exact: true }).click();
-      await expect(twinDialog.getByText('Installed. The app uses its private SQLite database', { exact: false })).toBeVisible({ timeout: 60000 });
+      await expect(twinDialog.getByText('Version 1 is installed.', { exact: true })).toBeVisible({ timeout: 60000 });
       const reimported = (await nativeProject(context, twin.id))!;
       expect(reimported.version).toBe(1);
       expect(reimported.files).toEqual(published.files);
@@ -240,7 +244,7 @@ test.describe('embedded editors: round trip and live conflict', () => {
       const dialogB = await builderEdit(pageB, 'Saved by editor B');
 
       await dialogA.getByRole('button', { name: 'Publish changes', exact: true }).click();
-      await expect(dialogA.getByText('Installed. The app uses its private SQLite database', { exact: false })).toBeVisible({ timeout: 60000 });
+      await expect(dialogA.getByText('Version 2 is installed.', { exact: true })).toBeVisible({ timeout: 60000 });
       expect((await nativeProject(a, app.id))!.version).toBe(2);
 
       await dialogB.getByRole('button', { name: 'Publish changes', exact: true }).click();

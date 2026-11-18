@@ -38,6 +38,7 @@ describe('viewerOwnsApp', () => {
     expect(viewerOwnsApp({ ownerId: 'u1', canManage: true }, 'u1')).toBe(true);
     expect(viewerOwnsApp({ ownerId: 'u1' } as never, 'u1')).toBe(true);
     expect(viewerOwnsApp({ canManage: false } as never, 'u2')).toBe(false);
+    expect(viewerOwnsApp({ ownerId: 'u1', canManage: false }, 'u1')).toBe(false);
     expect(viewerOwnsApp({ ownerId: 'u1' } as never, 'u2')).toBe(false);
   });
 

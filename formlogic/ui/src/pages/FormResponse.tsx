@@ -1094,7 +1094,7 @@ function FormResponseContent() {
       },
     };
   }, [rawForm, appTheme, privateSchema]);
-  useDocumentTitle(form?.title);
+  useDocumentTitle(form?.title || (formLoadError ? 'Form unavailable' : 'Open form'));
 
   // E2EE (blocker 2): verify the served manifest (structure, signature, schema
   // hash, signer-key binding) and parse the SIGNED schema snapshot. Until this
@@ -1293,15 +1293,15 @@ function FormResponseContent() {
   // The load starts in an effect, so the first paint comes before it: no form yet isn't a failure.
   if (isLoadingForm || (formId && !form && !publicForm && !formLoadError)) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400" />
-      </div>
+      <main className="min-h-[100dvh] flex items-center justify-center bg-gray-100 dark:bg-slate-950">
+        <span role="status" className="flex items-center gap-3 text-sm text-gray-600 dark:text-slate-300"><span className="motion-safe:animate-spin rounded-full h-6 w-6 border-2 border-gray-300 border-t-primary-600" aria-hidden="true" />Opening form…</span>
+      </main>
     );
   }
 
   if (!form || formLoadError) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 p-4">
+      <main className="min-h-[100dvh] flex items-center justify-center bg-gray-100 dark:bg-slate-950 p-4">
         <div className="text-center max-w-sm">
           <div className="w-16 h-16 bg-gray-200/70 dark:bg-slate-800 rounded-2xl flex items-center justify-center mx-auto mb-6">
             <FileQuestion className="h-8 w-8 text-gray-400 dark:text-slate-500" />
@@ -1314,7 +1314,7 @@ function FormResponseContent() {
             Try again
           </Button>
         </div>
-      </div>
+      </main>
     );
   }
 
@@ -1985,86 +1985,90 @@ function FormResponseContent() {
       }}
       onKeyDown={effectiveMode === 'focused' ? handleKeyDown : undefined}
     >
-      {/* Back to the custom-screen dashboard (only when the screen stepped aside for a new record) */}
-      {screenTakeover && showFormView && (
-        <button
-          type="button"
-          onClick={() => setShowFormView(false)}
-          className="fixed top-3 left-4 z-20 inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2"
-          style={{ backgroundColor: `${form.theme.textColor}15`, color: form.theme.textColor }}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to dashboard
-        </button>
+      {(showModeToggle || (screenTakeover && showFormView) || form.settings?.showNigoDashboard) && (
+        <div className="sticky top-0 z-20 flex shrink-0 flex-wrap items-center gap-2 px-4 pb-2 pt-[max(.5rem,env(safe-area-inset-top))]" style={{ backgroundColor: form.theme.backgroundColor }}>
+          {/* Back to the custom-screen dashboard (only when the screen stepped aside for a new record) */}
+          {screenTakeover && showFormView && (
+            <button
+              type="button"
+              onClick={() => setShowFormView(false)}
+              className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2"
+              style={{ backgroundColor: `${form.theme.textColor}15`, color: form.theme.textColor }}
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to dashboard
+            </button>
+          )}
+
+          {/* NIGO dashboard toggle + panel (when enabled for this form) */}
+          {form.settings?.showNigoDashboard && (
+            <button
+              type="button"
+              onClick={() => setShowNigo((v) => !v)}
+              className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-all cursor-pointer shadow-sm"
+              style={showNigo
+                ? { backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }
+                : { backgroundColor: `${form.theme.textColor}15`, color: form.theme.textColor }}
+              aria-pressed={showNigo}
+              title="Completion checklist"
+            >
+              <ClipboardCheck className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Checklist</span>
+            </button>
+          )}
+          {/* Mode Toggle */}
+          {showModeToggle && (
+            <div className="ml-auto flex items-center rounded-lg p-0.5" style={{ backgroundColor: `${form.theme.textColor}15` }} role="group" aria-label="Presentation mode">
+              <button
+                onClick={() => setResponseMode('focused')}
+                aria-pressed={effectiveMode === 'focused'}
+                className={cn(
+                  'inline-flex min-h-9 items-center rounded-md px-3 text-xs transition-all cursor-pointer max-sm:min-h-11',
+                  effectiveMode === 'focused' ? 'shadow-sm' : 'opacity-50 hover:opacity-80'
+                )}
+                style={effectiveMode === 'focused' ? { backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) } : { color: form.theme.textColor }}
+              >
+                One at a time
+              </button>
+              <button
+                onClick={() => setResponseMode('classic')}
+                aria-pressed={effectiveMode === 'classic'}
+                className={cn(
+                  'inline-flex min-h-9 items-center rounded-md px-3 text-xs transition-all cursor-pointer max-sm:min-h-11',
+                  effectiveMode === 'classic' ? 'shadow-sm' : 'opacity-50 hover:opacity-80'
+                )}
+                style={effectiveMode === 'classic' ? { backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) } : { color: form.theme.textColor }}
+              >
+                All questions
+              </button>
+            </div>
+          )}
+
+          {showNigo && form.settings?.showNigoDashboard && (
+            <div className="absolute top-full right-4 w-72 max-w-[calc(100vw-2rem)] z-20 flex max-h-[calc(100dvh-5rem)]">
+              <NigoDashboard
+                fields={form.fields}
+                formData={allFormData}
+                visibleFields={nigoVisibleIds}
+                requiredFields={nigoRequiredIds}
+                onFieldClick={(fieldId) => {
+                  const idx = visibleFields.findIndex((f) => f.id === fieldId);
+                  if (idx >= 0) {
+                    if (effectiveMode === 'focused') goToStep(idx);
+                    const el = document.getElementById(`field-${fieldId}`);
+                    if (el) el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+                  }
+                }}
+              />
+            </div>
+          )}
+        </div>
       )}
 
       {/* Brand logo */}
       {form.theme.logo && (
         <div className="pt-6 pb-1 flex justify-center shrink-0">
           <img src={form.theme.logo} alt="" className="max-h-16 max-w-[60%] object-contain" />
-        </div>
-      )}
-
-      {/* Mode Toggle */}
-      {showModeToggle && (
-        <div className="fixed top-3 right-4 z-20 flex items-center rounded-lg p-0.5" style={{ backgroundColor: `${form.theme.textColor}15` }} role="group" aria-label="Presentation mode">
-          <button
-            onClick={() => setResponseMode('focused')}
-            aria-pressed={effectiveMode === 'focused'}
-            className={cn(
-              'inline-flex min-h-9 items-center rounded-md px-3 text-xs transition-all cursor-pointer max-sm:min-h-11',
-              effectiveMode === 'focused' ? 'shadow-sm' : 'opacity-50 hover:opacity-80'
-            )}
-            style={effectiveMode === 'focused' ? { backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) } : { color: form.theme.textColor }}
-          >
-            One at a time
-          </button>
-          <button
-            onClick={() => setResponseMode('classic')}
-            aria-pressed={effectiveMode === 'classic'}
-            className={cn(
-              'inline-flex min-h-9 items-center rounded-md px-3 text-xs transition-all cursor-pointer max-sm:min-h-11',
-              effectiveMode === 'classic' ? 'shadow-sm' : 'opacity-50 hover:opacity-80'
-            )}
-            style={effectiveMode === 'classic' ? { backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) } : { color: form.theme.textColor }}
-          >
-            All questions
-          </button>
-        </div>
-      )}
-
-      {/* NIGO dashboard toggle + panel (when enabled for this form) */}
-      {form.settings?.showNigoDashboard && (
-        <button
-          type="button"
-          onClick={() => setShowNigo((v) => !v)}
-          className="fixed top-3 left-4 z-20 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-all cursor-pointer shadow-sm"
-          style={showNigo
-            ? { backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }
-            : { backgroundColor: `${form.theme.textColor}15`, color: form.theme.textColor }}
-          aria-pressed={showNigo}
-          title="Completion checklist"
-        >
-          <ClipboardCheck className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Checklist</span>
-        </button>
-      )}
-      {showNigo && form.settings?.showNigoDashboard && (
-        <div className="fixed top-14 right-4 w-72 max-w-[calc(100vw-2rem)] z-20 flex max-h-[calc(100dvh-5rem)]">
-          <NigoDashboard
-            fields={form.fields}
-            formData={allFormData}
-            visibleFields={nigoVisibleIds}
-            requiredFields={nigoRequiredIds}
-            onFieldClick={(fieldId) => {
-              const idx = visibleFields.findIndex((f) => f.id === fieldId);
-              if (idx >= 0) {
-                if (effectiveMode === 'focused') goToStep(idx);
-                const el = document.getElementById(`field-${fieldId}`);
-                if (el) el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
-              }
-            }}
-          />
         </div>
       )}
 
@@ -2091,7 +2095,7 @@ function FormResponseContent() {
           nothing to assistive tech. */}
       {form.settings.showProgressBar && (
         <div
-          className="fixed top-0 left-0 right-0 z-10 h-1 bg-current/10"
+          className="pointer-events-none fixed top-0 left-0 right-0 z-30 h-1 bg-current/10"
           role="progressbar"
           aria-valuenow={safeCurrentStep + 1}
           aria-valuemin={1}

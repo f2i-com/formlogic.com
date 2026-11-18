@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
+import { useEffect } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Logo } from '../components/ui/Logo';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 
 interface LegalSection {
   heading: string;
@@ -51,13 +53,19 @@ const TERMS: LegalSection[] = [
 export function LegalPage({ type }: { type: 'privacy' | 'terms' }) {
   const title = type === 'privacy' ? 'Privacy Policy' : 'Terms of Service';
   const sections = type === 'privacy' ? PRIVACY : TERMS;
+  useDocumentTitle(title);
+  const sectionId = (heading: string) => heading.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  useEffect(() => {
+    const id = window.location.hash.slice(1);
+    if (id) document.getElementById(id)?.scrollIntoView({ behavior: 'instant' });
+  }, [type]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
       <header className="bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800">
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
           <Link to="/" aria-label="FormLogic home"><Logo /></Link>
-          <Link to="/" className="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+          <Link to="/" className="inline-flex min-h-11 items-center gap-1 text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
             <ArrowLeft className="h-4 w-4" /> Home
           </Link>
         </div>
@@ -73,11 +81,17 @@ export function LegalPage({ type }: { type: 'privacy' | 'terms' }) {
           </p>
         )}
 
+        <details className="mt-6 rounded-xl border border-gray-200 bg-white px-4 dark:border-slate-700 dark:bg-slate-900">
+          <summary className="cursor-pointer py-3 text-sm font-semibold text-gray-900 dark:text-white">Jump to a section</summary>
+          <nav aria-label={`${title} sections`} className="grid border-t border-gray-200 py-2 dark:border-slate-700 sm:grid-cols-2">
+            {sections.map((s) => <a key={s.heading} href={`#${sectionId(s.heading)}`} className="flex min-h-11 items-center rounded px-2 text-sm text-primary-700 hover:underline dark:text-primary-300">{s.heading}</a>)}
+          </nav>
+        </details>
         <div className="mt-8 space-y-8">
           {sections.map((s) => (
-            <section key={s.heading}>
+            <section key={s.heading} id={sectionId(s.heading)} tabIndex={-1} className="scroll-mt-6">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{s.heading}</h2>
-              <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-slate-400">{s.body}</p>
+              <p className="mt-2 leading-7 text-gray-700 dark:text-slate-300">{s.body}</p>
             </section>
           ))}
         </div>

@@ -5,4 +5,4 @@
 // Every other address is its own page. Kept apart from lib/softnApps so the first screen's code
 // does not take that module's imports with it.
 
-export const pagePlace = (pathname: string): string => pathname.replace(/^(\/apps\/[^/]+\/softn)\/.*$/, '$1');
+export const pagePlace = (pathname: string): string => pathname.replace(/^(\/apps\/[^/]+\/web)\/.*$/, '$1');

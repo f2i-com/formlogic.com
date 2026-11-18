@@ -145,11 +145,11 @@ export function AokieGuidePage() {
           <Link to="/" aria-label="FormLogic home">
             <Logo size="sm" />
           </Link>
-          <nav className="flex items-center gap-4 text-sm font-medium text-gray-600 dark:text-slate-300">
-            <Link to="/packs/aokie-receptionist" className="hover:text-gray-900 dark:hover:text-white">Marketplace</Link>
+          <nav aria-label="Aokie guide" className="flex items-center gap-3 text-sm font-medium text-gray-600 dark:text-slate-300">
+            <Link to="/packs/aokie-receptionist" className="inline-flex min-h-11 items-center hover:text-gray-900 dark:hover:text-white">Marketplace</Link>
             <a
               href="https://oaiy.com/desktop.html"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-primary-foreground hover:bg-primary-700"
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-primary-foreground hover:bg-primary-700"
             >
               <Download className="h-3.5 w-3.5" /> Get Desktop
             </a>
@@ -166,23 +166,15 @@ export function AokieGuidePage() {
               Hardware beta
             </span>
           </p>
-          <h1 className="mt-3 text-4xl sm:text-6xl font-bold tracking-tight text-gray-900 dark:text-white">
-            A front desk. On your own hardware.
-          </h1>
+          <h1 className="mt-3 text-4xl sm:text-6xl font-bold tracking-tight text-gray-900 dark:text-white">Set up the Aokie receptionist</h1>
           <p className="mt-4 max-w-2xl text-base leading-relaxed text-gray-600 dark:text-slate-300">
-            Aokie turns a Windows PC, a USB Bluetooth dongle and the phone you already own into a
-            local AI receptionist. Connect call handling and appointment requests to your FormLogic workspace,
-            with OAIY running the local services. This hardware beta needs a verified end-to-end test before live use.
-            Speech recognition, the language model and the voice run{' '}
-            <strong>locally on your hardware by default</strong> — no per-minute fees, and with
-            the standard local models your call audio stays on your machine. (If you point Aokie
-            at a remote AI or speech endpoint, that provider receives the audio or transcripts it
-            needs.)
+            Pair your phone with a Windows PC and a supported USB Bluetooth adapter to answer calls
+            and capture appointment requests in FormLogic. OAIY runs the speech and AI models
+            locally by default. If you choose a remote model, its provider receives the audio or text it needs.
           </p>
           <p className="mt-3 max-w-2xl text-[13px] leading-relaxed text-gray-500 dark:text-slate-400">
-            Aokie is in <strong>hardware beta</strong>: it needs Windows 10/11, a supported USB
-            Bluetooth dongle and a GPU for comfortable local AI — see{' '}
-            <a href="#requirements" className="underline hover:no-underline">what you need</a> below.
+            Check the <a href="#requirements" className="underline hover:no-underline">hardware requirements</a> and
+            test a call from start to finish before using Aokie with customers.
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-3">
             <a

@@ -45,7 +45,7 @@ class UserAiSettingsService
     public function get(string $userId): array
     {
         $stmt = $this->mysql->getConnection()->prepare(
-            'SELECT ai_source, desktop_provider_id, desktop_model, custom_provider_id, chat_tool_mode, desktop_reasoning, updated_at
+            'SELECT ai_source, desktop_provider_id, desktop_model, custom_provider_id, custom_tool_connection, chat_tool_mode, desktop_reasoning, updated_at
              FROM user_ai_settings WHERE user_id = ?'
         );
         $stmt->execute([$userId]);
@@ -58,6 +58,7 @@ class UserAiSettingsService
             'desktopProviderId' => $row['desktop_provider_id'] !== null ? (string) $row['desktop_provider_id'] : null,
             'desktopModel' => $row['desktop_model'] !== null ? (string) $row['desktop_model'] : null,
             'customProviderId' => $row['custom_provider_id'] !== null ? (string) $row['custom_provider_id'] : null,
+            ...($row['custom_tool_connection'] !== null ? ['customToolConnection' => $row['custom_tool_connection']] : []),
             'chatToolMode' => (string) $row['chat_tool_mode'],
             'desktopReasoning' => $row['desktop_reasoning'] !== null ? (string) $row['desktop_reasoning'] : null,
             'updatedAt' => $row['updated_at'] !== null ? (string) $row['updated_at'] : null,
@@ -85,20 +86,26 @@ class UserAiSettingsService
         $desktopProviderId = $this->idValue($data['desktopProviderId'] ?? null, 'desktopProviderId');
         $desktopModel = $this->idValue($data['desktopModel'] ?? null, 'desktopModel');
         $customProviderId = $this->idValue($data['customProviderId'] ?? null, 'customProviderId');
+        $customTools = $data['customToolConnection'] ?? null;
+        if ($customTools !== null && (!is_string($customTools) || !preg_match('/^[a-f0-9]{64}$/D', $customTools))) {
+            throw new \InvalidArgumentException('customToolConnection must identify a saved provider connection.');
+        }
+        if ($aiSource !== 'custom' || $customProviderId === null) $customTools = null;
 
         $stmt = $this->mysql->getConnection()->prepare(
             'INSERT INTO user_ai_settings
-                (user_id, ai_source, desktop_provider_id, desktop_model, custom_provider_id, chat_tool_mode, desktop_reasoning)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+                (user_id, ai_source, desktop_provider_id, desktop_model, custom_provider_id, chat_tool_mode, desktop_reasoning, custom_tool_connection)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
                 ai_source = VALUES(ai_source),
                 desktop_provider_id = VALUES(desktop_provider_id),
                 desktop_model = VALUES(desktop_model),
                 custom_provider_id = VALUES(custom_provider_id),
                 chat_tool_mode = VALUES(chat_tool_mode),
-                desktop_reasoning = VALUES(desktop_reasoning)'
+                desktop_reasoning = VALUES(desktop_reasoning),
+                custom_tool_connection = VALUES(custom_tool_connection)'
         );
-        $stmt->execute([$userId, $aiSource, $desktopProviderId, $desktopModel, $customProviderId, $chatToolMode, $desktopReasoning]);
+        $stmt->execute([$userId, $aiSource, $desktopProviderId, $desktopModel, $customProviderId, $chatToolMode, $desktopReasoning, $customTools]);
         return $this->get($userId);
     }
 

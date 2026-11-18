@@ -446,7 +446,7 @@ function HostingEditor({
             <input
               ref={input}
               type="file"
-              accept=".softn,.zip,.json"
+              accept=".zip,.json,.softn"
               className="hidden"
               aria-label="Import app project"
               onChange={(event) => {
@@ -529,7 +529,7 @@ function HostingEditor({
               </button>
             ))}
           </div>
-          <div className="flex flex-wrap gap-2">{(['builder', 'studio'] as const).map(kind => <Button key={kind} variant="secondary" disabled={!loaded || saving || importing || (kind === 'studio' && aiReady === false)} title={kind === 'studio' && aiReady === false ? 'Connect an AI in Settings → AI to edit with AI Studio.' : undefined} onClick={() => { try { setEditor({ kind, bundle: zipSync(Object.fromEntries(Object.entries(pkg.client).map(([path, source]) => [path, strToU8(source)]))) }); } catch { setError('Could not prepare this project for the editor.'); } }}>{kind === 'builder' ? 'Open Visual Builder' : 'Open AI Studio'}</Button>)}{aiReady === false && <AiConnectNotice className="basis-full text-xs leading-5 text-slate-500 dark:text-slate-400" lead="AI Studio needs an AI connection; the Visual Builder works without one" reason={ai.reason} onConnected={ai.recheck} />}</div>
+          <div className="flex flex-wrap gap-2">{(['builder', 'studio'] as const).map(kind => <Button key={kind} variant="secondary" disabled={!loaded || saving || importing} onClick={() => { try { setEditor({ kind, bundle: zipSync(Object.fromEntries(Object.entries(pkg.client).map(([path, source]) => [path, strToU8(source)]))) }); } catch { setError('Could not prepare this project for the editor.'); } }}>{kind === 'builder' ? 'Open Visual Builder' : 'Open AI Studio'}</Button>)}{aiReady === false && <AiConnectNotice className="basis-full text-xs leading-5 text-slate-500 dark:text-slate-400" lead="Connect an AI to use chat in Studio" reason={ai.reason} onConnected={ai.recheck} />}</div>
           {tab === "interface" && (
             <div className="space-y-3">
               <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -565,9 +565,8 @@ function HostingEditor({
                 className="min-h-[260px] w-full min-w-0 resize-y rounded-xl border border-slate-700 bg-slate-950 p-4 font-mono text-base sm:text-sm leading-relaxed text-slate-200"
               />
               <p className="text-xs text-slate-500">
-                Connect client logic with{" "}
-                <code>softn.backend.call(action, input, callback)</code>. The
-                callback receives <code>{"{ result }"}</code> or{" "}
+                The starter’s client logic shows how to call a backend action by name.
+                Its callback receives <code>{"{ result }"}</code> or{" "}
                 <code>{"{ error }"}</code>.
               </p>
             </div>

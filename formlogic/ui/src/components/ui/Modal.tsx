@@ -129,7 +129,7 @@ export function Modal({
     if (!hasInitialFocusRef.current) {
       hasInitialFocusRef.current = true;
       focusFrame = requestAnimationFrame(() => {
-        if (modalRef.current && isTopDialog(uniqueId)) {
+        if (modalRef.current && isTopDialog(uniqueId) && !modalRef.current.contains(document.activeElement)) {
           const focusableElements = focusable(modalRef.current);
           if (focusableElements[0]) focusableElements[0].focus();
           else modalRef.current.focus();

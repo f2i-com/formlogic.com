@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowUpRight, Braces, QrCode } from 'lucide-react';
 import { api } from '../../lib/api';
 import { ShareQrCode } from '../ui/ShareQrCode';
@@ -21,8 +21,6 @@ type DemoForm = {
  */
 export function FormExamplesSection() {
   const [forms, setForms] = useState<DemoForm[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const revealRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,60 +30,24 @@ export function FormExamplesSection() {
         if (!cancelled) setForms(r.data?.forms ?? []);
       } catch {
         /* demo unavailable — section hides itself */
-      } finally {
-        if (!cancelled) setLoaded(true);
       }
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // Reveal-on-scroll, self-registered (this section mounts after Landing's initial
-  // useReveal() scan — same pattern as LiveDemoSection).
-  useEffect(() => {
-    const el = revealRef.current;
-    if (!el) return;
-    if (
-      !('IntersectionObserver' in window) ||
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    ) {
-      el.classList.add('fl-in');
-      return;
-    }
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('fl-in');
-            io.disconnect();
-          }
-        });
-      },
-      { threshold: 0.05, rootMargin: '0px 0px -48px 0px' }
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [loaded, forms.length]);
-
-  if (!loaded || forms.length === 0) return null;
+  if (forms.length === 0) return null;
 
   return (
-    <section id="form-examples" className="relative px-4 sm:px-6 lg:px-8 py-20 sm:py-28">
-      <div ref={revealRef} className="fl-reveal max-w-6xl mx-auto">
-        <div className="fl-mono inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-primary-600 dark:text-primary-400">
-          <span className="fl-dot inline-block h-1.5 w-1.5 rounded-full bg-primary-500" />
-          Just a form · scan &amp; fill
+    <section id="form-examples" className="lv2-examples" aria-labelledby="form-examples-title">
+      <div className="lv2-container">
+        <div className="lv2-guide-head">
+          <div>
+            <h2 id="form-examples-title" className="lv2-guide-title">Try a public form.</h2>
+            <p>Open a form or scan its QR code with your phone. Submissions appear in the shared demo workspace.</p>
+          </div>
         </div>
-        <h2 className="fl-display mt-4 text-3xl sm:text-4xl font-bold tracking-tight text-gray-900 dark:text-white">
-          Sometimes all you need is <span className="fl-grad">a form</span>
-        </h2>
-        <p className="mt-3 max-w-2xl text-gray-500 dark:text-slate-400 leading-relaxed">
-          No app, no dashboard — just a shareable form with real backend logic running
-          server-side: validation, scoring, rejections, webhooks. Every form gets a link
-          and a QR code. Scan one below with your phone (or click it) and submit — no
-          account needed.
-        </p>
 
-        <div className="mt-9 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {forms.map((form) => {
             const url = `${window.location.origin}/form/${form.id}`;
             return (
@@ -102,7 +64,7 @@ export function FormExamplesSection() {
                     />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold text-gray-900 dark:text-white">{form.title}</div>
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{form.title}</h3>
                     {form.hasLogic && (
                       <span className="fl-mono mt-1 inline-flex items-center gap-1 rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-[10px] text-primary-700 dark:border-primary-500/25 dark:bg-primary-500/10 dark:text-primary-300">
                         <Braces className="h-2.5 w-2.5" /> backend logic
@@ -118,9 +80,9 @@ export function FormExamplesSection() {
                     href={url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="group inline-flex items-center gap-1 rounded-md text-sm font-semibold text-primary-600 transition hover:text-primary-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-400"
+                    className="group inline-flex min-h-11 items-center gap-1 rounded-md text-sm font-semibold text-primary-600 transition hover:text-primary-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-400"
                   >
-                    Try this form
+                    Try this form<span className="sr-only">, {form.title} (opens in a new tab)</span>
                     <ArrowUpRight className="h-4 w-4 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                   </a>
                   <ShareQrCode url={url} size={96} />
@@ -130,10 +92,6 @@ export function FormExamplesSection() {
           })}
         </div>
 
-        <p className="mt-6 text-xs text-gray-400 dark:text-slate-500">
-          These are live shared demo forms — your submission lands in the Demo workspace.
-          Build your own and it's private to your account, with the same link + QR sharing.
-        </p>
       </div>
     </section>
   );

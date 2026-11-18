@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, ChevronLeft, ChevronRight, Loader2, Search, Sparkles, X } from 'lucide-react';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { DynamicIcon } from '../ui/DynamicIcon';
+import { StarterExamples } from './StarterExamples';
 
 const PAGE_SIZE = 9;
 
@@ -64,10 +65,10 @@ function DemoAppCard({ app, launching, disabled, onLaunch }: {
       type="button"
       onClick={onLaunch}
       disabled={disabled}
-      aria-label={`Open ${app.name} in the live demo`}
       className="group flex cursor-pointer items-start gap-3.5 rounded-2xl border border-gray-200 bg-white p-4 text-left transition duration-200 hover:border-primary-400 hover:shadow-md hover:shadow-primary-500/5 motion-safe:hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:border-slate-800 dark:bg-slate-900/50 dark:hover:border-primary-500/50 dark:focus-visible:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-70"
     >
       <div
+        aria-hidden="true"
         style={accented ? ({ '--fl-a': app.accent } as CSSProperties) : undefined}
         className={`flex h-10 w-10 flex-none items-center justify-center overflow-hidden rounded-lg ${
           showLogo
@@ -122,6 +123,7 @@ function DemoAppCard({ app, launching, disabled, onLaunch }: {
             ))}
           </div>
         )}
+        <span className="sr-only">Opens in the live demo in a new tab.</span>
       </div>
     </button>
   );
@@ -130,8 +132,8 @@ function DemoAppCard({ app, launching, disabled, onLaunch }: {
 /**
  * Landing "live demo" band. Fetches the demoable apps (published apps owned by the shared Demo
  * account) and lets a visitor jump straight in — no signup. Clicking mints the Demo session cookie
- * and opens the demo in a NEW TAB (the landing tab stays put). Renders nothing if the demo is
- * disabled / has no apps.
+ * and opens the demo in a NEW TAB (the landing tab stays put). The marketplace is available
+ * when this installation has no public demos.
  */
 export function LiveDemoSection() {
   const [apps, setApps] = useState<DemoApp[]>([]);
@@ -139,7 +141,6 @@ export function LiveDemoSection() {
   const [launching, setLaunching] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
-  const revealRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,42 +149,13 @@ export function LiveDemoSection() {
         const r = await api.getDemoApps();
         if (!cancelled) setApps(r.data?.apps ?? []);
       } catch {
-        /* demo unavailable — section hides itself */
+        /* The marketplace still works when the demo list is unavailable. */
       } finally {
         if (!cancelled) setLoaded(true);
       }
     })();
     return () => { cancelled = true; };
   }, []);
-
-  // Reveal-on-scroll, self-registered. This section mounts AFTER Landing's useReveal()
-  // observer has already scanned the page (we render nothing until the apps load), so it
-  // runs its own observer once the section exists. Falls back to instantly visible when
-  // IntersectionObserver is unavailable or the user prefers reduced motion.
-  useEffect(() => {
-    const el = revealRef.current;
-    if (!el) return;
-    if (
-      !('IntersectionObserver' in window) ||
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    ) {
-      el.classList.add('fl-in');
-      return;
-    }
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('fl-in');
-            io.disconnect();
-          }
-        });
-      },
-      { threshold: 0.05, rootMargin: '0px 0px -48px 0px' }
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [loaded, apps.length]);
 
   const launch = async (slug?: string) => {
     if (launching) return;
@@ -204,8 +176,8 @@ export function LiveDemoSection() {
     }
   };
 
-  // Nothing to show until we know there are demoable apps.
-  if (!loaded || apps.length === 0) return null;
+  if (!loaded) return <div id="demo" role="status" className="lv2-examples lv2-container text-sm text-slate-600 dark:text-slate-300">Loading examples…</div>;
+  if (apps.length === 0) return <StarterExamples />;
 
   const anyLaunching = launching !== null;
 
@@ -223,20 +195,14 @@ export function LiveDemoSection() {
   const paged = filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
 
   return (
-    <section id="demo" className="relative px-4 sm:px-6 lg:px-8 py-20 sm:py-28">
-      <div ref={revealRef} className="fl-reveal max-w-6xl mx-auto">
+    <section id="demo" className="lv2-examples">
+      <div className="lv2-container">
         {/* Header */}
-        <div className="fl-mono inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-primary-600 dark:text-primary-400">
-          <span className="fl-dot inline-block h-1.5 w-1.5 rounded-full bg-primary-500" />
-          Live demo · no signup
+        <div className="lv2-guide-head">
+          <div><h2 className="lv2-guide-title">Explore a live app.</h2>
+            <p>Open a shared demo to try its forms, dashboards and records. You can explore without an account.</p></div>
+          <Link to="/packs" className="lv2-guide-link">Browse the marketplace <ArrowRight size={16} aria-hidden="true" /></Link>
         </div>
-        <h2 className="fl-display mt-4 text-3xl sm:text-4xl font-bold tracking-tight text-gray-900 dark:text-white">
-          Try a real business app <span className="fl-grad">right now</span>
-        </h2>
-        <p className="mt-3 max-w-2xl text-gray-500 dark:text-slate-400 leading-relaxed">
-          Jump into a live workspace as <strong className="text-gray-900 dark:text-white">Demo</strong> — no account,
-          no setup. Explore real data, custom dashboards, forms and roles. Like it? Sign up to build your own.
-        </p>
 
         <div className="mt-6 flex flex-wrap items-center gap-4">
           <button
@@ -248,7 +214,7 @@ export function LiveDemoSection() {
             {launching === '__all__' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             Launch the live demo
           </button>
-          <span className="text-xs text-gray-400 dark:text-slate-500">Opens in a new tab with sample data.</span>
+          <span className="text-xs text-[var(--lv2-body)]">Opens in a new tab with sample data.</span>
         </div>
 
         {/* Search + count */}
@@ -264,7 +230,7 @@ export function LiveDemoSection() {
               className="fl-mono w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-9 pr-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-primary-500/50 focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white dark:placeholder:text-slate-500"
             />
           </div>
-          <span className="text-xs text-gray-400 dark:text-slate-500">
+          <span className="text-xs text-[var(--lv2-body)]">
             {filtered.length} app{filtered.length === 1 ? '' : 's'}{terms.length ? ` matching “${query.trim()}”` : ''}
           </span>
         </div>
@@ -306,7 +272,7 @@ export function LiveDemoSection() {
               aria-label="Previous page"
               className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-300 dark:hover:bg-slate-800"
             >
-              <ChevronLeft className="h-4 w-4" /> Prev
+              <ChevronLeft className="h-4 w-4" /> Previous
             </button>
             <span className="px-2 text-xs text-gray-500 dark:text-slate-400" aria-live="polite">Page {current} of {pageCount}</span>
             <button
@@ -321,16 +287,6 @@ export function LiveDemoSection() {
           </div>
         )}
 
-        {/* Cross-link to the marketplace */}
-        <div className="mt-8 text-center">
-          <Link
-            to="/packs"
-            className="group inline-flex items-center gap-1.5 rounded-md text-sm font-medium text-gray-500 transition hover:text-primary-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:text-primary-400"
-          >
-            Browse the full marketplace
-            <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
-          </Link>
-        </div>
       </div>
     </section>
   );

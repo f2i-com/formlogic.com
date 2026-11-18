@@ -47,6 +47,7 @@ export function useFocusTrap(
 
     // Move focus into the dialog (defer so children have mounted).
     const raf = requestAnimationFrame(() => {
+      if (!isTopDialog(dialogId) || container?.contains(document.activeElement)) return;
       const focusables = container?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS);
       if (focusables && focusables.length > 0) {
         focusables[0].focus();

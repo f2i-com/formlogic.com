@@ -27,9 +27,9 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
-async function mount(props: { engine?: AppEngine; policy?: OwnerEnginePolicy; onChanged?: (e: AppEngine, p: OwnerEnginePolicy) => void } = {}) {
+async function mount(props: { engine?: AppEngine; policy?: OwnerEnginePolicy; webContainer?: boolean; onChanged?: (e: AppEngine, p: OwnerEnginePolicy) => void } = {}) {
   await act(async () => root.render(
-    <AppEngineSelect appId="app-1" engine={props.engine ?? engine()} policy={props.policy ?? POLICY} onChanged={props.onChanged ?? (() => {})} />
+    <AppEngineSelect appId="app-1" engine={props.engine ?? engine()} policy={props.policy ?? POLICY} webContainer={props.webContainer} onChanged={props.onChanged ?? (() => {})} />
   ));
   return container.querySelector<HTMLSelectElement>('select[aria-label="App engine"]')!;
 }
@@ -59,6 +59,14 @@ it('lets a verified account select host JavaScript', async () => {
   mocks.verified.value = true;
   const select = await mount();
   expect(options(select).find(o => o.value === 'host-js')!.disabled).toBe(false);
+});
+
+it('reports the web container and its language policy for an engine-2 project', async () => {
+  mocks.verified.value = true;
+  const select = await mount({ webContainer: true });
+  expect(container.textContent).toContain('web app sandbox');
+  expect(container.textContent).toContain('allows Python');
+  expect(options(select).find(o => o.value === 'host-js')?.disabled).toBe(true);
 });
 
 it('says which engine actually runs and why it is not the one asked for', async () => {

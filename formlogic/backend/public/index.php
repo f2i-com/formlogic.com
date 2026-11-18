@@ -1237,7 +1237,8 @@ $container->set(\FormLogic\Controllers\ChatToolsController::class, function (Con
         $c->get(\FormLogic\Services\DesktopCommandService::class),
         $c->get(ApiKeyService::class),
         $c->get(AuditService::class),
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        $c->get(\FormLogic\Services\UserAiSettingsService::class)
     );
 });
 // Desktop ops relay (plan Phase 3 section 5.3): account-scoped service/plugin lifecycle
@@ -2164,6 +2165,9 @@ $app->get('/api/ai/chat-tools/catalog', function ($request, $response) use ($con
 $app->post('/api/ai/chat-tools/execute', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\ChatToolsController::class)->execute($request, $response);
 })->add($chatToolsExecuteAuth);
+$app->post('/api/ai/chat-tools/custom', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\ChatToolsController::class)->executeCustom($request, $response);
+})->add($chatToolsRateLimiter)->add($authRequired);
 
 // Helper function to get route args
 $getArgs = function ($request) {

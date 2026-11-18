@@ -306,11 +306,14 @@ describe('live-call section screen (TSX)', () => {
     for (const call of connector.mock.calls) expect(call[1]).toBe('call.current');
   });
 
-  it('a stuck active call self-heals from the authoritative call.current poll (live report 2026-07-18)', async () => {
+  it('a stuck active call self-heals from the authoritative call.current poll (live report 2026-07-18)', async ({ onTestFinished }) => {
     // Remote mode: there is NO event lane, so a missed/never-delivered
     // aokie.call.ended used to leave the stage stuck on the hangup button
     // forever — the poll's `call: null` could not clear a non-ended call.
     // Now two consecutive null polls end it (one is forgiven as a race).
+    vi.useFakeTimers();
+    onTestFinished(() => { vi.useRealTimers(); });
+    const pollMs = 3000;
     let nulls = 0;
     const connector = vi.fn((_id: string, cmd: string) => {
       if (cmd !== 'call.current') return Promise.resolve({ status: 'done', result: {} });
@@ -330,15 +333,18 @@ describe('live-call section screen (TSX)', () => {
         can: () => Promise.resolve(true),
         connector,
       }),
-      { windowGlobals: { __flPollMs: 40 } }
+      { windowGlobals: { __flPollMs: pollMs } }
     );
-    await flush();
-    // The active stage is up (poll #1 returned the call).
+    // Settle the first render and its effects before the first interval can fire.
+    await vi.advanceTimersByTimeAsync(100);
+    expect(nulls).toBe(0);
     expect(root.querySelector('.btn.hangup')).not.toBeNull();
-    // Let several poll cycles run; every further call.current reports null.
-    await flush(400);
-    expect(nulls).toBeGreaterThanOrEqual(2);
-    // The stage cleared without any ended event — back to the remote standby.
+    // One missed call is tolerated. The second clears the stage without an ended event.
+    await vi.advanceTimersByTimeAsync(pollMs);
+    expect(nulls).toBe(1);
+    expect(root.querySelector('.btn.hangup')).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(pollMs);
+    expect(nulls).toBe(2);
     expect(root.querySelector('.btn.hangup')).toBeNull();
     expect(root.textContent).toContain('mirrors its calls');
   });

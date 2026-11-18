@@ -11,17 +11,17 @@ import { cn } from '../../lib/utils';
 import type { NativeProject } from '../../lib/nativeHosting';
 import {
   groupSourceFiles, hasDatabase, newSourceProblem, nextMigrationPath, removedSourceFiles, sourceFileState, sourceLockReason,
-  sourceGroupOf, sourceRemoveProblem, strayedMigration, withInstalledFile, withSourceFile, withoutSourceFile, type SourceGroupId,
+  sourceGroupOf, sourceRemoveProblem, strayedMigration, withInstalledFile, withSourceFile, withoutSourceFile, needsComponentEditor, type SourceGroupId,
 } from '../../lib/projectSource';
 
-const ICONS: Record<SourceGroupId, LucideIcon> = { pages: FileCode2, logic: Braces, styles: Paintbrush, backend: Server, migrations: Database, project: FileJson };
+const ICONS: Record<SourceGroupId, LucideIcon> = { pages: FileCode2, logic: Braces, styles: Paintbrush, backend: Server, migrations: Database, project: FileJson, generated: FileCode2 };
 const STATE_LABEL = { new: 'New', changed: 'Changed' } as const;
 /** The folder a group's files are all in, which its heading stands for. */
-const GROUP_FOLDER: Partial<Record<SourceGroupId, string>> = { backend: 'server/', migrations: 'server/migrations/' };
+const GROUP_FOLDER: Partial<Record<SourceGroupId, string>> = { backend: 'server/', migrations: 'server/migrations/', generated: '__softn_generated__/' };
 /** As tall as the dialog leaves it: the dialog is at most 90dvh, less its header, footer and messages. */
 const EDITOR_HEIGHT = 'clamp(300px, calc(90dvh - 19rem), 60rem)';
 
-export function ProjectSourcePane({ appId, project, installed, readOnly, file, onFile, onEdit, onNotice }: {
+export function ProjectSourcePane({ appId, project, installed, readOnly, file, onFile, onEdit, onNotice, onOpenBuilder }: {
   appId: string;
   /** The open draft. */
   project: NativeProject;
@@ -35,6 +35,7 @@ export function ProjectSourcePane({ appId, project, installed, readOnly, file, o
   onEdit(next: NativeProject): void;
   /** Said after a file is added or removed. */
   onNotice?(message: string): void;
+  onOpenBuilder?(): void;
 }) {
   const [query, setQuery] = useState('');
   const [adding, setAdding] = useState(false);
@@ -152,12 +153,13 @@ export function ProjectSourcePane({ appId, project, installed, readOnly, file, o
     </div>
     {open
       ? <NativeSourceEditor appId={appId} file={open} height={EDITOR_HEIGHT}
-        label={{ backend: 'Private backend source', migrations: 'Private backend source', project: 'Project file source', pages: 'Interface source', logic: 'Interface source', styles: 'Interface source' }[sourceGroupOf(open)]}
+        label={{ backend: 'Private backend source', migrations: 'Private backend source', project: 'Project file source', pages: 'Interface source', logic: 'Interface source', styles: 'Interface source', generated: 'Generated JavaScript' }[sourceGroupOf(open)]}
         readOnly={readOnly || lock !== null} value={project.files[open] ?? ''} onChange={value => onEdit({ ...project, files: { ...project.files, [open]: value } })}
         note={strayed
           ? 'This change has already run on the app’s database, and this draft holds a different copy of it. It cannot be published like this: put the installed copy back.'
           : lock ?? (open === 'manifest.json' ? 'The manifest names the first page, and the backend’s routes and database changes. It is checked when you publish.' : undefined)}
         actions={readOnly ? undefined
+          : needsComponentEditor(open) && onOpenBuilder ? <Button variant="secondary" onClick={onOpenBuilder}>Open Visual Builder</Button>
           // A copy that cannot be typed in or removed has one repair: the copy that ran.
           : strayed ? <button type="button" onClick={() => putBack(open)} aria-label={`Put the installed copy of ${open} back`}
             className="inline-flex min-h-7 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs font-medium text-primary-700 hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-primary-300 dark:hover:bg-primary-500/10">

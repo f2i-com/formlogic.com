@@ -178,7 +178,7 @@ describe('an offer', () => {
     await settle();
     expect(mocks.createSoftnApp).toHaveBeenCalledTimes(1);
     const [{ name, start }] = mocks.createSoftnApp.mock.calls[0] as [{ name: string; start: { kind: string; file: File } }];
-    expect([name, start.kind, start.file.name]).toEqual(['Tiny notes', 'upload', 'Tiny notes.softn']);
+    expect([name, start.kind, start.file.name]).toEqual(['Tiny notes', 'upload', 'Tiny notes.zip']);
     const files = unzipSync(new Uint8Array(await start.file.arrayBuffer()));
     expect(Object.fromEntries(Object.entries(files).map(([path, bytes]) => [path, strFromU8(bytes)]))).toEqual(made);
     expect(await status()).toEqual({ state: 'added', name: 'Tiny notes' });

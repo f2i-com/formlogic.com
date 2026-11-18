@@ -83,6 +83,21 @@ async function callAction(channel: StubChannel, id = 1) {
 }
 const initOf = (post: ReturnType<typeof vi.spyOn>) => post.mock.calls[0][0] as Record<string, unknown>;
 
+it('mounts a native web project without fetching the full engine and routes its API call to the app', async () => {
+  root = createRoot(container);
+  const client = { 'manifest.json': '{"engine":2,"main":"index.html"}', 'index.html': '<main>Notes</main>' };
+  await act(async () => root!.render(<HostedAppFrame slug="notes" client={client} version={1} native={{ ...application, assets: {} }} />));
+  const { iframe, post } = spyOnFrame();
+  expect(iframe.getAttribute('src')).toBe('/hosted-runtime/index.html?format=web');
+  await act(async () => window.dispatchEvent(new MessageEvent('message', { source: iframe.contentWindow!, data: { type: 'formlogic:ready', nativeProtocol: 1, webContainer: 1 } })));
+  expect(initOf(post)).toMatchObject({ engine: 'web-container', client });
+  expect(initOf(post)).not.toHaveProperty('zippWasm');
+  expect(getBytes).not.toHaveBeenCalled();
+  vi.mocked(api.runNativeRequest).mockResolvedValue({ data: { result: { status: 200, body: { notes: [] } } } } as Awaited<ReturnType<typeof api.runNativeRequest>>);
+  await act(async () => channels[0].port1.onmessage?.({ data: { type: 'call', id: 7, action: 'nativeRequest', input: { url: '/api/notes', options: { method: 'GET' } } } }));
+  expect(vi.mocked(api.runNativeRequest).mock.calls[0].slice(0, 2)).toEqual(['notes', { path: '/api/notes', method: 'GET', headers: {}, body: {}, query: {} }]);
+});
+
 describe("the site's own ZIPP (SoftN v0.0.36 frames)", () => {
   const readyFrom = (iframe: HTMLIFrameElement, data: Record<string, unknown>) => window.dispatchEvent(new MessageEvent('message', { source: iframe.contentWindow!, data: { type: 'formlogic:ready', ...data } }));
 

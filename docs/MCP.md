@@ -5,7 +5,7 @@
 
 FormLogic ships an **MCP server** (Model Context Protocol, over HTTP) so you can point your *own* AI —
 using a compatible client — at a FormLogic app and have it build and edit forms,
-compose **widget dashboards**, publish **Softn app projects**, write private
+compose **widget dashboards**, publish **web apps**, write private
 backend actions, configure roles and connect **Aokie** to an existing app.
 
 It works over a **temporary, scoped connection**: a short-lived bearer token with an idle timeout that you
@@ -13,7 +13,7 @@ can revoke at any time. Clients that support remote MCP OAuth start from the MCP
 URL; other compatible HTTP clients can use a [manual token](#manual-tokens-advanced--other-clients).
 
 MCP gives an external AI tools to build in your account. **Connect your AI**
-selects the model used by FormLogic's own chat; these are separate connections.
+selects the model used by FormLogic’s own chat. A tool-capable Site AI or compatible custom provider can also use an MCP connection from the Create app conversation.
 Use the public `/ai-setup` guide before signing in, or `/llms.txt` for an AI-readable
 overview. Signup, verification, OAuth consent, native installation and phone
 pairing remain user setup steps; they are not MCP tools.
@@ -26,6 +26,16 @@ Screens and backend actions use the same host boundaries as their UI editors.
 See [Custom screens](API.md) and [Hosted apps](HOSTED_APPS.md).
 
 ---
+
+## Use MCP in Create app chat
+
+1. Open **Apps → Create app** with a connected AI. For a custom provider, enable **Allow workspace tools in chat** on its AI settings.
+2. Choose **Connect MCP**, review the access requested, then choose **Use in workspace chat**. Account-wide access can work across apps. Reading or changing records and using connectors have separate permission controls.
+3. Describe the app or select a framework prompt. Chat can install a starter and edit its frontend, backend, and migrations through the same connection. **Ask first** lets you review each proposed write. Open the resulting workspace link to preview the saved project in Studio or Builder.
+4. Select the MCP connection in the conversation to disconnect it. The browser keeps its credential in memory for this tab. The selected model receives the tool inputs and results needed for the conversation.
+
+Linked Desktop chat uses the tools supplied by its own relay. An external MCP client can use its own scoped connection through the OAuth or manual setup below.
+When Site AI runs a conversation with an attached MCP connection, each model round uses its normal AI allowance. Discovering tools and applying a change can take several rounds.
 
 ## Connecting from Claude / ChatGPT (OAuth)
 
@@ -313,40 +323,37 @@ delegates to it, threading the token session (scopes, app/creator confinement, `
 through an explicit caller context — **MCP behavior, scopes, wire shapes and audit rows are
 unchanged**; the extraction only gives the two surfaces one implementation that cannot drift.
 
-### SoftN apps over MCP
+<a id="softn-apps-over-mcp"></a>
 
-A SoftN app is the other kind of app: a website, tool or web app of its own, with its own pages and
-logic, a private backend and a SQLite database, and no forms ([Hosted apps](HOSTED_APPS.md#softn-apps)).
-An AI that connects can make one, change its source, read and correct its data, and see to its
-members. The server's opening instructions say so, and `list_apps` marks each app `kind: "softn"` or
-`"forms"`.
+### Web apps over MCP
 
-**What the AI is told.** SoftN is a language of its own, so the tools carry its reference:
+A JavaScript, React or Vue app can have its own pages, a private backend and a SQLite database.
+An AI with the relevant scopes can create the app, edit its source, work with its records and
+manage its members. The API identifies these apps with `kind: "softn"`. See [Hosted apps](HOSTED_APPS.md#web-apps).
+
+**Project and component references**
 
 | Tool | Scope | What it gives |
 |---|---|---|
-| `get_softn_guide` | `apps:read` | With no topic: FormLogic's own page (`backend/resources/softn-on-formlogic.md`): the tools in the order a build uses them, what a project is made of, what a hosted app may use, the backend's rules, and a complete worked app. `topic: "language"`: SoftN's own guide, "How to build a SoftN app", the text SoftN Studio's agent is taught by (`language-python` where page logic is Python; `language#<section>` for one section). `topic: "components"`: every component, one line each. Any published SoftN guide by its name, or one section (`ui-language#bindings`). |
+| `get_softn_guide` | `apps:read` | The default topic covers the project files, build tools, backend rules and a worked example. For a classic component project, use `language`, `language-python` or `components`. A section such as `ui-language#bindings` returns just that reference. |
 | `lookup_softn_components` | `apps:read` | The props, events and a usage line of up to twelve components by name. |
 
-The language guide is a copy of `softn.com`'s `apps/softn-studio/src/lib/agent/guide.ts`
-(`backend/resources/softn-guide.json`, committed; `SOFTN_REPO=… node scripts/softn-guide.mjs`
-regenerates it when a Softn release is adopted, and stops when a sentence about Studio's own tools
-has been rewritten). The component reference and the published guides are the installed Softn
-release's own, read out of its Studio by `scripts/softn-knowledge.mjs` into
-`backend/resources/softn-knowledge.json` (generated, not in Git, written by
-`fetch-softn-release.mjs` at every install and shipped in the package), so they are always those of
-the SoftN the site runs. A server without them says so and still serves FormLogic's page.
+The committed classic language guide in `backend/resources/softn-guide.json` records its
+upstream source and license. To regenerate it from the matching runtime checkout, set
+`SOFTN_REPO` and run `node scripts/softn-guide.mjs`. The installer generates the
+component reference in `backend/resources/softn-knowledge.json` from that release.
+FormLogic's hosting guide is available independently.
 
 **The app and its source.**
 
 | Tool | Scope | What it does |
 |---|---|---|
-| `create_softn_app` | `apps:write`, `screens:write` | A new app with the working starter (a page, a backend with two routes, one table) as version 1. Answers `appUrl` and `workspaceUrl`. Not for an app-scoped token. |
+| `create_softn_app` | `apps:write`, `screens:write` | Pass `name`, `request` and the requested starter: `template: "javascript"`, `"react"` or `"vue"`. Each has editable source and a private API and database. Use `template: "classic"` for the classic component starter. Returns `appUrl` and `workspaceUrl`. Requires an account-level connection. |
 | `get_softn_app` | `apps:read` | How one stands: version, where it runs, whether it is published and who can open it, its page and routes, its database (each table's row count only for a connection with `responses:read`), its member counts. |
 | `get_native_app_project` | `apps:read` | The version, and every source and media file by path and size, with the source itself when the project is small. `files: [paths]` (up to 20) or `file` reads source. Media are listed, never sent. |
 | `update_native_app_files` | `apps:write`, `screens:write` | Writes files whole (`files`), removes files (`remove`), adds or replaces media as base64 (`media`), removes media (`removeMedia`), and changes `access` or `home`. Everything else stays, the database included. `expectedVersion` is the version read. |
 | `publish_native_app_project` | `apps:write`, `screens:write` | Installs a complete project (`expectedVersion: 0` for the first). Media are kept when `assets` is left out; `assets: {}` is none. |
-| `get_native_app_template` | `apps:read` | The starter, to read. |
+| `get_native_app_template` | `apps:read` | Read the `javascript`, `react`, `vue` or `classic` starter using the `template` parameter. React and Vue include authored source and a list of bundled libraries. Pass `includeLibraries: true` for the full project. Edit JSX and Vue files with `update_native_app_files`; FormLogic regenerates their runnable modules. |
 | `list_native_app_versions` | `apps:read` | The app's history, newest first: the current version and each earlier one kept (the newest 30 and any pinned), with when and how each was made, `byYou`, its `summary`, and what it changed. Who else made one is not named. |
 | `get_native_app_version` | `apps:read` | One version against the app now: the files and media that differ (`added` are in the app now only, `removed` in that version only, `changed`), `databaseAhead` (database changes applied since, which stay if it comes back) and the outside sites its pages may reach against the app's. With `file`, that version's text of one source file; a long one comes in parts, each saying the `offset` to read on from. |
 | `restore_native_app_version` | `apps:write`, `screens:write` | Goes back to a version: its files and media are installed as the next version, its backend started first as for an update, recorded as a going back. `expectedVersion` is the current version. Who may enter, where it opens and the database stay as they are; database changes made since stay applied and are named. |
@@ -644,20 +651,20 @@ first; documents reference them by the `id` returned from `create_report`.
 - `responses:read` scope is **not** required to create reports. Runtime data access still respects
   each user's response permissions.
 
-### Publishing to the SoftN directory
+<a id="publishing-to-the-softn-directory"></a>
 
-A hosted SoftN app built here can be published to a public SoftN directory (softn.com's, or another),
-where anyone can play it and read its source. It is off until the administrator names a directory
-(Admin → Platform → SoftN directory), and refused until the server has `DATA_ENCRYPTION_KEY`, because
-the directory answers a publish with an edit key that is kept here encrypted for the account that
-published.
+### Publishing to an app directory
+
+A hosted app can be published to a compatible directory, where visitors can open it and read
+its source. The administrator chooses the directory in **Admin → Platform → App directory**.
+The server needs `DATA_ENCRYPTION_KEY` to store the publishing account's edit key.
 
 An agent never publishes. It drafts and asks; the account's person approves on a page of this site.
 
 | Tool | Scope | What it does |
 | --- | --- | --- |
 | `softn_get_started` | `apps:read` | The directory, its categories, the limits (32 MB, 4,000 files, drafts kept 24 hours, 10 publications an hour), the workflow and the rules. |
-| `softn_create_draft` | `apps:write` | Packs the app's current files as a `.softn` draft and checks it: file names, size, the manifest, the permissions it declares. What browsers are never served here stays here (`server/`, `backend/`, `private/`, `.sql` files, the manifest's server and engine settings), with a warning. Returns `draftId`, `sha256`, `previewUrl` and `approvalUrl`. A new app needs `listing.name` and `listing.category`. |
+| `softn_create_draft` | `apps:write` | Packages the app's public files as a ZIP and checks the paths, size, manifest and permissions. Private code, SQL files and server settings stay on the host. Returns `draftId`, `sha256`, `previewUrl` and `approvalUrl`. A new app needs `listing.name` and `listing.category`. |
 | `softn_validate_draft`, `softn_preview_draft`, `softn_get_app` | `apps:read` | A draft: its checks, where its owner can try it, and its status (`draft`, `awaiting_approval`, `publishing`, `published`, `failed`, `uncertain`, `expired`) with the app's page and play links once published. |
 | `softn_publish_draft` | `apps:write` | Asks for publication and returns `approvalUrl` for the person. Publishes nothing. Asking again changes nothing. |
 | `softn_publish_version` | `apps:write` | Takes `appId` and `slug` (from `softn_list_my_apps`), packs the app's current files as a new version of that app, and asks for it the same way. |
@@ -666,7 +673,7 @@ An agent never publishes. It drafts and asks; the account's person approves on a
 A token kept to one app (an app-scoped token, or a creator token's own apps) reaches only that app's drafts and
 listings.
 
-- **The approval** is `/softn-directory/approve/<draftId>`, a signed-in page with the CSRF check, which an
+- **The approval** is `/app-directory/approve/<draftId>`, a signed-in page with the CSRF check, which an
   MCP token cannot call; someone signed out signs in first and comes back to it. It shows the destination,
   who can see the app, its listing, what it may use, the bundle's size and hash, and the warnings.
   Approving moves the draft to `publishing` in one conditional update, so a second click, a second tab or a

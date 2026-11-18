@@ -209,7 +209,7 @@ export function buildPreflightChecks(input: {
           id: 'forms',
           state: 'complete',
           title: `Its own database: ${input.nativeTableCount} ${input.nativeTableCount === 1 ? 'table' : 'tables'}`,
-          detail: 'The app keeps its data in its SoftN project, so it needs no forms',
+          detail: 'The web app keeps its data in its own project',
           step: 'data',
         }
       : input.formCount > 0

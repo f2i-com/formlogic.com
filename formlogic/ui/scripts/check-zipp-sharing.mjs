@@ -123,7 +123,9 @@ try {
         });
       };
       const index = await policyOf('index.html');
+      const web = await policyOf('index.html?format=web');
       const host = await policyOf('host.html');
+      assert.equal(web, index, 'web and classic containers must install the same policy at page load');
       assert.ok(!index.includes("'unsafe-eval'"), `index.html must never write 'unsafe-eval': ${index}`);
       // 'wasm-unsafe-eval' is a different token and index.html has always had it; the check above
       // must not be passing merely because the assertion is looking at the wrong string.
@@ -163,7 +165,7 @@ try {
       }
       assert.deepEqual(errors, [], 'The browser must not report uncaught exceptions');
       assert.equal(wasmRequests.length, 0, 'Loading a runtime document must not fetch an engine');
-      console.log(`PASS ${order}: index.html and host.html differ by exactly one script-src token, and both pin default-src/connect-src/form-action/frame-src/base-uri, read from the running documents`);
+      console.log(`PASS ${order}: web and classic containers share a policy at page load, host.html differs by exactly one script-src token, and all pin default-src/connect-src/form-action/frame-src/base-uri`);
       await context.close();
       continue;
     }

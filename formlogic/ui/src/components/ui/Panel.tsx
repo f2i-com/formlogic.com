@@ -2,6 +2,9 @@
 // Panels are laid out by the page (`PANEL_COLUMNS`, or a grid), never centred one by one.
 import type { ReactNode } from 'react';
 import { cn } from '../../lib/utils';
+import './Panel.css';
+
+export const PANEL_ANCHOR = 'scroll-mt-[calc(var(--fl-workspace-header-h,4rem)+var(--fl-nav-top,0px)+var(--fl-system-top,0px)+var(--fl-demo-banner-h,0px)+.75rem)]';
 
 export function Panel({ id, title, icon, description, actions, children, className }: {
   /** A panel a link can land on (…/settings#settings-look); it stops below the sticky header. */
@@ -16,8 +19,7 @@ export function Panel({ id, title, icon, description, actions, children, classNa
   className?: string;
 }) {
   return (
-    // scroll-mt: below the sticky header, and below the demo or acting-as bar when one stands over it.
-    <section id={id} className={cn('min-w-0 scroll-mt-[calc(6rem+var(--fl-demo-banner-h,0px))] rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900', className)}>
+    <section id={id} tabIndex={id ? -1 : undefined} className={cn(PANEL_ANCHOR, 'min-w-0 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm focus-visible:outline-2 focus-visible:outline-primary-500 dark:border-slate-700 dark:bg-slate-900', className)}>
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
@@ -35,4 +37,4 @@ export function Panel({ id, title, icon, description, actions, children, classNa
 
 /** Panels in as many columns as fit, each as tall as what it holds: one column on a phone, two
     on a laptop, three on a wide screen. Put on the element that holds the panels. */
-export const PANEL_COLUMNS = 'columns-1 gap-4 lg:columns-2 2xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid';
+export const PANEL_COLUMNS = 'fl-panel-columns';

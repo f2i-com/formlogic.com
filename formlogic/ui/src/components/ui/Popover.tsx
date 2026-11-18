@@ -148,17 +148,24 @@ export function Popover({
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('mousedown', handlePointerDown, true);
 
+    let cancelPendingFocus: (() => void) | undefined;
     if (!hasInitialFocusRef.current) {
       hasInitialFocusRef.current = true;
-      // rAF with a setTimeout fallback (jsdom without pretendToBeVisual has no rAF).
-      const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb: FrameRequestCallback) => setTimeout(cb, 0);
-      raf(() => {
-        const focusableElements = panelRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS);
-        focusableElements?.[0]?.focus();
-      });
+      const focusFirst = () => {
+        const panel = panelRef.current;
+        if (panel && !panel.contains(document.activeElement)) panel.querySelector<HTMLElement>(FOCUSABLE_SELECTORS)?.focus();
+      };
+      if (typeof requestAnimationFrame === 'function') {
+        const frame = requestAnimationFrame(focusFirst);
+        cancelPendingFocus = () => cancelAnimationFrame(frame);
+      } else {
+        const timer = setTimeout(focusFirst, 0);
+        cancelPendingFocus = () => clearTimeout(timer);
+      }
     }
 
     return () => {
+      cancelPendingFocus?.();
       document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('mousedown', handlePointerDown, true);
       if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {

@@ -1,7 +1,8 @@
 // Shared mobile sheet chrome for editors that need to keep the canvas visible while a
 // secondary panel is open. The sizing/z-index classes intentionally mirror FlowEditor.
-import { type ReactNode } from 'react';
+import { type ReactNode, useRef } from 'react';
 import { X } from 'lucide-react';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 export function BottomSheet({
   title,
@@ -16,11 +17,15 @@ export function BottomSheet({
   children: ReactNode;
   expanded?: boolean;
 }) {
+  const panel = useRef<HTMLElement>(null);
+  useFocusTrap(panel, open, onClose);
   if (!open) return null;
   return (
     <div>
       <div className="fixed inset-0 z-[80] bg-gray-900/30 dark:bg-slate-950/60" onClick={onClose} aria-hidden="true" />
       <section
+        ref={panel}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={title}

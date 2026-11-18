@@ -7,5 +7,5 @@ export function browseStarters(search = '', category = '', tag = '', sort = 'pop
     (!query || [pack.name, pack.description, ...pack.tags].join(' ').toLowerCase().includes(query)) &&
     (!category || pack.category === category) && (!tag || pack.tags.includes(tag)));
   matching.sort((a,b) => sort === 'name' ? a.name.localeCompare(b.name) : Number(b.featured) - Number(a.featured) || a.name.localeCompare(b.name));
-  return { packs:matching.slice((page-1)*limit,page*limit), totalPages:Math.max(1,Math.ceil(matching.length/limit)) };
+  return { packs:matching.slice((page-1)*limit,page*limit), total: matching.length, totalPages:Math.max(1,Math.ceil(matching.length/limit)) };
 }

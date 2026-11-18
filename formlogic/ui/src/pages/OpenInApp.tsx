@@ -4,13 +4,11 @@
 // intercept `https://<domain>/open/app/:slug` and open the app BEFORE the browser loads
 // this route. If we reach here, the runtime isn't handling the link (not installed, or
 // desktop), so degrade gracefully to the web app at `/app/:slug`.
-import { Navigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 
 export function OpenInApp() {
-  // Route is /open/app/:appSlug/* — preserve the splat so a deep sub-path
-  // (…/open/app/foo/form/123) degrades to /app/foo/form/123, not just /app/foo.
-  const { appSlug, '*': rest } = useParams<{ appSlug: string; '*': string }>();
-  if (!appSlug) return <Navigate to="/" replace />;
-  const suffix = rest ? `/${rest}` : '';
-  return <Navigate to={`/app/${appSlug}${suffix}`} replace />;
+  // The router has matched /open/app/:appSlug/*. Keep the encoded path and
+  // any query or fragment the shared link uses to select a view.
+  const { pathname, search, hash } = useLocation();
+  return <Navigate to={{ pathname: pathname.slice('/open'.length), search, hash }} replace />;
 }

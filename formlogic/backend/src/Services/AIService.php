@@ -1653,12 +1653,23 @@ PROMPT;
         if ($response === false || $error) {
             throw new \Exception('API request failed: ' . ($error ?: 'curl_exec returned false'));
         }
-        if ($httpCode !== 200) {
-            $errorData = json_decode((string) $response, true);
-            $errorMessage = $errorData['error']['message'] ?? 'Unknown error';
-            throw new \Exception('API error (' . $httpCode . '): ' . $errorMessage);
+        return $this->decodeToolRoundResponse((string) $response, (int) $httpCode, !empty($payload['tools']));
+    }
+
+    protected function decodeToolRoundResponse(string $body, int $status, bool $hasTools): array
+    {
+        if ($status !== 200) {
+            // Provider messages may quote arbitrary model output. Classify only an explicit
+            // machine code on a tool request, and keep all upstream text out of errors and logs.
+            if ($hasTools && $status === 422 && strlen($body) <= 16384) {
+                $error = json_decode($body, true, 8)['error'] ?? null;
+                if (is_array($error) && ($error['code'] ?? null) === 'tool_contract_error') {
+                    throw new InvalidModelToolCallException('The model returned an invalid tool call.');
+                }
+            }
+            throw new \RuntimeException('AI provider returned HTTP ' . $status . ' for a tool round.');
         }
-        $data = json_decode((string) $response, true);
+        $data = json_decode($body, true);
         if (!is_array($data)) {
             throw new \Exception('Invalid API response format');
         }

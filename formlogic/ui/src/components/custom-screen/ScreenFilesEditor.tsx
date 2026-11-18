@@ -1,6 +1,7 @@
-import { useRef, useState, type ChangeEvent, type InputHTMLAttributes } from 'react';
+import { useId, useRef, useState, type ChangeEvent, type InputHTMLAttributes } from 'react';
 import {
   Braces,
+  ChevronDown,
   FileCode,
   FileCode2,
   FileImage,
@@ -91,7 +92,7 @@ type EditorModal =
   | { kind: 'overwrite'; incoming: ScreenFile[]; skipped: string[]; clashes: string[] };
 
 const toolbarBtn =
-  'p-1 rounded text-gray-400 dark:text-slate-500 hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500';
+  'inline-flex h-11 w-11 items-center justify-center @lg/files:h-7 @lg/files:w-7 rounded text-gray-500 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500';
 
 /**
  * A small multi-file editor: a file list (add / upload / rename / delete / select) + a Monaco editor
@@ -100,6 +101,9 @@ const toolbarBtn =
  */
 export function ScreenFilesEditor({ files, onChange, sdk }: { files: ScreenFile[]; onChange: (files: ScreenFile[]) => void; sdk: 'form' | 'app' }) {
   const [active, setActive] = useState<string>(files[0]?.path || '');
+  const [filesOpen, setFilesOpen] = useState(false);
+  const fileListId = useId();
+  const fileToggle = useRef<HTMLButtonElement>(null);
   const [modal, setModal] = useState<EditorModal | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -173,9 +177,15 @@ export function ScreenFilesEditor({ files, onChange, sdk }: { files: ScreenFile[
   };
 
   return (
-    <div className="flex-1 min-h-0 flex border border-gray-200 dark:border-slate-700 rounded-lg overflow-hidden m-3 mt-2">
-      <div className="w-48 shrink-0 border-r border-gray-200 dark:border-slate-800 flex flex-col bg-gray-50 dark:bg-slate-900/40">
-        <div className="flex items-center gap-0.5 px-2 h-8 text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">
+    <div className="@container/files flex-1 min-h-0 min-w-0 flex border border-gray-200 dark:border-slate-700 rounded-lg overflow-hidden m-3 mt-2">
+      <div className="min-h-0 min-w-0 flex flex-1 flex-col @lg/files:flex-row">
+      <button type="button" ref={fileToggle} aria-expanded={filesOpen} aria-controls={fileListId} onClick={() => setFilesOpen(!filesOpen)} className="flex min-h-11 shrink-0 items-center gap-2 border-b border-gray-200 bg-gray-50 px-3 text-left text-xs text-gray-700 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 @lg/files:hidden">
+        <span className="font-semibold">Files</span>
+        <span className="min-w-0 flex-1 truncate font-mono">{activeFile?.path}</span>
+        <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 transition-transform ${filesOpen ? 'rotate-180' : ''}`} />
+      </button>
+      <div id={fileListId} className={`min-h-0 max-h-[40%] shrink-0 flex-col border-b border-gray-200 bg-gray-50 dark:border-slate-800 dark:bg-slate-900/40 @lg/files:flex @lg/files:max-h-none @lg/files:w-44 @lg/files:border-r @lg/files:border-b-0 ${filesOpen ? 'flex' : 'hidden'}`}>
+        <div className="flex shrink-0 items-center gap-0.5 px-2 h-11 @lg/files:h-8 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-slate-400">
           <span className="flex-1 truncate">Files</span>
           <button type="button" onClick={() => fileInputRef.current?.click()} title="Upload files" aria-label="Upload files" className={toolbarBtn}>
             <Upload className="h-3.5 w-3.5" />
@@ -200,9 +210,12 @@ export function ScreenFilesEditor({ files, onChange, sdk }: { files: ScreenFile[
               >
                 <button
                   type="button"
-                  onClick={() => setActive(f.path)}
+                  onClick={() => {
+                    setActive(f.path);
+                    if (filesOpen) { setFilesOpen(false); fileToggle.current?.focus(); }
+                  }}
                   title={f.path}
-                  className="flex-1 min-w-0 flex items-center gap-1.5 pl-2 py-1.5 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
+                  className="flex-1 min-w-0 min-h-11 @lg/files:min-h-0 flex items-center gap-1.5 pl-2 py-1.5 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
                   aria-current={isActive ? 'true' : undefined}
                 >
                   <Icon className={`h-3.5 w-3.5 shrink-0 ${iconClass}`} />
@@ -213,7 +226,7 @@ export function ScreenFilesEditor({ files, onChange, sdk }: { files: ScreenFile[
                   onClick={() => setModal({ kind: 'rename', path: f.path })}
                   title={`Rename ${f.path}`}
                   aria-label={`Rename ${f.path}`}
-                  className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 rounded hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                  className="inline-flex h-11 w-11 items-center justify-center @lg/files:h-6 @lg/files:w-6 @lg/files:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 rounded hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                 >
                   <Pencil className="h-3 w-3" />
                 </button>
@@ -223,7 +236,7 @@ export function ScreenFilesEditor({ files, onChange, sdk }: { files: ScreenFile[
                     onClick={() => setModal({ kind: 'delete', path: f.path })}
                     title={`Delete ${f.path}`}
                     aria-label={`Delete ${f.path}`}
-                    className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 rounded hover:text-red-500 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                    className="inline-flex h-11 w-11 items-center justify-center @lg/files:h-6 @lg/files:w-6 @lg/files:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 rounded hover:text-red-500 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                   >
                     <Trash2 className="h-3 w-3" />
                   </button>
@@ -233,7 +246,7 @@ export function ScreenFilesEditor({ files, onChange, sdk }: { files: ScreenFile[
           })}
         </div>
       </div>
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 min-w-0">
         {activeFile ? (
           isImagePath(activeFile.path) || activeFile.content.startsWith('data:image') ? (
             <ImagePreview key={activeFile.path} file={activeFile} />
@@ -243,6 +256,7 @@ export function ScreenFilesEditor({ files, onChange, sdk }: { files: ScreenFile[
         ) : (
           <div className="h-full flex items-center justify-center text-sm text-gray-400 dark:text-slate-500">No file selected</div>
         )}
+      </div>
       </div>
 
       <NewFileModal

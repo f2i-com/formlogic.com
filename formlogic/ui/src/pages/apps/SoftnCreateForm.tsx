@@ -1,98 +1,97 @@
-// "Create app" for a hosted SoftN app: name it, then choose how it starts — AI Studio builds it
-// from a description, the Visual Builder opens on a working starter, or a .softn file becomes
-// its first version. Every path lands in the app's workspace with the app running.
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Database, FileUp, KeyRound, PencilRuler, Sparkles } from 'lucide-react';
+import { ArrowRight, Database, FileCheck2, FileUp, KeyRound } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
-import { Textarea } from '../../components/ui/Textarea';
-import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
-import { readKeyFile } from '../../lib/appKeyFile';
+import { declaredAppId, readKeyFile } from '../../lib/appKeyFile';
 import { formlogicAsks, importNativeProject, phoneCodeProvider } from '../../lib/nativeHosting';
 import { holdsSignInSettings } from '../../lib/signInCodes';
 import { backendOf, withBackend } from '../../lib/softnBackend';
 import { api } from '../../lib/api';
-import { createSoftnApp, projectFromUpload, projectHasBackend, softnWorkspacePath, uploadName, type SoftnStart } from '../../lib/softnApps';
+import { createSoftnApp, projectFromUpload, projectHasBackend, softnWorkspacePath, uploadName } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
-import { useFocusIfInView } from '../../hooks/useFocusIfInView';
 import { toast } from '../../stores/toastStore';
-import { useUIStore } from '../../stores/uiStore';
 
-type Method = 'ai' | 'builder' | 'upload';
+type FileSlot = 'app' | 'backend' | 'database' | 'key';
 
 /** What a chosen .softn file holds, read as soon as it is chosen: its app's name, and whether it brings a backend. */
 /** `asks`: what the app asks of FormLogic itself (its AI, its payments), said before it is created. */
 /** `codes`: its manifest names a provider for the sign-in codes it sends by text. */
-interface FileReview { name: string; backend: boolean; asks: string[]; codes: boolean }
+interface FileReview { name: string; backend: boolean; backendId?: string; asks: string[]; codes: boolean }
 
 const isFileDrag = (event: React.DragEvent) => [...(event.dataTransfer?.types ?? [])].includes('Files');
+const dropSlot = (target: EventTarget): FileSlot => {
+  const slot = target instanceof Element ? target.closest('[data-file-slot]')?.getAttribute('data-file-slot') : null;
+  return slot === 'backend' || slot === 'database' || slot === 'key' ? slot : 'app';
+};
+const fileKinds: Record<FileSlot, { accepts: RegExp; hint: string }> = {
+  app: { accepts: /\.(softn|zip)$/i, hint: 'Drop a project or build ZIP to replace the app.' },
+  backend: { accepts: /\.(softn|zip)$/i, hint: 'Drop a project ZIP that contains the backend.' },
+  database: { accepts: /\.(sqlite3?|db)$/i, hint: 'Drop a SQLite database (.sqlite, .sqlite3 or .db) here.' },
+  key: { accepts: /\.json$/i, hint: 'Drop the app’s JSON key file here.' },
+};
 
-export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disabled = false, uploadOnly = false }: {
-  aiReady: boolean | null;
-  aiReason?: string | null;
-  /** Check the default AI again (fresh), after the person connects one. */
-  onAiRecheck: () => Promise<unknown> | void;
-  disabled?: boolean;
-  /** Bringing an app they already have: the upload alone, with no other way to start offered. */
-  uploadOnly?: boolean;
-}) {
+export function SoftnCreateForm({ disabled = false }: { disabled?: boolean }) {
   const navigate = useNavigate();
-  const setSoftnOpen = useUIStore(s => s.setSoftnOpen);
   const [name, setName] = useState('');
-  const [method, setMethod] = useState<Method>(uploadOnly ? 'upload' : aiReady === false ? 'builder' : 'ai');
-  // Until the person chooses, the start follows what their AI can do: once the check says it
-  // cannot answer, the form moves off building with AI to a start that works.
-  const [chosen, setChosen] = useState(false);
-  const [seenReady, setSeenReady] = useState(aiReady);
-  if (aiReady !== seenReady) {
-    setSeenReady(aiReady);
-    if (!chosen && aiReady === false && method === 'ai') setMethod('builder');
-  }
-  const [request, setRequest] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [review, setReview] = useState<FileReview | null>(null);
   const [fileError, setFileError] = useState('');
-  const [dragging, setDragging] = useState(false);
+  const [dragging, setDragging] = useState<FileSlot | null>(null);
+  const [refusedDrop, setRefusedDrop] = useState<FileSlot | null>(null);
   // Its data from where it ran before, optional: the database, and the key file it was kept under.
   const [data, setData] = useState<File | null>(null);
   const [keyFile, setKeyFile] = useState<File | null>(null);
   // The key file's configuration, and whether to give the plugin that sends the app's sign-in codes
   // what it takes from such a file: known only once the app is made (lib/signInCodes).
   const [keyConfig, setKeyConfig] = useState<Record<string, unknown> | null>(null);
+  const latestKey = useRef<File | null>(null);
   const [useCodes, setUseCodes] = useState(true);
   // The chosen file's backend names a provider for its sign-in codes (with the page's own, below).
-  const [backendCodes, setBackendCodes] = useState(false);
+  const [attachedBackend, setAttachedBackend] = useState<{ id?: string; codes: boolean } | null>(null);
   const [dataError, setDataError] = useState('');
   // A file with no backend of its own, and the app's full file to take one from (optional).
   const [backendFile, setBackendFile] = useState<File | null>(null);
   const [backendError, setBackendError] = useState('');
   const [readingBackend, setReadingBackend] = useState(false);
   const backendInput = useRef<HTMLInputElement>(null);
-  // The name, asked for at once where it is in view (beside the choice of what to make, on a wide
-  // screen), and never for an upload, whose file names the app.
-  const nameInput = useRef<HTMLInputElement>(null);
-  useFocusIfInView(nameInput);
+  const chooseKey = async (picked: File | null) => {
+    setRefusedDrop(null);
+    latestKey.current = picked;
+    setKeyFile(picked); setKeyConfig(null); setDataError(''); setUseCodes(true);
+    if (!picked) return;
+    const info = await readKeyFile(picked, attachedBackend?.id ?? review?.backendId);
+    if (latestKey.current !== picked) return;
+    if ('error' in info) setDataError(info.error);
+    else setKeyConfig(info.config);
+  };
+  const chooseDatabase = (picked: File | null) => {
+    setData(picked);
+    void chooseKey(null);
+  };
   // The backend file most recently chosen, as `latest` is for the app's file.
   const latestBackend = useRef<File | null>(null);
   /** Read the backend file and put it with the page at once, so what would refuse it shows now, not at Create. */
   const takeBackend = async (picked: File | null, page: File | null) => {
     latestBackend.current = picked;
-    setBackendFile(null); setBackendError(''); setBackendCodes(false);
+    setBackendFile(null); setBackendError(''); setAttachedBackend(null); setReadingBackend(!!picked && !!page);
+    chooseDatabase(null);
     if (!picked || !page) return;
-    setReadingBackend(true);
     try {
       const backend = backendOf(await importNativeProject(picked));
       if (!backend) throw new Error(`${picked.name} has no backend either: its manifest.json has no server block. Choose the app's full file, the one with its server/ folder.`);
       const together = withBackend(await projectFromUpload(page), backend);
-      if (latestBackend.current === picked) { setBackendFile(picked); setBackendCodes(!!phoneCodeProvider(together)); }
+      if (latestBackend.current === picked && latest.current === page) {
+        setBackendFile(picked);
+        setAttachedBackend({ id: declaredAppId(together.files['manifest.json']), codes: !!phoneCodeProvider(together) });
+      }
     } catch (reason) {
-      if (latestBackend.current === picked) setBackendError(reason instanceof Error ? reason.message : 'That file could not be read as a SoftN app.');
+      if (latestBackend.current === picked) setBackendError(reason instanceof Error ? reason.message : 'That file could not be read as an app project.');
     } finally { if (latestBackend.current === picked) setReadingBackend(false); }
   };
   const withItsBackend = !!review?.backend || !!backendFile;
   // The app, as it will be, sends sign-in codes by text: its own backend's manifest says so, or the one added to it.
-  const sendsCodes = backendFile && !review?.backend ? backendCodes : !!review?.codes;
+  const sendsCodes = attachedBackend?.codes ?? !!review?.codes;
   const dataInput = useRef<HTMLInputElement>(null);
   const keyInput = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
@@ -101,38 +100,49 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
   const input = useRef<HTMLInputElement>(null);
   // The file most recently chosen: a slower read of an earlier one never replaces its review.
   const latest = useRef<File | null>(null);
-  // Building with AI waits for the readiness check: an unknown answer is not a yes.
-  const aiBlocked = method === 'ai' && aiReady !== true;
-  // An uploaded app is named after itself unless the person names it.
-  const named = !!name.trim() || (method === 'upload' && !!review);
-  const canCreate = named && !creating && !disabled && !aiBlocked
-    && (method !== 'ai' || !!request.trim()) && (method !== 'upload' || (!!file && !!review && !fileError && !readingBackend));
+  const canCreate = !creating && !disabled && !!file && !!review && !fileError && !backendError && !readingBackend && (!keyFile || !!keyConfig);
 
   /** Take a chosen or dropped file: the start becomes the upload, and the file is read at once, so a problem shows before anything is created. */
   const takeFile = async (picked: File | null) => {
     latest.current = picked;
     setFile(picked); setReview(null); setFileError(''); setError('');
+    chooseDatabase(null);
     // A backend chosen for the last file is not this one's.
-    latestBackend.current = null; setBackendFile(null); setBackendError(''); setReadingBackend(false); setBackendCodes(false);
+    latestBackend.current = null; setBackendFile(null); setBackendError(''); setReadingBackend(false); setAttachedBackend(null);
     if (!picked) return;
-    setChosen(true); setMethod('upload');
     try {
       const project = await projectFromUpload(picked);
-      if (latest.current === picked) setReview({ name: uploadName(project, picked), backend: projectHasBackend(project), asks: formlogicAsks(project), codes: !!phoneCodeProvider(project) });
+      if (latest.current === picked) setReview({ name: uploadName(project, picked), backend: projectHasBackend(project), backendId: declaredAppId(project.files['manifest.json']), asks: formlogicAsks(project), codes: !!phoneCodeProvider(project) });
     } catch (reason) {
-      if (latest.current === picked) setFileError(reason instanceof Error ? reason.message : 'That file could not be read as a SoftN app.');
+      if (latest.current === picked) setFileError(reason instanceof Error ? reason.message : 'That file could not be read as an app project.');
+    }
+  };
+
+  const dropFile = (event: React.DragEvent) => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    setDragging(null);
+    const picked = event.dataTransfer.files[0];
+    if (creating || disabled || !picked) return;
+    const slot = dropSlot(event.target);
+    // Once an app is selected, a misplaced attachment must leave the existing choices intact.
+    if (review && !fileKinds[slot].accepts.test(picked.name)) { setRefusedDrop(slot); return; }
+    switch (slot) {
+      case 'backend': void takeBackend(picked, file); break;
+      case 'database': chooseDatabase(picked); break;
+      case 'key': void chooseKey(picked); break;
+      case 'app': void takeFile(picked); break;
     }
   };
 
   const create = async () => {
-    if (!canCreate || lock.current) return;
+    if (!file || !canCreate || lock.current) return;
     lock.current = true; setCreating(true); setError('');
     try {
-      const start: SoftnStart = method === 'upload' && file ? { kind: 'upload', file, ...(backendFile && !review?.backend ? { backendFile } : {}) } : { kind: 'starter' };
-      const created = await createSoftnApp({ name, description: method === 'ai' ? request.slice(0, 500) : undefined, start });
+      const created = await createSoftnApp({ name, start: { kind: 'upload', file, ...(backendFile && !review?.backend ? { backendFile } : {}) } });
       if (created.error) toast.info('Your app was created', created.error);
       // Its data, once its first version is in: installed as the next version, or not at all.
-      if (created.project && method === 'upload' && withItsBackend && data) {
+      if (created.project && withItsBackend && data) {
         // What the key file holds for the app's sign-in codes is given to the plugin on this site
         // that sends them, where there is one and it takes those settings from such a file.
         let codes = false;
@@ -146,116 +156,100 @@ export function SoftnCreateForm({ aiReady, aiReason = null, onAiRecheck, disable
         else toast.success('Its data came with it', brought.data?.keyImported ? 'With the key it was kept under.' : 'The app has a key of its own here.');
         if (brought.data?.verificationProblem) toast.warning('Sign-in codes are not set up', brought.data.verificationProblem);
       }
-      if (created.project && method !== 'upload') {
-        setSoftnOpen({ appId: created.app.id, editor: method === 'ai' ? 'studio' : 'builder', ...(method === 'ai' ? { brief: { prompt: request.trim(), kind: 'build' as const } } : {}) });
-      } else if (!created.project && method === 'ai') {
-        // Kept for the workspace's setup, which asks again once the app can be installed.
-        setSoftnOpen({ appId: created.app.id, editor: 'studio', brief: { prompt: request.trim(), kind: 'build' } });
-      }
       // A new app opens on its Edit section: the app running, with the ways to change it.
-      navigate(softnWorkspacePath(created.app.id, 'edit'));
+      navigate(softnWorkspacePath(created.app.id, 'edit'), created.warnings?.length ? { state: { siteWarnings: created.warnings } } : undefined);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not create the app. Please try again.');
     } finally { lock.current = false; setCreating(false); }
   };
 
-  const option = (value: Method, icon: React.ReactNode, title: string, hint: string, extra?: string) =>
-    <label className={cn('flex cursor-pointer gap-3 rounded-xl border p-4 transition has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary-500', method === value ? 'border-primary-400 bg-primary-50/70 ring-2 ring-primary-500/10 dark:border-primary-500/60 dark:bg-primary-500/[0.08]' : 'border-gray-200 hover:border-gray-300 dark:border-white/10 dark:hover:border-white/20')}>
-      <input type="radio" name="softn-start" value={value} checked={method === value} disabled={creating} onChange={() => { setChosen(true); setMethod(value); }} className="sr-only" />
-      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-primary-600 shadow-sm ring-1 ring-gray-200 dark:bg-slate-800 dark:text-primary-300 dark:ring-white/10">{icon}</span>
-      <span className="min-w-0">
-        <span className="block text-sm font-semibold text-gray-900 dark:text-white">{title}</span>
-        <span className="mt-1 block text-xs leading-5 text-gray-500 dark:text-slate-400">{hint}</span>
-        {extra && <span className="mt-1 block text-xs font-medium text-amber-700 dark:text-amber-300">{extra}</span>}
-      </span>
-    </label>;
-
   const nameField = <div>
     <label htmlFor="softn-app-name" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">
-      App name{method === 'upload' && <span className="font-normal text-gray-400 dark:text-slate-500"> (optional: an uploaded app keeps its own)</span>}
+      App name<span className="font-normal text-gray-400 dark:text-slate-500"> (optional)</span>
     </label>
-    <Input id="softn-app-name" ref={uploadOnly ? undefined : nameInput} value={name} onChange={event => setName(event.target.value)} placeholder={method === 'upload' && review ? review.name : 'e.g. Recipe Box, Team Directory, Booking Site'} maxLength={120} disabled={creating || disabled} />
+    <Input id="softn-app-name" value={name} onChange={event => setName(event.target.value)} placeholder={review?.name || 'Use the app’s name'} maxLength={120} disabled={creating || disabled} />
   </div>;
 
-  const dropZone = <div data-testid="softn-drop-zone" className={cn('rounded-xl border-2 border-dashed text-center transition-colors', uploadOnly ? 'px-5 py-8' : 'p-5', dragging ? 'border-primary-400 bg-primary-50/70 dark:border-primary-500/60 dark:bg-primary-500/10' : 'border-gray-300 dark:border-white/15')}>
-    <input ref={input} type="file" accept=".softn,.zip" className="hidden" aria-label="Choose a .softn file" onChange={event => { void takeFile(event.target.files?.[0] ?? null); event.target.value = ''; }} />
-    {uploadOnly && !file && <FileUp className="mx-auto mb-2 h-8 w-8 text-gray-400 dark:text-slate-500" aria-hidden="true" />}
-    <p className="text-sm text-gray-600 dark:text-slate-300">{dragging ? 'Drop it to use it' : 'Drop a .softn file here, or'}</p>
-    <Button className="mt-2" variant="secondary" size="sm" disabled={creating || disabled} onClick={() => input.current?.click()} leftIcon={<FileUp className="h-4 w-4" />}>{file ? 'Choose another file' : 'Choose a file'}</Button>
-    {file && <p className="mt-3 break-words text-sm text-gray-700 dark:text-slate-300">
-      <span className="font-medium">{file.name}</span>
-      {review && <span className="text-gray-500 dark:text-slate-400"> · {review.name} · {review.backend ? 'with its own backend and database' : 'runs in the browser, no backend'}</span>}
-      {review && review.asks.length > 0 && <ul className="mt-1 list-disc pl-5 text-gray-600 dark:text-slate-300" data-testid="softn-asks">{review.asks.map(ask => <li key={ask}>{ask}</li>)}</ul>}
-    </p>}
+  const dropHighlight = 'border-primary-400 bg-primary-50/70 dark:border-primary-500/60 dark:bg-primary-500/10';
+  const dropHint = (slot: FileSlot) => refusedDrop === slot && <p role="alert" className="mt-2 text-left text-xs text-amber-800 dark:text-amber-300">{fileKinds[slot].hint}</p>;
+  const dropZone = <div data-testid="softn-drop-zone" className={cn('min-w-0 rounded-xl border transition-colors', file ? 'p-4' : 'border-dashed px-4 py-6 text-center', dragging === 'app' ? dropHighlight : 'border-gray-300 dark:border-white/15')}>
+    <input ref={input} type="file" accept=".zip,.softn" className="hidden" aria-label="Choose an app ZIP" onChange={event => { void takeFile(event.target.files?.[0] ?? null); event.target.value = ''; }} />
+    <div className={cn(file && 'flex flex-col items-start gap-3 sm:flex-row sm:items-center')}>
+      {!file ? <div>
+        <FileUp className="mx-auto mb-2 h-7 w-7 text-primary-500 dark:text-primary-400" aria-hidden="true" />
+        <p className="text-sm text-gray-600 dark:text-slate-300">{dragging === 'app' ? 'Drop it to use it' : 'Drop an app ZIP here, or'}</p>
+      </div> : <div className="flex min-w-0 max-w-full flex-1 items-start gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-300">{review ? <FileCheck2 className="h-5 w-5" aria-hidden="true" /> : <FileUp className="h-5 w-5" aria-hidden="true" />}</span>
+        <div role="status" className="min-w-0 break-words text-sm">
+          <span className="font-semibold text-gray-900 dark:text-white">{review?.name ?? file.name}</span>
+          {review && <>
+            <span className="text-xs text-gray-600 dark:text-slate-300"> · {review.backend ? 'with its own backend and database' : backendFile ? 'with the attached backend and database' : 'runs in the browser, no backend'}</span>
+            <span className="mt-0.5 block break-all text-xs leading-5 text-gray-500 dark:text-slate-400">{file.name}</span>
+          </>}
+          {!review && !fileError && <span className="block text-xs text-gray-500 dark:text-slate-400">Reading app…</span>}
+        </div>
+      </div>}
+      <Button className={file ? undefined : 'mt-2'} variant="secondary" size="sm" disabled={creating || disabled} onClick={() => input.current?.click()}>{file ? 'Choose another file' : 'Choose a file'}</Button>
+    </div>
+    {review && review.asks.length > 0 && <ul className="mt-3 list-disc space-y-1 border-t border-gray-200 pt-3 pl-5 text-left text-xs text-gray-600 dark:border-white/10 dark:text-slate-300" data-testid="softn-asks">{review.asks.map(ask => <li key={ask}>{ask}</li>)}</ul>}
     {fileError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-left text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{fileError}</p>}
+    {dropHint('app')}
   </div>;
 
-  // A .softn file dropped anywhere on the form is the start: no need to find the option first.
   return <div className="space-y-5"
-    onDragOver={event => { if (!isFileDrag(event) || creating || disabled) return; event.preventDefault(); setDragging(true); }}
-    onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
-    onDrop={event => {
-      if (!isFileDrag(event) || creating || disabled) return;
-      event.preventDefault(); setDragging(false);
-      void takeFile(event.dataTransfer.files?.[0] ?? null);
-    }}>
-    {!uploadOnly && nameField}
-    {!uploadOnly && <fieldset>
-      <legend className="mb-2 block text-xs font-semibold text-gray-600 dark:text-slate-300">How do you want to start?</legend>
-      <div className="grid gap-3">
-        {option('ai', <Sparkles className="h-4 w-4" />, 'Describe it, and AI builds it', 'AI Studio builds your app from your description while you watch: its pages, its database and how it looks.', aiReady === false ? 'Needs an AI connection first.' : undefined)}
-        {option('builder', <PencilRuler className="h-4 w-4" />, 'Start from a working app and edit it visually', 'A small app with a page, a backend and a database table, opened in the Visual Builder. No AI needed.')}
-        {option('upload', <FileUp className="h-4 w-4" />, 'Upload a .softn file', 'An app you already have, with or without a backend of its own. It becomes the first version, and you can edit it here.')}
-      </div>
-    </fieldset>}
-    {method === 'ai' && <div>
-      <label htmlFor="softn-app-request" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">What should it do?</label>
-      <Textarea id="softn-app-request" value={request} onChange={event => { setChosen(true); setRequest(event.target.value); }} rows={5} maxLength={8000} disabled={creating || disabled || aiBlocked} className="min-h-32 resize-y"
-        placeholder="e.g. A recipe box: add recipes with ingredients and steps, mark favourites, search by ingredient, and a shopping list. Warm, friendly style." />
-      {aiReady === false && <AiConnectNotice lead="Building with AI needs an AI connection" reason={aiReason} onConnected={onAiRecheck} />}
-    </div>}
-    {method === 'upload' && dropZone}
-    {method === 'upload' && review && !review.backend && <div className="rounded-xl border border-gray-200 p-4 dark:border-white/10">
+    onDragOver={event => { if (!isFileDrag(event)) return; event.preventDefault(); if (!creating && !disabled) setDragging(dropSlot(event.target)); }}
+    onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(null); }}
+    onDrop={dropFile}>
+    {dropZone}
+    {review && !review.backend && <div data-file-slot="backend" className={cn('rounded-xl border p-4 transition-colors', dragging === 'backend' ? dropHighlight : 'border-gray-200 dark:border-white/10')}>
       <p className="text-sm font-semibold text-gray-900 dark:text-white">Add its backend <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span></p>
-      <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">This file is the app&apos;s page alone. If its backend was built separately (its API and database, in a <code>server/</code> folder), choose the app&apos;s full file: its backend is added, and this page stays as it is.</p>
-      <input ref={backendInput} type="file" accept=".softn,.zip" className="hidden" aria-label="Choose the file with its backend" onChange={event => { const picked = event.target.files?.[0] ?? null; event.target.value = ''; void takeBackend(picked, file); }} />
+      <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">Choose or drop the same app’s complete project ZIP here to import its API and database schema from the <code>server/</code> folder. You can also create a custom API in the Data tab after import.</p>
+      <input ref={backendInput} type="file" accept=".zip,.softn" className="hidden" aria-label="Choose the file with its backend" onChange={event => { const picked = event.target.files?.[0] ?? null; event.target.value = ''; void takeBackend(picked, file); }} />
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button size="sm" variant="secondary" disabled={creating || disabled} isLoading={readingBackend} onClick={() => backendInput.current?.click()} leftIcon={<FileUp className="h-4 w-4" />}>{backendFile ? 'Another file' : 'Choose the file with its backend'}</Button>
         {backendFile && <span className="break-all text-xs text-gray-600 dark:text-slate-300">{backendFile.name} · its backend will be added</span>}
+        {(backendFile || backendError) && <Button size="sm" variant="ghost" disabled={creating || disabled} onClick={() => void takeBackend(null, file)}>Skip separate backend</Button>}
       </div>
       {backendError && <p role="alert" className="mt-2 rounded-lg bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">{backendError}</p>}
+      {dropHint('backend')}
     </div>}
-    {method === 'upload' && withItsBackend && <div className="rounded-xl border border-gray-200 p-4 dark:border-white/10">
+    {withItsBackend && <div data-file-slot="database" className={cn('rounded-xl border p-4 transition-colors', dragging === 'database' ? dropHighlight : 'border-gray-200 dark:border-white/10')}>
 
       <p className="text-sm font-semibold text-gray-900 dark:text-white">Bring its data too <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span></p>
-      <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">Moving it from SoftN&apos;s own hosting? Add its database (<code>private/data/application.sqlite</code>), and the key file it was kept under (<code>private/config.json</code>). Stop the old site first, so the copy is complete.</p>
-      <input ref={dataInput} type="file" accept=".sqlite,.db,.sqlite3" className="hidden" aria-label="Choose its database" onChange={event => { setData(event.target.files?.[0] ?? null); setDataError(''); event.target.value = ''; }} />
+      <p className="mt-1 break-words text-xs leading-5 text-gray-500 dark:text-slate-400">To bring existing records, stop the old site and choose or drop <code>private/data/application.sqlite</code> here.</p>
+      <input ref={dataInput} type="file" accept=".sqlite,.db,.sqlite3" className="hidden" aria-label="Choose its database" onChange={event => { chooseDatabase(event.target.files?.[0] ?? null); event.target.value = ''; }} />
       <input ref={keyInput} type="file" accept=".json,application/json" className="hidden" aria-label="Choose its key file" onChange={event => {
         const picked = event.target.files?.[0] ?? null;
         event.target.value = '';
-        setKeyFile(null); setKeyConfig(null); setDataError('');
-        if (picked) void readKeyFile(picked).then(info => { if ('error' in info) setDataError(info.error); else { setKeyFile(picked); setKeyConfig(info.config); } });
+        void chooseKey(picked);
       }} />
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button size="sm" variant="secondary" disabled={creating || disabled} onClick={() => dataInput.current?.click()} leftIcon={<Database className="h-4 w-4" />}>{data ? 'Another database' : 'Choose its database'}</Button>
         {data && <span className="break-all text-xs text-gray-600 dark:text-slate-300">{data.name}</span>}
+        {data && <Button size="sm" variant="ghost" disabled={creating || disabled} onClick={() => chooseDatabase(null)}>Remove database</Button>}
       </div>
-      {data && <div className="mt-2 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="ghost" disabled={creating || disabled} onClick={() => keyInput.current?.click()} leftIcon={<KeyRound className="h-4 w-4" />}>{keyFile ? 'Another key file' : 'Add its key file'}</Button>
-        {keyFile && <span className="break-all text-xs text-gray-600 dark:text-slate-300">{keyFile.name}</span>}
+      {dropHint('database')}
+      {data && <div data-file-slot="key" className={cn('mt-3 rounded-lg border border-dashed p-3 transition-colors', dragging === 'key' ? dropHighlight : 'border-gray-300 dark:border-white/15')}>
+        <p className="mb-2 break-words text-xs leading-5 text-gray-600 dark:text-slate-300">To keep reading data protected by the old key, choose or drop <code>private/config.json</code> here.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="secondary" disabled={creating || disabled} onClick={() => keyInput.current?.click()} leftIcon={<KeyRound className="h-4 w-4" />}>{keyFile ? 'Another key file' : 'Add its key file'}</Button>
+          {keyFile && <span className="break-all text-xs text-gray-600 dark:text-slate-300">{keyFile.name}</span>}
+          {keyFile && <Button size="sm" variant="ghost" disabled={creating || disabled} onClick={() => void chooseKey(null)}>Remove key file</Button>}
+        </div>
+        {dropHint('key')}
       </div>}
-      {keyFile && sendsCodes && <label className="mt-2 flex items-start gap-2 text-xs leading-5 text-gray-600 dark:text-slate-300">
+      {keyConfig && sendsCodes && <label className="mt-2 flex items-start gap-2 text-xs leading-5 text-gray-600 dark:text-slate-300">
         <input type="checkbox" className="mt-0.5" checked={useCodes} onChange={event => setUseCodes(event.target.checked)} disabled={creating || disabled} />
         <span>Where it holds the details this app&apos;s sign-in codes were sent with, use them here: they go to the plugin that sends the codes on this site.</span>
       </label>}
       {dataError && <p role="alert" className="mt-2 rounded-lg bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">{dataError}</p>}
     </div>}
 
-    {uploadOnly && nameField}
+    {nameField}
     {error &&<p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
     <div className="flex items-center justify-end">
-      <Button onClick={() => void create()} isLoading={creating} disabled={!canCreate} rightIcon={<ArrowRight className="h-4 w-4" />}>
-        {method === 'ai' ? 'Create and build with AI' : method === 'builder' ? 'Create and start editing' : 'Create from this file'}
+      <Button className="w-full sm:w-auto" onClick={() => void create()} isLoading={creating} disabled={!canCreate} rightIcon={<ArrowRight className="h-4 w-4" />}>
+        Create from this file
       </Button>
     </div>
   </div>;

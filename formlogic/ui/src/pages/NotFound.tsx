@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { FileQuestion, ArrowLeft } from 'lucide-react';
-import { Button } from '../components/ui/Button';
 import { useAuthStore } from '../stores/authStore';
 
 export function NotFound() {
@@ -16,7 +15,7 @@ export function NotFound() {
   }, []);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 p-4 relative overflow-hidden">
+    <main className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 p-4 relative overflow-hidden">
       {/* Background decoration */}
       <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] bg-primary-600/5 dark:bg-primary-600/10 rounded-full blur-[120px] pointer-events-none" />
 
@@ -29,22 +28,12 @@ export function NotFound() {
           The page you're looking for doesn't exist or has been moved.
         </p>
         <div className="flex items-center justify-center gap-3">
-          {user ? (
-            <Link to="/">
-              <Button size="lg" leftIcon={<ArrowLeft className="h-4 w-4" />}>Go to Home</Button>
-            </Link>
-          ) : (
-            <>
-              <Link to="/">
-                <Button size="lg" leftIcon={<ArrowLeft className="h-4 w-4" />}>Go Home</Button>
-              </Link>
-              <Link to="/login">
-                <Button variant="outline" size="lg">Sign In</Button>
-              </Link>
-            </>
-          )}
+          <Link to="/" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary-600 px-5 text-sm font-semibold text-primary-foreground hover:bg-primary-500">
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />Go Home
+          </Link>
+          {!user && <Link to="/login" className="inline-flex min-h-11 items-center rounded-xl border border-gray-300 px-5 text-sm font-semibold text-gray-800 hover:bg-gray-100 dark:border-slate-600 dark:text-slate-100 dark:hover:bg-slate-800">Sign In</Link>}
         </div>
       </div>
-    </div>
+    </main>
   );
 }

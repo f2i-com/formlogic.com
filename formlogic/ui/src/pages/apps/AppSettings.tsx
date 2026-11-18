@@ -6,6 +6,7 @@ import { useAppStore } from '../../stores/appStore';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { Header } from '../../components/layout/Header';
+import { useAppNavigationGuard } from '../../components/layout/useAppSectionSidebar';
 import { PageBody, PAGE_GUTTER } from '../../components/layout/PageBody';
 import { SectionNav, type SectionNavItem } from '../../components/ui/SectionNav';
 import { Panel, PANEL_COLUMNS } from '../../components/ui/Panel';
@@ -171,6 +172,7 @@ export function AppSettings() {
   const navGuarded = (to: string, state: ReturnToState | undefined = childState) => {
     if (dirty) setPendingNav({ to, state }); else navigate(to, { state });
   };
+  useAppNavigationGuard(navGuarded);
 
   // Roles + forms power the membership defaults (default role, landing page).
   useEffect(() => {

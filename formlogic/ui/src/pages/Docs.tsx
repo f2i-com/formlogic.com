@@ -5,7 +5,6 @@ import {
   GitBranch, Palette, Code2, Share2, Inbox, Download, BarChart3, Boxes,
   Package, Server, Shield, Lightbulb, Check, Terminal, Cloud, Plug, Workflow, Search, Phone, LifeBuoy,
 } from 'lucide-react';
-import { Button } from '../components/ui/Button';
 import { LandingNav } from '../components/landing-v2/LandingNav';
 import { LandingFooter } from '../components/landing-v2/LandingFooter';
 import { useLandingFonts } from '../components/landing-v2/hooks';
@@ -69,7 +68,7 @@ const START_PATHS = [
   { id: 'quick-start', title: 'Create your first form', description: 'Build, publish and collect a response.', icon: Rocket },
   { id: 'connect-ai', title: 'Bring your own AI', description: 'Use OAIY, a provider API or your AI client.', icon: Plug },
   { id: 'hosted-apps', title: 'Build a connected app', description: 'An editable interface, private logic and data.', icon: Code2 },
-  { id: 'native-records', title: 'Manage app database records', icon: Inbox },
+  { id: 'native-records', title: 'Manage app database records', description: 'Browse tables and edit individual records.', icon: Inbox },
   { id: 'aokie', title: 'Set up a front desk', description: 'Connect calls, messages and appointments.', icon: Phone },
 ];
 
@@ -288,11 +287,9 @@ export function Docs() {
           {/* Content */}
           <main id="docs-content" tabIndex={-1} className="min-w-0 py-8 lg:py-12 max-w-3xl scroll-mt-24 outline-none [overflow-wrap:anywhere]">
             <div className="mb-12">
-              <p className="fl-mono text-xs uppercase tracking-[0.2em] text-primary-600 dark:text-primary-400 mb-4">Documentation</p>
-              <h1 className="fl-display text-4xl sm:text-5xl text-gray-900 dark:text-white mb-5">Build something<br /><span className="fl-grad">that works for you.</span></h1>
+              <h1 className="fl-display text-4xl sm:text-5xl text-gray-900 dark:text-white mb-4">FormLogic documentation</h1>
               <p className="text-lg text-gray-500 dark:text-slate-400 leading-relaxed">
-                Start with a form. Turn it into an app. Connect your AI, automate the next step,
-                and keep your team’s work in one place. Choose a guide to get started.
+                Choose a guide to build a form, host an app or connect the tools in your workspace.
               </p>
               <div className="grid sm:grid-cols-2 gap-3 mt-7">
                 {START_PATHS.map((path) => <a key={path.id} href={`#${path.id}`} className="group rounded-2xl border border-gray-200 dark:border-slate-800 bg-gray-50/70 dark:bg-slate-900/50 p-5 hover:border-primary-400 dark:hover:border-primary-500/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors">
@@ -315,7 +312,7 @@ export function Docs() {
                 <ArrowRight className="h-3.5 w-3.5 text-primary-500" />
                 <span className="px-3 py-1.5 rounded-full bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/25 text-primary-700 dark:text-primary-300">data is stored</span>
               </div>
-              <P>Editable app interfaces use Softn. FormLogic hosts their private backend logic and SQLite databases. OAIY connects local AI, services and devices; Aokie adds calls, messages and appointment workflows. You can start with the visual builders and connect these when you need them.</P>
+              <P>Host a JavaScript, React or Vue app with its own private API and SQLite database. FormLogic can also serve a site you have already built. OAIY connects local AI, services and devices; Aokie adds calls, messages and appointment workflows. You can start with the visual builders and connect these when you need them.</P>
               <P>This guide covers the current workspace. For deployment or API details, use the linked developer guides or jump to <a href="#self-hosting" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">Self-hosting</a>.</P>
             </section>
 
@@ -508,6 +505,7 @@ export function Docs() {
             {/* MCP */}
             <section className="mb-14">
               <H2 id="mcp" icon={Plug}>Build with your AI (MCP)</H2>
+              <P>To use MCP in FormLogic’s own Create app chat, choose <C>Connect MCP</C>, review the access you want to grant, and choose <C>Use in workspace chat</C>. Tool-capable Site AI and compatible custom providers can use this connection. Custom providers also need workspace tools enabled in AI settings.</P>
               <P>Connect an AI client that supports remote HTTP <strong className="text-gray-900 dark:text-white">MCP</strong> (Model Context Protocol) to create and edit forms, screens, dashboards, reports, flows and hosted app projects. Every connection is scoped and revocable. The client can only use tools granted by your token and account permissions.</P>
               <h3 className="scroll-mt-24 text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-6 mb-3">Connect with OAuth</h3>
               <Steps items={[
@@ -578,30 +576,30 @@ export function Docs() {
 
             <section className="mb-14">
               <H2 id="hosted-apps" icon={Code2}>Host an editable app</H2>
-              <P>Softn powers portable interfaces made from <C>.ui</C> screens and <C>.logic</C> code. FormLogic can host the interface alongside private backend actions and a separate SQLite database. The interface stays editable and downloadable.</P>
-              <h3 className="text-lg font-semibold mt-6 mb-3">Host a SoftN app</h3>
-              <P>A SoftN app is a website or web app of its own: its pages, a private backend and its own database, hosted by FormLogic with no forms needed. Its owner sees it running, changes it and manages its data in one place: the app&apos;s own page, with the sections <C>Overview</C>, <C>Data</C>, <C>Members</C>, <C>Edit</C>, <C>Automations</C>, <C>History</C>, <C>Domains</C> and <C>Settings</C>. <C>History</C> keeps every version a publish replaced: see what changed, and go back to one. Going back is a new version, and the app&apos;s records stay as they are.</P>
+              <P>Build a web app in FormLogic or upload a ZIP. An editable project includes its source and manifest. A website build includes <C>index.html</C> and the browser-ready files it uses. Both can have private API routes and a SQLite database.</P>
+              <h3 className="text-lg font-semibold mt-6 mb-3">Build or import an editable web app</h3>
+              <P>The app’s workspace brings together its preview, source, records, members and publication settings. History keeps earlier published versions. Restoring one preserves the app’s records.</P>
               <Steps items={[
-                <>Choose <C>Create app → Website or web app</C>. Describe it and AI Studio builds it while you watch, or start from a working app and edit it visually (no AI needed). For a <C>.softn</C> file you already have, choose <C>Bring an app you have</C>; dropping the file on <C>Apps → Import</C> works too.</>,
+                <>Open <C>Create app</C>. With AI connected, describe your app in chat or select <C>Choose a starter</C>. Pick Vanilla JS, React or Vue and open it in Studio or Builder to edit and preview. To bring your own editable project, upload its <C>.zip</C> from the creation screen or use <C>Apps → Import an app</C>.</>,
                 <><C>Edit</C> shows the app running at desktop or phone width. Describe a change for AI Studio, edit it visually, edit the source code, upload a new version or download it. Until you publish, only you can open it, and each change you keep is installed at once.</>,
                 <><C>Data</C> lists every table the app keeps: add, edit and delete records, and the app sees the changes at once. To add a table or a column, ask AI Studio.</>,
                 <><C>Settings</C> chooses who can use it (only people you invite, or anyone with the link) and whether it opens at the app&apos;s address. Then <C>Publish</C>. Once it is live, changes wait as a draft until you choose <C>Publish changes</C>.</>,
               ]} />
-              <Figure src="/images/docs/softn-app-page.jpg" alt="A SoftN app’s own page on its Edit section: a list of studio jobs running in the preview, beside Describe a change for AI Studio, Edit visually, Edit the source code and the app’s files" caption="A SoftN app’s own page, on Edit: the app running beside the ways to change it. Fictional Studio jobs app." />
+              <Figure src="/images/docs/softn-app-page.jpg" alt="Studio jobs running in a web app preview beside the visual editor and source editor controls" caption="Use Edit to preview the app or open its source. Studio jobs is a fictional example." />
               <P><C>Edit the source code</C> opens every file of the app in one editor: its pages, logic, styles, backend and database changes in a list, grouped by what they are for, beside the file that is open. Changes are kept as a draft until you choose <C>Save changes</C>.</P>
               <Figure src="/images/docs/softn-source-editor.jpg" alt="Source code: the app’s files listed under Pages, Logic, Styles, Backend, Database changes and Project, with index.html open in the editor" caption="Source code: every file of the app beside the editor." />
               <Tip>Ask the chat to build one: &ldquo;Make me a recipe box with favourites and a shopping list.&rdquo; It creates the app and takes you to AI Studio, which builds it from your words.</Tip>
               <h3 id="javascript-apps" tabIndex={-1} className="scroll-mt-24 text-lg font-semibold mt-6 mb-3 outline-none">Host a web app you have already built</h3>
-              <P>A JavaScript app is a web app built elsewhere: the <C>dist</C> or <C>build</C> folder of a React, Vue, Svelte or Angular project, or plain HTML and JavaScript. Upload it as a zip and it is hosted as an app of its own, as it was built. It is listed, published, shared and given members like a SoftN app, and it can have the same private backend and SQLite database.</P>
+              <P>For plain JavaScript, zip your HTML, scripts, styles and assets together. For React, Vue or another framework that uses a build step, build locally and zip the contents of <C>dist</C> or <C>build</C>. Include <C>index.html</C> and use local copies of your dependencies. FormLogic serves these files as uploaded. Keep the original framework project for future builds.</P>
               <Steps items={[
-                <>Choose <C>Create app → JavaScript app</C>. Name the app and choose the zip of the folder your build made, the one with <C>index.html</C> in it.</>,
+                <>Choose <C>Create app → Upload ZIP</C>. Select the ZIP containing <C>index.html</C> and review the files before creating the app.</>,
                 <>The app opens on its own page, running. <C>Upload a new build (.zip)</C> replaces its files and keeps its backend and records; <C>Edit the backend code</C> opens its API routes, server code and database changes in the editor.</>,
                 <>In <C>Settings</C>, choose who can use it, then <C>Publish</C>. Visitors open it at <C>/app/&lt;its address&gt;</C>, or at a domain you connect.</>,
               ]} />
-              <Figure src="/images/docs/javascript-app-create.jpg" alt="Create app with JavaScript app chosen, the app named Pottery classes and the zip of its build chosen" caption="Create app with JavaScript app chosen. The zip is read before anything is created." />
+              <Figure src="/images/docs/javascript-app-create.jpg" alt="Create app with the Pottery classes ZIP selected for upload" caption="Review the ZIP and its backend before creating the app." />
               <Figure src="/images/hosted-app/desktop-dark.jpg" alt="The app’s own page: a pottery studio’s class timetable running in the preview, beside Upload a new build, Edit the backend code and how the app is hosted" caption="The uploaded app running on its page. The places left come from the app’s own database; the classes are fictional." />
               <div className="mx-auto max-w-sm"><Figure src="/images/docs/javascript-app-visitor.jpg" alt="The same class timetable on a phone, as a visitor who is not signed in sees it at the app’s address" caption="Published, the app as a visitor’s phone shows it." /></div>
-              <P>In the app, <C>fetch(&apos;/api/…&apos;)</C> reaches its own backend, files named from the root (<C>/assets/app.js</C>) are its own, and <C>localStorage</C> is kept for each visitor. It runs in a sandbox with no access to FormLogic or to other sites, so an outside API, font service or CDN script is not reachable: keep what the app needs in the build. A router that goes by the path works in Chrome, Edge and Firefox; Safari keeps such an app on its first screen, where hash routing works. Service workers and IndexedDB are not available. <GuideLink file="docs/JAVASCRIPT_APPS.md">How a JavaScript app is hosted, and its limits</GuideLink>.</P>
+              <P>In a website build, <C>fetch(&apos;/api/…&apos;)</C> reaches the app’s own backend and a path such as <C>/assets/app.js</C> loads from its files. FormLogic keeps local storage separate for each visitor and app. To use an external API or font service, add its origin under <C>Settings → Outside sites</C>. Hash routing works across supported browsers, including Safari. <GuideLink file="docs/JAVASCRIPT_APPS.md">Website hosting and browser limits</GuideLink>.</P>
               <h3 className="text-lg font-semibold mt-6 mb-3">Use your existing forms and records</h3>
               <Steps items={[
                 <>Open your app&apos;s <C>App Studio → Screens</C> and choose <C>Create connected dashboard</C>.</>,
@@ -611,27 +609,18 @@ export function Docs() {
               ]} />
               <h3 className="text-lg font-semibold mt-6 mb-3">Build custom screens and private actions</h3>
               <Steps items={[
-                <>In <C>Screens → App hosting</C>, start from the working notes project or import a client <C>.softn</C> bundle. Review the imported interface and its backend requirements.</>,
+                <>In <C>Screens → App hosting</C>, start from the working notes project or import a client project ZIP. Review the imported interface and its backend requirements.</>,
                 <>Define named private actions with <C>onRequest(ctx)</C>. Set each action&apos;s access to owner or member and its database mode to read or write.</>,
-                <>Call actions from the client with <C>softn.backend.call</C>. The host handles the signed-in session; the client receives no account token.</>,
+                <>Use the client call in the notes starter to invoke the action by name. FormLogic supplies the signed-in session.</>,
                 <>Publish the project and preview it. Publish the parent app and give members access separately before sharing it with them.</>,
               ]} />
-              <CodeBlock title="client .logic — call a private backend action">{`let notes = [];
-let message = "";
-
-function _init() {
-  softn.backend.call("listNotes", {}, function(response) {
-    if (response.error) { message = response.error; return; }
-    notes = response.result;
-  });
-}`}</CodeBlock>
               <P>Private actions use bounded <C>ctx.db.get</C>, <C>list</C>, <C>put</C> and <C>remove</C> operations inside a transaction. They do not expose arbitrary SQL or network access. A member action must check <C>ctx.user.id</C> itself when records need finer ownership rules.</P>
               <Tip><strong>Choose the right export.</strong> Download client contains public interface files. Save project copy includes private action source. Download database includes the deployment and records. Downloaded clients need a compatible authenticated FormLogic host for live records; they contain neither credentials nor an offline database.</Tip>
               <h3 className="text-lg font-semibold mt-6 mb-3">Host an existing app with its own backend</h3>
               <P>Open <C>Data &amp; forms → Records</C> for direct access to <C>Backend code</C> and <C>Database records</C>. Backend edits publish a new source version while preserving the app’s SQLite records.</P>
-              <P>Use <C>Screens → Hosting &amp; app tools → Native app hosting</C> for a complete app with private <C>.logic</C> handlers and SQLite migrations. Its backend runs in ZIPP, the Source tab lists every file of the project beside a highlighted editor, and the Records tab shows the same database used by the app. An app made as a SoftN app is managed on its own page instead: its Edit section opens the same editor as <C>Source code</C>.</P>
+              <P>Use <C>Screens → Hosting &amp; app tools → Native app hosting</C> for a complete app with private <C>.logic</C> handlers and SQLite migrations. Its backend runs in ZIPP, the Source tab lists every file of the project beside a highlighted editor, and the Records tab shows the same database used by the app. For a standalone web app, choose <C>Edit → Source code</C> to open the same editor.</P>
               <Steps items={[
-                <>Import the <C>.softn</C> project and review its interface, backend and migrations before installing.</>,
+                <>Import the project ZIP and review its interface, backend and migrations before installing.</>,
                 <>Keep the app&apos;s own sign-in, or require FormLogic membership and configure registration in <C>Users &amp; roles</C>. Project administration remains separate from visitor accounts.</>,
                 <>Choose <C>Use this app as the website home</C> to open it at the normal app address. Connected domains in direct-app mode use this entry point after publication.</>,
                 <>Edit source in Screens and Backend, and browse its SQLite tables in Records. Open Visual Builder for layout changes, or AI Studio for source and AI editing, including on mobile. Studio uses your FormLogic AI settings. Review changes returns a draft; publish it when ready. Download editable project keeps a portable copy.</>,
@@ -689,7 +678,7 @@ function _init() {
             <section className="mb-14">
               <H2 id="packs" icon={Package}>Packs &amp; templates</H2>
               <P>The 29 bundled packs include 32 editable app workspaces. Installation creates a draft with its forms, linked record stores, roles, reports and workflows. Open App Studio to customise the screens, backend actions and automations, then publish when ready. Dashboard &amp; reports retains access to each pack’s specialist tools.</P>
-              <P>Choose <C>Download app sources</C> on a pack’s detail page for an installable ZIP containing a separate <C>.softn</C> project for each app. Import the outer ZIP to recreate the complete pack. Downloads contain source and definitions; existing records and account credentials stay on the server.</P>
+              <P>Choose <C>Download app sources</C> on a pack’s detail page for an installable ZIP containing a separate editable project ZIP for each app. Import the outer ZIP to recreate the complete pack. Downloads contain source and definitions; existing records and account credentials stay on the server.</P>
               <Tip>Operators can add or edit <C>backend/storage/pack-projects/&lt;id&gt;/</C> with <C>pack.json</C>, <C>install.json</C> and app project folders. The live catalogue refreshes without a rebuild. Existing installations stay unchanged. Packs also support native <C>.logic</C> routes and SQLite migrations. <GuideLink file="docs/PACK_PROJECTS.md">Folder format, backend options and examples</GuideLink>.</Tip>
               <P>Packs provide starter forms, screens and workflows for a business use case. Browse <Link to="/packs" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">Starter apps</Link> without signing in, including Aokie, trades, hospitality, customer service and team operations.</P>
               <Figure src="/images/docs/starter-apps.jpg" alt="The public FormLogic starter-app catalogue" caption="The current starter-app catalogue, available before sign-in." />
@@ -721,11 +710,7 @@ function _init() {
             <section className="mb-14">
               <H2 id="self-hosting" icon={Server}>Self-hosting</H2>
               <P>FormLogic can run on your infrastructure: PHP 8.2+, MySQL 8+, SQLite for form responses and hosted apps, and a static frontend. Use the Node version pinned in the repository to build the frontend. Native app hosting also needs a compatible Node runtime on the server, with node:sqlite, to run its ZIPP backend host. Standard form scripts and named hosted actions use their packaged sandbox launcher. Include the generated browser runtime, editors and native host modules.</P>
-              <P><strong>Prepare a source checkout before running an installer.</strong> Keep <C>softn.com</C> beside <C>formlogic.com</C>, install dependencies in the Softn repository and in <C>formlogic/ui</C>, then run this from <C>formlogic/ui</C>:</P>
-              <CodeBlock title="required before the frontend build or CLI installer">{`npm run build:hosted-runtime
-npm run build:app-editors
-node ../../scripts/prepare-native-runtime.mjs`}</CodeBlock>
-              <P>Every frontend build checks for these generated assets. A fresh clone without them cannot complete <C>npm run build</C> or the CLI installer. A deployment using prepared build artifacts must include the matching hosted-runtime and app-editors directories, plus the prepared native backend modules.</P>
+              <P><strong>Prepare the runtime before building from source.</strong> Install the matching sandbox, browser editors and backend modules using the <GuideLink file="docs/ecosystem/SOFTN_RELEASE.md">runtime setup guide</GuideLink>. Then run <C>npm run build</C> in <C>formlogic/ui</C>. The build checks the prepared assets before compiling the frontend.</P>
               <P><strong>Updates after installation:</strong> open <C>Admin → Updates</C>, choose <C>Check for updates</C>, then <C>Download and verify</C>. Review the release before selecting <C>Install</C>. FormLogic verifies the official GitHub release digest and backs up your database and code before applying it. No signing-key setup is needed for official downloads; signed ZIP uploads remain available for offline or custom releases. See the <GuideLink file="docs/UPGRADING.md">upgrade guide</GuideLink>.</P>
               <P>Then choose an assisted installer in <C>formlogic/</C>:</P>
               <Bullets items={[
@@ -750,7 +735,7 @@ node ../../scripts/prepare-native-runtime.mjs`}</CodeBlock>
               <div className="mt-10 rounded-2xl border border-primary-200/70 dark:border-primary-500/25 bg-primary-50/60 dark:bg-primary-500/[0.07] p-7 text-center">
                 <h3 className="fl-display text-2xl text-gray-900 dark:text-white mb-2">Ready to build?</h3>
                 <p className="text-gray-600 dark:text-slate-300 mb-5">Create your first form in minutes — no credit card required.</p>
-                <Link to="/signup"><Button size="lg" className="bg-primary-600 hover:bg-primary-500 text-primary-foreground border-0">Get started free <ArrowRight className="h-4 w-4 ml-2" /></Button></Link>
+                <Link to="/signup" className="lv2-btn lv2-btn--primary">Get started free <ArrowRight size={16} aria-hidden="true" /></Link>
               </div>
             </section>
 

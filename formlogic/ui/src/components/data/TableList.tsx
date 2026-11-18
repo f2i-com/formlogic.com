@@ -7,6 +7,7 @@ import { count, formatBytes, number, type TableInfo } from './format';
 import { field, focusRing, line, muted, quietSurface } from './styles';
 
 interface TableListProps {
+  compact: boolean;
   tables: TableInfo[];
   /** The open table. */
   current?: string;
@@ -17,7 +18,7 @@ interface TableListProps {
   onPick(table: string): void;
 }
 
-export function TableList({ tables, current, bytes, hiddenTables = 0, onPick }: TableListProps) {
+export function TableList({ compact, tables, current, bytes, hiddenTables = 0, onPick }: TableListProps) {
   const [find, setFind] = useState('');
   const wanted = find.trim().toLowerCase();
   const shown = wanted ? tables.filter(table => table.name.toLowerCase().includes(wanted)) : tables;
@@ -25,10 +26,10 @@ export function TableList({ tables, current, bytes, hiddenTables = 0, onPick }: 
   const totals = [count(tables.length, 'table'), counted ? count(tables.reduce((sum, table) => sum + (table.rows ?? 0), 0), 'row') : '', bytes === undefined ? '' : formatBytes(bytes)].filter(Boolean).join(' · ');
   const hidden = hiddenTables > 0 ? `${count(hiddenTables, 'system table')} not shown` : '';
 
-  return <nav aria-label="Tables" className={cn('flex-none border-b lg:flex lg:min-h-0 lg:w-[216px] lg:flex-col lg:border-b-0 lg:border-r', line, quietSurface)}>
+  return <nav aria-label="Tables" className={cn('@container/tables flex-none', compact ? 'border-b' : 'flex min-h-0 w-[216px] flex-col border-r', line, quietSurface)}>
     {/* Below a wide screen: one picker and the totals, so the rows start near the top and keep the width. */}
-    <div className="flex flex-col gap-1 p-2 lg:hidden">
-      <select aria-label="Table" value={current ?? ''} onChange={event => onPick(event.target.value)} className={cn(field, 'w-full min-w-0 px-2 font-mono')}>
+    <div className={cn(compact ? 'flex' : 'hidden', 'flex-wrap items-center gap-x-3 gap-y-1.5 p-2')}>
+      <select aria-label="Table" value={current ?? ''} onChange={event => onPick(event.target.value)} className={cn(field, 'w-full min-w-0 px-2 font-mono @lg/tables:w-60')}>
         {current === undefined || tables.some(table => table.name === current) ? null : <option value={current}>{current}</option>}
         {tables.map(table => <option key={table.name} value={table.name}>{table.name}{typeof table.rows === 'number' ? ` · ${count(table.rows, 'row')}` : ''}</option>)}
       </select>
@@ -37,7 +38,7 @@ export function TableList({ tables, current, bytes, hiddenTables = 0, onPick }: 
 
     {/* Wide: the list is as tall as the manager. The totals stand at its top, and its last table can
         scroll clear of the bottom corner, where the page's own floating button sits. */}
-    <div className="hidden min-h-0 flex-1 flex-col gap-1.5 p-2 pb-0 lg:flex">
+    <div className={cn(compact ? 'hidden' : 'flex', 'min-h-0 flex-1 flex-col gap-1.5 p-2 pb-0')}>
       <label className={cn(field, 'flex flex-none items-center gap-1.5 px-2 focus-within:ring-2 focus-within:ring-primary-500', muted)}>
         <Search className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
         <input type="search" aria-label="Find a table" placeholder="Find a table" value={find} onChange={event => setFind(event.target.value)}

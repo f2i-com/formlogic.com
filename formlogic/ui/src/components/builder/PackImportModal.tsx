@@ -42,7 +42,9 @@ import { InstallJobProgress } from './InstallJobProgress';
 import { PackDetailView } from './PackDetailView';
 import { PublishPackDialog } from './PublishPackDialog';
 import { formatDate } from '../../lib/utils';
-import { createSoftnApp, softnWorkspacePath } from '../../lib/softnApps';
+import { createSoftnApp, projectFromUpload, softnWorkspacePath, uploadName } from '../../lib/softnApps';
+import { appArchiveKind, siteOf } from '../../lib/siteApps';
+import type { NativeProject } from '../../lib/nativeHosting';
 import { useNavigate } from 'react-router-dom';
 
 type Tab = 'marketplace' | 'installed' | 'mypacks' | 'upload';
@@ -101,6 +103,9 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
 
   // Upload state
+  const [webUpload, setWebUpload] = useState<{ file: File; project: NativeProject; notes: string[] } | null>(null);
+  const choosingFile = useRef(0);
+  const webImportLock = useRef(false);
   const [uploadedPack, setUploadedPack] = useState<PackData | null>(null);
   // A dropped .formlogic ARCHIVE (binary ZIP) can't be parsed client-side — held for direct import.
   const [pendingArchiveFile, setPendingArchiveFile] = useState<File | null>(null);
@@ -282,6 +287,9 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
   );
 
   const resetState = useCallback(() => {
+    choosingFile.current++;
+    setWebUpload(null);
+    setUploading(false);
     setUploadedPack(null);
     setPendingArchiveFile(null);
     setSignedEnvelope(null);
@@ -482,6 +490,10 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
   }, [extractPack, loadPackageReview]);
 
   const parseFile = useCallback((file: File) => {
+    if (webImportLock.current) return;
+    const choice = ++choosingFile.current;
+    setWebUpload(null);
+    setUploading(false);
     setUploadError('');
     setUploadedPack(null);
     setPendingArchiveFile(null);
@@ -491,42 +503,34 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
 
     const lower = file.name.toLowerCase();
 
-    // A SoftN app (.softn): hosted as an app of its own, opened in its workspace.
-    if (lower.endsWith('.softn')) {
+    if (lower.endsWith('.zip') || lower.endsWith('.softn')) {
       (async () => {
         setUploading(true);
         try {
-          const created = await createSoftnApp({ name: '', start: { kind: 'upload', file } });
-          if (created.error) toast.info('Your app was created', created.error);
-          else toast.success('SoftN app added', `${created.app.name} is ready to preview and publish.`);
-          onClose();
-          navigate(softnWorkspacePath(created.app.id, 'edit'));
-        } catch (reason) {
-          setUploadError(reason instanceof Error ? reason.message : 'Could not add that SoftN app.');
-        } finally {
-          setUploading(false);
-        }
-      })();
-      return;
-    }
-
-    // Legacy marketplace .zip (manifest.json only) — parsed server-side for preview.
-    if (lower.endsWith('.zip')) {
-      (async () => {
-        setUploading(true);
-        try {
-          const result = await api.uploadPackZip(file);
-          if (result.data?.pack) {
+          const kind = lower.endsWith('.softn') ? 'editable' : await appArchiveKind(file);
+          if (choice !== choosingFile.current) return;
+          if (kind === 'application-package') {
+            setPendingArchiveFile(file);
+            setUploadFileName(file.name);
+            void loadPackageReview({ kind: 'archive', file });
+          } else if (kind === 'pack') {
+            const result = await api.uploadPackZip(file);
+            if (choice !== choosingFile.current) return;
+            if (!result.data?.pack) throw new Error(result.error || 'Could not read this template ZIP.');
             setUploadedPack(result.data.pack);
             setUploadFileName(file.name);
             void loadPackageReview({ kind: 'pack', pack: result.data.pack });
           } else {
-            setUploadError(result.error || 'Failed to parse zip file');
+            const notes: string[] = [];
+            const project = await projectFromUpload(file, '', notes, kind);
+            if (choice !== choosingFile.current) return;
+            setWebUpload({ file, project, notes });
+            setUploadFileName(file.name);
           }
-        } catch {
-          setUploadError('Failed to upload file');
+        } catch (reason) {
+          if (choice === choosingFile.current) setUploadError(reason instanceof Error ? reason.message : 'Could not read this app ZIP.');
         } finally {
-          setUploading(false);
+          if (choice === choosingFile.current) setUploading(false);
         }
       })();
       return;
@@ -540,6 +544,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
       (async () => {
         try {
           const text = await file.text();
+          if (choice !== choosingFile.current) return;
           if (text.trimStart().startsWith('{')) {
             routeParsedJson(JSON.parse(text), file.name);
           } else {
@@ -548,6 +553,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
             void loadPackageReview({ kind: 'archive', file });
           }
         } catch {
+          if (choice !== choosingFile.current) return;
           // Not JSON text → treat as a binary archive to import directly.
           setPendingArchiveFile(file);
           setUploadFileName(file.name);
@@ -558,7 +564,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
     }
 
     if (!lower.endsWith('.json')) {
-      setUploadError('Only .json, .zip, .formlogic and .softn files are accepted.');
+      setUploadError('Choose an app ZIP or a FormLogic export (.json or .formlogic).');
       return;
     }
 
@@ -569,6 +575,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
 
     const reader = new FileReader();
     reader.onload = (e) => {
+      if (choice !== choosingFile.current) return;
       try {
         routeParsedJson(JSON.parse(e.target?.result as string), file.name);
       } catch {
@@ -576,7 +583,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
       }
     };
     reader.readAsText(file);
-  }, [routeParsedJson, clearReview, loadPackageReview, navigate, onClose]);
+  }, [routeParsedJson, clearReview, loadPackageReview]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -585,6 +592,26 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
     const file = e.dataTransfer.files[0];
     if (file) parseFile(file);
   }, [parseFile]);
+
+  const importWebApp = async () => {
+    if (!webUpload || webImportLock.current) return;
+    webImportLock.current = true;
+    const choice = choosingFile.current;
+    setImporting(true);
+    try {
+      const created = await createSoftnApp({ name: '', start: { kind: 'upload', file: webUpload.file, reviewed: webUpload } });
+      if (created.error) toast.info('Your app was created', created.error);
+      else toast.success('Web app added', created.app.name);
+      if (choice !== choosingFile.current) return;
+      handleClose();
+      navigate(softnWorkspacePath(created.app.id, 'edit'), created.warnings?.length ? { state: { siteWarnings: created.warnings } } : undefined);
+    } catch (reason) {
+      if (choice === choosingFile.current) setUploadError(reason instanceof Error ? reason.message : 'Could not add this app.');
+    } finally {
+      webImportLock.current = false;
+      setImporting(false);
+    }
+  };
 
   const handleImport = useCallback(async () => {
     if (importing) return;
@@ -1221,23 +1248,24 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                 onDrop={handleDrop}
                 onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
                 onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); }}
-                onClick={() => !uploadedPack && !pendingArchiveFile && !signedEnvelope && !uploading && fileInputRef.current?.click()}
+                onClick={() => !webUpload && !uploadedPack && !pendingArchiveFile && !signedEnvelope && !uploading && fileInputRef.current?.click()}
                 className={`relative rounded-xl transition-all ${
                   isDragging
                     ? 'border-2 border-dashed border-primary-500 bg-primary-50/60 dark:bg-primary-500/10 dark:border-primary-400 shadow-lg shadow-primary-500/10'
-                    : (uploadedPack || pendingArchiveFile || signedEnvelope)
+                    : (uploadedPack || pendingArchiveFile || signedEnvelope || webUpload)
                       ? 'border border-green-300 bg-green-50/50 dark:bg-green-500/5 dark:border-green-500/40'
                       : 'border-2 border-dashed border-gray-300 dark:border-slate-700 hover:border-primary-400 dark:hover:border-primary-500/50 bg-gray-50/50 dark:bg-slate-800/30 cursor-pointer group'
                 }`}
               >
                 <input
                   ref={fileInputRef}
+                  onClick={(event) => event.stopPropagation()}
                   type="file"
                   accept=".json,.zip,.formlogic,.formlogic-app,.softn"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) parseFile(f); e.target.value = ''; }}
                   className="hidden"
                 />
-                {(uploadedPack || pendingArchiveFile || signedEnvelope) ? (
+                {(uploadedPack || pendingArchiveFile || signedEnvelope || webUpload) ? (
                   <div className="flex items-center gap-4 p-4">
                     <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-green-100 dark:bg-green-500/20 flex items-center justify-center">
                       <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
@@ -1245,7 +1273,7 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{uploadFileName}</p>
                       <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
-                        {uploadedPack
+                        {webUpload ? `${uploadName(webUpload.project, webUpload.file)} · ${siteOf(webUpload.project) ? 'Browser-ready site' : 'Editable web app'}` : uploadedPack
                           ? `${uploadedPack.packMeta.name} · v${uploadedPack.packMeta.version}`
                           : pendingArchiveFile
                             ? 'Application package archive · verified on import'
@@ -1262,7 +1290,8 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                       </button>
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); setUploadedPack(null); setPendingArchiveFile(null); setSignedEnvelope(null); clearReview(); setUploadFileName(''); setUploadError(''); }}
+                        onClick={(e) => { e.stopPropagation(); choosingFile.current++; setWebUpload(null); setUploadedPack(null); setPendingArchiveFile(null); setSignedEnvelope(null); clearReview(); setUploadFileName(''); setUploadError(''); }}
+                        aria-label="Remove selected file"
                         className="p-1 rounded-md text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
                       >
                         <X className="h-4 w-4" />
@@ -1283,16 +1312,15 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                       {forApps ? 'Drop an app file here' : 'Drop your pack file here'}
                     </p>
                     {forApps && <p className="mt-1 max-w-md text-center text-xs text-gray-500 dark:text-slate-400">
-                      A SoftN app (.softn) is added as an app of its own. A FormLogic export (.json, .zip or .formlogic) brings its apps and forms.
+                      Choose a JavaScript, React or Vue app ZIP, or a FormLogic export containing apps and forms.
                     </p>}
                     <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-                      or <span className="text-primary-600 dark:text-primary-400 font-medium">click to browse</span>
+                      or <button type="button" className="min-h-8 rounded px-1 font-medium text-primary-600 hover:underline focus-visible:ring-2 dark:text-primary-400">browse files</button>
                     </p>
                     <div className="flex items-center gap-2 mt-3">
                       <Badge variant="default" size="sm">.json</Badge>
                       <Badge variant="default" size="sm">.zip</Badge>
                       <Badge variant="default" size="sm">.formlogic</Badge>
-                      <Badge variant="default" size="sm">.softn</Badge>
                     </div>
                   </div>
                 )}
@@ -1536,12 +1564,12 @@ export function PackImportModal({ isOpen, onClose, initialTab, forApps = false }
                 <Button variant="outline" onClick={handleClose}>Cancel</Button>
                 <Button
                   variant="primary"
-                  onClick={handleImport}
-                  disabled={(!uploadedPack && !pendingArchiveFile && !signedEnvelope) || !packageReview || reviewLoading}
+                  onClick={webUpload ? importWebApp : handleImport}
+                  disabled={uploading || (!webUpload && ((!uploadedPack && !pendingArchiveFile && !signedEnvelope) || !packageReview || reviewLoading))}
                   isLoading={importing}
                   leftIcon={importing ? undefined : <Download className="h-4 w-4" />}
                 >
-                  {importing ? 'Importing...' : v2Plan?.action === 'update' ? 'Update extension' : forApps ? 'Import' : 'Import to My Forms'}
+                  {importing ? 'Importing...' : webUpload ? 'Import app' : v2Plan?.action === 'update' ? 'Update extension' : forApps ? 'Import' : 'Import to My Forms'}
                 </Button>
               </div>
             </div>

@@ -1,7 +1,6 @@
 import { AlertTriangle, RotateCcw } from 'lucide-react';
 import { useStudioSaveState } from './studioSaveState';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
-import { cn } from '../../lib/utils';
 
 /**
  * A failed write, pinned.
@@ -22,17 +21,13 @@ export function StudioSaveErrorStrip() {
   const isOnline = useOnlineStatus();
 
   if (!saveError) return null;
+  const systemTop = isOnline ? 'var(--fl-system-top, 0px)' : '2rem';
 
   return (
     <div
       role="alert"
-      // Under the Header (h-14, sm:h-16), which itself stands below the offline and demo banners.
-      className={cn(
-        'sticky z-20 flex min-h-11 items-center gap-2 border-b border-red-200 bg-red-50 px-4 text-xs font-medium text-red-700 sm:px-6 dark:border-red-500/20 dark:bg-red-950 dark:text-red-300',
-        isOnline
-          ? 'top-[calc(3.5rem+var(--fl-demo-banner-h,0px))] sm:top-[calc(4rem+var(--fl-demo-banner-h,0px))]'
-          : 'top-[calc(5.5rem+var(--fl-demo-banner-h,0px))] sm:top-[calc(6rem+var(--fl-demo-banner-h,0px))]',
-      )}
+      className="sticky z-20 flex min-h-11 items-center gap-2 border-b border-red-200 bg-red-50 px-4 text-xs font-medium text-red-700 [--studio-header-height:3.5rem] sm:px-6 sm:[--studio-header-height:4rem] dark:border-red-500/20 dark:bg-red-950 dark:text-red-300"
+      style={{ top: `calc(var(--fl-workspace-header-h, var(--studio-header-height)) + var(--fl-nav-top, 0px) + ${systemTop} + var(--fl-demo-banner-h, 0px))` }}
     >
       <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate" title={saveError}>

@@ -23,7 +23,7 @@ test('folder pack installs an editable workspace connected to its real forms', a
   expect(JSON.parse(strFromU8(archive['pack.json'])).id).toBe('clinic-appointment-intake');
   expect(archive['install.json']).toBeTruthy();
   const pack = JSON.parse(strFromU8(archive['manifest.json']));
-  const bundle = Object.keys(archive).find(path => path.endsWith('.softn'))!;
+  const bundle = Object.keys(archive).find(path => path.startsWith('projects/') && path.endsWith('.zip'))!;
   const project = unzipSync(archive[bundle]);
   expect(project['server/packGuide.logic']).toBeTruthy();
   expect(project['ui/main.ui']).toBeTruthy();

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ maintenance: vi.fn(), notices: vi.fn(), backups: vi.fn(), create: vi.fn(), revoke: vi.fn(), toggle: vi.fn(), error: vi.fn(), success: vi.fn() }));
@@ -24,7 +25,13 @@ beforeEach(() => {
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
-async function mount() { await act(async () => root.render(<AdminPlatform />)); }
+async function mount(part = '') {
+  await act(async () => root.render(<MemoryRouter initialEntries={['/admin/platform' + (part ? '#' + part : '')]}><AdminPlatform /></MemoryRouter>));
+}
+async function selectPart(id: string) {
+  const link = container.querySelector<HTMLAnchorElement>('nav a[href$="#' + id + '"]')!;
+  await act(async () => link.click());
+}
 async function click(label: string) {
   const button = [...document.querySelectorAll('button')].find(el => el.textContent === label);
   expect(button, label).toBeTruthy(); await act(async () => button!.click());
@@ -32,44 +39,42 @@ async function click(label: string) {
 it('distinguishes loading backup history from a never-run schedule', async () => {
   let resolve!: (value: unknown) => void;
   mocks.backups.mockReturnValue(new Promise(r => { resolve = r; }));
-  await mount(); expect(container.textContent).toContain('Loading backup history'); expect(container.textContent).not.toContain('Never run');
+  await mount('backups'); expect(container.textContent).toContain('Loading backup history'); expect(container.textContent).not.toContain('Never run');
   await act(async () => resolve({ error: 'Unavailable' }));
   expect(container.textContent).toContain("read the backup history"); expect(container.textContent).not.toContain('Never run');
 });
 it('shows notice loading failures with retry instead of reporting an empty list', async () => {
   mocks.notices.mockResolvedValueOnce({ error: 'Notices unavailable' }).mockResolvedValueOnce({ data: { notices: [] } });
-  await mount(); expect(container.querySelector('[role="alert"]')?.textContent).toBe('Notices unavailable');
+  await mount('notices'); expect(container.querySelector('[role="alert"]')?.textContent).toBe('Notices unavailable');
   await click('Try again'); expect(container.textContent).toContain('No notices yet.');
 });
 it('keeps a failed retraction visible and reports the error', async () => {
   mocks.notices.mockResolvedValue({ data: { notices: [{ id: 'n1', message: 'Scheduled maintenance', level: 'info', audience: 'all', createdAt: '2026-09-13', active: true }] } });
   mocks.revoke.mockResolvedValue({ error: 'Please retry' });
-  await mount(); await click('Retract');
+  await mount('notices'); await click('Retract');
   expect(mocks.error).toHaveBeenCalledWith('Could not retract notice', 'Please retry');
   expect(container.textContent).toContain('Scheduled maintenance');
 });
-// "Set up the site's AI", in an app's AI settings, leads to /admin/platform#app-ai.
-it('goes to the card a link names once the cards are drawn, until the person scrolls themselves', async () => {
-  vi.useFakeTimers();
-  const went: string[] = [];
-  const scroll = Element.prototype.scrollIntoView;
-  Element.prototype.scrollIntoView = function (this: Element) { went.push(this.id); };
-  window.history.replaceState(null, '', '#app-ai');
-  try {
-    await mount();
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(went).toEqual(['app-ai']);
-    // Again as the cards above it fill in and push it down.
-    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
-    expect(went).toEqual(['app-ai', 'app-ai']);
-    // The person scrolls: the page is theirs from then on.
-    await act(async () => { window.dispatchEvent(new Event('wheel')); await vi.advanceTimersByTimeAsync(2000); });
-    expect(went).toEqual(['app-ai', 'app-ai']);
-  } finally {
-    Element.prototype.scrollIntoView = scroll;
-    window.history.replaceState(null, '', window.location.pathname);
-    vi.useRealTimers();
-  }
+it('opens and focuses the panel named by a deep link without mounting the other panels', async () => {
+  await mount('app-ai');
+  expect(document.activeElement?.id).toBe('app-ai');
+  expect(container.querySelector('#plans')).toBeNull();
+  expect(container.querySelector('[aria-current="page"]')?.textContent).toBe('AI for apps');
+});
+it('opens the app directory from its old address', async () => {
+  await mount('softn-directory');
+  expect(document.activeElement?.id).toBe('app-directory');
+  expect(container.querySelector('#softn-directory')).not.toBeNull();
+});
+it('keeps an unfinished notice when switching platform settings', async () => {
+  await mount('notices');
+  const draft = container.querySelector<HTMLTextAreaElement>('#broadcast-message')!;
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(draft, 'Evening maintenance'); draft.dispatchEvent(new Event('input', { bubbles: true })); });
+  await selectPart('plans');
+  expect(container.querySelector<HTMLElement>('#notices')?.hidden).toBe(true);
+  await selectPart('notices');
+  expect(container.querySelector<HTMLElement>('#notices')?.hidden).toBe(false);
+  expect(draft.value).toBe('Evening maintenance');
 });
 it('stays where it is when the address names no card', async () => {
   const scroll = Element.prototype.scrollIntoView;
@@ -82,7 +87,7 @@ it('stays where it is when the address names no card', async () => {
   } finally { Element.prototype.scrollIntoView = scroll; }
 });
 it('waits for confirmation before enabling maintenance', async () => {
-  await mount(); await click('Close site for maintenance');
+  await mount('availability'); await click('Close site for maintenance');
   expect(mocks.toggle).not.toHaveBeenCalled();
   expect(document.body.textContent).toContain('Close the site for maintenance?');
   await click('Cancel'); expect(mocks.toggle).not.toHaveBeenCalled();
@@ -90,7 +95,7 @@ it('waits for confirmation before enabling maintenance', async () => {
 it('disables notice submission and editing while sending', async () => {
   let resolve!: (value: unknown) => void;
   mocks.create.mockReturnValue(new Promise(r => { resolve = r; }));
-  await mount();
+  await mount('notices');
   const input = container.querySelector<HTMLTextAreaElement>('#broadcast-message')!;
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'Test notice'); input.dispatchEvent(new Event('input', { bubbles: true })); });
   await click('Send notice');

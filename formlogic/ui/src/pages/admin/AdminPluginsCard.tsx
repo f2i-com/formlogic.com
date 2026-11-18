@@ -42,7 +42,7 @@ function grantsOf(review: GrantsReview): string[] {
     ...(review.network?.length ? [`Reach ${listed(review.network)} over HTTPS, through this site: the site makes each request it asks for, only in the steps the site calls (never from its own page), and gives it back the answer. Nowhere else.`] : []),
     ...(settings.length ? [`Ask each app's owner for: ${listed(settings.map((field) => field.label))}.`] : []),
     ...secrets.map((field) => `${field.label}: a secret, ${field.sendTo?.length ? `sent only to ${listed(field.sendTo)}` : 'sent to no host'}. Kept on this site and filled in by the site itself, never given to its code.`),
-    ...(imported.length ? [`Take from the key file of an app's earlier SoftN host, when its owner brings the app's data and says so: ${listed(imported.map((field) => `${field.label} (${field.importFrom})`))}. Nothing else of that file.`] : []),
+    ...(imported.length ? [`Take from the key file of an app's previous host, when its owner brings the app's data and says so: ${listed(imported.map((field) => `${field.label} (${field.importFrom})`))}. Nothing else of that file.`] : []),
     ...review.sandbox,
   ];
 }
@@ -167,13 +167,13 @@ export function AdminPluginsCard() {
         title="Plugins"
         icon={<Puzzle className="h-4 w-4" />}
         actions={<>
-          <input ref={file} type="file" accept=".softn,.zip" className="hidden" aria-label="Plugin file" onChange={(e) => void read(e.target.files?.[0])} />
+          <input ref={file} type="file" accept=".zip,.softn" className="hidden" aria-label="Plugin file" onChange={(e) => void read(e.target.files?.[0])} />
           <Button size="sm" variant="outline" leftIcon={<Upload className="h-4 w-4" />} onClick={() => file.current?.click()}>Upload a plugin</Button>
         </>}
       >
         <div className="space-y-3">
           <p className={HELP}>
-            Plugins are SoftN apps that add to the site. Their code runs sandboxed, with no network of its own, and can do only what it was granted when installed, listed under it: where one needs a host reached, this site makes the request for it, to the hosts listed and no others.
+            Plugins are sandboxed web apps that extend the site. Their code runs sandboxed, with no network of its own, and can do only what it was granted when installed, listed under it: where one needs a host reached, this site makes the request for it, to the hosts listed and no others.
             App owners choose whether their apps ask for what a plugin issues. Turning one off closes the apps that ask for it; removing it also withdraws everything it issued.
           </p>
 

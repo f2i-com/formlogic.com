@@ -765,10 +765,9 @@ export const OWNER_GUARDED_PERMISSIONS: PermissionAction[] = APP_LEVEL_PERMISSIO
  * taken as owned: a draft or archived app is not listed to a member at all, so assuming ownership
  * there would offer a delegated manager the owner's controls and a refusal.
  */
-export function viewerOwnsApp(app: Pick<App, 'ownerId' | 'canManage'> | undefined, userId: string | undefined): boolean {
+export function viewerOwnsApp(app: Partial<Pick<App, 'ownerId' | 'canManage'>> | undefined, userId: string | undefined): boolean {
   if (!app) return false;
-  if (app.canManage === true) return true;
-  return !!app.ownerId && !!userId && app.ownerId === userId;
+  return app.canManage ?? (!!userId && app.ownerId === userId);
 }
 
 /** Why a manager who is not the Owner cannot act on such a member or hand out such a role. */

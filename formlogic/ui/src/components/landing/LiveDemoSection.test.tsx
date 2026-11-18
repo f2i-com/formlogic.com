@@ -12,8 +12,8 @@ import { LiveDemoSection } from './LiveDemoSection';
 let root: Root | null = null;
 let host: HTMLElement | null = null;
 
-async function renderSection() {
-  vi.spyOn(api, 'getDemoApps').mockResolvedValue({ data: { apps: [{ slug: 'crm', name: 'CRM', description: '', logoUrl: null }] } } as never);
+async function renderSection(apps = [{ slug: 'crm', name: 'CRM', description: '', logoUrl: null }]) {
+  vi.spyOn(api, 'getDemoApps').mockResolvedValue({ data: { apps } });
   host = document.createElement('div');
   document.body.appendChild(host);
   await act(async () => {
@@ -38,6 +38,13 @@ afterEach(() => {
 });
 
 describe('LiveDemoSection launch', () => {
+  it('offers public starter previews when this installation has no demo apps', async () => {
+    await renderSection([]);
+    expect(Array.from(host!.querySelectorAll('a'), link => link.getAttribute('href'))).toEqual([
+      '/packs', '/packs/event-management', '/packs/customer-service', '/packs/sitepulse-site-diary',
+    ]);
+  });
+
   it('says so when the demo cannot start, and opens nothing', async () => {
     vi.spyOn(api, 'startDemo').mockResolvedValue({ error: 'The demo is unavailable' });
     const open = vi.spyOn(window, 'open').mockReturnValue(null);

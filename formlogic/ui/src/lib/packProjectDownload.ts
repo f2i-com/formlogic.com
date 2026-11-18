@@ -15,7 +15,7 @@ export async function downloadPackProjects(slug: string) {
     const name = id.replace(/[^a-zA-Z0-9_-]/g, '-');
     projects[id] = `projects/${name}`;
     for (const [path, bytes] of Object.entries(files)) entries[`projects/${name}/${path}`] = bytes;
-    entries[`projects/${name}.softn`] = zipSync(files);
+    entries[`projects/${name}.zip`] = zipSync(files);
   };
   for (const app of pack.apps ?? []) {
     const native = (app as typeof app & { nativeProject?: NativeProject }).nativeProject;
@@ -36,7 +36,7 @@ export async function downloadPackProjects(slug: string) {
       return [name, { file, access: action.access, mode: action.mode }];
     }));
     files['formlogic.json'] = strToU8(JSON.stringify({ formatVersion: 1, storage: 'formlogic-forms-sqlite', actions }, null, 2));
-    files['README.md'] = strToU8('This app uses its installed FormLogic forms, roles and flows. Install the outer pack ZIP first. Open this .softn in Builder or Studio to edit the interface, or import into FormLogic app hosting to preserve its named backend actions. It does not include records, credentials or an offline backend.');
+    files['README.md'] = strToU8('This app uses its installed FormLogic forms, roles and flows. Install the outer pack ZIP first. Open this project ZIP in Builder or Studio to edit the interface, or import into FormLogic app hosting to preserve its named backend actions. It does not include records, credentials or an offline backend.');
     addProject(String(app.packAppId), files);
   }
   for (const app of install.apps ?? []) { delete app.hostedProject; delete app.nativeProject; }

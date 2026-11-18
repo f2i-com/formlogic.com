@@ -37,9 +37,9 @@ const MANIFEST = JSON.stringify({
 const call = (id: number, over: Partial<NativeCall> = {}): NativeCall => ({ id, at: new Date(Date.now() - 5_000).toISOString(), method: 'GET', path: '/api/items', status: 200, ms: 14, error: null, caller: 'owner', ...over });
 const listOf = (calls: NativeCall[], over: Partial<NativeCallList> = {}): NativeCallList => ({ calls, limit: 50, keep: { calls: 500, days: 14 }, ...over });
 
-async function mount(props: Partial<{ manifest: string | undefined; access: 'members' | 'application'; dirty: boolean; readOnly: boolean }> = {}) {
-  const all = { manifest: MANIFEST, access: 'application' as const, dirty: false, readOnly: false, ...props };
-  await act(async () => root.render(<SoftnApi app={app} access={all.access} manifest={all.manifest} version={4} dirty={all.dirty} readOnly={all.readOnly} />));
+async function mount(props: Partial<{ app: App; version: number; manifest: string | undefined; access: 'members' | 'application'; dirty: boolean; readOnly: boolean }> = {}) {
+  const all = { app, version: 4, manifest: MANIFEST, access: 'application' as const, dirty: false, readOnly: false, ...props };
+  await act(async () => root.render(<SoftnApi {...all} />));
   await act(async () => {});
 }
 const panel = (title: string) => [...container.querySelectorAll('section')].find(node => node.querySelector('h2')?.textContent === title) as HTMLElement | undefined;
@@ -47,7 +47,7 @@ const button = (text: RegExp, within: ParentNode = document.body) => [...within.
 const dialog = () => document.body.querySelector('[role="dialog"]');
 const rows = (title: string) => [...(panel(title)?.querySelectorAll('tbody tr') ?? [])] as HTMLTableRowElement[];
 /** Type into a field as a person does: React reads the value from the input event. */
-async function type(field: HTMLTextAreaElement | HTMLSelectElement, value: string) {
+async function type(field: HTMLTextAreaElement | HTMLSelectElement | HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')!.set!;
   await act(async () => { setter.call(field, value); field.dispatchEvent(new Event(field instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true })); });
 }
@@ -166,12 +166,99 @@ describe('Try it', () => {
     expect(container.querySelector('section[aria-label="Answer"]')!.textContent).toContain('201 Created');
   });
 
+  it('sends the selected route’s headers to the app and reuses an idempotency key on a confirmed retry', async () => {
+    await mount();
+    const route = container.querySelector<HTMLSelectElement>('#api-try-route')!;
+    const auth = container.querySelector<HTMLInputElement>('#api-try-authorization')!;
+    const retryKey = container.querySelector<HTMLInputElement>('#api-try-idempotency-key')!;
+    const disclosure = auth.closest('details')!;
+    expect(disclosure.open).toBe(false);
+    await press(disclosure.querySelector('summary')!);
+    expect(auth.type).toBe('password');
+    await type(route, 'POST /api/items');
+    await type(auth, 'Bearer example');
+    await type(retryKey, 'item-create-1');
+    expect(disclosure.querySelector('summary')!.textContent).toBe('Request headers (2)');
+    await type(route, 'GET /api/items');
+    expect(auth.value).toBe('');
+    expect(retryKey.value).toBe('');
+    await press(button(/^Send$/));
+    expect(mocks.runNativeRequest).toHaveBeenLastCalledWith('tasks', expect.objectContaining({ headers: {} }));
+    mocks.runNativeRequest.mockClear();
+    await type(route, 'POST /api/items');
+    expect(retryKey.value).toBe('item-create-1');
+    mocks.runNativeRequest.mockResolvedValueOnce({ transportFailure: true });
+    const expected = { path: '/api/items', method: 'POST', body: {}, query: {}, headers: { authorization: 'Bearer example', 'idempotency-key': 'item-create-1' } };
+    await press(button(/^Send$/));
+    expect(mocks.runNativeRequest).not.toHaveBeenCalled();
+    expect(dialog()!.textContent).not.toContain('Bearer example');
+    await press(button(/^Send it$/, dialog()!));
+    expect(mocks.runNativeRequest).toHaveBeenNthCalledWith(1, 'tasks', expected);
+    expect(container.querySelector('section[aria-label="Answer"]')!.textContent).toContain('Check the app’s data or recent calls before sending this write again.');
+    await press(button(/^Send$/));
+    await press(button(/^Send it$/, dialog()!));
+    expect(mocks.runNativeRequest).toHaveBeenNthCalledWith(2, 'tasks', expected);
+  });
+
+  it.each([
+    ['authorization', 4096, '4,096 bytes'],
+    ['idempotency-key', 255, '255 bytes'],
+  ] as const)('checks the host’s byte limit for %s and focuses the field even when headers are collapsed', async (name, limit, hint) => {
+    await mount();
+    const input = container.querySelector<HTMLInputElement>('#api-try-' + name)!;
+    const disclosure = input.closest('details')!;
+    const atLimit = 'é'.repeat(Math.floor(limit / 2)) + 'x'.repeat(limit % 2);
+    await press(disclosure.querySelector('summary')!);
+    await type(input, atLimit + 'x');
+    await press(disclosure.querySelector('summary')!);
+    expect(disclosure.open).toBe(false);
+    await press(button(/^Send$/));
+    expect(mocks.runNativeRequest).not.toHaveBeenCalled();
+    expect(disclosure.open).toBe(true);
+    expect(document.activeElement).toBe(input);
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById(input.getAttribute('aria-describedby')!)!.textContent).toContain(hint);
+    await type(input, atLimit);
+    expect(input.hasAttribute('aria-invalid')).toBe(false);
+    await press(button(/^Send$/));
+    expect(mocks.runNativeRequest).toHaveBeenCalledWith('tasks', expect.objectContaining({ headers: { [name]: atLimit } }));
+  });
+
+  it.each([
+    ['another app', { app: { ...app, id: 'app-2', slug: 'notes' } }],
+    ['a new live version', { version: 5 }],
+  ] as const)('clears credentials and pending write confirmation on switching to %s', async (_change, next) => {
+    await mount();
+    await type(container.querySelector<HTMLSelectElement>('#api-try-route')!, 'POST /api/items');
+    await type(container.querySelector<HTMLInputElement>('#api-try-authorization')!, 'Bearer example');
+    await press(button(/^Send$/));
+    expect(dialog()).not.toBeNull();
+    await mount(next);
+    expect(dialog()).toBeNull();
+    expect(container.querySelector<HTMLInputElement>('#api-try-authorization')!.value).toBe('');
+    expect(mocks.runNativeRequest).not.toHaveBeenCalled();
+  });
+
+  it('drops a pending write if its selected route changes', async () => {
+    await mount();
+    const route = container.querySelector<HTMLSelectElement>('#api-try-route')!;
+    await type(route, 'POST /api/items');
+    await press(button(/^Send$/));
+    expect(dialog()).not.toBeNull();
+    await type(route, 'GET /api/items');
+    expect(dialog()).toBeNull();
+    await type(route, 'POST /api/items');
+    expect(dialog()).toBeNull();
+    expect(mocks.runNativeRequest).not.toHaveBeenCalled();
+  });
+
   it('checks the query and the body before anything is sent, and says what is wrong', async () => {
     await mount();
     await type(container.querySelector('#api-try-query') as HTMLTextAreaElement, '{page: 2}');
     await press(button(/^Send$/));
     expect(container.querySelector('#api-try-problem')!.textContent).toMatch(/^The query is not valid JSON/);
     expect(container.querySelector('#api-try-query')!.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement?.id).toBe('api-try-query');
     await type(container.querySelector('#api-try-query') as HTMLTextAreaElement, '{"tags": ["a"]}');
     await press(button(/^Send$/));
     expect(container.querySelector('#api-try-problem')!.textContent).toBe('In the query, "tags" is not text or a number: an address cannot carry a list or an object.');
@@ -180,6 +267,7 @@ describe('Try it', () => {
     await type(container.querySelector('#api-try-body') as HTMLTextAreaElement, '"Buy milk"');
     await press(button(/^Send$/));
     expect(container.querySelector('#api-try-problem')!.textContent).toBe('The body is a JSON object or list, such as {"title": "Buy milk"}.');
+    expect(document.activeElement?.id).toBe('api-try-body');
     expect(dialog()).toBeNull();
     expect(mocks.runNativeRequest).not.toHaveBeenCalled();
   });

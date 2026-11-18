@@ -3,8 +3,8 @@ import { getAiReadiness } from '../client-runtime/flows/aiDefault';
 
 /**
  * Whether the person's default AI source can run a request now (getAiReadiness, audit FL-23):
- * true or false once known, null while it is being checked. Used to offer AI Studio only to
- * someone whose AI would answer it, and the Visual Builder to everyone. `recheck` asks again
+ * true or false once known, null while it is being checked. AI prompts use this result.
+ * Both editors can open for manual editing and preview. `recheck` asks again
  * without the cached answer, after the person connects an AI.
  */
 export function useAiReady(): boolean | null;

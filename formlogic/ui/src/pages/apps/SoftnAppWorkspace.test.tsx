@@ -11,8 +11,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NativeProject } from '../../lib/nativeHosting';
+import type { NativeProjectDraft } from '../../components/studio/useNativeProjectDraft';
 
 const mocks = vi.hoisted(() => ({
+  aiReady: true,
   getNativeProject: vi.fn(),
   saveNativeProject: vi.fn(),
   installNativeStarter: vi.fn(),
@@ -29,19 +31,13 @@ const mocks = vi.hoisted(() => ({
   keepUnchanged: vi.fn(),
   dataManager: null as null | { table?: string; view?: string; query?: string; onNavigate(table: string | undefined, view: string, query?: string, options?: { replace?: boolean }): void },
   editor: null as null | { kind: string; brief?: unknown; applyLabel?: string; onApply(bytes: Uint8Array): Promise<void>; onClose(): void },
+  source: null as null | { draft: NativeProjectDraft; initialTab: string; onClose(): void; surface: string; saveLabel: string },
   history: null as null | { app: { name: string }; version: number; open?: number; file?: string; backend: boolean; readOnly: boolean; waiting: string | null; onRestored(result: { version: number; restored: number; databaseAhead: string[] }): void },
   appApi: null as null | { app: { name: string }; access?: string; manifest?: string; version: number; dirty: boolean; readOnly: boolean },
   designer: null as null | { mode: string; access?: string; waiting?: string | null; onCreate(design: unknown): Promise<boolean>; onMode(mode: string): void; onClose(): void },
 }));
 vi.mock('../../components/design/DatabaseDesigner', () => ({
   DatabaseDesigner: (props: NonNullable<typeof mocks.designer>) => { mocks.designer = props; return <p data-testid="designer">designer {props.mode}, {props.access}</p>; },
-}));
-// lib/nativeHosting is stood in for below, so the backend is added to the page as withBackend would, without its checks.
-vi.mock('../../lib/softnBackend', () => ({
-  STARTER_ORIGIN: 'https://app.example',
-  backendOf: () => null,
-  withBackend: (project: NativeProject, backend: { server: unknown; files: Record<string, string> }) =>
-    ({ ...project, files: { ...project.files, ...backend.files, 'manifest.json': JSON.stringify({ id: 'a', server: backend.server }) } }),
 }));
 vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({ api: {
@@ -53,8 +49,9 @@ vi.mock('../../lib/api', () => ({ api: {
   getPassKinds: async () => ({ data: { passes: [] } }),
   isAdminActing: () => false, isDemoMode: () => false,
 } }));
-vi.mock('../../hooks/useAiReady', () => ({ useAiReady: () => ({ ready: true, reason: null, recheck: async () => true }) }));
-vi.mock('../../lib/nativeHosting', () => ({
+vi.mock('../../hooks/useAiReady', () => ({ useAiReady: () => ({ ready: mocks.aiReady, reason: null, recheck: async () => mocks.aiReady }) }));
+vi.mock('../../lib/nativeHosting', async importOriginal => ({
+  ...await importOriginal<typeof import('../../lib/nativeHosting')>(),
   exportNativeProject: () => new Uint8Array([1]),
   importNativeProject: async () => ({ version: 0, files: { 'manifest.json': '{"id":"a"}', 'ui/main.ui': '<Text>Changed</Text>' }, assets: {}, access: 'application' }),
   declaresFormlogicAi: (project: { files: Record<string, string> }) => 'formlogicAi' in JSON.parse(project.files['manifest.json'] ?? '{}'),
@@ -77,7 +74,10 @@ vi.mock('../../components/apps/SoftnMembers', () => ({
 }));
 vi.mock('../../components/studio/AppEngineSelect', () => ({ AppEngineSelect: () => null }));
 vi.mock('../../components/studio/NativeAppPanel', () => ({
-  NativeEditor: ({ surface, saveLabel }: { surface?: string; saveLabel?: string }) => <p data-testid="source-editor">source editor: {surface}, {saveLabel}</p>,
+  NativeEditorView: (props: NonNullable<typeof mocks.source>) => {
+    mocks.source = props;
+    return <p data-testid="source-editor">source editor: {props.surface}, {props.saveLabel}</p>;
+  },
 }));
 vi.mock('../../components/apps/SoftnAutomations', () => ({
   SoftnAutomations: ({ app }: { app: { name: string } }) => <p data-testid="softn-automations">automations of {app.name}</p>,
@@ -104,6 +104,7 @@ const installed = (version: number): NativeProject => ({ version, home: true, ac
 const app = (status: 'draft' | 'published') => ({ id: 'app-1', name: 'Recipes', slug: 'recipes', status, ownerId: 'u1', canManage: true, settings: { softnApp: true }, theme: {}, navConfig: [] });
 
 beforeEach(() => {
+  mocks.aiReady = true;
   for (const mock of [mocks.getNativeProject, mocks.saveNativeProject, mocks.installNativeStarter, mocks.publishApp]) mock.mockReset();
   mocks.withMediaBytes.mockReset().mockImplementation(async (_id: string, project: NativeProject) => project);
   mocks.keepUnchanged.mockReset().mockImplementation(async (project: NativeProject) => project);
@@ -128,11 +129,11 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
 /** The page at one of its addresses: the overview unless a section is named. */
-async function render(status: 'draft' | 'published', project: NativeProject | null, at = '') {
-  useAppStore.setState({ apps: [app(status)] as never, fetchApps: vi.fn(async () => {}) });
+async function render(status: 'draft' | 'published', project: NativeProject | null, at = '', listed: { formCount?: number; canManage?: boolean } = {}) {
+  useAppStore.setState({ apps: [{ ...app(status), ...listed }] as never, fetchApps: vi.fn(async () => {}) });
   mocks.getNativeProject.mockResolvedValue({ data: { available: true, ready: true, preflight: { ok: true, checks: [] }, project } });
   root = createRoot(container);
-  await act(async () => root.render(<MemoryRouter initialEntries={[`/apps/app-1/softn${at}`]}><Routes><Route path="/apps/:appId/softn/*" element={<SoftnAppWorkspace />} /></Routes></MemoryRouter>));
+  await act(async () => root.render(<MemoryRouter initialEntries={[`/apps/app-1/web${at}`]}><Routes><Route path="/apps/:appId/web/*" element={<SoftnAppWorkspace />} /><Route path="/app/recipes" element={<p>Recipes runtime</p>} /></Routes></MemoryRouter>));
   await act(async () => {});
 }
 const button = (text: RegExp) => [...document.body.querySelectorAll('button')].find(b => text.test(b.textContent ?? '')) as HTMLButtonElement | undefined;
@@ -153,7 +154,7 @@ describe('SoftnAppWorkspace', () => {
       await render('published', withBackend(1));
       const card = container.querySelector('section[aria-label="Automations"]')!;
       expect(card.textContent).toContain('3 automations · 2 running');
-      expect(card.querySelector('a')!.getAttribute('href')).toBe('/apps/app-1/softn/automations');
+      expect(card.querySelector('a')!.getAttribute('href')).toBe('/apps/app-1/web/automations');
       expect(mocks.listFlows).toHaveBeenCalledWith('app-1');
       await act(async () => root.unmount());
       // None yet: it says so, and what one would be for.
@@ -178,23 +179,39 @@ describe('SoftnAppWorkspace', () => {
       expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent)).not.toContain('Automations');
       expect(container.querySelector('[data-testid="softn-automations"]')).toBeNull();
       expect(container.textContent).toContain('This app has no database on the server yet.');
-      expect(container.querySelector('a[href="/apps/app-1/softn/data"]:not(nav a)')!.textContent).toBe('Add a backend');
+      expect(container.querySelector('a[href="/apps/app-1/web/data"]:not(nav a)')!.textContent).toBe('Add a backend');
     });
 
-    it('names the studio only for an app that also holds forms, as the way to those forms', async () => {
+    it('shows attached forms in navigation when opening the app from an older list response', async () => {
       mocks.getAppForms.mockResolvedValue({ data: { forms: [{ id: 'af1', formId: 'f1' }, { id: 'af2', formId: 'f2' }] } });
-      await render('published', withBackend(1), '/settings');
+      await render('published', withBackend(1), '/edit');
       expect(mocks.getAppForms).toHaveBeenCalledWith('app-1');
-      expect(button(/^This app’s forms \(App Studio\)$/)).toBeDefined();
+      expect(container.querySelector('nav a[href="/apps/app-1/studio/data"]')?.textContent).toBe('Forms');
       await act(async () => root.unmount());
-      // A read of its forms that fails offers nothing rather than a way to somewhere that would send it back.
       mocks.getAppForms.mockResolvedValue({ error: 'Server error', status: 500 });
       await render('published', withBackend(1), '/settings');
-      expect(button(/App Studio/)).toBeUndefined();
+      expect(container.querySelector('nav a[href="/apps/app-1/studio/data"]')).toBeNull();
+    });
+
+    it('uses the list attachment count and offers creation before the first form', async () => {
+      await render('published', withBackend(1), '/settings', { formCount: 0 });
+      expect(button(/^Add a form$/)).toBeDefined();
+      expect(mocks.getAppForms).not.toHaveBeenCalled();
       await act(async () => root.unmount());
-      // Its forms are not asked for until Settings is open.
-      mocks.getAppForms.mockClear();
-      await render('published', withBackend(1), '/edit');
+      await render('published', installed(1), '', { formCount: 1 });
+      expect(container.querySelector('nav a[href="/apps/app-1/studio/data"]')?.textContent).toBe('Forms');
+      expect(container.querySelector('section[aria-label="Data"] a[href="/apps/app-1/studio/data"]')?.textContent).toBe('Manage forms');
+      expect(container.textContent).toContain('1 attached form');
+      await act(async () => root.unmount());
+      await render('published', installed(1), '', { formCount: 0 });
+      expect(container.querySelector('section[aria-label="Data"] a[href="/apps/app-1/studio/data?new=form"]')?.textContent).toBe('Add a form');
+      expect(mocks.getAppForms).not.toHaveBeenCalled();
+    });
+
+    it('opens a member bookmark in the running app before fetching management data', async () => {
+      await render('published', installed(1), '/edit', { canManage: false });
+      expect(container.textContent).toContain('Recipes runtime');
+      expect(mocks.getNativeProject).not.toHaveBeenCalled();
       expect(mocks.getAppForms).not.toHaveBeenCalled();
     });
 
@@ -248,16 +265,58 @@ describe('SoftnAppWorkspace', () => {
       expect(container.textContent).toContain('phone sign-in');
     });
 
-    it('has no link or button named for the studio anywhere on the page of an app with no forms', async () => {
+    it('keeps form sections out of the menu until the owner adds a first form', async () => {
       for (const at of ['', '/edit', '/members', '/automations', '/history', '/domains', '/settings']) {
         await render('published', withBackend(1), at);
-        expect([...container.querySelectorAll('a')].map(a => a.getAttribute('href')).filter(href => href?.includes('/studio'))).toEqual([]);
+        expect(container.querySelectorAll('nav a[href*="/studio"]')).toHaveLength(0);
+        const formsActions = [...container.querySelectorAll('a[href*="/studio"]')].map(a => a.textContent);
+        expect(formsActions).toEqual(at === '' ? ['Add a form'] : []);
         expect(button(/App Studio/)).toBeUndefined();
         await act(async () => root.unmount());
       }
       await render('published', withBackend(1));
     });
 
+    it('edits a first custom API in the workspace draft and installs only the version its owner saves', async () => {
+      await render('published', installed(1), '/data');
+      await act(async () => button(/^Write a custom API/)!.click());
+      expect(mocks.source!.initialTab).toBe('backend');
+      expect(mocks.source!.draft.project!.files['server/main.logic']).toContain('function appStatus(req)');
+      const next = mocks.source!.draft.project!;
+      const files = { ...next.files, 'server/main.logic': next.files['server/main.logic'].replace('"ok"', '"ready"') };
+      await act(async () => { mocks.source!.draft.edit({ ...next, files }); mocks.source!.onClose(); });
+      expect(mocks.saveNativeProject).not.toHaveBeenCalled();
+      expect(container.querySelector('[data-testid="data-manager"]')).toBeNull();
+      expect(container.textContent).toContain('Your backend is in the draft.');
+      const edit = container.querySelector<HTMLAnchorElement>('nav a[href$="/edit"]')!;
+      await act(async () => edit.click());
+      await act(async () => button(/^Edit the source code$/)!.click());
+      expect(mocks.source!.draft.project!.files['server/main.logic']).toContain('"ready"');
+      await act(async () => { await mocks.source!.draft.save(); mocks.source!.onClose(); });
+      expect(mocks.saveNativeProject).toHaveBeenCalledWith('app-1', expect.objectContaining({ files }), 1);
+      expect(container.textContent).toContain('Version 2');
+    });
+
+    it('saves a first backend from Data after the editor closes and leaves the app unpublished', async () => {
+      await render('draft', installed(1), '/data');
+      await act(async () => button(/^Write a custom API/)!.click());
+      await act(async () => mocks.source!.onClose());
+      await act(async () => container.querySelector<HTMLAnchorElement>('nav a[href="/apps/app-1/web"]')!.click());
+      expect(container.textContent).toContain('Your draft includes a backend');
+      expect(mocks.getNativeDataSummary).not.toHaveBeenCalled();
+      await act(async () => container.querySelector<HTMLAnchorElement>('section[aria-label="Data"] a')!.click());
+      mocks.saveNativeProject.mockResolvedValueOnce({ error: 'Could not install this version.' });
+      await act(async () => button(/^Save backend$/)!.click());
+      expect(container.textContent).toContain('Could not install this version.');
+      expect(button(/^Save backend$/)).toBeDefined();
+      await act(async () => button(/^Save backend$/)!.click());
+      expect(container.querySelector('[data-testid="data-manager"]')).not.toBeNull();
+      expect(mocks.publishApp).not.toHaveBeenCalled();
+      await act(async () => container.querySelector<HTMLAnchorElement>('nav a[href="/apps/app-1/web"]')!.click());
+      const data = container.querySelector('section[aria-label="Data"]')!;
+      expect(data.textContent).toContain('1 API route');
+      expect(data.querySelector('a[href$="/api"]')).not.toBeNull();
+    });
     it('opens the files as source code and nothing else, saying what saving them does', async () => {
       await render('published', withBackend(1), '/edit');
       await act(async () => button(/^Edit the source code$/)!.click());
@@ -280,9 +339,33 @@ describe('SoftnAppWorkspace', () => {
       expect(container.textContent).toContain('2 tables · 8,226 rows · 3.0 MB');
       expect(container.textContent).toContain('You and 3 other people can use it.');
       // The largest table is a link into the data section, at that table.
-      expect((container.querySelector('a[href="/apps/app-1/softn/data/bookings"]') as HTMLAnchorElement).textContent).toContain('8,214');
+      expect((container.querySelector('a[href="/apps/app-1/web/data/bookings"]') as HTMLAnchorElement).textContent).toContain('8,214');
       // The app itself runs under Edit: an owner looking at ten apps starts none of them.
       expect(container.querySelector('[data-testid="softn-app-preview"]')).toBeNull();
+    });
+
+    it('keeps table links when the backend supplies names without row counts', async () => {
+      mocks.getNativeDataSummary.mockResolvedValue({ data: { installed: true, tables: ['field notes'] } });
+      await render('published', withBackend(2));
+      const data = container.querySelector('section[aria-label="Data"]')!;
+      expect(data.textContent).toContain('1 table');
+      expect(data.querySelector('a[href$="/data/field%20notes"]')?.textContent).toBe('field notes');
+      expect(data.textContent).not.toContain('0 rows');
+    });
+
+    it('shows the installed audience and release when a recovered draft changes access', async () => {
+      const live = { ...withBackend(2), access: 'application' as const };
+      const kept = { ...live, access: 'members' as const };
+      window.localStorage.setItem('formlogic:native-draft:u1:app-1', JSON.stringify({ baseVersion: 2, savedAt: new Date().toISOString(), project: kept }));
+      try {
+        await render('published', live);
+        await act(async () => button(/^Recover them$/)!.click());
+        expect(container.querySelector('section[aria-label="People"]')?.textContent).toContain('Anyone with the link');
+        expect(container.querySelector('section[aria-label="Release"]')?.textContent).toContain('Publish changes');
+        expect(mocks.getAppUsers).not.toHaveBeenCalled();
+      } finally {
+        window.localStorage.removeItem('formlogic:native-draft:u1:app-1');
+      }
     });
 
     it('gives every section an address, and takes the table and the view from it', async () => {
@@ -290,7 +373,7 @@ describe('SoftnAppWorkspace', () => {
       expect(section()).toBe('Data');
       expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:bookings:structure');
       expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.getAttribute('href'))).toEqual([
-        '/apps/app-1/softn', '/apps/app-1/softn/data', '/apps/app-1/softn/api', '/apps/app-1/softn/members', '/apps/app-1/softn/edit', '/apps/app-1/softn/automations', '/apps/app-1/softn/history', '/apps/app-1/softn/domains', '/apps/app-1/softn/settings']);
+        '/apps/app-1/web', '/apps/app-1/web/edit', '/apps/app-1/web/data', '/apps/app-1/web/api', '/apps/app-1/web/automations', '/apps/app-1/web/members', '/apps/app-1/web/domains', '/apps/app-1/web/history', '/apps/app-1/web/settings']);
       // The data manager asks for another table: the address follows, and the default view is left out of it.
       await act(async () => mocks.dataManager!.onNavigate('rooms', 'browse'));
       expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:rooms:browse');
@@ -318,19 +401,42 @@ describe('SoftnAppWorkspace', () => {
     it('offers a backend, not an empty table list, to an app that keeps its data in each browser', async () => {
       await render('published', installed(1), '/data');
       expect(container.querySelector('[data-testid="data-manager"]')).toBeNull();
-      expect(container.textContent).toContain('This app has no database on the server.');
+      expect(container.querySelector('section[aria-label="Data"] h2')?.textContent).toBe('Add a backend');
       expect(mocks.getNativeDataSummary).not.toHaveBeenCalled();
     });
   });
 
-  // Every version a later one replaced, and going back to one: a section after Automations.
+  it('opens and dismisses Sections, keeps keyboard focus, and names the current table view', async () => {
+    await render('published', withBackend(2), '/data/visits/structure');
+    const trail = container.querySelector('nav[aria-label="Current app location"]')!;
+    expect([...trail.querySelectorAll('li')].map(part => part.textContent)).toEqual(['Data', 'visits', 'Structure']);
+    expect(trail.querySelector('a[href="/apps/app-1/web/data/visits"]')).not.toBeNull();
+    const toggle = button(/^Sections$/)!;
+    const links = container.querySelector<HTMLElement>('nav[aria-label="App sections"]')!;
+    expect(toggle.getAttribute('aria-controls')).toBe(links.id);
+    expect(links.hidden).toBe(true);
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    const history = links.querySelector<HTMLAnchorElement>('a[href$="/history"]')!;
+    history.focus();
+    await act(async () => history.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(links.hidden).toBe(true);
+    expect(document.activeElement).toBe(toggle);
+    await act(async () => toggle.click());
+    await act(async () => history.click());
+    expect(links.hidden).toBe(true);
+    expect(trail.querySelector('[aria-current="page"]')?.textContent).toBe('History');
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  // Every version a later one replaced, and going back to one.
   describe('history', () => {
-    it('is a section of the page after Automations, for an app with a backend and one without', async () => {
+    it('appears with the management sections for apps with and without a backend', async () => {
       await render('published', withBackend(3), '/history');
       expect(section()).toBe('History');
       expect(container.querySelector('[data-testid="softn-history"]')!.textContent).toBe('history of Recipes, version 3, open undefined, file undefined');
       const names = [...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent);
-      expect(names.slice(names.indexOf('Automations'), names.indexOf('Automations') + 2)).toEqual(['Automations', 'History']);
+      expect(names.slice(-4)).toEqual(['Members', 'Domains', 'History', 'Settings']);
       expect(mocks.history).toMatchObject({ backend: true, readOnly: false, waiting: null });
       await act(async () => root.unmount());
       // A JavaScript app or a SoftN app with no backend has versions too.
@@ -385,7 +491,7 @@ describe('SoftnAppWorkspace', () => {
       expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent)).not.toContain('API');
       expect(container.querySelector('[data-testid="softn-api"]')).toBeNull();
       expect(container.textContent).toContain('This app has no backend, so it has no API.');
-      expect(container.querySelector('a[href="/apps/app-1/softn/data"]:not(nav a)')!.textContent).toBe('Add a backend');
+      expect(container.querySelector('a[href="/apps/app-1/web/data"]:not(nav a)')!.textContent).toBe('Add a backend');
     });
 
     it('is the owner\'s alone: nobody else is offered it, or shown it at its address', async () => {
@@ -432,11 +538,11 @@ describe('SoftnAppWorkspace', () => {
       expect(container.querySelector('[data-testid="softn-members"]')!.textContent).toBe('members of Recipes, members');
       await act(async () => root.unmount());
       await render('published', installed(1));
-      expect((container.querySelector('a[href="/apps/app-1/softn/members"]:not(nav a)') as HTMLAnchorElement).textContent).toBe('Members');
+      expect((container.querySelector('a[href="/apps/app-1/web/members"]:not(nav a)') as HTMLAnchorElement).textContent).toBe('Members');
       expect(container.querySelector('a[href="/apps/app-1/studio/access"]')).toBeNull();
       await act(async () => root.unmount());
       await render('published', installed(1), '/settings');
-      expect([...container.querySelectorAll('#settings-access a')].map(a => a.getAttribute('href'))).toEqual(['/apps/app-1/softn/members']);
+      expect([...container.querySelectorAll('#settings-access a')].map(a => a.getAttribute('href'))).toEqual(['/apps/app-1/web/members']);
     });
 
     it('is the owner\'s alone: nobody else is offered it, or shown it at its address', async () => {
@@ -542,8 +648,23 @@ describe('SoftnAppWorkspace', () => {
     mocks.getNativeProject.mockResolvedValue({ data: { available: true, ready: true, preflight: { ok: true, checks: [] }, project: installed(1) } });
     await act(async () => button(/Start building/)!.click());
     await act(async () => {});
-    expect(mocks.installNativeStarter).toHaveBeenCalledWith('app-1');
+    expect(mocks.installNativeStarter).toHaveBeenCalledWith('app-1', 'javascript');
     expect(mocks.editor?.kind).toBe('builder');
+  });
+
+  it('retries the chosen starter in the same app and opens its preview in the chosen editor', async () => {
+    useUIStore.getState().setSoftnOpen({ appId: 'app-1', editor: 'studio', template: 'vue', preview: true });
+    await render('draft', null);
+    expect(container.textContent).toContain('Install the Vue starter');
+    mocks.installNativeStarter.mockResolvedValueOnce({ error: 'Still unavailable' });
+    await act(async () => button(/Retry in Studio/)!.click());
+    expect(container.textContent).toContain('Still unavailable');
+    expect(mocks.editor).toBeNull();
+    mocks.installNativeStarter.mockResolvedValue({ data: { project: installed(1) } });
+    mocks.getNativeProject.mockResolvedValue({ data: { available: true, ready: true, preflight: { ok: true, checks: [] }, project: installed(1) } });
+    await act(async () => button(/Retry in Studio/)!.click());
+    expect(mocks.installNativeStarter).toHaveBeenLastCalledWith('app-1', 'vue');
+    expect(mocks.editor).toMatchObject({ kind: 'studio', preview: true });
   });
 
   it('opens AI Studio on the request it was brought here with, once', async () => {
@@ -557,6 +678,16 @@ describe('SoftnAppWorkspace', () => {
     await act(async () => mocks.editor!.onClose());
     expect(section()).toBe('Edit');
     expect(container.textContent).toContain('Change your app');
+  });
+
+  it('opens Studio for manual editing when this account has no connected AI', async () => {
+    mocks.aiReady = false;
+    await render('draft', installed(1), '/edit');
+    expect(button(/Make this change/)!.disabled).toBe(true);
+    const studio = button(/Open AI Studio/)!;
+    expect(studio.disabled).toBe(false);
+    await act(async () => studio.click());
+    expect(mocks.editor).toMatchObject({ kind: 'studio', brief: undefined });
   });
 
   it('installs editor changes at once while the app is not published, so the preview shows them', async () => {
@@ -599,7 +730,7 @@ describe('SoftnAppWorkspace', () => {
       await render('draft', project, '/edit');
       expect(mocks.getNativeProject).toHaveBeenCalledWith('app-1', { media: 'refs' });
       expect(mocks.withMediaBytes).not.toHaveBeenCalled();
-      await act(async () => button(/Download as \.softn/)!.click());
+      await act(async () => button(/Download app ZIP/)!.click());
       expect(mocks.withMediaBytes).toHaveBeenCalledWith('app-1', project);
       expect(created).toHaveBeenCalledTimes(1);
     });
@@ -607,7 +738,7 @@ describe('SoftnAppWorkspace', () => {
     it('says why a download could not be had, and downloads nothing', async () => {
       mocks.withMediaBytes.mockRejectedValue(new Error('assets/model.glb is no longer on the server as this page has it: the app was changed since the page was opened. Reload the page and try again.'));
       await render('draft', named(), '/edit');
-      await act(async () => button(/Download as \.softn/)!.click());
+      await act(async () => button(/Download app ZIP/)!.click());
       expect(container.textContent).toContain('assets/model.glb is no longer on the server');
       expect(created).not.toHaveBeenCalled();
     });

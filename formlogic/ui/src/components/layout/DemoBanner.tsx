@@ -53,7 +53,7 @@ export function DemoBanner() {
   };
 
   return (
-    <div ref={bannerRef} className="sticky top-0 z-40 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-gradient-to-r from-primary-600 to-primary-700 px-4 py-2 text-center text-sm text-primary-foreground">
+    <div ref={bannerRef} className="sticky top-[calc(var(--fl-nav-top,0px)+var(--fl-system-top,0px))] z-40 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-gradient-to-r from-primary-600 to-primary-700 px-4 py-2 text-center text-sm text-primary-foreground">
       <span className="inline-flex items-center gap-1.5 font-medium">
         <Sparkles className="h-4 w-4" />
         You're exploring the live demo — your changes stay in this browser and reset periodically.

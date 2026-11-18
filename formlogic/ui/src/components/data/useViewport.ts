@@ -1,17 +1,25 @@
-// How wide the window is, in the three sizes the data manager lays itself out for. The widths are
-// Tailwind's `sm` and `lg`, so what changes in the markup changes with the classes.
-//
-// innerWidth and the resize event, as the app shell reads its own phone layout: the test
-// environment has no matchMedia.
-import { useSyncExternalStore } from 'react';
+import { useLayoutEffect, useState, type RefObject } from 'react';
 
-/** `phone`: below 640px, rows are cards. `tablet`: below 1024px, the grid, flowing with the page. `desktop`: the manager fills the height it is given. */
+/** Phones use cards. A compact workspace uses a table picker and a row dialog.
+ * The three-pane layout needs space for the table list, grid and row inspector together. */
 export type Viewport = 'phone' | 'tablet' | 'desktop';
 
-const read = (): Viewport => window.innerWidth < 640 ? 'phone' : window.innerWidth < 1024 ? 'tablet' : 'desktop';
-const subscribe = (changed: () => void) => {
-  window.addEventListener('resize', changed);
-  return () => window.removeEventListener('resize', changed);
-};
+function layout(width: number): Viewport {
+  if (window.innerWidth < 640) return 'phone';
+  return window.innerWidth >= 1024 && width >= 960 ? 'desktop' : 'tablet';
+}
 
-export const useViewport = (): Viewport => useSyncExternalStore(subscribe, read, () => 'desktop');
+export function useViewport(frame: RefObject<HTMLDivElement | null>): Viewport {
+  const [viewport, setViewport] = useState<Viewport>(() => layout(window.innerWidth));
+  useLayoutEffect(() => {
+    const element = frame.current;
+    if (!element) return;
+    const measure = () => setViewport(layout(element.clientWidth || window.innerWidth));
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    window.addEventListener('resize', measure);
+    return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
+  }, [frame]);
+  return viewport;
+}

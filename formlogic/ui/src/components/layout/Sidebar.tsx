@@ -10,15 +10,11 @@ import {
   ChevronDown,
   Blocks,
   Boxes,
-  ArrowRight,
   Cloud,
   HardDrive,
-  Map,
-  Package,
   Search,
   Settings,
   ShieldCheck,
-  Trash2,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useUIStore } from '../../stores/uiStore';
@@ -29,8 +25,11 @@ import { Button } from '../ui/Button';
 import { Logo } from '../ui/Logo';
 import { AppTile } from '../apps/AppTile';
 import { DesktopConnectionPopover } from '../desktop/DesktopConnectionPopover';
+import { workspaceTools } from './workspaceTools';
+import { ScopedAppSidebar } from './ScopedAppSidebar';
+import { useScopedAppNavigation } from './useAppSectionSidebar';
 import { appClickPath } from '../../lib/appNavigation';
-import { statusLabel } from '../../lib/appStatus';
+import { listedStatus } from '../../lib/appStatus';
 import type { AppListItem } from '../../types/app';
 
 const TOOLS_OPEN_KEY = 'formlogic.sidebar.toolsOpen';
@@ -43,10 +42,12 @@ const SIDEBAR_APPS = 6;
  * are the primary navigation; forms/flows/diagrams remain reachable under
  * "Advanced tools" as the shared building blocks behind apps.
  */
-export function Sidebar({ offline = false }: { offline?: boolean }) {
-  const { sidebarCollapsed, toggleSidebar } = useUIStore();
+export function Sidebar({ floating = false, placementControl }: { floating?: boolean; placementControl?: React.ReactNode }) {
+  const sidebarCollapsed = useUIStore(state => state.sidebarCollapsed && !floating);
+  const toggleSidebar = useUIStore(state => state.toggleSidebar);
   const { storageMode } = useFormStore();
   const isDemo = useAuthStore((s) => !!s.user?.isDemo);
+  const userId = useAuthStore(s => s.user?.id);
   const isAdmin = useAuthStore((s) => !!s.user?.isAdmin);
   const apps = useAppStore((s) => s.apps);
   const fetchApps = useAppStore((s) => s.fetchApps);
@@ -101,6 +102,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
   // The app whose workspace/studio the user is currently inside (if any).
   const activeAppId =
     matchPath('/apps/:appId/*', location.pathname)?.params.appId ?? null;
+  const scoped = useScopedAppNavigation(location.pathname);
 
   const visibleApps = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -125,7 +127,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
 
   const openApp = (app: AppListItem) => {
     // Owners land in the App Studio; members go straight to the live app.
-    navigate(appClickPath(app));
+    navigate(appClickPath(app, userId));
   };
 
   // The demo account's Dashboard lives at /dashboard ("/" is the marketing landing for it).
@@ -135,29 +137,20 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
   // the chat both call /flows "automations"; only the nav used to say "Flows", so an
   // owner following either had no way to tell they were the same thing. "Flow" survives
   // inside the editor, where it names the thing being edited.
-  const toolLinks = [
-    { path: '/diagrams', icon: Map, label: 'Diagrams', hint: 'Sketch an app before building it' },
-    { path: '/packs', icon: Package, label: 'Templates', hint: 'Ready-made apps to install' },
-    ...(!isDemo ? [{ path: '/trash', icon: Trash2, label: 'Recycle bin', hint: 'Restore deleted items' }] : []),
-  ];
+  const toolLinks = workspaceTools(isDemo);
 
   return (
     <aside
-      className={cn(
-        'fixed left-0 bg-white dark:bg-slate-900/50 backdrop-blur-xl border-r border-gray-200 dark:border-white/10 z-40',
-        'flex flex-col transition-all duration-300 shadow-xl',
-        // Sit below the offline banner (h-8) when offline so it isn't covered
-        offline ? 'top-8 h-[calc(100%-2rem)]' : 'top-0 h-full',
-        sidebarCollapsed ? 'w-16' : 'w-64'
-      )}
+      className="flex h-full min-h-0 w-full flex-col bg-slate-50 dark:bg-slate-900"
     >
       {/* Logo */}
-      <div className="h-16 flex items-center justify-center px-4 border-b border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-transparent">
+      <div className={cn('flex shrink-0 items-center justify-center border-b border-gray-200 bg-gray-50 px-4 dark:border-white/10 dark:bg-transparent', floating ? 'h-11' : 'h-16')}>
         <NavLink to={homePath} aria-label="Home" className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded-lg">
           <Logo size="sm" showText={!sidebarCollapsed} />
         </NavLink>
       </div>
 
+      {scoped ? <ScopedAppSidebar navigation={scoped.navigation} section={scoped.section} collapsed={sidebarCollapsed} /> : <>
       {/* Create app + search */}
       <div className={cn('p-3 space-y-2.5', sidebarCollapsed && 'space-y-0')}>
         <Button
@@ -196,6 +189,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
           collapsed={sidebarCollapsed}
         />
 
+        <SidebarNavLink to="/apps" icon={Boxes} label="Apps" collapsed={sidebarCollapsed} />
         <SidebarNavLink to="/forms" icon={FileText} label="Forms" collapsed={sidebarCollapsed} />
         <SidebarNavLink to="/flows" icon={Workflow} label="Automations" collapsed={sidebarCollapsed} />
 
@@ -208,22 +202,12 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
               aria-expanded={appsExpanded}
               className="flex min-h-9 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg px-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 hover:text-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white"
             >
-              <Boxes className="h-4 w-4 shrink-0 text-primary-500 dark:text-primary-400" />
-              <span className="truncate">Apps</span>
+              <span className="truncate">Your apps</span>
               <span className="ml-0.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 dark:bg-white/[0.06] dark:text-slate-400">
                 {visibleApps.length}
               </span>
               <ChevronDown className={cn('ml-auto h-4 w-4 shrink-0 text-gray-400 transition-transform', appsExpanded && 'rotate-180')} />
             </button>
-            <NavLink
-              to="/apps"
-              aria-label="View all apps"
-              title="View all apps"
-              className="flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-[11px] font-semibold text-gray-500 transition hover:bg-gray-100 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-primary-300"
-            >
-              {/* An arrow, not the "opens elsewhere" mark: the Apps page is a page of this workspace. */}
-              View all <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-            </NavLink>
           </div>
         )}
         {appsExpanded && visibleApps.length === 0 && !sidebarCollapsed && (
@@ -267,7 +251,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
                       )}
                       aria-hidden="true"
                     />
-                    {statusLabel(app)}
+                    {listedStatus(app)}
                   </span>
                 </>
               )}
@@ -345,6 +329,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
       <div className="px-3 py-1">
         <SidebarNavLink to="/settings" icon={Settings} label="Settings" collapsed={sidebarCollapsed} />
       </div>
+      </>}
 
       {/* What the workspace is connected to, on one line: the desktop (a button: its services,
           plugins and AI source open from it) and where its data is kept. Here, and not floating
@@ -366,12 +351,15 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
       </div>
 
       {/* Collapse Button */}
-      <div className="p-3 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-transparent">
-        <button
+      <div className={cn('flex shrink-0 gap-1 border-t border-gray-200 p-2 dark:border-white/10', sidebarCollapsed && 'flex-col')}>
+        {placementControl}
+        {!floating && <button
           onClick={toggleSidebar}
           aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className={cn(
-            'flex items-center gap-3 px-3 py-2 w-full rounded-lg',
+            'flex min-h-10 items-center justify-center px-2 rounded-lg',
+            !placementControl && 'w-full',
             'text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-700 dark:hover:text-slate-300 transition-all duration-200 cursor-pointer',
             sidebarCollapsed && 'justify-center px-0'
           )}
@@ -381,10 +369,10 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
           ) : (
             <>
               <ChevronLeft className="h-5 w-5" />
-              <span className="text-sm font-medium">Collapse</span>
+              {!placementControl && <span className="text-sm font-medium">Collapse</span>}
             </>
           )}
-        </button>
+        </button>}
       </div>
     </aside>
   );

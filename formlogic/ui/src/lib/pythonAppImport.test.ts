@@ -110,7 +110,21 @@ describe('Python client app import', () => {
     expect(reviewAppArchive(zipSync(encode({ ...client, [path]: python }))).review.backend).toBe('native');
   });
 
-  it.each(['logic/counter.PY', 'logic/code.wasm', 'logic/code.bin', 'logic/code.mjs', 'logic/code.JS', 'pages/index.htm'])('does not expand the upload surface to %s', async path => {
+  it('accepts native JavaScript module source and refuses binary data with a module extension', async () => {
+    const path = 'logic/code.mjs';
+    const code = 'export const greeting = "Kia ora 👋";';
+    const bytes = new Uint8Array([0, 255, 1]);
+    const imported = await importNativeProject(file({ ...native(), [path]: code }));
+    expect(imported.files[path]).toBe(code);
+    await expect(importNativeProject(file({ ...native(), [path]: bytes }))).rejects.toThrow(`${path} is not UTF-8 text`);
+    // The separate FormLogic actions package accepts its own source formats.
+    expect(() => hostedPackageFromArchive(encode({ ...actions(), [path]: bytes }))).toThrow('native asset hosting');
+    const { review } = reviewAppArchive(zipSync(encode({ ...client, [path]: bytes })));
+    expect(review.assets).toBe(1);
+    expect(review.blockers).toEqual([expect.stringContaining('asset hosting')]);
+  });
+
+  it.each(['logic/counter.PY', 'logic/code.wasm', 'logic/code.bin', 'logic/code.JS', 'pages/index.htm'])('does not expand the upload surface to %s', async path => {
     const bytes = new Uint8Array([0, 255, 1]);
     await expect(importNativeProject(file({ ...native(), [path]: bytes }))).rejects.toThrow(`${path} is a kind of file this host cannot keep with an app`);
     expect(() => hostedPackageFromArchive(encode({ ...actions(), [path]: bytes }))).toThrow('native asset hosting');

@@ -72,7 +72,7 @@ it('a missing sqlite3 is a warning: the panel says what is limited and keeps Pub
   // Nothing is reported as failing or as unable to start.
   expect(failures()).toBeNull();
   expect(document.body.textContent).not.toContain('cannot start on this server yet');
-  expect(button('Import .softn project')!.hasAttribute('disabled')).toBe(false);
+  expect(button('Import project ZIP')!.hasAttribute('disabled')).toBe(false);
   await edit();
   expect(button('Publish changes')!.hasAttribute('disabled')).toBe(false);
 });

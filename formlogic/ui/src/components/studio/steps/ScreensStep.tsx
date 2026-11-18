@@ -30,6 +30,7 @@ import { Button } from '../../ui/Button';
 import { Modal } from '../../ui/Modal';
 import { Switch } from '../../ui/Switch';
 import { api } from '../../../lib/api';
+import { isDemoLocalId } from '../../../lib/demoLocal';
 import { toast } from '../../../stores/toastStore';
 import { useAppStore } from '../../../stores/appStore';
 import { cn, formatRelativeTime } from '../../../lib/utils';
@@ -144,10 +145,11 @@ export function ScreensStep({
   const [nativeInstalled, setNativeInstalled] = useState<boolean | undefined>(undefined);
   const [nativeRevision, setNativeRevision] = useState(0);
   useEffect(() => {
+    if (isDemoLocalId(app.id)) return;
     let cancelled = false;
     void api.getNativeEntry(app.slug).then(result => { if (!cancelled && result.data) { setNativeHome(!!result.data.home); setNativeInstalled(!!result.data.native); } });
     return () => { cancelled = true; };
-  }, [app.slug]);
+  }, [app.id, app.slug]);
   const [requestedSelection, setSelection] = useState<ScreenSelection>({ kind: 'home' });
   const selection = useMemo<ScreenSelection>(() => requestedSelection.kind === 'form' && !appForms.some(form => form.formId === requestedSelection.formId)
     ? { kind: 'home' }
@@ -478,7 +480,7 @@ export function ScreensStep({
             })}
             {appForms.length === 0 && (
               <p className="px-3 py-4 text-xs text-gray-500 dark:text-slate-400">
-                {nativeHome ? 'Edit the website’s files and browse its database in Native app hosting below. Add a form for anything else people should fill in.' : 'Screens are made from your forms: add one in Data & forms first.'}
+                {nativeHome ? 'Edit the website’s files and browse its database in Native app hosting below. Add a form for anything else people should fill in.' : 'Add a form in Forms to give people a screen they can fill in.'}
               </p>
             )}
             <button

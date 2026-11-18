@@ -549,6 +549,24 @@ function pathForCapability(provider: AiProviderConfig, capability: AiCapability)
   return normalizePath(provider.chatPath, DEFAULT_CHAT_PATH);
 }
 
+export function customChatEndpoint(provider: AiProviderConfig): string {
+  return normalizeBaseUrl(provider.baseUrl) + pathForCapability(provider, 'chat');
+}
+
+/** Consent follows the chosen browser-local service and address. Only the fingerprint leaves this browser. */
+export async function customToolConnection(id: string, url: string): Promise<string | null> {
+  if (!globalThis.crypto?.subtle) return null;
+  let endpoint: URL;
+  try { endpoint = new URL(url); } catch { return null; }
+  if (endpoint.protocol !== 'https:' && !(endpoint.protocol === 'http:' && isLoopbackHost(endpoint.hostname))) return null;
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([id, endpoint.href])));
+  return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export function supportsWorkspaceTools(provider: Pick<ResolvedAiProvider, 'requestTemplate' | 'responsePath'>): boolean {
+  return !provider.requestTemplate && (provider.responsePath ?? 'choices.0.message.content') === 'choices.0.message.content';
+}
+
 function isLoopbackHost(hostname: string): boolean {
   return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]' || hostname === '::1';
 }

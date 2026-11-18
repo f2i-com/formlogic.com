@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, Outlet, useParams } from 'react-router-dom';
 import { api } from '../../lib/api';
+import { deferEffect } from '../../lib/deferredEffect';
 import { useAuthStore } from '../../stores/authStore';
 import { AdminActingBanner } from './AdminActingBanner';
 import { AdminActingContext, enterActing, exitActing, type AdminActing } from './AdminActingContext';
@@ -28,6 +29,16 @@ export function AdminActingBoundary({ kind, children }: { kind: 'app' | 'form' |
   const current = resolved && resolved.target === targetId ? resolved : null;
   const acting = current?.acting ?? null;
   const error = current?.error ?? null;
+  const [admitted, setAdmitted] = useState<AdminActing | null>(null);
+
+  // Install the request scope before the owner UI can mount. A lazy editor can suspend,
+  // hide and later reconnect the same subtree, even when the owner lookup hasn't changed.
+  useLayoutEffect(() => {
+    if (!acting || !isAdmin) return;
+    enterActing(acting);
+    const cancel = deferEffect(() => setAdmitted(acting));
+    return () => { cancel(); exitActing(); };
+  }, [acting, isAdmin]);
 
   useEffect(() => {
     if (!isAdmin || !targetId) return;
@@ -38,9 +49,6 @@ export function AdminActingBoundary({ kind, children }: { kind: 'app' | 'form' |
     };
     const ready = (ctx: AdminActing) => {
       if (cancelled) return;
-      // Enter acting mode BEFORE rendering children so their mount-time
-      // fetches are already routed onto the mirror.
-      enterActing(ctx);
       setResolved({ target: targetId, acting: ctx });
     };
     const resolveOwner = (ownerId: string) => {
@@ -66,7 +74,6 @@ export function AdminActingBoundary({ kind, children }: { kind: 'app' | 'form' |
 
     return () => {
       cancelled = true;
-      exitActing();
     };
   }, [kind, targetId, isAdmin]);
 
@@ -87,18 +94,15 @@ export function AdminActingBoundary({ kind, children }: { kind: 'app' | 'form' |
     );
   }
 
-  if (!acting) {
-    return (
-      <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500" role="status" aria-label="Loading" />
-      </div>
-    );
-  }
+  const loading = <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex items-center justify-center">
+    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500" role="status" aria-label="Loading account tools" />
+  </div>;
+  if (!acting || admitted !== acting) return loading;
 
   return (
     <AdminActingContext.Provider value={acting}>
       <AdminActingBanner acting={acting} />
-      {children ?? <Outlet />}
+      <Suspense fallback={loading}>{children ?? <Outlet />}</Suspense>
     </AdminActingContext.Provider>
   );
 }

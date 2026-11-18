@@ -1,0 +1,98 @@
+/* The landing's examples and guides share the signed-in workspace accent. */
+.lv2 :is(.lv2-examples, .lv2-hosting, .lv2-guides) {
+  --guide-accent: rgb(var(--primary-700));
+  --guide-tint: rgb(var(--primary-500) / .09);
+  padding-block: clamp(42px, 6vw, 82px);
+  color: var(--lv2-ink);
+}
+:root.dark .lv2 :is(.lv2-examples, .lv2-hosting, .lv2-guides) {
+  --guide-accent: rgb(var(--primary-300));
+}
+.lv2 :is(#platform, #product, #portable-apps, #live-demo, #demo, #form-examples, #desktop, #pricing, #aokie) {
+  scroll-margin-top: 5rem;
+}
+.lv2 .lv2-guide-title {
+  margin: 0;
+  color: var(--lv2-ink);
+  font-size: clamp(1.95rem, 3.65vw, 3.45rem);
+  font-weight: 605;
+  letter-spacing: -.052em;
+  line-height: 1.08;
+  text-wrap: balance;
+}
+.lv2 .lv2-guide-head { display: flex; align-items: end; justify-content: space-between; flex-wrap: wrap; gap: 12px 32px; margin-bottom: clamp(22px, 3vw, 36px); }
+.lv2 .lv2-guide-head p, .lv2 .lv2-guide-intro {
+  max-width: 55ch; margin: 12px 0 0; color: var(--lv2-body); font-size: 1rem; line-height: 1.65;
+}
+.lv2 .lv2-guide-link, .lv2 .lv2-hosted-example figcaption a {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--guide-accent); font-size: .925rem; font-weight: 620; text-decoration: none;
+}
+.lv2 .lv2-guide-link:hover, .lv2 .lv2-hosted-example figcaption a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.lv2 .lv2-starters { display: grid; grid-template-columns: minmax(0, 1.28fr) minmax(0, 1fr); gap: clamp(14px, 2vw, 24px); }
+.lv2 .lv2-starters a { color: var(--lv2-ink); text-decoration: none; }
+.lv2 .lv2-starter-feature {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .87fr); align-items: stretch;
+  overflow: hidden; border: 1px solid var(--lv2-line); border-radius: 14px; background: var(--lv2-card);
+}
+.lv2 .lv2-starter-feature__copy { padding: clamp(20px, 2.6vw, 36px); align-self: center; }
+.lv2 .lv2-starter-feature__copy:only-child { grid-column: 1 / -1; }
+.lv2 .lv2-starter-feature__copy > svg { color: var(--guide-accent); margin-bottom: 18px; }
+.lv2 .lv2-starters h3, .lv2 .lv2-hosting__paths h3 { margin: 0; color: var(--lv2-ink); font-size: clamp(1.08rem, 1.48vw, 1.35rem); font-weight: 620; letter-spacing: -.025em; line-height: 1.26; }
+.lv2 .lv2-starters p, .lv2 .lv2-hosting__paths p { color: var(--lv2-body); margin: 7px 0 0; font-size: .9rem; line-height: 1.55; }
+.lv2 .lv2-starter-action { display: inline-flex; align-items: center; gap: 7px; margin-top: 18px; font-size: .88rem; font-weight: 620; color: var(--guide-accent); }
+.lv2 .lv2-starter-capture { min-width: 0; position: relative; overflow: hidden; background: #e0eeef; }
+.lv2 .lv2-starter-capture img { position: absolute; width: 470px; max-width: none; height: auto; top: 20%; left: 17%; border: 1px solid #c8d5d7; border-radius: 8px; box-shadow: 0 8px 24px #234c4c1c; }
+.lv2 .lv2-starter-list { display: grid; gap: 12px; }
+.lv2 .lv2-starter-list > a {
+  display: grid; align-items: center; grid-template-columns: auto 1fr auto; gap: 15px;
+  padding: clamp(16px, 2vw, 25px); border: 1px solid var(--lv2-line); border-radius: 12px; background: var(--lv2-card);
+}
+.lv2 .lv2-starter-list > a > svg:first-child { color: var(--guide-accent); }
+.lv2 .lv2-starter-list > a > svg:last-child { color: var(--lv2-body); }
+.lv2 .lv2-starters a:hover, .lv2 .lv2-hosting__paths a:hover { border-color: var(--guide-accent); }
+.lv2 .lv2-hosting { background: var(--lv2-band); border-block: 1px solid var(--lv2-line); }
+.lv2 .lv2-hosting__layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.03fr); align-items: center; gap: clamp(30px, 7vw, 95px); }
+.lv2 .lv2-hosting__paths { margin-top: 24px; border-top: 1px solid var(--lv2-line); }
+.lv2 .lv2-hosting__paths a {
+  display: grid; align-items: center; grid-template-columns: 21px 1fr 16px; gap: 13px;
+  min-height: 72px; padding: 16px 2px; border-bottom: 1px solid var(--lv2-line); text-decoration: none; color: var(--guide-accent);
+}
+.lv2 .lv2-hosting__paths h3 { font-size: 1rem; }
+.lv2 .lv2-hosting__paths p { margin-top: 3px; }
+.lv2 .lv2-hosted-example { margin: 0; min-width: 0; overflow: hidden; background: var(--lv2-card); border: 1px solid var(--lv2-line); border-radius: 14px; }
+.lv2 .lv2-hosted-example__image {
+  display: flex; align-items: flex-start; justify-content: center; overflow: hidden; height: clamp(290px, 31vw, 385px);
+  padding: 28px 20px 0; background: #eadbd2;
+}
+.lv2 .lv2-hosted-example__image img { width: min(100%, 330px); height: auto; border: 1px solid #c9b6a9; border-radius: 12px 12px 0 0; box-shadow: 0 8px 24px #4d312321; }
+.lv2 .lv2-hosted-example figcaption { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 14px; padding: 12px 18px; }
+.lv2 .lv2-hosted-example figcaption span, .lv2 .lv2-hosted-example figcaption strong { display: block; }
+.lv2 .lv2-hosted-example figcaption span { color: var(--lv2-body); font-size: .77rem; }
+.lv2 .lv2-hosted-example figcaption strong { color: var(--lv2-ink); font-size: .95rem; font-weight: 610; }
+.lv2 .lv2-guides { background: var(--lv2-band-alt); border-bottom: 1px solid var(--lv2-line); }
+.lv2 .lv2-guides__layout { display: grid; grid-template-columns: minmax(0, .68fr) minmax(0, 1.32fr); align-items: start; gap: clamp(20px, 5vw, 70px); }
+.lv2 .lv2-guides__layout .lv2-guide-link { margin-top: 10px; }
+.lv2 .lv2-guides__links { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); column-gap: clamp(14px, 3vw, 38px); }
+.lv2 .lv2-guides__links a { display: flex; align-items: center; gap: 10px; min-height: 54px; padding: 10px 0; border-top: 1px solid var(--lv2-line); text-decoration: none; color: var(--lv2-ink); font-size: .92rem; font-weight: 570; }
+.lv2 .lv2-guides__links a > svg { flex: none; color: var(--lv2-body); }
+.lv2 .lv2-guides__links a > svg:last-child { margin-left: auto; }
+.lv2 .lv2-guides__links a:hover, .lv2 .lv2-guides__links a:hover svg { color: var(--guide-accent); }
+@media (max-width: 860px) {
+  .lv2 .lv2-starters, .lv2 .lv2-hosting__layout { grid-template-columns: minmax(0, 1fr); }
+  .lv2 .lv2-starter-list { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .lv2 .lv2-hosting__layout { gap: 24px; }
+  .lv2 .lv2-guides__layout { grid-template-columns: minmax(0,1fr); gap: 16px; }
+}
+@media (max-width: 580px) {
+  .lv2 .lv2-guide-head { display: block; }
+  .lv2 .lv2-guide-head .lv2-guide-link { margin-top: 6px; }
+  .lv2 .lv2-starter-list, .lv2 .lv2-guides__links { grid-template-columns: minmax(0, 1fr); }
+  .lv2 .lv2-starter-feature { grid-template-columns: minmax(0, 1fr); }
+  .lv2 .lv2-starter-feature__copy > svg { margin-bottom: 10px; }
+  .lv2 .lv2-starter-capture { height: 125px; }
+  .lv2 .lv2-starter-capture img { top: 16px; left: 24px; width: max(100%, 425px); }
+  .lv2 .lv2-hosted-example__image { height: 270px; padding: 18px 14px 0; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .lv2 .lv2-starters a, .lv2 .lv2-hosting__paths a { transition: border-color .16s ease; }
+}

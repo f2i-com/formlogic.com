@@ -5,6 +5,7 @@ import { Plus, Trash2, Shield, X, Pencil, Check } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useResourcePaths } from '../../components/admin/AdminActingContext';
 import { Header } from '../../components/layout/Header';
+import { useAppNavigationGuard } from '../../components/layout/useAppSectionSidebar';
 import { PageBody } from '../../components/layout/PageBody';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -59,6 +60,7 @@ function AppRoleEditorContent() {
   const navGuarded = (to: string, state?: ReturnToState) => {
     if (dirty) setPendingNav({ to, state }); else navigate(to, { state });
   };
+  useAppNavigationGuard(navGuarded);
 
   const loadData = async (isCancelled: () => boolean = () => false) => {
     if (!appId) return;

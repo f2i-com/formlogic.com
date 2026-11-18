@@ -126,7 +126,7 @@ final class SoftnDirectoryServiceTest extends TestCase
         self::assertSame(['name' => 'Booking', 'description' => 'Book a table.', 'category' => 'tools', 'tags' => ['food', 'tables'], 'categoryName' => 'Tools'], $draft['listing']);
         self::assertSame(['net' => ['enabled' => true, 'allowed_hosts' => ['api.example.com']]], $draft['permissions']);
         self::assertStringContainsString('server/', $draft['warnings'][0]);
-        self::assertSame('/softn-directory/approve/' . $draft['draftId'], $draft['approvalUrl']);
+        self::assertSame('/app-directory/approve/' . $draft['draftId'], $draft['approvalUrl']);
         $file = self::$tmp . '/staging/' . $draft['draftId'] . '.softn';
         self::assertSame(hash_file('sha256', $file), $draft['sha256']);
         $zip = new \ZipArchive();
@@ -766,7 +766,7 @@ final class SoftnDirectoryServiceTest extends TestCase
 
         self::assertTrue($tools->call('softn_get_started', [], $ctx)['enabled']);
         $draft = $tools->call('softn_create_draft', ['appId' => $this->appId, 'listing' => ['name' => 'Booking', 'category' => 'tools']], $ctx);
-        self::assertSame('https://forms.test/softn-directory/approve/' . $draft['draftId'], $draft['approvalUrl']);
+        self::assertSame('https://forms.test/app-directory/approve/' . $draft['draftId'], $draft['approvalUrl']);
         $asked = $tools->call('softn_publish_draft', ['draftId' => $draft['draftId']], $ctx);
         self::assertSame('awaiting_approval', $asked['status']);
         self::assertStringContainsString('approvalUrl', $asked['next']);

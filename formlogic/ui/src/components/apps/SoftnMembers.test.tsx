@@ -52,7 +52,7 @@ it('lists the people of an app only invited people can use, and how they join, w
   expect(mocks.signup).toMatchObject({ app, roles: ROLES, onReloadApp: reload, peopleName: 'the list above' });
   // Who can use it is changed in the app's own settings, and its roles on the roles page: neither
   // sends a SoftN app's owner to the App Studio, which is for forms apps.
-  expect(hrefs()).toEqual(['/apps/app-1/softn/settings#settings-access', '/apps/app-1/roles']);
+  expect(hrefs()).toEqual(['/apps/app-1/web/settings#settings-access', '/apps/app-1/roles']);
 });
 
 it('says so of an app anyone with the link can use', async () => {

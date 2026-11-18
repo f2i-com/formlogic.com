@@ -48,7 +48,6 @@ import { useAppStore } from '../stores/appStore';
 import { api } from '../lib/api';
 import { loadUiCache, saveUiCache } from '../lib/uiCache';
 import { loadAppGroupsCache, fetchAppGroups, type AppGroup } from '../lib/appGroups';
-import { appClickPath } from '../lib/appNavigation';
 import { actionsMenuPosition, isMenuScroll } from '../lib/actionsMenu';
 import { isDemoLocalId } from '../lib/demoLocal';
 import { cn, formatBytes, formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
@@ -1246,8 +1245,8 @@ export function Dashboard() {
           ? (count === 1 ? <>Your app is live</> : <>All {num(count)} apps are live</>)
           : live === 0
             ? <>{num(count)} app{count === 1 ? '' : 's'}, not live yet</>
-            : <>{num(live)} of {num(count)} apps are live</>}
-        {tables > 0 && <>, holding {num(tables.toLocaleString())} table{tables === 1 ? '' : 's'}{bytes > 0 && <> ({formatBytes(bytes)})</>}</>}.
+            : <>{num(live)} of {num(count)} apps {live === 1 ? 'is' : 'are'} live</>}.
+        {tables > 0 && <span className="font-normal text-slate-600 dark:text-slate-300"> {num(tables.toLocaleString())} table{tables === 1 ? '' : 's'} across your apps{bytes > 0 && <> ({formatBytes(bytes)})</>}.</span>}
       </>
     );
   }
@@ -1262,31 +1261,6 @@ export function Dashboard() {
           layout exactly when the content box was 704px — 219px tracks, with app names and
           "12 forms · published" both truncated to nothing. Size against the real box. */}
       <PageBody className="@container/dash flex-1">
-        {/* Post-signup security nudge: suggest (optional) two-factor auth to new accounts. */}
-        {showMfaNudge && (
-          <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-primary-200/70 dark:border-primary-500/25 bg-primary-50/70 dark:bg-primary-500/10 p-4">
-            <ShieldCheck className="h-5 w-5 text-primary-600 dark:text-primary-400 flex-none" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-gray-900 dark:text-white">Secure your account with two-factor authentication</p>
-              <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
-                Optional, takes a minute: one-time codes from Google Authenticator on unknown browsers.
-              </p>
-            </div>
-            <div className="flex flex-none items-center gap-2">
-              <Button size="sm" variant="outline" onClick={() => { dismissMfaNudge(); navigate('/settings#security'); }}>
-                Set up
-              </Button>
-              <button
-                type="button"
-                onClick={dismissMfaNudge}
-                aria-label="Dismiss two-factor suggestion"
-                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-slate-200 hover:bg-primary-100/60 dark:hover:bg-primary-500/20 transition-colors cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        )}
 
         {(formsFailed || statsFailed) && (
           <div
@@ -1316,29 +1290,20 @@ export function Dashboard() {
           </div>
         )}
 
-        {/* Headline band — the workspace reads as one live sentence, not four stat cards: the apps
-            first for an owner who hosts some, then the week's answers. The sentence is the band:
-            no title stands over it, so the page's lists start higher. */}
-        <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-gray-200/80 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 @3xl/dash:flex-row @3xl/dash:items-center @3xl/dash:justify-between @3xl/dash:px-5">
-          <p className="min-w-0 text-base font-medium leading-relaxed text-gray-800 dark:text-slate-100 @2xl/dash:text-lg" aria-live="polite">
+        {!showGettingStarted && <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-primary-200/70 bg-linear-to-br from-primary-50 via-white to-white p-4 dark:border-slate-700 dark:from-slate-800 dark:via-slate-900 dark:to-slate-900 @2xl/dash:p-5 @5xl/dash:flex-row @5xl/dash:items-center @5xl/dash:justify-between">
+          <p className="min-w-0 max-w-2xl text-lg font-semibold leading-snug tracking-tight text-gray-900 dark:text-slate-100 @2xl/dash:text-xl" aria-live="polite">
             {appsLine}{appsLine && headline ? ' ' : null}{headline}
           </p>
-          {/* Deliberately minimal (owner direction): the sidebar's Create app owns the
-              whole app journey (studio covers diagrams, AI and the rest) — the dashboard
-              keeps just the form quick-start and pack import. The first button is what this
-              owner makes: an app for someone who hosts apps and has no forms, a form otherwise. */}
-          {!showGettingStarted && (
-            <div className="flex flex-none flex-wrap gap-2">
-              <Button size="sm" variant={appsOnly ? 'outline' : 'primary'} onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
-                Create a form
-              </Button>
-              <Button size="sm" variant={appsOnly ? 'primary' : 'outline'} onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>Create an app</Button>
-              <Button size="sm" variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
-                Start from a template
-              </Button>
-            </div>
-          )}
-        </div>
+          <div className="flex flex-wrap gap-2 @5xl/dash:flex-none">
+            {!appsOnly && <Button size="sm" onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
+              Create a form
+            </Button>}
+            <Button size="sm" variant={appsOnly ? 'primary' : 'outline'} onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>Create an app</Button>
+            <Button size="sm" variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
+              Start from a template
+            </Button>
+          </div>
+        </div>}
 
         {/* The apps changed most recently, as the Apps page lists them: one compact row each with
             its state, what it holds and the ways into it (open, data, settings). Removing an app
@@ -1346,7 +1311,7 @@ export function Dashboard() {
         {recentApps.length > 0 && (
           <section aria-labelledby="home-apps" className="mb-6">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <h2 id="home-apps" className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400">Your apps</h2>
+              <h2 id="home-apps" className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">Your apps</h2>
               <Button
                 variant="ghost"
                 size="sm"
@@ -1361,8 +1326,7 @@ export function Dashboard() {
               apps={recentApps}
               summaries={appSummaries}
               packNames={NO_PACK_NAMES}
-              canManage={(app) => app.canManage ?? !!app.ownerId}
-              managePath={appClickPath}
+              userId={user?.id}
               sortable={false}
               footer={apps.length > recentApps.length
                 ? <Link to="/apps" className="font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-300 max-sm:inline-flex max-sm:min-h-11 max-sm:items-center">All {apps.length.toLocaleString()} apps</Link>
@@ -1425,7 +1389,7 @@ export function Dashboard() {
             under their apps. The line's buttons are the ones a first form starts from. */}
         {appsOnly && (
           <div className="flex flex-col gap-2 rounded-2xl border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-600 dark:border-slate-700 dark:text-slate-400 @2xl/dash:flex-row @2xl/dash:items-center @2xl/dash:justify-between">
-            <p className="min-w-0"><span className="font-medium text-gray-900 dark:text-white">No forms yet.</span> A form asks questions and keeps the answers; the newest answers are listed here.</p>
+            <p className="min-w-0"><span className="font-medium text-gray-900 dark:text-white">No forms yet.</span> Create one to collect responses here.</p>
             <Button variant="outline" size="sm" className="flex-none" onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>Create form</Button>
           </div>
         )}
@@ -1749,6 +1713,19 @@ export function Dashboard() {
             )}
           </div>
         </div>}
+        {showMfaNudge && (
+          <aside aria-label="Account security" className="mt-6 grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 border-t border-slate-200 pt-4 dark:border-slate-800 @2xl/dash:flex @2xl/dash:items-center">
+            <ShieldCheck className="mt-0.5 size-5 shrink-0 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">Two-factor authentication</p>
+              <p className="mt-0.5 text-xs leading-5 text-slate-600 dark:text-slate-400">Add a sign-in code for browsers you haven’t used before.</p>
+            </div>
+            <Button size="sm" variant="outline" className="col-start-2 row-start-2 justify-self-start" aria-label="Set up two-factor authentication" onClick={() => { dismissMfaNudge(); navigate('/settings#security'); }}>Set up</Button>
+            <button type="button" onClick={dismissMfaNudge} aria-label="Dismiss two-factor suggestion" className="col-start-3 row-start-1 grid size-11 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-primary-500 dark:hover:bg-slate-800">
+              <X className="size-4" aria-hidden="true" />
+            </button>
+          </aside>
+        )}
       </PageBody>
 
       {/* Embed Modal */}

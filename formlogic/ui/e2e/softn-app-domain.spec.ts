@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
 import { E2E_FRONTEND_BASE_URL, sessionHeaders } from './session-request';
+import { openAppSection } from './app-sections';
 
 // A SoftN app on its own domain, on real hostnames: the browser resolves them to this server, so
 // Origin, Host, cookies and the page's address are all what a visitor's would be. That is what a
@@ -81,8 +82,8 @@ async function publishApp(context: BrowserContext, request: APIRequestContext, n
 
 /** Connects a domain the way an owner does, from the app's Domains section. */
 async function connectDomain(page: Page, appId: string, domain: string) {
-  await page.goto(`/apps/${appId}/softn`);
-  await page.getByRole('navigation', { name: 'App sections' }).getByRole('link', { name: 'Domains', exact: true }).click();
+  await page.goto(`/apps/${appId}/web`);
+  await openAppSection(page, 'Domains');
   await expect(page.getByLabel('Domain mode')).toHaveValue('runtime_direct');
   await page.getByLabel('Custom domain').fill(domain);
   await page.getByRole('button', { name: 'Add', exact: true }).click();

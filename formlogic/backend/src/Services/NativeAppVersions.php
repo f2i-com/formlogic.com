@@ -185,23 +185,27 @@ final class NativeAppVersions
             $changes = self::changes([], [], $files, $newMap, null, null);
         } else {
             $oldVersion = (int) ($old['version'] ?? 0);
-            $oldFiles = array_filter(is_array($old['files'] ?? null) ? $old['files'] : [], 'is_string');
+            $originalFiles = self::sourceOf($old);
+            $oldFiles = NativeAppService::portableFiles($originalFiles);
             $oldAssets = is_array($old['assets'] ?? null) ? $old['assets'] : [];
             $oldJson = self::json($oldFiles);
+            // A legacy head identifies the full original source. Match it before storing
+            // the portable copy, so its pin, author and summary stay with this version.
+            $originalText = hash('sha256', $originalFiles === $oldFiles ? $oldJson : self::json($originalFiles));
             $oldPrint = self::printOf($oldAssets);
             // Where a record known to be this project's already names each of its files (knownMap),
             // a file whose bytes are kept under that name is not decoded and hashed again. Any
             // doubt about one file hashes it, and any disagreement hashes them all.
-            $known = self::knownMap($dir, $index, $operation, $oldVersion, hash('sha256', $oldJson), $oldPrint);
+            $known = self::knownMap($dir, $index, $operation, $oldVersion, $originalText, $oldPrint);
             $oldMap = self::keepAssets($dir, $oldAssets, $known ?? []);
             if ($known !== null && $oldMap !== $known) $oldMap = self::keepAssets($dir, $oldAssets);
             [$oldText, $oldTextBytes] = self::putObject($dir, 'texts', $oldJson);
             [$oldMapKey, $oldMapBytes] = $oldMap === [] ? [null, 0] : self::putObject($dir, 'maps', self::json($oldMap));
-            $index = self::adopting($dir, $index, $operation, $oldVersion, $oldText, $oldMapKey);
+            $index = self::adopting($dir, $index, $operation, $oldVersion, $originalText, $oldMapKey);
             // What was recorded of this version when it was installed, if it is this version: a
             // project put there another way (a restore from a backup, an app from before its
             // history was kept) has no one known to have made it.
-            $head = self::describes($index['head'], $oldVersion, $oldText, $oldMapKey) ? $index['head'] : null;
+            $head = self::describes($index['head'], $oldVersion, $originalText, $oldMapKey) ? $index['head'] : null;
             $oldSettings = ['access' => ($old['access'] ?? '') === 'members' ? 'members' : 'application', 'home' => ($old['home'] ?? false) === true];
             $record = [
                 'version' => $oldVersion,
@@ -336,7 +340,7 @@ final class NativeAppVersions
             $dir = $root . self::FOLDER;
             $index = self::reading($dir, $project);
             $current = (int) ($project['version'] ?? 0);
-            $currentFiles = self::sourceOf($project);
+            $currentFiles = NativeAppService::portableFiles(self::sourceOf($project));
             $reach = self::outsideSites($currentFiles);
             if ($version === $current) {
                 $none = self::changes($currentFiles, [], $currentFiles, [], null, null);
@@ -372,7 +376,7 @@ final class NativeAppVersions
             $index = self::reading($dir, $project);
             $current = (int) ($project['version'] ?? 0);
             if ($version === $current) {
-                $files = self::sourceOf($project);
+                $files = NativeAppService::portableFiles(self::sourceOf($project));
                 $map = $named && isset($files[$path]) ? [] : $this->currentMap($dir, $index, $project, $appId);
             } else {
                 $record = self::recordOf($index, $version, $current);
@@ -709,7 +713,7 @@ final class NativeAppVersions
         $whole = $this->native->get($appId) ?? [];
         $version = (int) ($whole['version'] ?? 0);
         $assets = is_array($whole['assets'] ?? null) ? $whole['assets'] : [];
-        $text = hash('sha256', self::json(self::sourceOf($whole)));
+        $text = hash('sha256', self::json(self::sourceOf($project)));
         $print = self::printOf($assets);
         $map = false;
         foreach ($waiting as $left) {
@@ -855,6 +859,14 @@ final class NativeAppVersions
     private static function row(array $record, int $current, bool $paths = false): array
     {
         $changes = is_array($record['changes'] ?? null) ? $record['changes'] : null;
+        if (is_array($changes['paths'] ?? null)) {
+            foreach ($changes['paths'] as $kind => $names) {
+                if (!is_array($names)) continue;
+                $visible = array_values(array_filter($names, static fn ($name) => !is_string($name) || !NativeAppService::isHostConfig($name)));
+                if (isset($changes[$kind])) $changes[$kind] -= count($names) - count($visible);
+                $changes['paths'][$kind] = $visible;
+            }
+        }
         if ($changes !== null && !$paths) unset($changes['paths']);
         // A record written before these two were looked for says nothing of them.
         if ($changes !== null) $changes += ['outside' => false, 'asks' => false];
@@ -1340,7 +1352,7 @@ final class NativeAppVersions
         if ($json === null) throw new RuntimeException(self::DAMAGED, 409);
         $value = json_decode($json, true, 8);
         if (!is_array($value)) throw new RuntimeException(self::DAMAGED, 409);
-        return $value;
+        return $kind === 'texts' ? NativeAppService::portableFiles($value) : $value;
     }
 
     /**

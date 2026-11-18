@@ -9,6 +9,8 @@ use InvalidArgumentException;
 /** Owner database maintenance. App-specific validation remains in the app's routes. */
 final class NativeRecordStore
 {
+    private ?\PDOStatement $acknowledgeEvent = null;
+
     /**
      * `$revisionKey`: a secret of the installation's, which a record's revision is keyed with. The
      * revision is made from the whole row, hidden columns included (a change to a credential is a
@@ -18,6 +20,25 @@ final class NativeRecordStore
      * for a caller with no installation behind it.
      */
     public function __construct(private PDO $db, private ?string $revisionKey = null) {}
+
+    /** Open an operation's connection. A read snapshot keeps counts, keys and rows consistent. */
+    public static function open(string $path, ?string $revisionKey = null, bool $readSnapshot = false, int $busyTimeout = 1500): self
+    {
+        $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+        if ($readSnapshot) {
+            $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=' . $busyTimeout);
+            $db->beginTransaction();
+        }
+        return new self($db, $revisionKey);
+    }
+
+    /** Detach the connection before releasing the app lock, even if an exception trace retains this store. */
+    public function close(): void
+    {
+        try {
+            if ($this->db->inTransaction()) $this->db->rollBack();
+        } finally { unset($this->acknowledgeEvent, $this->db); }
+    }
 
     /**
      * Column names that hold a credential or sealed data: never listed, returned, searched,
@@ -674,11 +695,39 @@ final class NativeRecordStore
             // Under the key the database gives the row, so two spellings of one key ('7', '07') are one target.
             $targets[serialize(array_slice($found[0], 2 * count($stamped)))] = $keys;
         }
+        // An exception trace can keep the statement and its SQLite file open after the app lock is released.
+        unset($look);
         if ($stale) throw new RuntimeException(($stale === 1 ? '1 record has' : $stale . ' records have') . ' changed or gone since the list was loaded, so nothing was deleted. Refresh the records and try again.', 409);
         $this->captureEvents($subscriptions);
         $delete = $this->db->prepare('DELETE FROM ' . self::quote($table) . ' WHERE ' . $where);
         foreach ($targets as $keys) $delete->execute($keys);
         return ['saved' => true, 'deleted' => count($targets)];
+    }
+
+    /** Deliver committed events in order. Leave unacknowledged events for a retry if delivery fails. */
+    public function dispatchEvents(callable $deliver, int $limit): int
+    {
+        $this->db->exec('PRAGMA busy_timeout=1500');
+        if (!$this->db->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_formlogic_record_events'")->fetchColumn()) return 0;
+        $events = $this->db->query('SELECT * FROM _formlogic_record_events ORDER BY created_at, rowid LIMIT ' . max(1, min(500, $limit)))->fetchAll();
+        $this->acknowledgeEvent = $this->db->prepare('DELETE FROM _formlogic_record_events WHERE id=?');
+        $readRow = function (string $table, string $column, mixed $value): ?array {
+            if (!isset($this->db)) return null;
+            if (!preg_match('/^[A-Za-z][A-Za-z0-9_]{0,62}$/D', $table) || !preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,62}$/D', $column) || (!is_string($value) && !is_int($value))) return null;
+            try {
+                $statement = $this->db->prepare('SELECT * FROM "' . $table . '" WHERE "' . $column . '" = ? LIMIT 1');
+                $statement->execute([$value]);
+                $row = $statement->fetch();
+                return is_array($row) ? $row : null;
+            } catch (\PDOException) {
+                return null;
+            }
+        };
+        foreach ($events as $event) {
+            $deliver($event['id'], $event['event_name'], json_decode($event['data_json'], true, 64, JSON_THROW_ON_ERROR), json_decode($event['bindings_json'], true, 64, JSON_THROW_ON_ERROR), $readRow);
+            $this->acknowledgeEvent->execute([$event['id']]);
+        }
+        return count($events);
     }
 
     /** Same durable, redacted event contract as the ZIPP host, including cascaded writes. */

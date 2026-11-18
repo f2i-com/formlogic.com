@@ -95,4 +95,23 @@ describe('BringDataPanel', () => {
     await bring();
     expect(mocks.importNativeData.mock.calls[0][3]).toBe(false);
   });
+
+  it('waits for the selected key and ignores a late result for a previous database', async () => {
+    await act(async () => root.render(<BringDataPanel appId="app-1" manifestId="example.app" onImported={vi.fn()} />));
+    const submit = () => [...container.querySelectorAll('button')].find(button => button.textContent === 'Bring this data')!;
+    await choose('Choose the app database', new File(['first'], 'first.sqlite'));
+    const old = new File([], 'old.json');
+    let finish!: (value: string) => void;
+    vi.spyOn(old, 'text').mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    await choose('Choose the key file', old);
+    expect(submit().disabled).toBe(true);
+    await choose('Choose the app database', new File(['second'], 'second.sqlite'));
+    await act(async () => finish('invalid JSON'));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(submit().disabled).toBe(false);
+    await choose('Choose the key file', keyFile({ appId: 'another.app' }));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Choose the key file for example.app');
+    expect(submit().disabled).toBe(true);
+    expect(mocks.importNativeData).not.toHaveBeenCalled();
+  });
 });

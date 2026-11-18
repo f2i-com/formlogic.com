@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Check, Laptop, KeyRound } from "lucide-react";
 import { Header } from "../components/layout/Header";
@@ -27,14 +27,24 @@ export default function ConnectAiWizard() {
   const [checking, setChecking] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
+  const stepTitle = useRef<HTMLHeadingElement>(null);
+  const previousStep = useRef(step);
+  const verification = useRef(0);
+  useEffect(() => {
+    if (previousStep.current !== step) stepTitle.current?.focus();
+    previousStep.current = step;
+  }, [step]);
+  useEffect(() => () => { verification.current += 1; }, []);
   const presence = useFlowsDesktopPresence(true, desktopConnection === 'local', desktopConnection === 'account');
   const user = useAuthStore((s) => s.user);
   const verify = async () => {
+    const attempt = ++verification.current;
     setChecking(true);
     setError("");
     setReady(false);
     try {
       const result = await api.getAiPreferences();
+      if (verification.current !== attempt) return;
       if (!result.data)
         throw new Error(
           result.error || "Could not read your saved AI settings.",
@@ -87,21 +97,29 @@ export default function ConnectAiWizard() {
           );
         }
       }
+      if (verification.current !== attempt) return;
       cacheAiPreferences(prefs);
       setReady(true);
     } catch (e) {
+      if (verification.current !== attempt) return;
       setError(
         e instanceof Error ? e.message : "Could not check the connection.",
       );
     } finally {
-      setChecking(false);
+      if (verification.current === attempt) setChecking(false);
     }
   };
-  const changeStep = (next: number) => {
-    setStep(next);
+  const resetCheck = () => {
+    verification.current += 1;
+    setChecking(false);
     setReady(false);
     setError("");
   };
+  const changeStep = (next: number) => {
+    resetCheck();
+    setStep(next);
+  };
+  const titles = ["How would you like to connect?", method === "desktop" ? "Connect your OAIY computer" : "Add your API connection", "Choose your default AI"];
   return (
     <div className="min-h-screen">
       <Header title="Connect your AI" />
@@ -136,14 +154,12 @@ export default function ConnectAiWizard() {
           ))}
         </ol>
         <section
-          onChange={() => setReady(false)}
+          onChange={resetCheck}
           className="min-w-0 space-y-5 rounded-2xl border border-gray-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900 sm:p-7"
         >
+          <h3 ref={stepTitle} tabIndex={-1} className="scroll-mt-20 text-lg font-semibold focus:outline-none">{titles[step]}</h3>
           {step === 0 && (
             <>
-              <h3 className="text-lg font-semibold">
-                How would you like to connect?
-              </h3>
               <div className="grid gap-4 sm:grid-cols-2">
                 {(
                   [
@@ -180,9 +196,6 @@ export default function ConnectAiWizard() {
           )}
           {step === 1 && method === "desktop" && (
             <>
-              <h3 className="text-lg font-semibold">
-                Connect your OAIY computer
-              </h3>
               <fieldset className="space-y-2">
                 <legend className="mb-2 text-sm font-medium">Connection method</legend>
                 <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
@@ -228,7 +241,6 @@ export default function ConnectAiWizard() {
           )}
           {step === 1 && method === "custom" && (
             <>
-              <h3 className="text-lg font-semibold">Add your API connection</h3>
               <ol className="list-decimal space-y-3 pl-5 text-sm leading-6">
                 <li>
                   Have your provider endpoint, model name and API key ready.
@@ -253,7 +265,6 @@ export default function ConnectAiWizard() {
           )}
           {step === 2 && (
             <>
-              <h3 className="text-lg font-semibold">Choose your default AI</h3>
               <p className="text-sm text-gray-500">
                 Select the provider you connected. These settings power chat and
                 automations using your default AI.

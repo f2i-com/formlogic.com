@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Compass, RotateCcw, Sparkles } from 'lucide-react';
+import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Compass, RotateCcw, Sparkles } from 'lucide-react';
+import { AppSectionBar } from '../../components/apps/AppSectionBar';
+import { AppTile } from '../../components/apps/AppTile';
 import { Header } from '../../components/layout/Header';
 import { PageBody, PAGE_GUTTER } from '../../components/layout/PageBody';
+import { sectionForAppItems } from '../../components/layout/appSectionNavigation';
+import { useAppSectionSidebar } from '../../components/layout/useAppSectionSidebar';
+import { useFormsWorkspaceNavigation } from '../../components/layout/useFormsWorkspaceNavigation';
 import { Button } from '../../components/ui/Button';
 import { StudioHeaderActions, StudioStateLine } from '../../components/studio/StudioTopBar';
-import { StudioSectionNav } from '../../components/studio/StudioRail';
 import { StudioCommandPalette } from '../../components/studio/StudioCommandPalette';
 import { StudioAppMenu } from '../../components/studio/StudioAppMenu';
 import { StudioSaveErrorStrip } from '../../components/studio/StudioSaveErrorStrip';
@@ -14,7 +18,6 @@ import {
   STUDIO_STEPS,
   computeUnpublishedChanges,
   deriveNextAction,
-  deriveSectionBadges,
   isStudioStep,
   type StudioStepId,
 } from '../../components/studio/studioSteps';
@@ -26,6 +29,8 @@ import { AutomationsStep } from '../../components/studio/steps/AutomationsStep';
 import { AccessStep } from '../../components/studio/steps/AccessStep';
 import { PublishStep } from '../../components/studio/steps/PublishStep';
 import { useUIStore } from '../../stores/uiStore';
+import { useAuthStore } from '../../stores/authStore';
+import { viewerOwnsApp } from '../../types/app';
 import { returnToState } from '../../hooks/useReturnTo';
 import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
 import { isDemoLocalId } from '../../lib/demoLocal';
@@ -33,7 +38,7 @@ import { useKeyboardShortcuts, type KeyboardShortcut } from '../../hooks/useKeyb
 import { cn } from '../../lib/utils';
 import { useNativeTables } from '../../components/studio/useNativeTables';
 import { useAdminActing } from '../../components/admin/AdminActingContext';
-import { isSoftnApp, softnPathForStudio, softnWorkspacePath } from '../../lib/softnApps';
+import { isSoftnApp, softnPathForStudio } from '../../lib/softnApps';
 
 /** One suggestion per section, offered only when a default AI can actually run. */
 const STEP_PROMPTS: Record<StudioStepId, string> = {
@@ -46,22 +51,16 @@ const STEP_PROMPTS: Record<StudioStepId, string> = {
 };
 
 /**
- * The App Studio: one workspace per forms app. The same frame as every page that
- * manages an app: the page Header with the app's name, then a row of six sections —
- * Overview, Data, Screens, Automations, Access, Publish — each at its own address,
- * with the app's state at the row's end. Everything reads and writes the real app
- * APIs; deep surfaces (form builder, flow canvas, diagram, screen studios) open
- * from their sections.
- *
- * It is deliberately NOT a wizard. An owner opens this screen for the life of
- * the app, so there is no step counter, no progress bar and no Previous/Next
- * bar pinned over the content — the nav carries what each section holds, and
- * one recommendation says what is worth doing next.
+ * The forms workspace uses the app shell's navigation. Its section URLs also open
+ * on their own, with the same section picker used by the web workspace.
  */
 export function AppStudio() {
   const { appId, step: stepParam } = useParams<{ appId: string; step?: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const data = useStudioData(appId);
+  const userId = useAuthStore(s => s.user?.id);
   const setChatSeed = useUIStore((s) => s.setChatSeed);
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
@@ -74,12 +73,19 @@ export function AppStudio() {
     setChatOpen(true);
   };
 
-  const activeStep: StudioStepId = isStudioStep(stepParam) ? stepParam : 'data';
+  const activeStep: StudioStepId = isStudioStep(stepParam) ? stepParam : stepParam ? 'data' : 'plan';
   const acting = useAdminActing();
-  const nativeDatabase = useNativeTables(appId && data.app && !isDemoLocalId(appId) && !acting ? appId : undefined, activeStep);
+  const canManage = viewerOwnsApp(data.app ?? undefined, userId);
+  const hasWebApp = !!data.app && isSoftnApp(data.app);
+  const addingFirstForm = stepParam === 'data' && searchParams.get('new') === 'form';
+  const goToWeb = hasWebApp && !data.formsFailed && data.appForms.length === 0 && !addingFirstForm;
+  const navigation = useFormsWorkspaceNavigation(appId, { hasWebApp, canManage });
+  const section = sectionForAppItems(navigation, location.pathname) || activeStep;
+  const visible = canManage && !data.initialLoading && !goToWeb && isStudioStep(stepParam);
+  const hasSidebar = useAppSectionSidebar(data.app, visible ? navigation : null, navigate);
+  const nativeDatabase = useNativeTables(appId && canManage && !goToWeb && !isDemoLocalId(appId) && !acting ? appId : undefined, activeStep);
 
-  // Footer navigation should reveal the next section from its heading: at once, as a page opens (the
-  // workspace's smooth scrolling ran the page up through the whole of the next section).
+  // A new section opens at its heading even when the previous section was scrolled.
   useEffect(() => { window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); }, [appId, activeStep]);
 
   // The save indicator starts clean per app — one app's failure must not haunt
@@ -114,28 +120,11 @@ export function AppStudio() {
     );
   }, [data.app, data.appForms, data.formsById, data.flows]);
 
-  const badges = useMemo(
-    () =>
-      deriveSectionBadges({
-        formCount: data.appForms.length,
-        nativeTableCount: nativeDatabase.tables.length,
-        flowCount: data.flows.length,
-        activeFlowCount: data.flows.filter((f) => f.enabled).length,
-        roleCount: data.roles.length,
-        published: data.app?.status === 'published',
-        publishedVersion: data.app?.publishedVersion ?? 0,
-        unpublishedCount: changes.everPublished ? changes.count : 0,
-      }),
-    [data.appForms.length, data.app, data.flows, data.roles.length, changes, nativeDatabase.tables.length]
-  );
-
   const setStep = useCallback((step: StudioStepId) => {
     if (appId) navigate(`/apps/${appId}/studio/${step}`);
   }, [appId, navigate]);
 
   const activeIndex = STUDIO_STEPS.findIndex((s) => s.id === activeStep);
-  const next = STUDIO_STEPS[activeIndex + 1];
-  const previous = STUDIO_STEPS[activeIndex - 1];
   const openPreview = useCallback(() => {
     if (!data.app) return;
     navigate(`/app/${data.app.slug}`, {
@@ -182,7 +171,7 @@ export function AppStudio() {
       action: () => setStep(step.id),
     })),
   ], [openPreview, setStep]);
-  useKeyboardShortcuts({ shortcuts, enabled: !!data.app });
+  useKeyboardShortcuts({ shortcuts, enabled: visible });
 
   // ONE recommendation, derived from real state — the nav says what each section
   // holds, this says what is worth doing next. Null = the app is in good shape
@@ -207,7 +196,7 @@ export function AppStudio() {
 
   if (!appId) return <Navigate to="/apps" replace />;
 
-  const backToApps = { onClick: () => navigate('/apps'), label: 'Back to apps' };
+  const backToApps = { onClick: () => navigate('/apps'), label: 'Back to apps', text: 'Apps' };
 
   // A transport failure is not a missing app: telling an owner their app was
   // deleted because a request dropped is both wrong and a dead end.
@@ -248,28 +237,20 @@ export function AppStudio() {
     );
   }
 
-  // Members without manage rights use the app, they don't edit it (ownerId is
-  // stripped from non-owner reads, so its absence is the capability signal).
-  if (!data.app.ownerId) {
+  if (!canManage) {
     return <Navigate to={`/app/${data.app.slug}`} replace />;
   }
 
-  // The studio is for forms apps. A SoftN app is managed on its own page, which has what each
-  // part of the studio did for it (its data, members, automations and settings): an address of
-  // the studio that names one goes there. Unless the app also holds forms, as some made before
-  // the two were told apart do: their forms, relations and screens have no other home, so such
-  // an app keeps its studio, under a line that says where the rest of it is. Decided once its
-  // forms are known, and never on a read of them that failed.
-  const softn = isSoftnApp(data.app);
-  if (softn && !data.formsFailed && data.appForms.length === 0) {
+  // Existing web-only Studio bookmarks still open the equivalent project section.
+  // The explicit first-form link starts form design even for an empty web project.
+  if (goToWeb) {
     return <Navigate to={softnPathForStudio(appId, stepParam)} replace />;
   }
 
   // Resolve the entry URL before mounting a section: the previous effect briefly
   // mounted Data & forms while deciding that an empty app should open Overview.
   if (!isStudioStep(stepParam)) {
-    const entry = stepParam === undefined && !data.formsFailed && data.appForms.length === 0 ? 'plan' : 'data';
-    return <Navigate to={`/apps/${appId}/studio/${entry}`} replace />;
+    return <Navigate to={`/apps/${appId}/studio/${activeStep}`} replace />;
   }
 
   const active = STUDIO_STEPS[activeIndex];
@@ -278,6 +259,7 @@ export function AppStudio() {
     <div className="min-h-screen">
       <Header
         title={data.app.name}
+        mark={<AppTile app={data.app} size="sm" className="h-7 w-7 rounded-md" />}
         back={backToApps}
         actions={
           <StudioHeaderActions
@@ -295,11 +277,10 @@ export function AppStudio() {
 
       {appMenuOpen && (
         <StudioAppMenu
-          app={data.app}
-          changes={changes}
           aiAvailable={aiAvailable}
           aiPrompt={STEP_PROMPTS[activeStep]}
           onClose={() => setAppMenuOpen(false)}
+          onOpenApp={openPreview}
           onOpenSearch={() => setCommandPaletteOpen(true)}
           onOpenPublish={() => setStep('publish')}
           onAskAi={openContextualChat}
@@ -313,6 +294,7 @@ export function AppStudio() {
           formsById={data.formsById}
           flows={data.flows}
           roles={data.roles}
+          navigation={navigation}
           activeStep={activeStep}
           aiAvailable={aiAvailable}
           onClose={() => setCommandPaletteOpen(false)}
@@ -331,20 +313,10 @@ export function AppStudio() {
         every width.
       */}
       <PageBody className="@container/studio">
-        <StudioSectionNav
-          appId={appId}
-          activeStep={activeStep}
-          badges={badges}
-          end={<StudioStateLine app={data.app} changes={changes} onOpenPublish={() => setStep('publish')} />}
-        />
+        <AppSectionBar items={navigation} section={section} hasSidebar={hasSidebar}
+          trail={[{ label: navigation.find(item => item.value === section)?.label ?? active.label }]}
+          status={<StudioStateLine app={data.app} changes={changes} onOpenPublish={() => setStep('publish')} />} />
 
-        {/* The section's name is in the row above, so it is not painted again: a heading for
-            a screen reader's outline, and ONE line under the row.
-            The line is the recommendation when there is one about THIS section, and what the
-            section is for otherwise. The recommendation used to be a permanent strip that
-            showed the same section-agnostic advice on all six sections, then a card of its
-            own above the section; said in the section's one line it reads as advice, and
-            the section starts right under it. */}
         <div className="mb-4 mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <h2 className="sr-only">{active.label}</h2>
           {nextAction && nextAction.step === activeStep ? (
@@ -367,19 +339,12 @@ export function AppStudio() {
           )}
         </div>
 
-        {/* A SoftN app that also holds forms: the studio is for those forms, and the rest of the app is on its own page. */}
-        {softn && (
-          <p className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-primary-200/80 bg-primary-50/70 px-3 py-2 text-sm text-gray-700 dark:border-primary-500/20 dark:bg-primary-500/[0.07] dark:text-slate-200">
-            <span className="min-w-0 flex-1">This is a SoftN app that also holds forms. Its pages, data, members and settings are on its own page; the studio here is for its forms.</span>
-            <Link to={softnWorkspacePath(data.app.id)} className="inline-flex min-h-9 items-center font-semibold text-primary-700 underline-offset-2 hover:underline max-sm:min-h-11 dark:text-primary-300">Open the app’s page</Link>
-          </p>
-        )}
-
         {activeStep === 'plan' && (
           <OverviewStep
             app={data.app}
             nativeTableCount={nativeDatabase.tables.length}
             appForms={data.appForms}
+            formsKnown={!data.formsFailed}
             formsById={data.formsById}
             roles={data.roles}
             flows={data.flows}
@@ -387,7 +352,6 @@ export function AppStudio() {
             memberCount={isDemoLocalId(data.app.id) ? 1 : data.memberCount}
             memberCountKnown={isDemoLocalId(data.app.id) || !data.membersFailed}
             aiAvailable={aiAvailable}
-            onStepChange={setStep}
             onReloadApp={data.reloadApp}
           />
         )}
@@ -455,12 +419,6 @@ export function AppStudio() {
           />
         )}
 
-        {/* Forward movement lives at the END of the content, where a reader
-            actually finishes — not pinned over it in a fixed bar. */}
-        <nav aria-label="Previous and next Studio sections" className="mt-6 flex flex-col gap-3 border-t border-gray-200 pt-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
-          {previous ? <Button variant="ghost" onClick={() => setStep(previous.id)} className="min-h-11 whitespace-normal text-left"><ArrowLeft className="mr-2 h-4 w-4 shrink-0" />Previous: {previous.label}</Button> : <span className="text-xs text-gray-500 dark:text-slate-400">You can return to any section as your app grows.</span>}
-          {next && <Button variant="outline" onClick={() => setStep(next.id)} className="min-h-11 whitespace-normal">Next: {next.label}<ArrowRight className="ml-2 h-4 w-4 shrink-0" /></Button>}
-        </nav>
       </PageBody>
     </div>
   );

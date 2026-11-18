@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { WebStarterTemplate } from '../lib/softnApps';
 
 type ModalType =
   | 'fieldPicker'
@@ -11,6 +12,13 @@ type ModalType =
 
 type PreviewDevice = 'desktop' | 'mobile';
 type PreviewMode = 'focused' | 'classic';
+
+/** Fraction of the available travel, so a saved menu position also fits a smaller display. */
+export interface SidebarPosition {
+  x: number;
+  y: number;
+}
+export type SidebarEdge = 'left' | 'top' | 'right' | 'bottom';
 
 // 'default' = use the curated per-mode accents (Indigo in light, Lime on navy
 // in dark). The named colors are explicit opt-in overrides applied to both modes.
@@ -27,12 +35,17 @@ export interface ChatPanelPosition {
 export interface ChatLaunch {
   text: string;
   images?: string[];
+  /** Start an independent brief without sending the previous conversation to the model. */
+  newThread?: boolean;
 }
 
 /** One-shot: open this SoftN app's workspace straight into an editor, with a request for AI Studio. */
 export interface SoftnOpen {
   appId: string;
   editor: 'studio' | 'builder';
+  /** A starter opens in Preview. Keep its choice available if installation needs a retry. */
+  preview?: boolean;
+  template?: WebStarterTemplate;
   /** Studio only: what its agent should build or change once the app is open. */
   brief?: { prompt: string; kind: 'build' | 'edit' };
 }
@@ -40,6 +53,14 @@ export interface SoftnOpen {
 interface UIState {
   // Sidebar
   sidebarCollapsed: boolean;
+  sidebarFloating: boolean;
+  sidebarEdge: SidebarEdge;
+  sidebarOpen: boolean;
+  sidebarPosition: SidebarPosition;
+  dockSidebar: (edge: SidebarEdge) => void;
+  setSidebarOpen: (open: boolean) => void;
+  setSidebarFloating: (floating: boolean) => void;
+  setSidebarPosition: (position: SidebarPosition) => void;
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
 
@@ -117,6 +138,14 @@ export const useUIStore = create<UIState>()(
     (set) => ({
       // Sidebar
       sidebarCollapsed: false,
+      sidebarFloating: false,
+      sidebarEdge: 'left',
+      sidebarOpen: true,
+      sidebarPosition: { x: 0, y: 0 },
+      setSidebarFloating: (sidebarFloating) => set({ sidebarFloating, sidebarOpen: true }),
+      dockSidebar: (sidebarEdge) => set({ sidebarEdge, sidebarFloating: false, sidebarOpen: true }),
+      setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+      setSidebarPosition: (sidebarPosition) => set({ sidebarPosition }),
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
 
@@ -188,6 +217,10 @@ export const useUIStore = create<UIState>()(
         theme: state.theme,
         themeColor: state.themeColor,
         sidebarCollapsed: state.sidebarCollapsed,
+        sidebarFloating: state.sidebarFloating,
+        sidebarEdge: state.sidebarEdge,
+        sidebarOpen: state.sidebarOpen,
+        sidebarPosition: state.sidebarPosition,
         chatOpen: state.chatOpen,
         chatFollowAi: state.chatFollowAi,
         chatDocked: state.chatDocked,

@@ -24,13 +24,13 @@ const { newLink, newTable } = await import('../../lib/databaseDesign');
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root;
 let container: HTMLDivElement;
-let onCreate: ReturnType<typeof vi.fn>;
+const onCreate = vi.fn<(design: DatabaseDesign) => Promise<boolean>>();
 let mode: 'diagram' | 'mermaid';
 
 beforeEach(() => {
   localStorage.clear();
   diagram.props = null;
-  onCreate = vi.fn(async () => true);
+  onCreate.mockReset().mockResolvedValue(true);
   mode = 'diagram';
   container = document.createElement('div');
   document.body.append(container);
@@ -38,9 +38,9 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
-async function render(access: 'members' | 'application' = 'members', waiting: string | null = null) {
-  await act(async () => root.render(<DatabaseDesigner appId="app-1" appName="Recipes" access={access} mode={mode} waiting={waiting}
-    onMode={next => { mode = next; void render(access, waiting); }} onClose={() => {}} onCreate={onCreate} />));
+async function render(access: 'members' | 'application' = 'members', waiting: string | null = null, client: 'classic' | 'web' | 'site' = 'classic') {
+  await act(async () => root.render(<DatabaseDesigner appId="app-1" appName="Recipes" access={access} client={client} mode={mode} waiting={waiting}
+    onMode={next => { mode = next; void render(access, waiting, client); }} onClose={() => {}} onCreate={onCreate} />));
 }
 const button = (name: string | RegExp) => [...document.body.querySelectorAll('button')].find(b => typeof name === 'string' ? b.textContent?.trim() === name || b.getAttribute('aria-label') === name : name.test(b.textContent ?? '')) as HTMLButtonElement;
 const field = (label: string) => document.body.querySelector(`[aria-label="${label}"]`) as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
@@ -59,6 +59,18 @@ async function addTable(name: string) {
 }
 
 describe('DatabaseDesigner', () => {
+  it.each([
+    ['web', "import { api } from 'softn:api'"],
+    ['site', 'Use the page’s fetch'],
+    ['classic', 'Call softn.net.fetch'],
+  ] as const)('shows the %s client how to call its generated routes', async (client, expected) => {
+    await render('members', null, client);
+    await addTable('notes');
+    await click(button('Review and create'));
+    expect(document.body.textContent).toContain(expected);
+    expect(document.body.textContent).toContain('/api/notes');
+  });
+
   it('starts empty, with nothing chosen for the owner', async () => {
     await render();
     expect(shown()).toBe('empty');

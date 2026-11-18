@@ -2,8 +2,9 @@
 // which files stay as they are, and what adding or removing one does to the project. Pure, so the
 // rules are tested apart from the editor that shows them (components/studio/ProjectSourcePane).
 import { sourceNameProblem, type NativeProject } from './nativeHosting';
+import { usesWebContainer } from './formlogic/frameEngine';
 
-export type SourceGroupId = 'pages' | 'logic' | 'styles' | 'backend' | 'migrations' | 'project';
+export type SourceGroupId = 'pages' | 'logic' | 'styles' | 'backend' | 'migrations' | 'project' | 'generated';
 export interface SourceGroup { id: SourceGroupId; label: string; hint: string; files: string[] }
 type Files = Readonly<Record<string, string>>;
 
@@ -14,8 +15,16 @@ const GROUPS: readonly (readonly [SourceGroupId, string, string])[] = [
   ['backend', 'Backend', 'Private code, run on the server'],
   ['migrations', 'Database changes', 'Each one runs once, in order'],
   ['project', 'Project', 'The manifest and other files'],
+  ['generated', 'Generated JavaScript', 'Runnable modules produced by the app editors'],
 ];
 const MIGRATIONS = 'server/migrations/';
+/** SoftN editors make these browser modules when they save the original component source. */
+export function needsComponentEditor(path: string): boolean {
+  if (/^(?:server|backend|private)\//i.test(path)) return false;
+  return /\.(?:jsx|vue)$/i.test(path)
+    || /^__softn_generated__\/(?:.+\.(?:jsx|vue)\.js|vendor\/(?:react|vue)\.js)$/i.test(path);
+}
+const COMPONENT_EDIT = 'Use Visual Builder or AI Studio to edit this component. Saving there updates the original source and its runnable JavaScript together.';
 
 /**
  * A database change: any .sql file under server/migrations/, in a folder of its own or not. The
@@ -26,11 +35,12 @@ export const isMigration = (path: string) => path.startsWith(MIGRATIONS) && path
 
 /** The group a source file is listed under. */
 export function sourceGroupOf(path: string): SourceGroupId {
+  if (path.startsWith('__softn_generated__/') && needsComponentEditor(path)) return 'generated';
   if (isMigration(path)) return 'migrations';
   // The private trees, which a page is never handed: the backend's own (server/), and the others an older project may carry.
   if (/^(server|backend|private)\//i.test(path)) return 'backend';
-  if (/\.(html|ui)$/.test(path)) return 'pages';
-  if (/\.(js|logic|py)$/.test(path)) return 'logic';
+  if (/\.(html|ui|jsx|vue)$/.test(path)) return 'pages';
+  if (/\.(js|mjs|ts|logic|py)$/.test(path)) return 'logic';
   if (path.endsWith('.css')) return 'styles';
   return 'project';
 }
@@ -104,6 +114,7 @@ export const removedSourceFiles = (files: Files, installed: Files | null): strin
 
 /** Why a file stays as it is in the editor, or null when it may be changed. */
 export function sourceLockReason(path: string, installed: Files | null): string | null {
+  if (needsComponentEditor(path)) return COMPONENT_EDIT;
   if (isMigration(path)) {
     return appliedMigrations(installed).has(path)
       ? 'This change has already run on the app’s database, so it stays as it is. Add a new database change to alter the database again.'
@@ -123,6 +134,7 @@ export function strayedMigration(path: string, files: Files, installed: Files | 
 
 /** Why a file cannot be taken out of the project, or null when it can. */
 export function sourceRemoveProblem(path: string, files: Files, installed: Files | null): string | null {
+  if (needsComponentEditor(path)) return COMPONENT_EDIT;
   if (path === 'manifest.json') return 'Every project keeps its manifest.';
   if (appliedMigrations(installed).has(path)) return 'A database change that has run stays in the project.';
   const { main, entry } = namedFiles(files);
@@ -135,6 +147,7 @@ export function sourceRemoveProblem(path: string, files: Files, installed: Files
 export function newSourceProblem(path: string, files: Files): string | null {
   if (path === '') return 'Give the file a name.';
   if (Object.hasOwn(files, path)) return 'A file with this name is already in the project.';
+  if (needsComponentEditor(path)) return 'Add component source in AI Studio so its runnable JavaScript is generated when you save.';
   if (path.startsWith('assets/')) return 'Pictures, sound and other media are added by uploading a new version of the app.';
   const problem = sourceNameProblem(path);
   if (problem) return problem;
@@ -146,8 +159,9 @@ export function newSourceProblem(path: string, files: Files): string | null {
 }
 
 /** What a new file starts with: a line that says what it is for, in its own language's comment. */
-export function newSourceText(path: string): string {
+export function newSourceText(path: string, files?: Files): string {
   if (isMigration(path)) return '-- What this change does to the database. It runs once, when this version is published.\n';
+  if (path.endsWith('.html') && files && usesWebContainer(files)) return '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>New page</title>\n</head>\n<body>\n  <main><h1>New page</h1></main>\n</body>\n</html>\n';
   if (/\.(html|ui)$/.test(path)) return '<Stack gap="md">\n  <Heading level={2}>New page</Heading>\n</Stack>\n';
   if (/\.(js|logic)$/.test(path)) return '// New file\n';
   if (path.endsWith('.py')) return '# New file\n';
@@ -158,21 +172,35 @@ export function newSourceText(path: string): string {
 }
 
 /**
- * The name the next database change takes: one after the highest number, as wide as the others.
+ * The next database change sorts after the latest filename and uses the project's numbering.
  * The installed version's changes are counted too: a draft brought in from an older copy may lack
  * the latest of them, and a new change under that number would be taken for the one that has run.
  */
 export function nextMigrationPath(files: Files, installed: Files | null = null): string {
-  let highest = 0;
+  let last = '';
   let width = 3;
+  let highest = 0;
   for (const path of [...Object.keys(files), ...Object.keys(installed ?? {})]) {
-    if (!path.startsWith(MIGRATIONS) || !path.endsWith('.sql') || path.slice(MIGRATIONS.length).includes('/')) continue;
+    if (!path.startsWith(MIGRATIONS) || !path.endsWith('.sql')) continue;
+    if (path > last) last = path;
     const digits = /^\d+/.exec(path.slice(MIGRATIONS.length))?.[0];
     if (!digits) continue;
     highest = Math.max(highest, Number(digits));
     width = Math.max(width, digits.length);
   }
-  return `${MIGRATIONS}${String(highest + 1).padStart(width, '0')}.sql`;
+  if (Number.isSafeInteger(highest + 1)) {
+    const numbered = MIGRATIONS + String(highest + 1).padStart(width, '0') + '.sql';
+    if (numbered > last) return numbered;
+  }
+  // Match the host's bytewise path order, even after a hand-named file or a width rollover.
+  const suffix = /^(.*_)(\d+)\.sql$/.exec(last);
+  if (suffix) {
+    const next = Number(suffix[2]) + 1;
+    if (Number.isSafeInteger(next) && String(next).length <= suffix[2].length) {
+      return suffix[1] + String(next).padStart(suffix[2].length, '0') + '.sql';
+    }
+  }
+  return last.slice(0, -4) + '_001.sql';
 }
 
 /** Whether the project has a backend with a database, which is what a database change is for. */
@@ -203,7 +231,7 @@ function manifestWithMigration(files: Files, path: string, listed: boolean): str
  * The project with a new file in it. A database change is also listed in the manifest; `listed`
  * says whether it could be (a manifest that does not parse is left for its owner to fix).
  */
-export function withSourceFile(project: NativeProject, path: string, text = newSourceText(path)): { project: NativeProject; listed: boolean } {
+export function withSourceFile(project: NativeProject, path: string, text = newSourceText(path, project.files)): { project: NativeProject; listed: boolean } {
   const files = { ...project.files, [path]: text };
   if (!isMigration(path)) return { project: { ...project, files }, listed: true };
   const manifest = manifestWithMigration(files, path, true);

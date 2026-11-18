@@ -17,12 +17,14 @@ export function AppEngineSelect({
   appId,
   engine,
   policy,
+  webContainer = false,
   disabled,
   onChanged,
 }: {
   appId: string;
   engine: AppEngine | undefined;
   policy: OwnerEnginePolicy | undefined;
+  webContainer?: boolean;
   disabled?: boolean;
   onChanged: (engine: AppEngine, policy: OwnerEnginePolicy) => void;
 }) {
@@ -60,22 +62,31 @@ export function AppEngineSelect({
         >
           <option value="">Site default ({engineLabel(policy.default)})</option>
           {policy.allowed.map((id) => (
-            <option key={id} value={id} disabled={id === 'host-js' && !verified}>
+            <option key={id} value={id} disabled={id === 'host-js' && (!verified || webContainer)}>
               {ENGINE_LABELS[id]}
-              {id === 'host-js' && !verified ? ' — needs an administrator to verify this account' : ''}
+              {id === 'host-js' && (webContainer ? ' (classic apps only)' : !verified && ' — needs an administrator to verify this account')}
             </option>
           ))}
         </select>
       </label>
-      <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
-        {ENGINE_DESCRIPTIONS[engine.stored ?? policy.default]}
-      </p>
-      <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
-        This app runs on <strong>{engineLabel(engine.id)}</strong>.{reason ? ` ${reason}` : ''}
-      </p>
-      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-        Automations and app logic written in Python always run on the full ZIPP engine, whatever this is set to.
-      </p>
+      {webContainer ? (
+        <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
+          This app runs in the <strong>web app sandbox</strong>. JavaScript uses the lite engine and loads the full engine when a feature needs it.{' '}
+          {engine.id === 'zipp-web-python' ? 'The current policy also allows Python.' : 'The current policy allows JavaScript only.'}
+        </p>
+      ) : (
+        <>
+          <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
+            {ENGINE_DESCRIPTIONS[engine.stored ?? policy.default]}
+          </p>
+          <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
+            This app runs on <strong>{engineLabel(engine.id)}</strong>.{reason ? ` ${reason}` : ''}
+          </p>
+          <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+            Automations and app logic written in Python always run on the full ZIPP engine, whatever this is set to.
+          </p>
+        </>
+      )}
       {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
     </div>
   );

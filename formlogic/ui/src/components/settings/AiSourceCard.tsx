@@ -23,7 +23,7 @@ import {
 import { cacheAiPreferences } from '../../lib/websiteAiRouting';
 import { fetchModelCatalog, fetchProviderCatalog } from '../../client-runtime/desktop/desktopTunnel';
 import { listAiSources, type AiSourceListing } from '../../client-runtime/flows/desktopService';
-import { listProviders, providerSupports, type AiProviderConfig } from '../../client-runtime/flows/aiProviders';
+import { customChatEndpoint, customToolConnection, listProviders, providerSupports, supportsWorkspaceTools, type AiProviderConfig } from '../../client-runtime/flows/aiProviders';
 import { useFlowsDesktopPresence } from '../flows/useFlowsDesktopPresence';
 import { explainDesktopAiError } from '../../client-runtime/flows/aiDefault';
 import { useAuthStore } from '../../stores/authStore';
@@ -74,6 +74,24 @@ function chatCapableCustomProviders(userId: string | null | undefined): AiProvid
   return listProviders(userId).filter((p) => p.enabled && providerSupports(p, 'chat'));
 }
 
+function WorkspaceToolsChoice({ id, url, saved, disabled, onChange }: {
+  id: string; url: string; saved?: string; disabled: boolean; onChange: (access: string | null) => void;
+}) {
+  const [connection, setConnection] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    void customToolConnection(id, url).then(key => { if (active) setConnection(key); });
+    return () => { active = false; };
+  }, [id, url]);
+  if (!connection) return null;
+  return <label className="mt-3 flex items-start gap-2 text-sm text-gray-700 dark:text-slate-200">
+    <input type="checkbox" className="mt-1" checked={saved === connection} disabled={disabled} onChange={event => onChange(event.target.checked ? connection : null)} />
+    <span>Allow workspace tools in chat<span className="mt-1 block text-xs text-gray-500 dark:text-slate-400">
+      This provider can read your workspace, receive tool results including records, and make changes using your chat tool mode.
+    </span></span>
+  </label>;
+}
+
 function usageLine(usage: AiUsageInfo | null | undefined): string {
   if (!usage) return 'Monthly usage is not tracked on this instance yet.';
   return usage.limit !== null
@@ -115,6 +133,7 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
   const [providerListError, setProviderListError] = useState('');
   const [providerListTick, setProviderListTick] = useState(0);
   const [customProviders, setCustomProviders] = useState<AiProviderConfig[]>(() => chatCapableCustomProviders(user?.id));
+  const selectedCustom = customProviders.find(provider => provider.id === customProviderId);
   const [catalogResult, setCatalogResult] = useState<CatalogResult | null>(null);
   const [catalogReloadTick, setCatalogReloadTick] = useState(0);
 
@@ -261,6 +280,7 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
     desktopProviderId?: string;
     desktopModel?: string;
     customProviderId?: string;
+    customToolConnection?: string | null;
     chatToolMode?: AiChatToolMode;
     desktopReasoning?: string;
   }) => {
@@ -270,6 +290,8 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
       desktopProviderId: (patch.desktopProviderId ?? desktopProviderId).trim() || null,
       desktopModel: (patch.desktopModel ?? desktopModel).trim() || null,
       customProviderId: (patch.customProviderId ?? customProviderId) || null,
+      ...(patch.customToolConnection !== undefined ? { customToolConnection: patch.customToolConnection }
+        : !patch.customProviderId && loaded.customToolConnection ? { customToolConnection: loaded.customToolConnection } : {}),
       chatToolMode: patch.chatToolMode ?? chatToolMode,
       desktopReasoning: (patch.desktopReasoning ?? desktopReasoning) || null,
     };
@@ -307,6 +329,7 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
       desktopProviderId: desktopProviderId.trim() || null,
       desktopModel: desktopModel.trim() || null,
       customProviderId: customProviderId || null,
+      ...(loaded?.customToolConnection && loaded.customProviderId === customProviderId ? { customToolConnection: loaded.customToolConnection } : {}),
       chatToolMode,
       desktopReasoning: desktopReasoning || null,
     });
@@ -653,6 +676,9 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
                     <option value={customProviderId}>{customProviderId} (saved — not in this browser)</option>
                   )}
                 </select>
+                {selectedCustom && supportsWorkspaceTools(selectedCustom) && <WorkspaceToolsChoice
+                  key={selectedCustom.id + customChatEndpoint(selectedCustom)} id={selectedCustom.id} url={customChatEndpoint(selectedCustom)}
+                  saved={loaded?.customToolConnection} disabled={readOnly || saving} onChange={access => void autoSave({ customToolConnection: access })} />}
               </div>
             ) : (
               <p className="text-sm text-gray-500 dark:text-slate-400">
@@ -692,7 +718,9 @@ export function AiSourceCard({ preferredSource, remoteOnly = false }: { preferre
         <p className="text-xs text-gray-500 dark:text-slate-400 mt-1.5">
           {chatToolMode === 'auto'
             ? 'The AI runs approved tools right away during a chat.'
-            : 'You approve every tool action before it runs during a chat.'}
+            : source === 'site'
+              ? 'Site AI can read and plan in this mode. Choose Auto to let it create or change an app.'
+              : 'You approve changes before they run during a chat.'}
         </p>
       </div>
 

@@ -94,12 +94,12 @@ describe('offeredFiles', () => {
 describe('offeredAppFile', () => {
   it('is a .softn file holding those files, named for the app', async () => {
     const file = offeredAppFile(offeredFiles({ files: made })!.files, 'Tiny notes');
-    expect(file.name).toBe('Tiny notes.softn');
+    expect(file.name).toBe('Tiny notes.zip');
     const unzipped = unzipSync(new Uint8Array(await file.arrayBuffer()));
     expect(Object.keys(unzipped).filter(path => !path.endsWith('/')).sort()).toEqual(Object.keys(made).sort());
     expect(strFromU8(unzipped['manifest.json'])).toBe(made['manifest.json']);
-    expect(offeredAppFile({}, '  ').name).toBe('app.softn');
-    expect(offeredAppFile({}, 'a/b:c\\d').name).toBe('a b c d.softn');
+    expect(offeredAppFile({}, '  ').name).toBe('app.zip');
+    expect(offeredAppFile({}, 'a/b:c\\d').name).toBe('a b c d.zip');
   });
 });
 
@@ -113,7 +113,7 @@ describe('addOfferedApp', () => {
     const [{ name, start }] = mocks.createSoftnApp.mock.calls[0] as [{ name: string; start: { kind: string; file: File } }];
     expect(name).toBe('Tiny notes');
     expect(start.kind).toBe('upload');
-    expect(start.file.name).toBe('Tiny notes.softn');
+    expect(start.file.name).toBe('Tiny notes.zip');
     const unzipped = unzipSync(new Uint8Array(await start.file.arrayBuffer()));
     expect(strFromU8(unzipped['logic/main.logic'])).toBe(made['logic/main.logic']);
   });
@@ -123,7 +123,7 @@ describe('addOfferedApp', () => {
     const [{ name, start }] = mocks.createSoftnApp.mock.calls[0] as [{ name: string; start: { file: File } }];
     // (createSoftnApp names an upload with no name after its manifest, then after its file.)
     expect(name).toBe('');
-    expect(start.file.name).toBe('Shown name.softn');
+    expect(start.file.name).toBe('Shown name.zip');
   });
 
   it('refuses what the importer refuses, as invalid, and creates nothing', async () => {

@@ -2,9 +2,8 @@
 
 A JavaScript app is a web app someone has already built (the `dist` or `build` folder of a Vite,
 React, Vue, Svelte or Angular project, or plain HTML and JavaScript), uploaded as a zip and hosted
-as an app of its own. It is listed, published, shared, given members and a custom domain like a
-SoftN app, and it can have the same private backend: API routes written in `.logic`, a SQLite
-database and migrations.
+as an app of its own. Publish it, invite members or connect a custom domain from its workspace.
+It can also have private API routes written in `.logic`, a SQLite database and migrations.
 
 This page says how it is kept apart from FormLogic, what a build can rely on, and what does not
 work yet. It is for whoever reviews or extends the code.
@@ -13,7 +12,7 @@ work yet. It is for whoever reviews or extends the code.
 
 A native project (`NativeAppService`) whose pages are a built site:
 
-- `files["manifest.json"]` has a `site` block naming the first page: `{"name": "Shop", "version": "1.0.0", "site": {"entry": "index.html"}}`. A `server` block, `.logic` files and migrations are as for a SoftN app. `main` is not needed.
+- `files["manifest.json"]` has a `site` block naming the first page: `{"name": "Shop", "version": "1.0.0", "site": {"entry": "index.html"}}`. A `server` block, `.logic` files and migrations use the same format as an editable web app. `main` is not needed.
 - `assets["site/…"]` holds every file of the build, base64, under the same limits as media (1,000 files, 32 MB each, 64 MB in all).
 - Names are held to `NativeAppService::SITE_PATH` (kinds a build is made of, including a game's data and files packed as `.br`/`.gz`), with no dot-files, no `..`, and no ending a web server runs anywhere in a name (`SITE_RUNS`). The UI's importer (`ui/src/lib/siteApps.ts`) holds the same rules, leaves out what does not fit, and tells the owner what it left out.
 
@@ -31,7 +30,7 @@ FormLogic, so everything about serving it is containment (`SiteAppController`,
 
 The framing page (`ui/src/components/studio/SiteAppFrame.tsx`) holds the other end of that port. It
 passes `/api/…` requests to the app's own backend as whoever is signed in
-(`POST /api/app/{slug}/native/request`, the route SoftN apps use), keeps what the app stores, and
+(`POST /api/app/{slug}/native/request`), keeps what the app stores, and
 shows the owner what the browser refused the app.
 
 ## What a build can rely on
@@ -58,7 +57,7 @@ and that address opens the app there.
 - **Web workers** started from a file (`new Worker(url)`) are refused by browsers for a page with no origin. Not shimmed yet.
 - **No service worker, IndexedDB or real cookies** (no origin).
 - **The address is a bearer.** Whoever has a ticket's address can read the build's files for up to two days, whatever the app's access is. The app's data is behind its backend, which checks the session as before.
-- **Request bodies to the backend are JSON**, up to 2 MB; uploads of files go through media, as for SoftN apps.
+- **Request bodies to the backend are JSON**, up to 2 MB; use media for file uploads.
 
 ## Where things are
 

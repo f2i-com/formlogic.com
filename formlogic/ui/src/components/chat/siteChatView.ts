@@ -18,8 +18,8 @@ export function chatToolLinkPath(link: NonNullable<ChatToolActivity['link']>): s
     // A SoftN app lands on its own page (where AI Studio opens on a request), or in the section the tool worked in.
     case 'softnApp':
       return link.section
-        ? `/apps/${encodeURIComponent(link.id)}/softn/${link.section}${link.section === 'data' && link.table ? `/${encodeURIComponent(link.table)}` : ''}`
-        : `/apps/${encodeURIComponent(link.id)}/softn`;
+        ? `/apps/${encodeURIComponent(link.id)}/web/${link.section}${link.section === 'data' && link.table ? `/${encodeURIComponent(link.table)}` : ''}`
+        : `/apps/${encodeURIComponent(link.id)}/web`;
     case 'form':
       return `/builder/${encodeURIComponent(link.id)}`;
     // App links land in the APP STUDIO — the same guided wizard a human uses —

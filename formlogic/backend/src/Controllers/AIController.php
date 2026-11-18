@@ -700,6 +700,12 @@ class AIController
         }
         try {
             $result = $this->aiService->chatWithClientTools($body['messages'] ?? null, $body['tools'] ?? [], $body['maxOutputTokens'] ?? null);
+        } catch (\FormLogic\Services\InvalidModelToolCallException) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'invalid_model_tool_call',
+                'message' => 'The model returned an invalid tool call. Review any earlier actions, then ask for the next step on its own.',
+            ], 502);
         } catch (\Throwable $e) {
             $this->logger->error('AI chat (client tools) error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'The AI request failed'], 502);
@@ -865,7 +871,7 @@ class AIController
      * whatever text the last round produced (or an honest note).
      *
      * A round runs at most CHAT_TOOL_MAX_CALLS_PER_ROUND calls. With $askFirst (the user's chat
-     * tool mode is "Ask first") only the calls runsUnderAskFirst() admits run; every other call is
+     * tool mode is "Ask first") only reads and previews on an existing diagram run; every other call is
      * answered with a refusal, to the model and as a failed tool frame.
      *
      * @param callable(string):void|null $emit
@@ -919,7 +925,7 @@ class AIController
                     if (!is_array($call['arguments'])) {
                         throw new \Exception('The tool call arguments were not valid JSON');
                     }
-                    if ($askFirst && !self::runsUnderAskFirst($call['name'], $call['arguments'])) {
+                    if ($askFirst && !\FormLogic\Services\ChatToolsService::runsWithoutConfirmation($call['name'], $call['arguments'])) {
                         throw new \FormLogic\Services\ChatToolDeniedException(self::CHAT_TOOL_ASK_FIRST_REFUSAL, 'approval_required');
                     }
                     $result = $this->chatTools->callChatTool($call['name'], $call['arguments'], $ctx);
@@ -977,24 +983,6 @@ class AIController
         . 'forms, apps, flows or data. If you are asked to, say plainly that it cannot be done from this chat, and do not '
         . 'say or suggest that it was done. You can still explain how the person can do it themselves in FormLogic: '
         . 'New form on the Forms page, Create app, or Flows in the sidebar.';
-
-    /**
-     * Whether a call may run while the user's chat tool mode is "Ask first". Reading is not an
-     * action, so the read tools run. So does a diagram proposal that is not a commit: it parks a
-     * preview on an existing diagram, which the person applies or discards on the canvas. A name
-     * outside the chat subset passes too, so it gets its own unknown-tool answer.
-     */
-    private static function runsUnderAskFirst(string $name, array $args): bool
-    {
-        if (!in_array($name, \FormLogic\Services\ChatToolsService::CHAT_TOOL_NAMES, true)
-            || \FormLogic\Services\ChatToolsService::isReadTool($name)) {
-            return true;
-        }
-        return $name === 'blueprint_propose_elements'
-            && ($args['commit'] ?? false) !== true
-            && is_string($args['blueprintId'] ?? null)
-            && trim($args['blueprintId']) !== '';
-    }
 
     /** Chat-surface execution context: account-wide as $userId, audited under 'chat.<action>'. */
     private function chatToolsContext(string $userId, ?string $ip): \FormLogic\Services\ChatToolsContext

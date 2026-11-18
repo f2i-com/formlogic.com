@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, ExternalLink } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { ToolRow } from './ToolRow';
 import { api } from '../../lib/api';
 import { mapConcurrent } from '../../lib/mapConcurrent';
-import { createFormlogicProject, type FormlogicProject, type FormlogicSchema } from '../../lib/softn/project';
+import { createFormProject } from '../../lib/formProject';
+import type { FormlogicProject, FormlogicSchema } from '../../lib/softn/project';
 import type { App, AppForm } from '../../types/app';
 
 interface SoftnExportProps {
@@ -41,7 +42,8 @@ export function SoftnExportPanel({ app, appForms = [], forms: suppliedForms, sou
         return result.data.form;
       }, () => generation.current !== run);
       if (generation.current !== run) return;
-      setProject(createFormlogicProject({ app, origin: window.location.origin, forms, sourceKind }));
+      const next = createFormProject({ app, origin: window.location.origin, forms, sourceKind });
+      setProject(next);
     } catch (reason) {
       if (generation.current === run) { generation.current++; setBusy(false); setError(reason instanceof Error ? reason.message : 'Could not prepare the project.'); }
     } finally { if (generation.current === run) setBusy(false); }
@@ -58,7 +60,7 @@ export function SoftnExportPanel({ app, appForms = [], forms: suppliedForms, sou
       const url = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type: 'application/zip' }));
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `${app.name.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 80) || 'app'}.softn`;
+      anchor.download = `${app.name.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 80) || 'app'}.zip`;
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch { if (generation.current === run) setError('Could not create the download. Please try again.'); }
@@ -96,8 +98,8 @@ export function SoftnExportPanel({ app, appForms = [], forms: suppliedForms, sou
             <summary className="cursor-pointer font-medium">Review {project.warnings.length} conversion note{project.warnings.length === 1 ? '' : 's'}</summary>
             <ul className="mt-3 list-disc space-y-2 break-words pl-5">{project.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>
           </details>}
-          <p className="text-sm leading-6 text-gray-600 dark:text-slate-300">Download your project, then use Open in the app editor to customise it. The .softn download includes separate screen and logic files for each form, plus instructions for reusing them in another app.</p>
-          <a className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-primary-600 dark:text-primary-400" href="https://softn.com/builder/" target="_blank" rel="noopener noreferrer">Open app editor <ExternalLink className="h-4 w-4" /></a>
+          <p className="text-sm leading-6 text-gray-600 dark:text-slate-300">Download the project ZIP and import it into your workspace to open the editor. Each form has its own screen and logic files.</p>
+          <a className="inline-flex min-h-11 items-center text-sm font-medium text-primary-600 dark:text-primary-400" href="/apps/new?type=upload">Open the project importer</a>
         </div>}
       </div>
     </Modal>

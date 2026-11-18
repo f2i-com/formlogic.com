@@ -74,7 +74,8 @@ const Signup = lazyWithRetry(() => import('./pages/Signup').then(m => ({ default
 
 // Lazy load app admin pages
 const AppsDashboard = lazyWithRetry(() => import('./pages/apps/AppsDashboard').then(m => ({ default: m.AppsDashboard })));
-// App Studio: the app-first workspace — six prefilled, skippable steps per app.
+const AppManagementPages = lazyWithRetry(() => import('./components/layout/AppManagementPages').then(m => ({ default: m.AppManagementPages })));
+// The forms editor shares app navigation with the hosted project workspace.
 const AppStudio = lazyWithRetry(() => import('./pages/apps/AppStudio').then(m => ({ default: m.AppStudio })));
 const AppCreateStart = lazyWithRetry(() => import('./pages/apps/AppCreateStart').then(m => ({ default: m.AppCreateStart })));
 const SoftnAppWorkspace = lazyWithRetry(() => import('./pages/apps/SoftnAppWorkspace').then(m => ({ default: m.SoftnAppWorkspace })));
@@ -235,11 +236,55 @@ function AuthRedirector() {
   return null;
 }
 
-/** A page of an account that someone is sent a link to (an agent's approval link): sign in, then on to it. */
+/** Return to the linked workspace or approval page after signing in. */
 function SignInFirst() {
   const location = useLocation();
-  return <Navigate to={`/login?redirect=${encodeURIComponent(location.pathname + location.search)}`} replace />;
+  return <Navigate to={`/login?redirect=${encodeURIComponent(location.pathname + location.search + location.hash)}`} replace />;
 }
+
+/** Older bookmarks and chat links can include an encoded table name, filters and a fragment. */
+function LegacyAppAddress() {
+  const { pathname, search, hash, state } = useLocation();
+  const current = pathname.replace(/^(\/apps\/[^/]+)\/softn(?=\/|$)/i, '$1/web')
+    .replace(/^\/softn-directory\/approve\//i, '/app-directory/approve/');
+  return <Navigate replace to={{ pathname: current, search, hash }} state={state} />;
+}
+
+// The sign-in guard and both workspace layouts match the same bookmarks.
+const workspacePages = <>
+  <Route path="/forms" element={<FormsList />} />
+  <Route path="/settings" element={<Settings />} />
+  <Route path="/flows" element={<FlowsWorkspace />} />
+  <Route path="/diagrams/all" element={<DiagramsIndex />} />
+  <Route path="/diagrams/:diagramId" element={<DiagramPage />} />
+  <Route path="/billing" element={<Billing />} />
+  <Route path="/analytics/:formId" element={<FormAnalytics />} />
+  <Route path="/responses/:formId" element={<FormResponses />} />
+  <Route path="/responses/:formId/:responseId" element={<FormResponseView />} />
+  <Route path="/apps" element={<AppsDashboard />} />
+  <Route path="/apps/new" element={<AppCreateStart />} />
+  <Route path="/apps/:appId/web/*" element={<SoftnAppWorkspace />} />
+  <Route path="/apps/:appId/softn/*" element={<LegacyAppAddress />} />
+  <Route path="/apps/:appId/studio" element={<AppStudio />} />
+  <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
+  <Route element={<AppManagementPages />}>
+    <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />
+    <Route path="/apps/:appId/forms" element={<AppFormManager />} />
+    <Route path="/apps/:appId/users" element={<AppUserManager />} />
+    <Route path="/apps/:appId/roles" element={<AppRoleEditor />} />
+    <Route path="/apps/:appId/relations" element={<AppRelationsManager />} />
+    <Route path="/apps/:appId/records" element={<AppRecords />} />
+    <Route path="/apps/:appId/deploy" element={<AppDeploySettings />} />
+  </Route>
+</>;
+
+const editorPages = <>
+  <Route path="/builder/:formId" element={<FormBuilder />} />
+  <Route path="/preview/:formId" element={<FormPreview />} />
+  <Route path="/forms/:formId/screen" element={<CustomScreenPlay />} />
+  <Route path="/forms/:formId/screen/edit" element={<CustomScreenStudio />} />
+  <Route path="/apps/:appId/home/edit" element={<AppHomeStudio />} />
+</>;
 
 function AppRoutes() {
   const user = useAuthStore((state) => state.user);
@@ -264,7 +309,14 @@ function AppRoutes() {
         {/* A pass an app requires, met on its plugin's page on this site (it sends signed-out visitors through login) */}
         <Route path="/plugins/:plugin/verify" element={<PluginVerifyPage />} />
         {/* An agent's link to a draft for the SoftN directory: its owner signs in first */}
-        <Route path="/softn-directory/approve/:draftId" element={<SignInFirst />} />
+        <Route path="/app-directory/approve/:draftId" element={<SignInFirst />} />
+        <Route path="/softn-directory/approve/:draftId" element={<LegacyAppAddress />} />
+        <Route element={<SignInFirst />}>
+          {workspacePages}
+          {editorPages}
+        </Route>
+        <Route path="/diagrams" element={<SignInFirst />} />
+        <Route path="/trash" element={<SignInFirst />} />
         {/* Public form response route - accessible without auth */}
         <Route path="/form/:formId" element={<FormResponse />} />
         {/* Pack marketplace (public) */}
@@ -309,7 +361,8 @@ function AppRoutes() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/connect-ai" element={<Navigate to="/login?redirect=%2Fconnect-ai" replace />} />
-        <Route path="/softn-directory/approve/:draftId" element={<SignInFirst />} />
+        <Route path="/app-directory/approve/:draftId" element={<SignInFirst />} />
+        <Route path="/softn-directory/approve/:draftId" element={<LegacyAppAddress />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
 
@@ -318,50 +371,18 @@ function AppRoutes() {
           <Route path="/packs" element={<PackGalleryPage />} />
           <Route path="/packs/:slug" element={<PackDetailPage />} />
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/forms" element={<FormsList />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/flows" element={<FlowsWorkspace />} />
+          {workspacePages}
           {/* Diagrams work in the demo too: sketches are demolocal_ blueprints stored in
               THIS browser (api.ts demo overlay → lib/demoLocal.ts mini gateway) — the
               server stays read-only. Undo/proposals/materialise refuse honestly. */}
           <Route path="/diagrams" element={<DiagramsIndex />} />
-          <Route path="/diagrams/all" element={<DiagramsIndex />} />
-          <Route path="/diagrams/:diagramId" element={<DiagramPage />} />
-          {/* No /doctor for the demo — diagnostics are platform-admin-only now */}
-          <Route path="/billing" element={<Billing />} />
-          <Route path="/analytics/:formId" element={<FormAnalytics />} />
-          <Route path="/responses/:formId" element={<FormResponses />} />
-          <Route path="/responses/:formId/:responseId" element={<FormResponseView />} />
-          <Route path="/apps" element={<AppsDashboard />} />
-          {/* Create = name it, then straight into the App Studio (one surface for
-              creating AND editing). Companion apps are created from the app's
-              Forms manager; existing forms attach in the studio's Data step. */}
-          <Route path="/apps/new" element={<AppCreateStart />} />
-          {/* One route for the page and its sections (data, edit, domains, settings; under data a
-              table and its view), so moving between them keeps the page and its unpublished draft. */}
-          <Route path="/apps/:appId/softn/*" element={<SoftnAppWorkspace />} />
-          <Route path="/apps/:appId/studio" element={<AppStudio />} />
-          <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
-          <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />
-          <Route path="/apps/:appId/forms" element={<AppFormManager />} />
-          <Route path="/apps/:appId/users" element={<AppUserManager />} />
-          <Route path="/apps/:appId/roles" element={<AppRoleEditor />} />
-          <Route path="/apps/:appId/relations" element={<AppRelationsManager />} />
-          <Route path="/apps/:appId/records" element={<AppRecords />} />
-          <Route path="/apps/:appId/deploy" element={<AppDeploySettings />} />
         </Route>
 
-        {/* Full-screen platform routes (own chrome, no sidebar) */}
-        <Route path="/builder/:formId" element={<FormBuilder />} />
-        <Route path="/preview/:formId" element={<FormPreview />} />
-        <Route path="/forms/:formId/screen" element={<CustomScreenPlay />} />
-        <Route path="/forms/:formId/screen/edit" element={<CustomScreenStudio />} />
-        <Route path="/apps/:appId/home/edit" element={<AppHomeStudio />} />
+        {editorPages}
 
         {/* Public content (same as signed-out) */}
         <Route path="/accept-invite" element={<AcceptInvite />} />
         <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
-
 
         <Route path="/docs" element={<Docs />} />
         <Route path="/ai-setup" element={<AiSetupPage />} />
@@ -389,17 +410,13 @@ function AppRoutes() {
           <Route path="/packs" element={<PackGalleryPage />} />
           <Route path="/packs/:slug" element={<PackDetailPage />} />
         <Route path="/" element={<Dashboard />} />
-        <Route path="/forms" element={<FormsList />} />
-        <Route path="/flows" element={<FlowsWorkspace />} />
+        {workspacePages}
         {/* §11B O2: the Connect-your-AI wizard (three doors, skip always visible). */}
         <Route path="/connect-ai" element={<ConnectAiWizard />} />
         {/* Diagrams (extensible-flows §11A): the user-facing Blueprint surface — authenticated
             accounts only (no demo overlay). /blueprints kept as a compatibility redirect. */}
         <Route path="/diagrams" element={<DiagramsEntry />} />
-        <Route path="/diagrams/all" element={<DiagramsIndex />} />
-        <Route path="/diagrams/:diagramId" element={<DiagramPage />} />
         <Route path="/blueprints" element={<Navigate to="/diagrams" replace />} />
-        <Route path="/settings" element={<Settings />} />
         <Route path="/trash" element={<TrashPage />} />
         {/* Doctor now lives inside the admin panel (server-side admin-gated too) */}
         <Route path="/doctor" element={<Navigate to="/admin/doctor" replace />} />
@@ -412,30 +429,9 @@ function AppRoutes() {
           <Route path="upgrade" element={<AdminUpgrade />} />
           <Route path="doctor" element={<AdminDoctor />} />
         </Route>
-        <Route path="/billing" element={<Billing />} />
-        <Route path="/analytics/:formId" element={<FormAnalytics />} />
-        <Route path="/responses/:formId" element={<FormResponses />} />
-        <Route path="/responses/:formId/:responseId" element={<FormResponseView />} />
-        {/* App admin routes */}
-        <Route path="/apps" element={<AppsDashboard />} />
-        {/* Create = name it, then straight into the App Studio (one surface for
-            creating AND editing). Companion apps are created from the app's
-            Forms manager; existing forms attach in the studio's Data step. */}
-        <Route path="/apps/new" element={<AppCreateStart />} />
-        {/* App Studio — the app-first workspace (Plan/Data/Screens/Automations/Access/Publish) */}
-        {/* The page and its sections (data, edit, domains, settings), under data a table and its view */}
-        <Route path="/apps/:appId/softn/*" element={<SoftnAppWorkspace />} />
         {/* An agent's draft for the public SoftN directory, published only when its owner approves here */}
-        <Route path="/softn-directory/approve/:draftId" element={<SoftnDirectoryApprove />} />
-        <Route path="/apps/:appId/studio" element={<AppStudio />} />
-        <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
-        <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />
-        <Route path="/apps/:appId/forms" element={<AppFormManager />} />
-        <Route path="/apps/:appId/users" element={<AppUserManager />} />
-        <Route path="/apps/:appId/roles" element={<AppRoleEditor />} />
-        <Route path="/apps/:appId/relations" element={<AppRelationsManager />} />
-        <Route path="/apps/:appId/records" element={<AppRecords />} />
-        <Route path="/apps/:appId/deploy" element={<AppDeploySettings />} />
+        <Route path="/app-directory/approve/:draftId" element={<SoftnDirectoryApprove />} />
+        <Route path="/softn-directory/approve/:draftId" element={<LegacyAppAddress />} />
       </Route>
 
       {/* Redirect authenticated users from auth pages: on to the page that sent them there
@@ -454,11 +450,7 @@ function AppRoutes() {
       <Route path="/forgot-password" element={<Navigate to="/" replace />} />
       <Route path="/reset-password" element={<Navigate to="/" replace />} />
 
-      {/* Builder route (full screen, no sidebar) */}
-      <Route path="/builder/:formId" element={<FormBuilder />} />
-
-      {/* Preview route (full screen) */}
-      <Route path="/preview/:formId" element={<FormPreview />} />
+      {editorPages}
 
       {/* Platform-admin ACTING routes (full screen): the same owner UIs pointed at
           another user's account via the /admin/users/{ownerId} API mirror. There is
@@ -479,14 +471,6 @@ function AppRoutes() {
       <Route path="/admin/forms/:formId/screen/edit" element={<AdminActingBoundary kind="form"><CustomScreenStudio /></AdminActingBoundary>} />
       <Route path="/admin/users/:userId/flows" element={<AdminActingBoundary kind="user"><FlowsWorkspace /></AdminActingBoundary>} />
       <Route path="/admin/users/:userId/trash" element={<AdminActingBoundary kind="user"><TrashPage /></AdminActingBoundary>} />
-
-      {/* Custom-screen play + editors — full screen (own header/back), so they fit the viewport
-          and scroll internally instead of overflowing under AppShell's chrome on small screens */}
-      <Route path="/forms/:formId/screen" element={<CustomScreenPlay />} />
-      <Route path="/forms/:formId/screen/edit" element={<CustomScreenStudio />} />
-      <Route path="/apps/:appId/home/edit" element={<AppHomeStudio />} />
-
-
 
       {/* Docs */}
       <Route path="/docs" element={<Docs />} />
@@ -544,7 +528,6 @@ function RootGate() {
   React.useEffect(() => { if (!launchHost) restorePlatformHead(); }, [launchHost]);
   return launchHost ? <DomainLaunchRouter host={launchHost}><AppRoutes /></DomainLaunchRouter> : <AppRoutes />;
 }
-
 
 /** Only an administrator loads the confirmation dialog. */
 function AdminConfirmGate() {

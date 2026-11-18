@@ -9,9 +9,10 @@
 // The paired desktop is OAIY (its own product and repository) since FormLogic
 // Desktop was retired on 2026-09-02; this page sends people there rather than to a
 // releases feed that no longer carries an installer.
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Download, Globe, Monitor, Smartphone } from 'lucide-react';
+import { Download, Globe, Monitor, Smartphone } from 'lucide-react';
 
 const OAIY_URL = 'https://oaiy.com';
 
@@ -37,6 +38,7 @@ const PLATFORM_LABELS: Record<Platform, string> = {
 };
 
 export function DownloadPage() {
+  useDocumentTitle('Download OAIY');
   const platform = useMemo(() => detectPlatform(), []);
   const hasInstaller = platform === 'windows';
 
@@ -48,9 +50,8 @@ export function DownloadPage() {
         </div>
         <h1 className="mt-6 text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Get OAIY for your desktop</h1>
         <p className="mt-3 text-sm leading-relaxed text-gray-600 dark:text-slate-300">
-          OAIY is the local capability layer that pairs with your FormLogic account: it runs local AI services and
-          models, connects supervised plugins and hardware (like the Aokie AI receptionist), and keeps your flows
-          running headlessly — while everything also works right here in your browser.
+          Connect your Windows computer to FormLogic to run local AI models, pair hardware
+          and keep automations running when your browser is closed.
         </p>
 
         <div className="mt-8 flex flex-col gap-3 text-left">
@@ -71,7 +72,7 @@ export function DownloadPage() {
             </>
           ) : (
             <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 px-5 py-4 dark:border-slate-700 dark:bg-slate-900">
-              <Smartphone className="mt-0.5 h-5 w-5 shrink-0 text-gray-400 dark:text-slate-500" />
+              {platform === 'ios' || platform === 'android' ? <Smartphone className="mt-0.5 h-5 w-5 shrink-0 text-gray-500" /> : <Monitor className="mt-0.5 h-5 w-5 shrink-0 text-gray-500" />}
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-gray-800 dark:text-slate-100">
                   No installer for {PLATFORM_LABELS[platform]} yet
@@ -100,7 +101,7 @@ export function DownloadPage() {
               href={OAIY_URL}
               target="_blank"
               rel="noreferrer"
-              className="text-center text-xs font-medium text-gray-400 underline hover:no-underline dark:text-slate-500"
+              className="inline-flex min-h-11 items-center justify-center text-sm font-medium text-gray-600 underline hover:no-underline dark:text-slate-300"
             >
               About OAIY
             </a>
@@ -112,13 +113,6 @@ export function DownloadPage() {
           version stays available either way.
         </p>
 
-        <button
-          type="button"
-          onClick={() => (window.history.length > 1 ? window.history.back() : undefined)}
-          className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-slate-100"
-        >
-          <ArrowLeft className="h-4 w-4" /> Back
-        </button>
       </main>
     </div>
   );

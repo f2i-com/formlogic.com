@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useLocation, useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Wand2, Loader2, Save, Play, Sparkles, PanelRightClose, PanelRightOpen, FileCode2, FilePlus2, LayoutTemplate, FolderUp, Atom, StickyNote } from 'lucide-react';
 import { api } from '../lib/api';
 import { SiteChatWidget } from '../components/chat/SiteChatWidget';
@@ -7,6 +7,7 @@ import { useChatDockOffset } from '../components/chat/useChatDockOffset';
 import { Button } from '../components/ui/Button';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { ScreenFilesEditor } from '../components/custom-screen/ScreenFilesEditor';
+import { useScreenPreview } from '../components/custom-screen/useScreenPreview';
 import { readUploadedScreenFiles } from '../components/custom-screen/screenFileUpload';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
 import { bundleScreenFiles, type ScreenFile } from '../lib/screenCompile';
@@ -148,8 +149,13 @@ type Mode = 'section' | 'record';
 export default function CustomScreenStudio() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   // Platform-admin acting mode: the live preview renders no record data.
   const acting = useAdminActing();
+  const leaveEditor = () => {
+    if (location.key === 'default') navigate(acting ? `/admin/builder/${formId}` : `/builder/${formId}`, { replace: true });
+    else navigate(-1);
+  };
   const [title, setTitle] = useState('');
   const [fields, setFields] = useState<Array<{ id: string; label: string; type: string }>>([]);
   const [prompt, setPrompt] = useState('');
@@ -173,7 +179,7 @@ export default function CustomScreenStudio() {
   const [compileError, setCompileError] = useState<string | null>(null);
   // The AI "Describe the screen" panel is opt-in (default: just the editor), separate from AI_ENABLED.
   const [showAi, setShowAi] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(true);
+  const { previewOpen, showEditor, previewLabel, togglePreview } = useScreenPreview();
   const previewTimer = useRef<number | undefined>(undefined);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -413,7 +419,7 @@ export default function CustomScreenStudio() {
   const activeHasPreview = !!(activePreview.html || activePreview.js || activePreview.files?.length);
 
   const tabClass = (m: Mode) =>
-    `px-3 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-colors ${
+    `min-h-11 px-3 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-colors md:min-h-0 ${
       mode === m
         ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm'
         : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
@@ -429,14 +435,14 @@ export default function CustomScreenStudio() {
         </div>
       )}
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 h-14 shrink-0 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-        <button onClick={() => { if (dirty) setConfirmLeave(true); else navigate(-1); }} className="text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white cursor-pointer" aria-label="Back">
+      <div className="flex min-w-0 items-center gap-1 px-2 h-14 shrink-0 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 sm:gap-3 sm:px-4">
+        <button onClick={() => { if (dirty) setConfirmLeave(true); else leaveEditor(); }} className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 dark:text-slate-400 dark:hover:bg-slate-800 cursor-pointer" aria-label="Back">
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-gray-900 dark:text-white truncate">Custom Screen</span>
-            <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">Beta</span>
+            <h1 className="font-semibold text-gray-900 dark:text-white truncate"><span className="hidden sm:inline">Custom </span>Screen</h1>
+            <span className="hidden sm:inline text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">Beta</span>
           </div>
           <p className="text-[11px] leading-tight text-gray-400 dark:text-slate-500 truncate hidden sm:block">
             {title ? `A coded frontend for “${title}”` : 'A coded frontend for this form'} — HTML, CSS &amp; TypeScript/TSX over the FormLogic SDK
@@ -444,19 +450,19 @@ export default function CustomScreenStudio() {
         </div>
         {/* Section screen vs per-record widget */}
         <div className="ml-2 hidden md:flex items-center gap-0.5 p-0.5 rounded-lg bg-gray-100 dark:bg-slate-800">
-          <button type="button" onClick={() => switchMode('section')} className={tabClass('section')} title={hasScreen ? 'Section screen (authored)' : 'Section screen (empty)'}>
+          <button type="button" onClick={() => switchMode('section')} aria-pressed={mode === 'section'} className={tabClass('section')} title={hasScreen ? 'Section screen (authored)' : 'Section screen (empty)'}>
             Section screen{hasScreen ? ' •' : ''}
           </button>
-          <button type="button" onClick={() => switchMode('record')} className={tabClass('record')} title={hasRecordScreen ? 'Record widget (authored)' : 'Record widget (empty)'}>
+          <button type="button" onClick={() => switchMode('record')} aria-pressed={mode === 'record'} className={tabClass('record')} title={hasRecordScreen ? 'Record widget (authored)' : 'Record widget (empty)'}>
             Record widget{hasRecordScreen ? ' •' : ''}
           </button>
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setPreviewOpen((v) => !v)} leftIcon={previewOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />} title={previewOpen ? 'Hide preview' : 'Show preview'}>
-            <span className="hidden sm:inline">{previewOpen ? 'Hide preview' : 'Preview'}</span>
+        <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
+          <Button variant="outline" size="sm" onClick={togglePreview} aria-expanded={previewOpen} leftIcon={previewOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}>
+            {previewLabel}
           </Button>
           {mode === 'section' && hasScreen && !dirty && !acting && (
-            <Button variant="outline" size="sm" onClick={() => navigate(`/forms/${formId}/screen`)} leftIcon={<Play className="h-4 w-4" />}>Open</Button>
+            <Button variant="outline" size="sm" aria-label="Open screen" title="Open screen" onClick={() => navigate(`/forms/${formId}/screen`)} leftIcon={<Play className="h-4 w-4" />}><span className="hidden sm:inline">Open</span></Button>
           )}
           <Button size="sm" onClick={save} disabled={(!hasScreen && !hasRecordScreen) || saving || !dirty} leftIcon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}>Save</Button>
         </div>
@@ -465,17 +471,17 @@ export default function CustomScreenStudio() {
       {/* Mobile mode switch */}
       <div className="md:hidden flex items-center gap-0.5 px-4 py-2 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
         <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-gray-100 dark:bg-slate-800">
-          <button type="button" onClick={() => switchMode('section')} className={tabClass('section')}>Section screen</button>
-          <button type="button" onClick={() => switchMode('record')} className={tabClass('record')}>Record widget</button>
+          <button type="button" onClick={() => switchMode('section')} aria-pressed={mode === 'section'} className={tabClass('section')}>Section screen</button>
+          <button type="button" onClick={() => switchMode('record')} aria-pressed={mode === 'record'} className={tabClass('record')}>Record widget</button>
         </div>
       </div>
 
       {/* Body: editor | preview */}
       <div className={`flex-1 min-h-0 grid grid-cols-1 ${previewOpen ? 'lg:grid-cols-2' : ''}`}>
         {/* Editor */}
-        <div className="min-h-0 flex flex-col border-r border-gray-200 dark:border-slate-800">
+        <div className={`min-h-0 min-w-0 flex-col border-gray-200 dark:border-slate-800 lg:border-r ${showEditor ? 'flex' : 'hidden'}`}>
           {(activeFiles.length > 0 || (showLegacyAi && showAi)) && (
-          <div className="p-4 space-y-3 border-b border-gray-200 dark:border-slate-800">
+          <div className="max-h-[36%] shrink-0 overflow-y-auto p-4 space-y-3 border-b border-gray-200 dark:border-slate-800">
             {showLegacyAi && showAi ? (
               <>
                 <div className="flex items-center justify-between">
@@ -545,6 +551,7 @@ export default function CustomScreenStudio() {
                         <button
                           key={f.id}
                           type="button"
+                          aria-pressed={on}
                           onClick={() => {
                             const cur = new Set(meta.publicRecordFields || []);
                             if (on) cur.delete(f.id); else cur.add(f.id);
@@ -748,7 +755,7 @@ export default function CustomScreenStudio() {
               ) : (
                 <div className="h-full flex items-center justify-center text-center px-6">
                   <p className="text-sm text-gray-400 dark:text-slate-500">
-                    {activeFiles.length === 0 ? 'Pick a starting point on the left — the live preview appears here.' : 'Edit the files on the left — the live preview appears here.'}
+                    {activeFiles.length === 0 ? 'Choose a starting point in the editor to preview your screen.' : 'Your preview will appear as the source files compile.'}
                   </p>
                 </div>
               )}
@@ -761,7 +768,7 @@ export default function CustomScreenStudio() {
       <ConfirmDialog
         isOpen={confirmLeave}
         onClose={() => setConfirmLeave(false)}
-        onConfirm={() => { setConfirmLeave(false); navigate(-1); }}
+        onConfirm={() => { setConfirmLeave(false); leaveEditor(); }}
         title="Discard unsaved changes?"
         message="This screen has unsaved changes. Leaving will discard them."
         confirmLabel="Discard changes"

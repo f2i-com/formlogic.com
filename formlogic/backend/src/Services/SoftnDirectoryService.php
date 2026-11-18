@@ -9,7 +9,7 @@ use FormLogic\Support\DataEncryption;
 use PDO;
 
 /**
- * Publishing a hosted SoftN app to a public SoftN directory (softn.com's, or one the site's administrator names),
+ * Publishing a hosted web app to a public SoftN directory (softn.com's, or one the site's administrator names),
  * for an AI agent over MCP and for the person whose account it is.
  *
  * The agent works on drafts: the app's current project packed as a .softn bundle in a staging folder that expires,
@@ -131,8 +131,8 @@ final class SoftnDirectoryService
             'categories' => $directory !== null ? $this->categories($directory) : [],
             'limits' => ['bundleBytes' => self::MAX_BUNDLE_BYTES, 'files' => self::MAX_FILES, 'draftHours' => self::DRAFT_HOURS, 'publishesPerHour' => self::PUBLISH_PER_HOUR],
             'workflow' => [
-                'Build the app as a hosted SoftN app here first: create_softn_app, then update_native_app_files, and check it in its workspace.',
-                'softn_create_draft {appId, listing:{name, description, category, tags?, author?}} packs the app’s current files as a .softn draft and checks it. Nothing is public.',
+                'Build the app as a hosted web app here first: create_softn_app, then update_native_app_files, and check it in its workspace.',
+                'softn_create_draft {appId, listing:{name, description, category, tags?, author?}} packs the app’s current files as a ZIP draft and checks it. Nothing is public.',
                 'softn_validate_draft and softn_preview_draft {draftId}: the checks, the permissions the app declares, and the link where its owner can try it.',
                 'softn_publish_draft {draftId} asks for publication and returns approvalUrl: give it to the person. Only they can publish, by approving on that page. Calling it again changes nothing.',
                 'softn_get_app {draftId} tells you when it is published, with the app’s page and play links. softn_list_my_apps lists this account’s apps in the directory.',
@@ -143,7 +143,7 @@ final class SoftnDirectoryService
                 'Everything in the bundle is public: the directory shows every app’s source. Never put keys, passwords or private data in an app’s files.',
                 'What browsers are never served here stays here: server/, backend/, private/, .sql files and the manifest’s server settings. The directory’s copy runs in the browser alone.',
                 'Declare only the permissions the app needs in permission.json; the directory and the person see them before it runs.',
-                'Pages are SoftN’s UI language or HTML with SoftN in it; scripts and stylesheets from other sites are not loaded (see the HTML and SoftN guide).',
+                'Package scripts, styles and assets with the app. Check the directory’s publishing guide for the project formats and permissions it accepts.',
             ],
             'guides' => ['https://softn.com/docs/html-and-softn/', 'https://softn.com/docs/softn-app-format/', 'https://softn.com/docs/permissions/', 'https://softn.com/docs/publishing/'],
         ];
@@ -224,7 +224,7 @@ final class SoftnDirectoryService
             throw new \DomainException('No app of yours has that id.');
         }
         if (empty($app['settings']['softnApp'])) {
-            throw new \InvalidArgumentException('Only a hosted SoftN app can be published to a SoftN directory.');
+            throw new \InvalidArgumentException('Only a hosted web app can be published to an app directory.');
         }
         if ($targetSlug !== null) {
             $this->ownPublication($ownerId, $directory, $targetSlug);
@@ -343,8 +343,8 @@ final class SoftnDirectoryService
             'listing' => $this->listingOf($row),
             'permissions' => self::shownPermissions(json_decode((string) $row['permissions'], true), in_array('permission.json', $files, true)),
             'warnings' => json_decode((string) $row['warnings'], true),
-            'previewUrl' => '/apps/' . rawurlencode((string) $row['app_id']) . '/softn',
-            'approvalUrl' => '/softn-directory/approve/' . $row['id'],
+            'previewUrl' => '/apps/' . rawurlencode((string) $row['app_id']) . '/web',
+            'approvalUrl' => '/app-directory/approve/' . $row['id'],
             'expiresAt' => $row['expires_at'],
             'error' => $row['error'],
             'publication' => $publication ? self::publicView($publication) : null,
@@ -485,10 +485,10 @@ final class SoftnDirectoryService
     {
         $directory = $this->directory();
         if ($directory === null) {
-            throw new \DomainException('This site does not publish to a SoftN directory. Its administrator can name one in Admin → Platform.');
+            throw new \DomainException('This site does not publish to an app directory. Its administrator can name one in Admin → Platform.');
         }
         if (!$this->encryption()->enabled() || !$this->encryption()->usable()) {
-            throw new \DomainException('Publishing to a SoftN directory needs DATA_ENCRYPTION_KEY set on this server, so the apps’ edit keys are kept encrypted.');
+            throw new \DomainException('Publishing to an app directory needs DATA_ENCRYPTION_KEY set on this server, so the apps’ edit keys are kept encrypted.');
         }
         return $directory;
     }
@@ -755,7 +755,7 @@ final class SoftnDirectoryService
         }
         $unknown = array_values(array_diff(array_map('strval', array_keys($declared)), self::CAPABILITIES));
         if ($unknown !== []) {
-            throw new \InvalidArgumentException('permission.json names capabilities SoftN does not have: ' . implode(', ', $unknown) . '. They are ' . implode(', ', self::CAPABILITIES) . ' (the network is "net", files the visitor picks are "files").');
+            throw new \InvalidArgumentException('permission.json names unsupported capabilities: ' . implode(', ', $unknown) . '. They are ' . implode(', ', self::CAPABILITIES) . ' (the network is "net", files the visitor picks are "files").');
         }
         $malformed = array_keys(array_filter($declared, fn (mixed $entry) => !is_array($entry) || (array_is_list($entry) && $entry !== [])
             || (array_key_exists('enabled', $entry) && !is_bool($entry['enabled']))));

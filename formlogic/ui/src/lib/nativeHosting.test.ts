@@ -3,8 +3,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { strToU8, zipSync } from 'fflate';
-import { HOSTED_MEDIA, exportNativeProject, importNativeProject } from './nativeHosting';
+import { strToU8, unzipSync, zipSync } from 'fflate';
+import { HOSTED_MEDIA, exportNativeProject, importNativeProject, sourceNameProblem } from './nativeHosting';
 
 const softn = (files: Record<string, string | Uint8Array>) =>
   new File([zipSync(Object.fromEntries(Object.entries(files).map(([path, value]) => [path, typeof value === 'string' ? strToU8(value) : value])))], 'app.softn');
@@ -12,6 +12,23 @@ const client = { 'manifest.json': JSON.stringify({ name: 'Field notes', main: 'u
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
 
 describe('importNativeProject', () => {
+  it('separates a previous host’s key file from app source, even in an older saved draft', async () => {
+    const project = await importNativeProject(softn({ ...client, 'private/config.json': '{"keyHex":"fixture"}' }));
+    expect(project.files).not.toHaveProperty('private/config.json');
+    expect(sourceNameProblem('private/config.json')).toMatch(/host key/);
+    const exported = unzipSync(exportNativeProject({ ...project, files: { ...project.files, 'Private/config.json': '{"keyHex":"fixture"}' }, assets: {} }));
+    expect(Object.keys(exported)).not.toContain('Private/config.json');
+    expect(Object.keys(exported)).toContain('ui/main.ui');
+  });
+
+  it('validates the migration list before a backend is attached', async () => {
+    const path = 'server/migrations/001.sql';
+    const bundle = (migrations: unknown) => softn({ ...client, 'manifest.json': JSON.stringify({ main: 'ui/main.ui', server: {
+      entry: 'server/main.logic', requires: { apiVersion: 1, capabilities: ['sql'] }, database: { kind: 'private-sqlite', migrations },
+    } }), 'server/main.logic': 'function list() {}', [path]: 'CREATE TABLE notes(id INTEGER PRIMARY KEY);' });
+    for (const value of [undefined, null, [], [path]]) await expect(importNativeProject(bundle(value))).resolves.toMatchObject({ version: 0 });
+    for (const value of [path, {}, [1], [path, path]]) await expect(importNativeProject(bundle(value))).rejects.toThrow(/migration/i);
+  });
   it('takes an app with no backend, keeping its source, seed data and media as they came', async () => {
     const project = await importNativeProject(softn({ ...client, 'assets/logo.png': png, 'README.md': 'notes' }));
     expect(Object.keys(project.files).sort()).toEqual(['logic/main.logic', 'manifest.json', 'ui/main.ui', 'xdb/tasks.xdb']);
@@ -33,7 +50,7 @@ describe('importNativeProject', () => {
   it('refuses a backend this host does not run, and says what it needs', async () => {
     const withServer = (server: unknown, extra: Record<string, string> = {}) => softn({ ...client, 'manifest.json': JSON.stringify({ name: 'Notes', main: 'ui/main.ui', server }), 'server/main.logic': 'function list() {}', ...extra });
     // SoftN's older backend format: routes and an entry, nothing this host's runner reads.
-    await expect(importNativeProject(withServer({ entry: 'server/main.logic', routes: [{ method: 'GET', path: '/api/notes', handler: 'list', public: true }] }))).rejects.toThrow('it was written for another SoftN host');
+    await expect(importNativeProject(withServer({ entry: 'server/main.logic', routes: [{ method: 'GET', path: '/api/notes', handler: 'list', public: true }] }))).rejects.toThrow('its API version is unsupported');
     const v1 = { entry: 'server/main.logic', requires: { apiVersion: 1, capabilities: ['sql'] }, database: { kind: 'private-sqlite', migrations: [] } };
     await expect(importNativeProject(withServer({ ...v1, requires: { apiVersion: 1, capabilities: ['sql', 'websockets'] } }))).rejects.toThrow('it asks for websockets, which this host does not offer');
     await expect(importNativeProject(withServer({ ...v1, entry: 'logic/main.logic' }))).rejects.toThrow('its entry should be a server/….logic file');
@@ -49,7 +66,6 @@ describe('importNativeProject', () => {
 
   it('refuses media the host cannot serve, and other kinds of file, by name', async () => {
     await expect(importNativeProject(softn({ ...client, 'assets/page.htm': '<script>1</script>' }))).rejects.toThrow('assets/page.htm cannot be hosted with this app');
-    await expect(importNativeProject(softn({ ...client, 'assets/app.mjs': 'alert(1)' }))).rejects.toThrow('assets/app.mjs cannot be hosted with this app');
     await expect(importNativeProject(softn({ ...client, 'assets/tool.exe': 'MZ' }))).rejects.toThrow('assets/tool.exe cannot be hosted with this app');
     await expect(importNativeProject(softn({ ...client, 'styles/site.scss': 'body {}' }))).rejects.toThrow('styles/site.scss is a kind of file this host cannot keep with an app. Remove it');
   });
@@ -75,7 +91,7 @@ describe('importNativeProject', () => {
     // data; whatever is under the private tree stays out of it; a built site's files are not a SoftN app's.
     for (const path of ['private/keys.txt', 'server/data.bin', 'backend/seed.bin', 'server/logo.png', 'Private/photo.jpg', 'docs/guide.md', 'requirements.txt', 'logic/code.bin', 'shaders/blur.wgsl', 'site/logo.png']) {
       const refusal = await importNativeProject(softn({ ...client, [path]: 'x' })).then(() => 'taken', (error: Error) => error.message);
-      expect(refusal, path).toBe(`${path} is a kind of file this host cannot keep with an app. Remove it from the .softn file and try again.`);
+      expect(refusal, path).toBe(`${path} is a kind of file this host cannot keep with an app. Remove it from the project ZIP and try again.`);
     }
   });
 
@@ -93,7 +109,7 @@ describe('importNativeProject', () => {
     const php = readFileSync(resolve(process.cwd(), '../backend/src/Services/NativeAppService.php'), 'utf8');
     const server = /SOURCE_PATH = '~[^']*\\\.\(\?:([^)]*)\)\$~D'/.exec(php)?.[1];
     const browser = /SOURCE_PATH = \/[^\n]*\\\.\(\?:([^)]*)\)\$\//.exec(readFileSync(resolve(process.cwd(), 'src/lib/nativeHosting.ts'), 'utf8'))?.[1];
-    expect(server).toBe('html|ui|js|logic|py|css|json|sql|xdb');
+    expect(server).toBe('html|ui|js|jsx|vue|mjs|ts|logic|py|css|json|sql|xdb');
     expect(browser).toBe(server);
   });
 

@@ -2,16 +2,11 @@ import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Bot,
-  Database,
   ExternalLink,
   FileText,
-  GitBranch,
-  LayoutPanelTop,
-  Map,
   Play,
   Rocket,
   Search,
-  Settings,
   ShieldCheck,
   Sparkles,
   Workflow,
@@ -22,6 +17,7 @@ import { Input } from '../ui/Input';
 import { cn } from '../../lib/utils';
 import { returnToState } from '../../hooks/useReturnTo';
 import { useResourcePaths } from '../admin/AdminActingContext';
+import type { AppSectionItem } from '../layout/appSectionNavigation';
 import { STUDIO_STEPS, type StudioStepId } from './studioSteps';
 import type { App, AppForm, AppRole } from '../../types/app';
 import type { Form } from '../../types/form';
@@ -40,15 +36,6 @@ interface CommandItem {
 /** Results shown at once. The list scrolls, so this only bounds render cost. */
 const MAX_RESULTS = 40;
 
-const STEP_ICONS: Record<StudioStepId, LucideIcon> = {
-  plan: Map,
-  data: Database,
-  screens: LayoutPanelTop,
-  automations: GitBranch,
-  access: ShieldCheck,
-  publish: Rocket,
-};
-
 const GROUP_ORDER: CommandItem['group'][] = ['Actions', 'Sections', 'Forms', 'Automations', 'Roles'];
 
 /**
@@ -61,6 +48,7 @@ export function StudioCommandPalette({
   formsById,
   flows,
   roles,
+  navigation,
   activeStep,
   aiAvailable,
   onClose,
@@ -74,6 +62,7 @@ export function StudioCommandPalette({
   formsById: Record<string, Form>;
   flows: FlowDefinition[];
   roles: AppRole[];
+  navigation: readonly AppSectionItem[];
   activeStep: StudioStepId;
   aiAvailable: boolean;
   onClose: () => void;
@@ -108,15 +97,6 @@ export function StudioCommandPalette({
         icon: Rocket,
         action: onPublish,
       },
-      {
-        id: 'manage',
-        group: 'Actions',
-        label: 'App settings',
-        detail: 'Name, address, icon, timezone, services and deletion',
-        keywords: 'settings configure rename name slug url icon logo timezone archive delete manage',
-        icon: Settings,
-        action: () => navigate(`/apps/${app.id}/settings`, { state: studioReturn }),
-      },
     ];
     if (aiAvailable) {
       actions.splice(2, 0, {
@@ -130,15 +110,25 @@ export function StudioCommandPalette({
       });
     }
 
-    const steps: CommandItem[] = STUDIO_STEPS.map((step, index) => ({
-      id: `step-${step.id}`,
-      group: 'Sections',
-      label: step.label,
-      detail: step.description,
-      keywords: `${step.shortLabel} ${step.description} section step ${index + 1}`,
-      icon: STEP_ICONS[step.id],
-      action: () => onStepChange(step.id),
-    }));
+    const sections: CommandItem[] = navigation.map(item => {
+      const studioIndex = STUDIO_STEPS.findIndex(step => item.to === `/apps/${app.id}/studio/${step.id}`);
+      const step = STUDIO_STEPS[studioIndex];
+      const settings = item.to === `/apps/${app.id}/settings`;
+      return {
+        id: `section-${item.value}`,
+        group: 'Sections',
+        label: item.label,
+        detail: step?.description ?? (settings ? 'Name, address, icon, timezone and services' : ''),
+        keywords: [
+          'app section',
+          step && `${step.label} ${step.shortLabel} step ${studioIndex + 1}`,
+          settings && 'configure rename slug url logo timezone archive delete manage',
+          item.to.endsWith('/web/edit') && 'web editor project source code studio builder',
+        ].filter(Boolean).join(' '),
+        icon: item.icon,
+        action: () => navigate(item.to, { state: studioReturn }),
+      };
+    });
 
     const dataTypes: CommandItem[] = appForms.map((attachment) => {
       const form = formsById[attachment.formId];
@@ -175,7 +165,7 @@ export function StudioCommandPalette({
       action: () => onStepChange('access'),
     }));
 
-    return [...actions, ...steps, ...dataTypes, ...automationItems, ...roleItems];
+    return [...actions, ...sections, ...dataTypes, ...automationItems, ...roleItems];
   }, [
     aiAvailable,
     app.id,
@@ -184,6 +174,7 @@ export function StudioCommandPalette({
     flows,
     formsById,
     navigate,
+    navigation,
     onAskAi,
     onPreview,
     onPublish,
@@ -300,7 +291,7 @@ export function StudioCommandPalette({
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-xs font-bold">{item.label}</span>
-                            <span className="mt-0.5 block truncate text-[10px] text-gray-500 dark:text-slate-400">{item.detail}</span>
+                            {item.detail && <span className="mt-0.5 block truncate text-[10px] text-gray-500 dark:text-slate-400">{item.detail}</span>}
                           </span>
                           <ExternalLink className="h-3.5 w-3.5 shrink-0 text-gray-400 dark:text-slate-500" aria-hidden="true" />
                         </button>

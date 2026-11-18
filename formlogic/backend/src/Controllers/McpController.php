@@ -83,7 +83,7 @@ class McpController
         private ?\FormLogic\Services\PackService $packs = null,
         private ?\FormLogic\Services\AppUserService $appUsers = null,
         private ?\FormLogic\Services\RuntimeEngineService $engines = null,
-        // Publishing hosted SoftN apps to a public SoftN directory (the softn_* tools).
+        // Publishing hosted web apps to a public SoftN directory (the softn_* tools).
         private ?\FormLogic\Services\SoftnDirectoryService $softnDirectory = null,
         // Delivers the automations a record changed over MCP queued (change_native_app_record).
         private ?\FormLogic\Services\NativeRecordEventRouter $recordEvents = null,
@@ -543,7 +543,7 @@ class McpController
         $all = ChatToolsService::toolDefinitions();
         // get_started is always available (no scope) — a full how-to guide so an AI can build with no prior
         // knowledge. Listed first so it's the obvious first call.
-        $out = [['name' => 'get_started', 'description' => 'Read this first when building or editing a FORMS app (forms, dashboards, flows, custom screens): the workflow, field types, custom-screen SDK, and a worked example. For a SoftN app (a website, tool or web app of its own, with no forms) read get_softn_guide instead.', 'inputSchema' => ['type' => 'object']]];
+        $out = [['name' => 'get_started', 'description' => 'Read this first when building or editing a FORMS app (forms, dashboards, flows, custom screens): the workflow, field types, custom-screen SDK, and a worked example. For a web app (a website, tool or web app of its own, with no forms) read get_softn_guide instead.', 'inputSchema' => ['type' => 'object'], 'annotations' => ['readOnlyHint' => true]]];
         foreach ($all as $t) {
             if (!in_array($t['scope'], $scopes, true)) {
                 continue;
@@ -551,12 +551,13 @@ class McpController
             if (in_array($t['name'], ChatToolsService::CHAT_ONLY_TOOLS, true)) {
                 continue; // FormLogic's own chat taking the person somewhere: nothing an MCP client can use
             }
-            if (in_array($t['name'], ['create_app', 'create_softn_app'], true) && $scopedApp !== null) {
-                continue; // app-scoped tokens can't create new apps
+            if ($scopedApp !== null && in_array($t['name'], ['create_app', 'create_softn_app', 'install_aokie_starter', 'materialize_blueprint', 'compose_apps'], true)) {
+                continue; // these create another app or require access to two different apps
             }
-            if ($t['name'] === 'create_app_form' && !in_array('apps:write', $scopes, true)) {
-                continue; // callTool() also requires apps:write; hide it unless the session actually has both
+            if (array_diff(ChatToolsService::ADDITIONAL_TOOL_SCOPES[$t['name']] ?? [], $scopes)) {
+                continue;
             }
+            $t['annotations'] = ['readOnlyHint' => ChatToolsService::isReadTool($t['name']) || $t['name'] === 'desktop_status'];
             unset($t['scope']);
             $out[] = $t;
         }
@@ -567,10 +568,10 @@ class McpController
     private function serverInstructions(): string
     {
         return <<<'TXT'
-FormLogic hosts two kinds of app, and this MCP server creates, edits and looks after both. A FORMS app is made of FORMS (fields + data), optional backend onSubmit SCRIPTS, no-code widget DASHBOARDS (charts/KPIs/record lists over the data), FLOWS (event-triggered automation graphs), and optional CUSTOM CODE SCREENS (a sandboxed frontend — React-style TSX components on built-in Preact, or plain HTML/CSS/TypeScript). A SOFTN APP is a website, tool or web app of its own: its own pages and logic, a private backend and a SQLite database, with no forms. For a forms app, call the get_started tool for a full guide with a worked example; for a SoftN app, get_softn_guide is its guide (get_started is not about SoftN apps).
+FormLogic hosts two kinds of app, and this MCP server creates, edits and looks after both. A FORMS app is made of FORMS (fields + data), optional backend onSubmit SCRIPTS, no-code widget DASHBOARDS (charts/KPIs/record lists over the data), FLOWS (event-triggered automation graphs), and optional CUSTOM CODE SCREENS (a sandboxed frontend — React-style TSX components on built-in Preact, or plain HTML/CSS/TypeScript). A WEB APP uses JavaScript, React, or Vue and can include a private backend and SQLite database. For a forms app, call the get_started tool for a full guide with a worked example; for a web app, read get_softn_guide.
 
-A SoftN app (when the person wants something built for them rather than forms, or names an app that list_apps marks kind "softn"):
-- New: create_softn_app { name, request }. Then read get_softn_guide (no topic: FormLogic's rules and the tools) and get_softn_guide { topic: "language" } (how pages, logic and a backend are written) BEFORE writing a file; lookup_softn_components { names } gives a component's props. SoftN is its own language: do not write React, Vue or plain web pages from habit.
+A web app (when the person wants something built for them rather than forms, or names an app that list_apps marks kind "softn"):
+- New: create_softn_app { name, request, template: "javascript" | "react" | "vue" } with the requested framework. React starts with editable JSX, Vue with a .vue component. Send changed component source to update_native_app_files; FormLogic rebuilds its runnable module. Read get_softn_guide, then get_native_app_project to inspect the manifest and source. For classic markup, the language topic and lookup_softn_components describe its syntax and components. Use standard web source for JavaScript, React, or Vue projects. An existing classic project uses its own markup and components.
 - Read and change: get_native_app_project { appId } (files and version; files: [paths] reads them), update_native_app_files { appId, expectedVersion, files, remove?, media?, removeMedia? } (installs the next version; its backend is started first and a version that does not start is refused with what to fix).
 - Undo: list_native_app_versions { appId } lists the versions kept, get_native_app_version { appId, version, file?, offset? } shows what one differs by (or one of its files, a long one in parts from offset), and restore_native_app_version { appId, version, expectedVersion } goes back to it as the next version (the database stays as it is).
 - Look after: get_softn_app { appId } (how it stands, where it runs), list_native_app_records / get_native_app_record / change_native_app_record (its data: search, filter, sort; needs the records permissions), list_app_members / update_app_member / remove_app_member (its people), update_app { status } to publish or unpublish.
@@ -578,7 +579,7 @@ A SoftN app (when the person wants something built for them rather than forms, o
 Build an app from scratch:
 1. create_app { name, description?, appKind? } — a container for forms. appKind tags the audience: admin|client|staff|public|internal|custom. (Skip if your token is already scoped to one app; then create_app is hidden.)
 2. create_app_form { title, fields } — create a form AND attach it to the app in one call. Repeat per form. Fields: [{ id, type, label, required, properties? }]. Common types: short_text, long_text, email, number, dropdown / multiple_choice / checkboxes (properties.options: [{id,label,value}]; checkboxes with one option is a single tick box), date, rating, scale, file_upload, hidden, statement, linked_record (properties.targetFormId = another form's id, to relate records).
-(A SoftN app is the other kind, above: create_softn_app, not create_app. Its record changes can start a flow with create_flow_binding and app.record.created.TABLE events.)
+(A web app is the other kind, above: create_softn_app, not create_app. Its record changes can start a flow with create_flow_binding and app.record.created.TABLE events.)
 For a portable connected dashboard: get_workspace_template, get_app_project, then publish_app_project. Use compose_apps to add existing app forms or move Aokie automation into a destination app. Read both apps first; preserve existing member permissions.
 3. (optional) update_form { formId, logicScript } — a sandboxed JavaScript (ZIPP) "function onSubmit(ctx) {…}" server-side script. It writes through ctx.db.setField / setStatus / addTag and refuses by returning { reject: true, message }; anything it throws refuses every submission, so read get_started § onSubmit script first.
 4. (recommended) set_app_home { appId, customScreen: { kind:"dashboard", dashboard:{ cols:12, widgets:[…] } } } — a no-code widget DASHBOARD home screen, the primary kind. Widgets: { kind:"report", layout:{x,y,w,h}, title?, spec } (spec = the same shape as create_report), { kind:"list", layout, list:{formId,limit?,titleField?,subtitleField?,metaField?} }, { kind:"text", layout, text:{body} }, { kind:"actions", layout } (new-record buttons), { kind:"activity", layout } (latest records). ALTERNATIVE: a full CODE frontend { enabled:true, files:[{path,content}] } (React-style TSX supported: entry index.tsx mounting createRoot(document.getElementById('root')!).render(<App/>); built-ins 'react'/'react-dom/client'/'preact'/'preact/hooks', no other npm; folders + relative imports fine; no index.html needed) or legacy { enabled:true, ts, html, css }; compiled/bundled automatically. Inside it window.FormLogic is the SDK: context(), forms(), submit(formId,answers), records(formId,{limit}), currentUser(), navigate(formId), toast.success/error, escapeHtml(v) — render record data as JSX text (auto-escaped), never dangerouslySetInnerHTML.
@@ -598,11 +599,11 @@ TXT;
 
 FormLogic apps = an APP (container) + one or more FORMS (each a set of fields, backed by its own database) + optionally a backend onSubmit SCRIPT per form + a HOME SCREEN (preferably a no-code widget DASHBOARD; alternatively a sandboxed CODE screen — React-style TSX components on built-in Preact — that reads/writes the forms' data) + optionally FLOWS (event-triggered automation graphs bound to form or connector events). You build all of this with the tools below.
 
-## SoftN apps: a website, tool or web app of its own
-The other kind of app has no forms: it is a SoftN project, with its own pages and logic, a private backend and a SQLite database. Use it when the person wants something built for them (a booking page, a tracker, a game, a small site) rather than forms and a dashboard. This guide is about forms apps; a SoftN app has its own:
-- get_softn_guide (no topic) — FormLogic's rules for a hosted SoftN app, the tools in the order a build uses them, and a complete worked app. Then get_softn_guide { topic: "language" } — how pages, logic and a backend are written. Read both before writing a file.
-- create_softn_app { name, request } makes one with a working starter; get_native_app_project and update_native_app_files read and change it; list_native_app_versions, get_native_app_version and restore_native_app_version go back to an earlier version; get_softn_app says how one stands; list_native_app_records, get_native_app_record and change_native_app_record are its data; list_app_members and update_app_member its people.
-- list_apps marks each app kind "softn" or "forms". The form, dashboard and screen tools below do not apply to a SoftN app.
+## Hosting JavaScript, React, or Vue apps
+The other kind of app has no forms: it is a web project, with its own pages and logic, a private backend and a SQLite database. Use it when the person wants something built for them (a booking page, a tracker, a game, a small site) rather than forms and a dashboard. This guide is about forms apps; a web app has its own:
+- get_softn_guide (no topic) — FormLogic's rules for a hosted web app, the tools in the order a build uses them, and a complete worked app. For a project with classic markup, topic "language" covers that syntax and its components.
+- create_softn_app { name, request, template: "javascript" | "react" | "vue" } makes one with an editable Vanilla JS, React JSX or Vue component starter; get_native_app_project and update_native_app_files read and change it; list_native_app_versions, get_native_app_version and restore_native_app_version go back to an earlier version; get_softn_app says how one stands; list_native_app_records, get_native_app_record and change_native_app_record are its data; list_app_members and update_app_member its people.
+- list_apps marks each app kind "softn" or "forms". The form, dashboard and screen tools below do not apply to a web app.
 
 ## Recommended workflow
 1. list_apps / list_forms — see what already exists (only if editing).

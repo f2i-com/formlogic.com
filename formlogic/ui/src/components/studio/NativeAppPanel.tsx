@@ -3,13 +3,17 @@ import { Link } from 'react-router-dom';
 import { Check, Database, Download, ExternalLink, Package, Upload } from 'lucide-react';
 import { ToolRow } from './ToolRow';
 import { AppEngineSelect } from './AppEngineSelect';
+import { usesWebContainer } from '../../lib/formlogic/frameEngine';
 import { AppTorchSwitch } from './AppTorchSwitch';
 import { importNativeProject, exportNativeProject, type NativeProject, type NativeProjectBytes } from '../../lib/nativeHosting';
+import { downloadProjectZip } from '../../lib/downloadProjectZip';
+import { isDemoLocalId } from '../../lib/demoLocal';
 import { withMediaBytes } from '../../lib/nativeMedia';
 import { projectHasBackend } from '../../lib/softnApps';
 import { useAiReady } from '../../hooks/useAiReady';
 import { AiConnectNotice } from '../ai/AiConnectNotice';
-import { DRAFT_KEEPING, useNativeProjectDraft } from './useNativeProjectDraft';
+import { DRAFT_KEEPING, useNativeProjectDraft, type NativeProjectDraft } from './useNativeProjectDraft';
+import { namedFiles } from '../../lib/projectSource';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { ProjectSourcePane } from './ProjectSourcePane';
@@ -24,11 +28,12 @@ import { AppEditorDialog, type AppEditorKind } from './AppEditorDialog';
  */
 export function NativeAppPanel({ app, installed, onInstalled }: { app: { id: string; slug: string; name: string }; installed?: boolean; onInstalled?: (home: boolean) => void }) {
   const [open, setOpen] = useState<'project'|'backend'|'records'|null>(null);
+  if (isDemoLocalId(app.id)) return null;
   return <>
     <ToolRow icon={Database} title="App backend & database"
       description={installed === false
-        ? 'Bring in a finished app you already have (a .softn file) with its own pages, private backend and database; it can keep its own sign-in.'
-        : 'A finished app you bring in (a .softn file) keeps its own pages, private backend and database here: edit its code, browse its records or bring in a new version.'}
+        ? 'Bring in a finished app you already have (a project ZIP) with its own pages, private backend and database; it can keep its own sign-in.'
+        : 'A finished app you bring in (a project ZIP) keeps its own pages, private backend and database here: edit its code, browse its records or bring in a new version.'}
       actions={<>{installed !== false && <><Button variant="secondary" onClick={() => setOpen('backend')}>Backend code</Button><Button variant="secondary" onClick={() => setOpen('records')}>Database records</Button></>}<Button variant="secondary" onClick={() => setOpen('project')}>Native app hosting</Button></>} />
     {open && <NativeEditor app={app} initialTab={open} onInstalled={onInstalled} onClose={() => setOpen(null)} />}
   </>;
@@ -40,14 +45,25 @@ export function NativeAppPanel({ app, installed, onInstalled }: { app: { id: str
  * `hosting` (the App Studio, for a forms app that carries a project): the project's settings, its
  * source and its records, since the studio has no other place for them.
  */
-export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project', initialTable = '', surface = 'hosting', saveLabel }: {
+interface NativeEditorProps {
   app: { id: string; slug: string; name: string }; onClose: () => void; onInstalled?: (home: boolean) => void;
   /** The tab the hosting dialog opens on; `backend` opens the source on the backend's first file. */
   initialTab?: 'project'|'backend'|'records'; initialTable?: string;
   surface?: 'hosting'|'source';
   /** What the button that installs the draft says on the source surface. */
   saveLabel?: string;
-}) {
+}
+
+export function NativeEditor(props: NativeEditorProps) {
+  const draft = useNativeProjectDraft(props.app, {
+    onInstalled: installed => props.onInstalled?.(!!installed.home),
+    reloadKey: `${props.initialTab ?? 'project'}:${props.initialTable ?? ''}`,
+  });
+  return <NativeEditorView {...props} draft={draft} />;
+}
+
+/** The workspace keeps its open draft when switching between its sections and the source editor. */
+export function NativeEditorView({ app, onClose, draft, initialTab = 'project', initialTable = '', surface = 'hosting', saveLabel }: NativeEditorProps & { draft: NativeProjectDraft }) {
   const sourceOnly = surface === 'source';
   const [editor, setEditor] = useState<{ kind: AppEditorKind; bundle: Uint8Array } | null>(null);
   const [tab, setTab] = useState<'project'|'source'|'records'>(sourceOnly || initialTab === 'backend' ? 'source' : initialTab);
@@ -61,13 +77,13 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
   // The dialog's content, to bring its top back into view when another tab is opened.
   const body = useRef<HTMLDivElement>(null);
   const control = 'min-h-11 w-full min-w-0 rounded-xl border border-slate-300 bg-white p-3 text-base text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
-  // The editor is mounted anew for each chosen entry tab.
-  const draft = useNativeProjectDraft(app, { onInstalled: installed => onInstalled?.(!!installed.home), reloadKey: `${initialTab}:${initialTable}` });
   const { project, version, installedFiles, ready, available, preflight, readOnly, engine, enginePolicy, busy, dirty, error, notice, conflict, base, recoverable, edit } = draft;
   // Only a backend runs on the server's runtime: an app with none publishes and runs without it.
   const needsRuntime = !project || projectHasBackend(project);
-  const firstBackend = (files: Record<string, string>) => Object.keys(files).find(path => path.startsWith('server/') && path.endsWith('.logic')) || '';
-  const activeSource = project && project.files[sourceFile] !== undefined ? sourceFile : !sourceOnly && initialTab === 'backend' ? firstBackend(project?.files ?? {}) : '';
+  const firstBackend = project && initialTab === 'backend' && !sourceFile
+    ? namedFiles(project.files).entry ?? Object.keys(project.files).find(path => path.startsWith('server/') && path.endsWith('.logic'))
+    : undefined;
+  const activeSource = project && Object.hasOwn(project.files, sourceFile) ? sourceFile : firstBackend ?? '';
   const recoverDraft = () => {
     const recovered = draft.recoverDraft();
     if (recovered) setSourceFile(current => recovered.files[current] !== undefined ? current : '');
@@ -108,7 +124,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
   const projectName = typeof manifest?.name === 'string' && manifest.name.trim() !== '' ? manifest.name : app.name;
   const routeCount = Array.isArray(manifest?.server?.routes) ? manifest.server.routes.length : 0;
   if (editor && project) return <AppEditorDialog kind={editor.kind} name={app.name} bundle={editor.bundle} onClose={() => setEditor(null)} onApply={async bytes => {
-    const returned = await importNativeProject(new File([new Uint8Array(bytes)], `${app.slug}.softn`));
+    const returned = await importNativeProject(new File([new Uint8Array(bytes)], `${app.slug}.zip`));
     edit({ ...returned, version, home: project.home, access: project.access });
     setSourceFile(current => returned.files[current] !== undefined ? current : '');
     draft.setNotice('Editor changes returned to your draft. Review the source, then publish when ready.');
@@ -117,7 +133,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
   // What leaving is said to keep is read after the pending checkpoint is written.
   const keeping = draft.keeping;
   const leaveMessage = () => draft.leaveMessage();
-  const close = () => { if (!draft.isLocked() && (!dirty || window.confirm(leaveMessage()))) onClose(); };
+  const close = () => { if (!draft.isLocked() && (sourceOnly || !dirty || window.confirm(leaveMessage()))) onClose(); };
   const discard = () => { if (!draft.isLocked() && window.confirm('Discard your unpublished changes?')) { draft.revert(); setSourceFile(''); } };
   const status = sourceOnly
     // Nothing is said of a version until one is known: "Version 0" stood here while it loaded.
@@ -131,7 +147,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
   const cardTitle = 'text-sm font-semibold text-slate-900 dark:text-white';
   const hint = 'text-sm leading-6 text-slate-600 dark:text-slate-400';
   return <Modal isOpen title={sourceOnly ? 'Source code' : 'Native app hosting'} size={shown === 'project' ? '2xl' : 'window'} onClose={close}
-    description={sourceOnly ? (readOnly ? `Every file of ${app.name}, shown as they are.` : `Every file of ${app.name}. Your changes are kept as a draft until you press ${saveLabel ?? 'Publish changes'}.`) : 'An app of your own inside this one: its pages, a private backend and its database, brought in as a .softn file.'}
+    description={sourceOnly ? (readOnly ? `Every file of ${app.name}, shown as they are.` : `Every file of ${app.name}. Your changes are kept as a draft until you press ${saveLabel ?? 'Publish changes'}.`) : 'An app of your own inside this one: its pages, a private backend and its database, brought in as a project ZIP.'}
     footer={<div className="flex flex-wrap items-center justify-between gap-3">
       <span className="text-xs text-slate-500 dark:text-slate-400">{status}</span>
       <div className="flex flex-wrap items-center gap-2">
@@ -167,7 +183,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
       </div>}
 
       {/* The file chooser serves the first import and every later one. */}
-      {!sourceOnly && !readOnly && <input ref={input} type="file" accept=".softn,.zip" className="hidden" aria-label="Import native app" onChange={event => { void importFile(event.target.files?.[0]); event.target.value = ''; }} />}
+      {!sourceOnly && !readOnly && <input ref={input} type="file" accept=".zip,.softn" className="hidden" aria-label="Import native app" onChange={event => { void importFile(event.target.files?.[0]); event.target.value = ''; }} />}
 
       {/* What is open, and the two editors that work on all of it: one strip above the tabs, on every tab.
           The editors only return a draft to publish. A SoftN app's page opens them itself. */}
@@ -179,9 +195,9 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
           {/* Where it runs and where its data is, in a line: what an owner asks first of an app they brought in. */}
           <p className="mt-0.5 text-xs leading-5 text-slate-500 dark:text-slate-400">{needsRuntime ? 'Its backend runs on this server, and its records are kept in a database of its own.' : 'It has no backend: it runs in each visitor’s browser and keeps its data there.'}</p>
         </div>
-        {!readOnly && <div className="flex flex-wrap gap-2">{(['builder', 'studio'] as const).map(kind => <Button key={kind} variant="secondary" disabled={busy || !!preparing || (kind === 'studio' && aiReady === false)} title={kind === 'studio' && aiReady === false ? 'Connect an AI in Settings → AI to edit with AI Studio.' : undefined} onClick={() => void withBytes('editor', bytes => setEditor({ kind, bundle: exportNativeProject(bytes) }), 'Could not prepare this project for the editor.')}>{kind === 'builder' ? 'Open Visual Builder' : 'Open AI Studio'}</Button>)}</div>}
+        {!readOnly && <div className="flex flex-wrap gap-2">{(['builder', 'studio'] as const).map(kind => <Button key={kind} variant="secondary" disabled={busy || !!preparing} onClick={() => void withBytes('editor', bytes => setEditor({ kind, bundle: exportNativeProject(bytes) }), 'Could not prepare this project for the editor.')}>{kind === 'builder' ? 'Open Visual Builder' : 'Open AI Studio'}</Button>)}</div>}
       </section>}
-      {!sourceOnly && project && !readOnly && aiReady === false && <AiConnectNotice className="text-xs leading-5 text-slate-500 dark:text-slate-400" lead="AI Studio needs an AI connection; the Visual Builder works without one" reason={ai.reason} onConnected={ai.recheck} />}
+      {!sourceOnly && project && !readOnly && aiReady === false && <AiConnectNotice className="text-xs leading-5 text-slate-500 dark:text-slate-400" lead="Connect an AI to use chat in Studio" reason={ai.reason} onConnected={ai.recheck} />}
 
       {!sourceOnly && !starting && <div role="tablist" aria-label="Native app sections" className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">{(['project','source','records'] as const).map(value => <button type="button" role="tab" aria-selected={tab === value} key={value} className={`min-h-11 rounded-lg text-sm font-medium capitalize ${tab === value ? 'bg-white text-primary-700 shadow-sm dark:bg-slate-700 dark:text-primary-200' : 'text-slate-600 dark:text-slate-300'}`} onClick={() => { setTab(value); body.current?.scrollIntoView?.({ block: 'start' }); }}>{value}</button>)}</div>}
 
@@ -192,8 +208,8 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
         className={`flex flex-col items-center rounded-2xl border-2 border-dashed px-4 py-10 text-center transition-colors ${dropping ? 'border-primary-500 bg-primary-50/70 dark:bg-primary-500/10' : 'border-slate-300 dark:border-slate-700'}`}>
         <span aria-hidden="true" className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300"><Upload className="h-6 w-6" /></span>
         <h3 className="mt-4 text-lg font-semibold text-slate-900 dark:text-white">Bring in your app</h3>
-        <p className={`mt-1 max-w-xl ${hint}`}>Drop its <span className="font-mono text-[13px]">.softn</span> file here or choose it. You see what is in it first: nothing is installed until you press <span className="font-medium text-slate-900 dark:text-white">Install app project</span>.</p>
-        <Button className="mt-5" disabled={busy} isLoading={busy} leftIcon={<Upload className="h-4 w-4" />} onClick={() => input.current?.click()}>Import .softn project</Button>
+        <p className={`mt-1 max-w-xl ${hint}`}>Drop its <span className="font-mono text-[13px]">.zip</span> file here or choose it. You see what is in it first: nothing is installed until you press <span className="font-medium text-slate-900 dark:text-white">Install app project</span>.</p>
+        <Button className="mt-5" disabled={busy} isLoading={busy} leftIcon={<Upload className="h-4 w-4" />} onClick={() => input.current?.click()}>Import project ZIP</Button>
         <ul className="mt-6 grid max-w-2xl gap-x-6 gap-y-2 text-left text-sm text-slate-600 dark:text-slate-400 sm:grid-cols-3">
           <li className="flex gap-2"><Check className="mt-0.5 h-4 w-4 flex-none text-emerald-600 dark:text-emerald-400" aria-hidden="true" />Its own pages, as it was built</li>
           <li className="flex gap-2"><Check className="mt-0.5 h-4 w-4 flex-none text-emerald-600 dark:text-emerald-400" aria-hidden="true" />A private backend and its database</li>
@@ -216,11 +232,9 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
           <section aria-label="Files" className={card}>
             <h3 className={cardTitle}>Files</h3>
             <div className="mt-3 flex flex-wrap gap-2">
-              {!readOnly && <Button variant="secondary" disabled={!ready || busy || !!preparing} leftIcon={<Upload className="h-4 w-4" />} onClick={() => input.current?.click()}>Import .softn project</Button>}
+              {!readOnly && <Button variant="secondary" disabled={!ready || busy || !!preparing} leftIcon={<Upload className="h-4 w-4" />} onClick={() => input.current?.click()}>Import project ZIP</Button>}
               <Button variant="secondary" disabled={!!preparing} isLoading={preparing === 'download'} leftIcon={<Download className="h-4 w-4" />} onClick={() => void withBytes('download', project => {
-                const url = URL.createObjectURL(new Blob([new Uint8Array(exportNativeProject(project))], { type: 'application/octet-stream' }));
-                const link = document.createElement('a'); link.href = url; link.download = `${app.slug}.softn`; link.click();
-                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                downloadProjectZip(exportNativeProject(project), app.slug);
               }, 'The project copy could not be prepared. Your draft is still here.')}>Download editable project</Button>
             </div>
             <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{readOnly ? 'The download includes this project’s interface, private backend and migrations. It excludes records and server credentials.' : 'The download includes this draft’s interface, private backend and migrations. It excludes records and server credentials. Open it in your app editor and import the updated project here.'}</p>
@@ -236,7 +250,7 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
           {engine && enginePolicy && <section aria-label="Engine" className={card}>
             <h3 className={cardTitle}>Engine</h3>
             <div className="mt-3 space-y-4">
-              <AppEngineSelect appId={app.id} engine={engine} policy={enginePolicy} disabled={busy || readOnly} onChanged={() => void draft.refreshEngine()} />
+              <AppEngineSelect appId={app.id} engine={engine} policy={enginePolicy} webContainer={usesWebContainer(project.files)} disabled={busy || readOnly} onChanged={() => void draft.refreshEngine()} />
               {!readOnly && <AppTorchSwitch appId={app.id} policy={enginePolicy} disabled={busy} />}
             </div>
           </section>}
@@ -254,7 +268,8 @@ export function NativeEditor({ app, onClose, onInstalled, initialTab = 'project'
       {shown === 'source' && <div className="space-y-3">
         {!sourceOnly && <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">{readOnly ? 'Browse the project’s files: its pages, their logic and its private backend.' : 'Every file of the project: its pages, their logic and its private backend. Your changes remain a draft until you publish, and publishing preserves existing records.'}</p>}
         {project
-          ? <ProjectSourcePane appId={app.id} project={project} installed={installedFiles} readOnly={busy || readOnly} file={activeSource} onFile={setSourceFile} onEdit={edit} onNotice={draft.setNotice} />
+          ? <ProjectSourcePane appId={app.id} project={project} installed={installedFiles} readOnly={busy || readOnly} file={activeSource} onFile={setSourceFile} onEdit={edit} onNotice={draft.setNotice}
+            onOpenBuilder={() => void withBytes('editor', bytes => setEditor({ kind: 'builder', bundle: exportNativeProject(bytes) }), 'Could not prepare this project for Visual Builder.')} />
           : ready && <p className="text-sm text-slate-500 dark:text-slate-400">{readOnly ? 'No native app is installed, so there is no source to browse.' : 'Import a project first: its files are edited here.'}</p>}
       </div>}
       {shown === 'records' && ready && (version > 0 ? <NativeRecordsBrowser key={app.id} appId={app.id} appSlug={app.slug} version={version} initialTable={initialTable} readOnly={readOnly} /> : <p className="text-sm text-slate-500 dark:text-slate-400">{readOnly ? 'No native app is installed, so there is no database to browse.' : 'Install the project to create its database.'}</p>)}

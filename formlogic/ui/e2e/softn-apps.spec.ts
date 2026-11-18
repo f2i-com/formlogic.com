@@ -1,4 +1,5 @@
 import { sessionHeaders } from './session-request';
+import { openAppSection } from './app-sections';
 /**
  * Hosted SoftN apps, end to end in a real browser against the real backend:
  *
@@ -20,8 +21,9 @@ import { sessionHeaders } from './session-request';
  * Runs against the seeded golden-path account (E2E_EMAIL / E2E_PASSWORD); each test creates its
  * own apps and deletes them.
  */
-import { expect, test, type BrowserContext, type Page, type Route } from '@playwright/test';
+import { expect, test, type BrowserContext, type Locator, type Page, type Route } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
@@ -33,10 +35,47 @@ const STARTER = JSON.parse(readFileSync('../backend/resources/native-app-starter
 
 let created: string[] = [];
 let headers: Record<string, string> = {};
+let ownerCookies: Awaited<ReturnType<BrowserContext['cookies']>> = [];
+
+const isFullEngine = (path: string) => /\/zipp_wasm_bg-[\w-]+\.wasm$/.test(path);
+const isLiteEngine = (path: string) => path.endsWith('/zipp-javascript-lite.wasm');
+
+function requestedEngines(context: BrowserContext) {
+  const paths = new Set<string>();
+  context.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith('.wasm')) paths.add(path);
+  });
+  return paths;
+}
+
+test('a signed-out workspace bookmark keeps its section, filters and fragment through sign-in', async ({ page }) => {
+  const bookmark = '/apps/workspace-link-test/softn/data/notes?q=field%20notes#records';
+  await page.goto(bookmark);
+  await expect(page.getByRole('heading', { name: 'Sign in', exact: true })).toBeVisible();
+  const loginUrl = new URL(page.url());
+  expect(loginUrl.pathname).toBe('/login');
+  expect(loginUrl.searchParams.get('redirect')).toBe(bookmark);
+  await page.getByLabel('Email', { exact: true }).fill(EMAIL);
+  await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
+  await page.getByRole('button', { name: /^sign in$/i }).click();
+  await expect(page).toHaveURL(new URL(bookmark.replace('/softn/', '/web/'), loginUrl.origin).href);
+});
+
+test('an unrelated signed-out app address still shows the normal 404', async ({ page }) => {
+  await page.goto('/apps/workspace-link-test/unrecognized-route');
+  await expect(page.getByRole('heading', { name: '404' })).toBeVisible();
+});
 
 async function login(context: BrowserContext) {
-  const r = await context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email: EMAIL, password: PASSWORD } });
-  expect(r.ok(), await r.text()).toBe(true);
+  if (ownerCookies.length) {
+    await context.addCookies(ownerCookies);
+  } else {
+    // The matrix uses one owner session per worker across fresh browser contexts.
+    const r = await context.request.post('/api/auth/login', { headers: sessionHeaders(), data: { email: EMAIL, password: PASSWORD } });
+    expect(r.ok(), await r.text()).toBe(true);
+    ownerCookies = await context.cookies();
+  }
   const csrf = (await context.cookies()).find(c => c.name === 'formlogic_csrf')!.value;
   headers = { 'X-CSRF-Token': csrf };
 }
@@ -46,18 +85,54 @@ async function nativeProject(context: BrowserContext, id: string) {
 }
 
 /** The sections of an app's page: links, each at its own address. */
-const section = (page: Page, name: string) => page.getByRole('navigation', { name: 'App sections' }).getByRole('link', { name, exact: true });
 
 /** The app id in its page's address (a new app opens on its Edit section), recorded for deletion. */
 async function workspaceAppId(page: Page): Promise<string> {
-  await expect(page).toHaveURL(/\/apps\/[^/]+\/softn\/edit$/, { timeout: 30000 });
-  const id = /\/apps\/([^/]+)\/softn\/edit$/.exec(new URL(page.url()).pathname)![1];
+  await expect(page).toHaveURL(/\/apps\/[^/]+\/web\/edit$/, { timeout: 30000 });
+  const id = /\/apps\/([^/]+)\/web\/edit$/.exec(new URL(page.url()).pathname)![1];
   if (!created.includes(id)) created.push(id);
   return id;
 }
 
 /** The running app inside the workspace's preview. */
 const preview = (page: Page) => page.getByTestId('softn-app-preview').frameLocator('iframe[title="Hosted app"]');
+
+function softnUpload(name: string, files: Record<string, string>) {
+  return { name, mimeType: 'application/zip', buffer: Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([path, text]) => [path, strToU8(text)])))) };
+}
+
+// The guest DOM is drawn into a closed shadow root. Retain the rendered roots for
+// assertions, using ordinary pointer events to exercise the app's buttons.
+const observe = (p: Page) => p.addInitScript(() => {
+  const roots: ShadowRoot[] = [];
+  Object.defineProperty(window, 'guestRoots', { value: roots });
+  const attach = Element.prototype.attachShadow;
+  Element.prototype.attachShadow = function(init) { const root = attach.call(this, init); roots.push(root); return root; };
+});
+const guest = (p: Page) => p.frameLocator('iframe[title="Hosted app"]').first().locator('body');
+const guestText = (p: Page, selector: string) => guest(p).evaluate((_body, selector) =>
+  (window as Window & { guestRoots?: ShadowRoot[] }).guestRoots?.map(root => root.querySelector(selector)?.textContent).find(Boolean), selector);
+async function editorPreviewElement(body: Locator, selector: string) {
+  return body.evaluateHandle((_body, selector) => {
+    for (const root of (window as Window & { guestRoots: ShadowRoot[] }).guestRoots) {
+      const item = root.host.isConnected && root.querySelector<HTMLElement>(selector);
+      if (item) return item;
+    }
+    return null;
+  }, selector);
+}
+async function previewText(body: Locator, selector: string) {
+  const handle = await editorPreviewElement(body, selector);
+  try { return await handle.evaluate(node => node?.textContent); }
+  finally { await handle.dispose(); }
+}
+async function clickGuest(p: Page, selector: string) {
+  const center = await guest(p).evaluate((_body, selector) => {
+    const rect = (window as Window & { guestRoots: ShadowRoot[] }).guestRoots.map(root => root.querySelector(selector)).find(Boolean)!.getBoundingClientRect();
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  }, selector);
+  await guest(p).click({ position: center, force: true });
+}
 
 /**
  * Studio's agent, scripted: it reads the page and writes it back with the new heading, and the
@@ -75,11 +150,13 @@ function studioAgent(context: BrowserContext, appId: () => string, from: () => s
     }
     // Studio can ask before the test has read the new app's id from the address bar: wait for the id, do not ask for app "".
     await expect.poll(appId, { timeout: 30000 }).not.toBe('');
-    const current = (await nativeProject(context, appId()))!.files['ui/main.ui'];
+    const project = (await nativeProject(context, appId()))!;
+    const path: string = JSON.parse(project.files['manifest.json']).main;
+    const current = project.files[path];
     expect(current).toContain(from());
     await route.fulfill({ json: { data: { content: 'Writing the page.', toolCalls: [
-      { id: 'call-read', name: 'read_file', arguments: { path: 'ui/main.ui' } },
-      { id: 'call-write', name: 'write_file', arguments: { path: 'ui/main.ui', content: current.replace(from(), heading) } },
+      { id: 'call-read', name: 'read_file', arguments: { path } },
+      { id: 'call-write', name: 'write_file', arguments: { path, content: current.replace(from(), heading) } },
     ], stopReason: 'tool_calls' } } });
   };
   return { requests, handle };
@@ -118,7 +195,103 @@ async function watchStudioBuild(page: Page, request: string, heading: string, ai
   await expect(page.getByText('Saved. The preview shows your changes.', { exact: true })).toBeVisible({ timeout: 60000 });
 }
 
-test.describe('hosted SoftN apps', () => {
+test.describe('hosted web apps', () => {
+  test('Builder can start a React project inside the host and install it back into the app', async ({ page, context }) => {
+    test.setTimeout(120_000);
+    await observe(page);
+    await page.goto('/apps/new?type=upload');
+    await page.getByLabel('Choose an app ZIP').setInputFiles(softnUpload('seed.zip', {
+      'manifest.json': JSON.stringify({ engine: 2, name: 'Starter workspace', version: '1.0.0', main: 'index.html' }),
+      'index.html': '<!doctype html><h1>Starter workspace</h1>',
+    }));
+    await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
+    const id = await workspaceAppId(page);
+    const before = (await nativeProject(context, id))!;
+    await page.getByRole('button', { name: 'Edit visually', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: 'Visual Builder', exact: true });
+    await expect(editor.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled({ timeout: 45_000 });
+    const frame = editor.frameLocator('iframe');
+    await frame.getByRole('button', { name: 'New', exact: true }).click();
+    const chooser = frame.getByRole('dialog');
+    await chooser.getByRole('button', { name: 'React', exact: true }).click();
+    await chooser.getByRole('radio', { name: 'JSX App.jsx' }).check();
+    await chooser.getByRole('button', { name: 'Create app', exact: true }).click();
+    await expect.poll(() => previewText(frame.locator('body'), '#metric')).toBe('Rounds completed');
+    await editor.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(editor).toHaveCount(0, { timeout: 45_000 });
+    await expect.poll(() => guestText(page, '#metric'), { timeout: 45_000 }).toBe('Rounds completed');
+    const installed = (await nativeProject(context, id))!;
+    expect(installed.version).toBe(before.version + 1);
+    expect(installed.files['App.jsx']).toBeTruthy();
+    expect(installed.files['__softn_generated__/App.jsx.js']).toBeTruthy();
+    await page.reload();
+    await expect.poll(() => guestText(page, '#metric'), { timeout: 45_000 }).toBe('Rounds completed');
+  });
+
+  for (const component of [
+    { starter: 'React JSX', path: 'App.jsx', metric: 'Rounds completed' },
+    { starter: 'Vue SFC', path: 'App.vue', metric: 'Pages read' },
+  ]) for (const kind of ['Visual Builder', 'AI Studio']) test(`an embedded ${kind} edit updates the installed ${component.starter} component`, async ({ page, context }, info) => {
+    test.setTimeout(150_000);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto('/app-editors/studio/index.html');
+    await page.getByRole('button', { name: 'Create ' + component.starter + ' starter', exact: true }).click();
+    const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Export bundle', exact: true }).click()]);
+    const archive = info.outputPath('component.zip');
+    await download.saveAs(archive);
+    const files = unzipSync(readFileSync(archive));
+    const server = JSON.parse(STARTER.files['manifest.json']).server;
+    files['manifest.json'] = strToU8(JSON.stringify({ ...JSON.parse(strFromU8(files['manifest.json'])), server }));
+    for (const [path, source] of Object.entries(STARTER.files)) if (path.startsWith('server/')) files[path] = strToU8(source);
+
+    await page.addInitScript(() => {
+      const roots: ShadowRoot[] = [];
+      Object.defineProperty(window, 'componentRoots', { value: roots });
+      const attach = Element.prototype.attachShadow;
+      Element.prototype.attachShadow = function(init) { const root = attach.call(this, init); roots.push(root); return root; };
+    });
+    await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'auto' } } }));
+    await page.goto('/apps/new?type=upload');
+    await page.getByLabel('Choose an app ZIP').setInputFiles({ name: 'component.zip', mimeType: 'application/zip', buffer: Buffer.from(zipSync(files)) });
+    await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
+    const id = await workspaceAppId(page);
+    const heading = () => page.frameLocator('iframe[title="Hosted app"]').first().locator('body').evaluate(() =>
+      (window as Window & {componentRoots: ShadowRoot[]}).componentRoots.map(root => root.querySelector('#metric')?.textContent).find(Boolean));
+    await expect.poll(heading, { timeout: 45000 }).toBe(component.metric);
+    const before = (await nativeProject(context, id))!;
+    await page.getByRole('button', { name: kind === 'AI Studio' ? 'Open AI Studio' : 'Edit visually', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: kind, exact: true });
+    await expect(editor.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled({ timeout: 45000 });
+    const frame = editor.frameLocator('iframe');
+    if (kind === 'AI Studio') {
+      const filesPanel = frame.getByRole('button', { name: 'Files', exact: true });
+      if (await filesPanel.getAttribute('aria-pressed') !== 'true') await filesPanel.click();
+      await frame.getByRole('treeitem', { name: new RegExp('^' + component.path + ',') }).click();
+      await frame.getByRole('button', { name: 'Edit ' + component.path + ' by hand', exact: true }).click();
+    } else {
+      await frame.getByRole('treeitem', { name: component.path, exact: true }).click();
+    }
+    const field = frame.getByRole('textbox', { name: 'Edit ' + component.path, exact: true });
+    const title = 'Updated ' + component.metric.toLowerCase();
+    await field.fill((await field.inputValue()).replace(component.metric, title));
+    if (kind === 'AI Studio') await frame.getByRole('button', { name: 'Save & preview', exact: true }).click();
+    await editor.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.getByText('Saved. The preview shows your changes.', { exact: true })).toBeVisible({ timeout: 45000 });
+    await expect.poll(heading, { timeout: 45000 }).toBe(title);
+    const after = (await nativeProject(context, id))!;
+    expect(after.version).toBe(before.version + 1);
+    expect(after.files[component.path]).toContain(title);
+    const module = '__softn_generated__/' + component.path + '.js';
+    expect(after.files[module]).not.toBe(before.files[module]);
+    for (const path of Object.keys(STARTER.files).filter(path => path.startsWith('server/'))) expect(after.files[path]).toBe(before.files[path]);
+    // A raw API change cannot publish source alongside JavaScript from the previous save.
+    const stale = { ...after, files: { ...after.files, [component.path]: before.files[component.path] } };
+    const refused = await context.request.put(`/api/apps/${id}/native`, { headers, data: { project: stale, expectedVersion: after.version } });
+    expect(refused.status()).toBe(400);
+    expect(await refused.text()).toContain(component.path + ' has changed');
+    expect((await nativeProject(context, id))!.version).toBe(after.version);
+  });
+
   test.beforeEach(async ({ context }) => { created = []; await login(context); });
   test.afterEach(async ({ context }) => {
     for (const id of created) {
@@ -127,13 +300,84 @@ test.describe('hosted SoftN apps', () => {
     }
   });
 
+  for (const framework of ['Vanilla JS', 'React', 'Vue'] as const) {
+    for (const editor of ['Studio', 'Builder'] as const) {
+      test(`Create app opens the ${framework} starter in ${editor} with a working preview`, async ({ page, context }) => {
+        test.setTimeout(120_000);
+        const name = `${framework} in ${editor} ${Date.now()}`;
+        await observe(page);
+        await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'custom', customProviderId: null } } }));
+        await page.goto('/apps/new?type=web');
+        await page.getByRole('group', { name: 'Framework' }).getByRole('radio', { name: framework, exact: true }).check();
+        await page.getByLabel('App name', { exact: true }).fill(name);
+        await page.getByRole('button', { name: 'Open in ' + editor, exact: true }).click();
+        const appId = await workspaceAppId(page);
+        const installed = (await nativeProject(context, appId))!;
+        expect(installed).toMatchObject({ version: 1, access: 'members', home: true });
+        const source = framework === 'React' ? 'App.jsx' : framework === 'Vue' ? 'App.vue' : 'app.js';
+        expect(installed.files[source]).toBeTruthy();
+        expect(JSON.parse(installed.files['manifest.json']).name).toBe(name);
+        const dialog = page.getByRole('dialog', { name: editor === 'Studio' ? 'AI Studio' : 'Visual Builder', exact: true });
+        await expect(dialog.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled({ timeout: 60_000 });
+        const frame = dialog.frameLocator('iframe');
+        await expect(frame.getByRole('button', { name: 'Preview', exact: true, pressed: true }).first()).toBeVisible();
+        const body = frame.locator('body');
+        const selector = framework === 'Vanilla JS' ? 'h1' : '#metric';
+        const title = framework === 'Vanilla JS' ? name : framework === 'React' ? 'Rounds completed' : 'Pages read';
+        await expect.poll(() => previewText(body, selector)).toBe(title);
+        await context.setOffline(true);
+        try {
+          if (framework === 'Vanilla JS') {
+            await expect.poll(() => previewText(body, '#status')).toContain('Preview items stay in this session.');
+            const input = await editorPreviewElement(body, '#title');
+            await input.asElement()!.fill('A preview item');
+            await input.asElement()!.press('Enter');
+            await input.dispose();
+            await expect.poll(() => previewText(body, '#items li')).toBe('A preview item');
+          } else {
+            const before = Number(await previewText(body, '#value'));
+            const increment = await editorPreviewElement(body, '#increment');
+            const bounds = await increment.asElement()!.boundingBox();
+            expect(bounds).toBeTruthy();
+            await page.mouse.click(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+            await increment.dispose();
+            await expect.poll(() => previewText(body, '#value')).toBe(String(before + 1));
+          }
+        } finally {
+          await context.setOffline(false);
+        }
+        await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+        await expect(dialog).toHaveCount(0);
+        await expect.poll(() => guestText(page, selector), { timeout: 45_000 }).toBe(title);
+        if (framework === 'Vanilla JS') {
+          await expect.poll(() => guestText(page, '#status')).toBe('Add your first item above.');
+        }
+        expect((await nativeProject(context, appId))!.files[source]).toBe(installed.files[source]);
+      });
+    }
+  }
+
+  test('an interrupted starter installation retries in the same app and editor after refresh', async ({ page, context }) => {
+    await page.route('**/api/apps/*/native/starter', route => route.fulfill({ status: 503, json: { error: true, message: 'Temporarily unavailable' } }), { times: 1 });
+    await page.goto('/apps/new?type=web');
+    await page.getByRole('group', { name: 'Framework' }).getByRole('radio', { name: 'Vue', exact: true }).check();
+    await page.getByLabel('App name', { exact: true }).fill('Retry Vue ' + Date.now());
+    await page.getByRole('button', { name: 'Open in Builder', exact: true }).click();
+    const appId = await workspaceAppId(page);
+    await expect(page.getByRole('button', { name: 'Retry in Builder' })).toBeVisible();
+    await page.reload();
+    await page.getByRole('button', { name: 'Retry in Builder' }).click();
+    await expect(page.getByRole('dialog', { name: 'Visual Builder' }).getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled({ timeout: 45_000 });
+    expect((await nativeProject(context, appId))!.files['App.vue']).toBeTruthy();
+  });
+
   test('started visually: the starter runs, the Builder change is installed, the app saves to its database, and it publishes', async ({ page, context }) => {
     test.setTimeout(240000);
     const name = `Recipe Box ${Date.now()}`;
-    await page.goto('/apps/new?type=softn');
+    await observe(page);
+    await page.goto('/apps/new?type=web');
     await page.locator('#softn-app-name').fill(name);
-    await page.getByText('Start from a working app and edit it visually', { exact: true }).click();
-    await page.getByRole('button', { name: 'Create and start editing', exact: true }).click();
+    await page.getByRole('button', { name: 'Open in Builder', exact: true }).click();
     const appId = await workspaceAppId(page);
 
     // The starter is installed as version 1, named after the app, for members only and open at the app's address.
@@ -146,29 +390,39 @@ test.describe('hosted SoftN apps', () => {
     const editor = page.getByRole('dialog', { name: 'Visual Builder', exact: true });
     await expect(editor.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled({ timeout: 90000 });
     const frame = page.frameLocator('iframe[title="App visual editor"]');
-    await frame.getByRole('button', { name: 'Design', exact: true }).click();
-    await frame.getByRole('treeitem', { name: 'Select Button component', exact: true }).click();
-    await frame.getByLabel('Text', { exact: true }).fill('Save a recipe');
-    await frame.getByLabel('Text', { exact: true }).press('Tab');
+    await frame.getByRole('button', { name: 'Code', exact: true }).click();
+    await frame.getByRole('treeitem', { name: 'index.html', exact: true }).click();
+    const source = frame.getByRole('textbox', { name: 'Page source', exact: true });
+    await source.fill((await source.inputValue()).replace('Add item</button>', 'Save a recipe</button>'));
     await editor.getByRole('button', { name: 'Save changes', exact: true }).click();
 
     // Not published, so the change is installed at once and the preview runs it.
     await expect(page.getByText('Saved. The preview shows your changes.', { exact: true })).toBeVisible({ timeout: 60000 });
     const second = (await nativeProject(context, appId))!;
     expect(second.version).toBe(2);
-    expect(second.files['ui/main.ui']).toContain('Save a recipe');
+    expect(second.files['index.html']).toContain('Save a recipe');
     expect(second.files['server/main.logic']).toBe(first.files['server/main.logic']);
     // The preview starts the app inside its own frame (the engine loads first): give it time.
-    await expect(preview(page).getByRole('button', { name: 'Save a recipe', exact: true })).toBeVisible({ timeout: 60000 });
-    await preview(page).getByRole('button', { name: 'Save a recipe', exact: true }).click();
-    await expect(preview(page).getByText('Item saved in your app database', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect.poll(() => guestText(page, '#add-item button'), { timeout: 60000 }).toBe('Save a recipe');
+    await expect.poll(() => guestText(page, '#status'), { timeout: 30000 }).toBe('Add your first item above.');
+    await clickGuest(page, '#title');
+    await page.keyboard.type('My first item');
+    await clickGuest(page, '#add-item button');
+    await expect.poll(() => guestText(page, '#items li')).toBe('My first item');
+    await clickGuest(page, '#title');
+    await page.keyboard.type('Saved with Enter');
+    await page.keyboard.press('Enter');
+    await expect.poll(() => guestText(page, '#items')).toContain('Saved with Enter');
+    await page.reload();
+    await expect.poll(() => guestText(page, '#items'), { timeout: 30000 }).toContain('My first item');
 
     // The record is in the app's own database, shown in the Data section, which opens on the first table.
-    await section(page, 'Data').click();
-    await expect(page).toHaveURL(/\/softn\/data$/, { timeout: 30000 });
+    await openAppSection(page, 'Data');
+    await expect(page).toHaveURL(/\/web\/data$/, { timeout: 30000 });
     const data = page.getByRole('region', { name: 'Data', exact: true });
     await expect(data.getByRole('region', { name: 'Table items', exact: true })).toBeVisible({ timeout: 30000 });
     await expect(data.getByText('My first item').first()).toBeVisible({ timeout: 30000 });
+    await expect(data.getByText('Saved with Enter').first()).toBeVisible();
 
     // Publish makes it live at its address.
     // (The list of apps down the side says the same of each app: the page's own status is meant.)
@@ -180,47 +434,409 @@ test.describe('hosted SoftN apps', () => {
     expect((app.app ?? app).status).toBe('published');
   });
 
-  test('built with AI: AI Studio builds the app from the description, and keeping it installs the change', async ({ page, context }) => {
+  test('built with AI: a quick prompt in Create app hands the new app to Studio', async ({ page, context }) => {
     test.setTimeout(240000);
     const name = `Recipe Studio ${Date.now()}`;
     const request = 'A recipe box: a heading that says Family Recipes, and a list of recipes.';
     let appId = '';
-    const agent = studioAgent(context, () => appId, () => `<Text>${name}</Text>`, '<Text>Family Recipes</Text>');
+    const agent = studioAgent(context, () => appId, () => `<h1>${name}</h1>`, '<h1>Family Recipes</h1>');
+    await observe(page);
     await page.route('**/api/ai/preferences', route => route.fulfill({ json: { data: { aiSource: 'site', chatToolMode: 'auto' } } }));
     await page.route('**/api/ai/chat', async route => {
       const body = route.request().postDataJSON();
-      if (body.aiTools === undefined) { await route.fulfill({ status: 500, json: { error: true, message: 'Unexpected chat request' } }); return; }
-      await agent.handle(route, body);
+      if (body.aiTools !== undefined) { await agent.handle(route, body); return; }
+      // The provider's streamed tool result hands an installed starter to Studio.
+      // The MCP transport and create_softn_app execution have their own integration test.
+      expect(JSON.stringify(body)).toContain(request);
+      const response = await context.request.post('/api/apps', { headers, data: { name, settings: { softnApp: true } } });
+      expect(response.ok(), await response.text()).toBe(true);
+      const newApp = await response.json();
+      appId = (newApp.app ?? newApp).id;
+      created.push(appId);
+      const starter = await context.request.post(`/api/apps/${appId}/native/starter`, { headers, data: { template: 'javascript', home: true, access: 'members' } });
+      expect(starter.ok(), await starter.text()).toBe(true);
+      const result = { app: newApp.app ?? newApp, version: 1, request, workspaceUrl: `/apps/${appId}/web` };
+      await route.fulfill({ headers: { 'Content-Type': 'text/event-stream' }, body: [
+        'data: ' + JSON.stringify({ type: 'tool_result', id: 'create-app', name: 'create_softn_app', status: 'done', result }),
+        'event: done\ndata: {"usage":{}}', 'event: end\ndata: {}', '',
+      ].join('\n\n') });
     });
-    await page.goto('/apps/new?type=softn');
-    await page.locator('#softn-app-name').fill(name);
-    await page.locator('#softn-app-request').fill(request);
-    await page.getByRole('button', { name: 'Create and build with AI', exact: true }).click();
-    appId = await workspaceAppId(page);
+    await page.goto('/apps/new');
+    await page.getByRole('button', { name: 'Vanilla JS app', exact: true }).click();
+    const prompt = page.getByRole('textbox', { name: 'Describe your app' });
+    await expect(prompt).not.toHaveValue('');
+    await prompt.fill(request);
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
 
-    await watchStudioBuild(page, request, '<Text>Family Recipes</Text>', 'FormLogic Site AI');
+    await watchStudioBuild(page, request, '<h1>Family Recipes</h1>', 'FormLogic Site AI');
     const built = (await nativeProject(context, appId))!;
     expect(built.version).toBe(2);
-    expect(built.files['ui/main.ui']).toContain('<Text>Family Recipes</Text>');
+    expect(built.files['index.html']).toContain('<h1>Family Recipes</h1>');
     expect(agent.requests.map(r => r.aiTools)).toEqual([1, 1]);
-    await expect(preview(page).getByText('Family Recipes', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect.poll(() => guestText(page, 'h1'), { timeout: 60000 }).toBe('Family Recipes');
   });
 
   test('uploaded: a .softn file becomes the first version', async ({ page, context }) => {
     test.setTimeout(180000);
+    const wasm = requestedEngines(context);
     const files = { ...STARTER.files, 'ui/main.ui': STARTER.files['ui/main.ui'].replace('<Text>My app</Text>', '<Text>Uploaded app</Text>') };
     const path = join(tmpdir(), `softn-upload-${Date.now()}.softn`);
     writeFileSync(path, Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([p, source]) => [p, strToU8(source)])))));
     await page.goto('/apps/new?type=softn');
     await page.locator('#softn-app-name').fill(`Uploaded ${Date.now()}`);
-    await page.getByText('Upload a .softn file', { exact: true }).click();
-    await page.getByLabel('Choose a .softn file').setInputFiles(path);
+    await page.getByText('Upload an app ZIP', { exact: true }).click();
+    await page.getByLabel('Choose an app ZIP').setInputFiles(path);
     await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
     const appId = await workspaceAppId(page);
     const project = (await nativeProject(context, appId))!;
     expect(project).toMatchObject({ version: 1, access: 'members', home: true });
     expect(project.files['ui/main.ui']).toContain('Uploaded app');
     await expect(preview(page).getByText('Uploaded app', { exact: true })).toBeVisible({ timeout: 60000 });
+    expect([...wasm].some(isFullEngine)).toBe(true);
+    expect([...wasm].some(isLiteEngine)).toBe(false);
+  });
+
+  test('the app ZIP picker hosts a built site and exports it for re-import', async ({ page }, info) => {
+    const name = 'Atlas Desk';
+    const html = '<h1>Atlas Desk</h1><button id="collect">Collect sample</button><output></output><script type="module" src="./assets/main.js"></script>';
+    const js = "document.querySelector('#collect').onclick = () => { document.querySelector('output').textContent = 'Sample recorded' };";
+    await page.goto('/apps/new?type=upload');
+    const picker = page.getByLabel('Choose an app ZIP');
+    await picker.setInputFiles(softnUpload('Atlas-Desk.zip', {
+      'dist/index.html': html, 'dist/assets/main.js': js,
+      'dist/manifest.json': JSON.stringify({ name, display: 'standalone' }),
+    }));
+    await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
+    await workspaceAppId(page);
+    const frame = page.frameLocator('iframe[title="' + name + '"]');
+    await frame.getByRole('button', { name: 'Collect sample' }).click();
+    await expect(frame.locator('output')).toHaveText('Sample recorded');
+    const file = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download as .zip', exact: true }).click();
+    const download = await file;
+    expect(download.suggestedFilename()).toMatch(/\.zip$/);
+    const archive = info.outputPath('roundtrip.zip');
+    await download.saveAs(archive);
+    const entries = unzipSync(readFileSync(archive));
+    expect(strFromU8(entries['site/assets/main.js'])).toBe(js);
+    await page.goto('/apps/new?type=upload');
+    await picker.setInputFiles(archive);
+    await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
+    await workspaceAppId(page);
+    await frame.getByRole('button', { name: 'Collect sample' }).click();
+    await expect(frame.locator('output')).toHaveText('Sample recorded');
+  });
+
+  test('web container keeps local and shared rows through a new version and member sign-in', async ({ page, context, browser, baseURL }) => {
+    test.setTimeout(160000);
+    const name = `Field log ${Date.now()}`;
+    const manifest = { ...JSON.parse(STARTER.files['manifest.json']), engine: 2, name, main: 'index.html', files: { ui: ['index.html', 'totals.html'], logic: ['app.js'] } };
+    const bundle = (edition: string) => {
+      const files = {
+        'manifest.json': JSON.stringify(manifest),
+        'server/main.logic': STARTER.files['server/main.logic'],
+        'server/migrations/001.sql': STARTER.files['server/migrations/001.sql'],
+        'index.html': `<h1>${edition}</h1><button id="save">Save observation</button><output id="rows"></output><a id="totals" href="totals.html">Formatted total</a><script type="module" src="./app.js"></script>`,
+        'totals.html': '<h1>Formatted total</h1><output id="total"></output><script>document.getElementById("total").textContent = new Intl.NumberFormat("en-US").format(1234567.891);</script>',
+        'app.js': `import { db } from 'softn:db';
+import { api } from 'softn:api';
+async function render() {
+  const response = await api.fetch('/api/items');
+  const body = await response.json();
+  document.getElementById('rows').textContent = db.query('notes').length + ' local, ' + body.items.length + ' shared';
+}
+document.getElementById('save').onclick = async () => {
+  const response = await api.fetch('/api/items', { method: 'POST', body: { title: 'Observation' } });
+  if (response.ok) db.create('notes', { title: 'Observation' });
+  await render();
+};
+render();`,
+      };
+      return softnUpload('field-log.softn', files);
+    };
+    const rows = (p: Page) => guestText(p, '#rows');
+    await observe(page);
+    await page.goto('/apps/new?type=upload');
+    await page.getByLabel('Choose an app ZIP').setInputFiles(bundle('Field log, first edition'));
+    await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
+    const appId = await workspaceAppId(page);
+    await expect.poll(() => rows(page), { timeout: 45000 }).toBe('0 local, 0 shared');
+    await clickGuest(page, '#save');
+    await expect.poll(() => rows(page)).toBe('1 local, 1 shared');
+    await page.getByLabel('Upload a new version').setInputFiles(bundle('Field log, second edition'));
+    await expect.poll(async () => (await nativeProject(context, appId))?.version).toBe(2);
+    await expect.poll(() => guestText(page, 'h1'), { timeout: 45000 }).toBe('Field log, second edition');
+    await expect.poll(() => rows(page), { timeout: 45000 }).toBe('1 local, 1 shared');
+    await openAppSection(page, 'Settings');
+    await expect(page.locator('#settings-engine')).toContainText('web app sandbox');
+    await openAppSection(page, 'Edit');
+    await page.getByRole('button', { name: 'Publish', exact: true }).click();
+    await expect(page.locator('#main-content').getByText('Live', { exact: true })).toBeVisible();
+    const response = await context.request.get(`/api/apps/${appId}`);
+    const fetched = await response.json();
+    const app = fetched.app ?? fetched;
+    const joinable = await context.request.put(`/api/apps/${appId}`, { headers, data: { settings: { ...app.settings, allowSelfRegistration: true } } });
+    expect(joinable.ok(), await joinable.text()).toBe(true);
+    const visitor = await browser.newContext({ baseURL });
+    const memberPassword = 'field-observer-pass1';
+    let createdMember = false;
+    try {
+      const member = await visitor.newPage();
+      await observe(member);
+      const live = '/app/' + app.slug;
+      await member.goto(live);
+      await expect(member.getByRole('heading', { name: /^Sign in to / })).toBeVisible();
+      const registered = await visitor.request.post('/api/auth/register', { headers: sessionHeaders(), data: { name: 'Field observer', email: `field-observer-${appId}@example.com`, password: memberPassword } });
+      expect(registered.status(), await registered.text()).toBe(201);
+      createdMember = true;
+      await member.reload();
+      await member.getByRole('button', { name: 'Join app' }).click();
+      await expect.poll(() => rows(member), { timeout: 45000 }).toBe('0 local, 1 shared');
+      const runtime = await visitor.request.get(`/api/app/${app.slug}/native`);
+      expect(runtime.ok(), await runtime.text()).toBe(true);
+      const { project } = await runtime.json();
+      expect(project.client['app.js']).toBeTruthy();
+      expect(Object.keys(project.client).some(path => path.startsWith('server/'))).toBe(false);
+      expect(JSON.parse(project.client['manifest.json'])).not.toHaveProperty('server');
+      await clickGuest(member, '#save');
+      await expect.poll(() => rows(member)).toBe('1 local, 2 shared');
+      await page.goto(live);
+      await expect.poll(() => rows(page), { timeout: 45000 }).toBe('1 local, 2 shared');
+    } finally {
+      try {
+        if (createdMember) {
+          const csrf = (await visitor.cookies()).find(cookie => cookie.name === 'formlogic_csrf')!.value;
+          const removed = await visitor.request.delete('/api/auth/me', { headers: { 'X-CSRF-Token': csrf }, data: { password: memberPassword } });
+          expect(removed.ok(), await removed.text()).toBe(true);
+        }
+      } finally { await visitor.close(); }
+    }
+
+    const installed = (await nativeProject(context, appId))!;
+    const opened = await context.request.put(`/api/apps/${appId}/native`, {
+      headers, data: { project: { ...installed, access: 'application' }, expectedVersion: installed.version },
+    });
+    expect(opened.ok(), await opened.text()).toBe(true);
+    const publicBrowser = await browser.newContext({ baseURL });
+    try {
+      const anonymous = await publicBrowser.newPage();
+      const wasm = requestedEngines(publicBrowser);
+      await observe(anonymous);
+      await anonymous.goto('/app/' + app.slug);
+      await expect.poll(() => rows(anonymous), { timeout: 45000 }).toBe('0 local, 2 shared');
+      await clickGuest(anonymous, '#save');
+      await expect.poll(() => rows(anonymous)).toBe('1 local, 3 shared');
+      expect([...wasm].some(isLiteEngine)).toBe(true);
+      expect([...wasm].filter(isFullEngine)).toEqual([]);
+      await clickGuest(anonymous, '#totals');
+      await expect.poll(() => guestText(anonymous, '#total'), { timeout: 45000 }).toBe('1,234,567.891');
+      expect([...wasm].filter(isFullEngine)).toHaveLength(1);
+    } finally { await publicBrowser.close(); }
+  });
+
+  test('an owner gives a browser-only web app a custom API and SQLite table from its workspace', async ({ page, context, browser, browserName, baseURL }) => {
+    test.setTimeout(180_000);
+    const manifest = { id: 'test.weather.log', name: 'Weather log ' + Date.now(), version: '1.0.0', engine: 2, main: 'index.html' };
+    const files = {
+      'manifest.json': JSON.stringify(manifest),
+      'index.html': '<h1>Weather log</h1><button id="record">Record rain</button><output id="weather"></output><script type="module" src="./app.js"></script>',
+      'app.js': `import { api } from 'softn:api';
+async function refresh() {
+  const response = await api.fetch('/api/status');
+  if (response.ok) document.querySelector('#weather').textContent = (await response.json()).status;
+}
+document.querySelector('#record').onclick = async () => {
+  await api.fetch('/api/weather', { method: 'POST', body: { observation: 'Rain' } });
+  await refresh();
+};
+refresh();`,
+    };
+    await observe(page);
+    await page.goto('/apps/new?type=upload');
+    await page.getByLabel('Choose an app ZIP').setInputFiles(softnUpload('weather-log.softn', files));
+    await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
+    const appId = await workspaceAppId(page);
+    await expect.poll(() => guestText(page, 'h1')).toBe('Weather log');
+    await openAppSection(page, 'Data');
+    await page.getByRole('button', { name: 'Write a custom API', exact: true }).click();
+    const source = page.getByRole('dialog', { name: 'Source code', exact: true });
+    const openFile = (path: string) => source.getByRole('navigation', { name: 'Project files' }).locator(`button[title="${path}"]`).click();
+    const selectAll = await page.evaluate(() => navigator.userAgent.includes('Macintosh') ? 'Meta+a' : 'Control+a');
+    const replaceSource = async (label: string, code: string) => {
+      const input = source.getByRole('textbox', { name: label, exact: true });
+      const lines = source.getByRole('region', { name: label + ' editor', exact: true }).locator('.view-lines');
+      if (browserName === 'firefox') {
+        // Put the source on this browser's clipboard through its ordinary copy action.
+        // Firefox protects the contents of synthetic paste events.
+        await source.evaluate((dialog, text) => {
+          const transfer = document.createElement('textarea');
+          transfer.id = 'test-source-transfer';
+          transfer.value = text;
+          dialog.appendChild(transfer);
+          transfer.select();
+        }, code);
+        await page.keyboard.press('ControlOrMeta+c');
+        await source.locator('#test-source-transfer').evaluate(node => node.remove());
+      }
+      await lines.locator('.view-line').first().click();
+      await page.keyboard.press(selectAll);
+      if (browserName === 'firefox') {
+        await page.keyboard.press('ControlOrMeta+v');
+        return;
+      }
+      await input.evaluate((el, code) => {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData('text/plain', code);
+        el.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+      }, code);
+    };
+    await expect(source.getByRole('region', { name: 'Private backend source editor' })).toBeVisible();
+    await source.getByRole('button', { name: 'Close modal', exact: true }).click();
+    await page.getByRole('button', { name: 'Save backend', exact: true }).click();
+    await expect.poll(async () => (await nativeProject(context, appId))?.version).toBe(2);
+    await page.getByRole('link', { name: 'Open API routes', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Try it: GET /api/status', exact: true })).toBeVisible();
+    await openAppSection(page, 'Edit');
+    await expect.poll(() => guestText(page, '#weather')).toBe('ok');
+    await openAppSection(page, 'API');
+    const calls = page.getByRole('table', { name: 'Recent calls' }).getByRole('row').filter({ hasText: '/api/status' });
+    await expect(calls.first()).toBeVisible();
+    const beforeTry = await calls.count();
+    await page.getByRole('button', { name: 'Try it: GET /api/status', exact: true }).click();
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    const answer = page.getByRole('region', { name: 'Answer', exact: true });
+    await expect(answer).toContainText('200 OK');
+    await expect(answer).toContainText('"status": "ok"');
+    await expect(calls).toHaveCount(beforeTry + 1);
+    await openAppSection(page, 'Edit');
+
+    // Replace the starter route with one that reads the app's own data, then add a write route.
+    await page.getByRole('button', { name: 'Edit the source code', exact: true }).click();
+    await expect(source.getByRole('textbox', { name: 'Interface source', exact: true })).toBeAttached();
+    await source.getByRole('button', { name: 'New database change', exact: true }).press('Enter');
+    await replaceSource('Private backend source', 'CREATE TABLE observations (id INTEGER PRIMARY KEY, observation TEXT NOT NULL);');
+    const backend = `function appStatus(req) {
+  var row = softn.sql.first("SELECT COUNT(*) AS total FROM observations", []);
+  return { status: 200, body: { status: "Observations: " + row.total } };
+}
+function addWeather(req) {
+  softn.sql.execute("INSERT INTO observations (observation) VALUES (?)", [req.body.observation]);
+  return { status: 201, body: { saved: true } };
+}`;
+    await openFile('server/main.logic');
+    await replaceSource('Private backend source', backend);
+    await openFile('manifest.json');
+    const installed = (await nativeProject(context, appId))!;
+    const custom = JSON.parse(installed.files['manifest.json']);
+    custom.server.database.migrations = ['server/migrations/001.sql'];
+    custom.server.requires.capabilities = ['sql'];
+    custom.server.routes.push({ method: 'POST', path: '/api/weather', handler: 'addWeather', transaction: 'write', authorization: 'anonymous' });
+    await replaceSource('Project file source', JSON.stringify(custom, null, 2));
+    await source.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect.poll(async () => (await nativeProject(context, appId))?.version, { timeout: 30000 }).toBe(3);
+    await expect(source).toContainText('Saved as the next version.');
+    await source.getByRole('button', { name: 'Close modal', exact: true }).click();
+    await openAppSection(page, 'Settings');
+    await page.getByRole('radio', { name: /Anyone with the link/ }).check();
+    await expect.poll(async () => (await nativeProject(context, appId))?.access).toBe('application');
+    await openAppSection(page, 'Edit');
+    await page.getByRole('button', { name: 'Publish', exact: true }).click();
+    await expect(page.getByText('Live', { exact: true }).first()).toBeVisible();
+    const response = await context.request.get(`/api/apps/${appId}`);
+    const app = (await response.json()).app;
+    const visitor = await browser.newContext({ baseURL });
+    try {
+      const live = await visitor.newPage();
+      await observe(live);
+      await live.goto('/app/' + app.slug);
+      await expect.poll(() => guestText(live, '#weather')).toBe('Observations: 0');
+      await clickGuest(live, '#record');
+      await expect.poll(() => guestText(live, '#weather')).toBe('Observations: 1');
+      const publicFiles = (await (await visitor.request.get(`/api/app/${app.slug}/native`)).json()).project.client;
+      expect(publicFiles['server/main.logic']).toBeUndefined();
+      expect(publicFiles['server/migrations/001.sql']).toBeUndefined();
+
+      const version = (await nativeProject(context, appId))!.version;
+      await page.getByRole('button', { name: 'Edit the source code', exact: true }).click();
+      await openFile('server/main.logic');
+      await replaceSource('Private backend source', backend.replace('Observations: ', 'Weather reports: '));
+      await source.getByRole('button', { name: 'Publish changes', exact: true }).click();
+      await expect(source).toContainText('Saved as the next version.');
+      await expect.poll(async () => (await nativeProject(context, appId))?.version).toBe(version + 1);
+      await live.reload();
+      await expect.poll(() => guestText(live, '#weather'), { timeout: 45000 }).toBe('Weather reports: 1');
+    } finally { await visitor.close(); }
+  });
+
+  test('create pairs a web app with its matching separate backend and existing private data', async ({ page, context, browser, baseURL }, info) => {
+    test.setTimeout(120_000);
+    const manifest = { id: 'garden.journal', name: 'Garden journal ' + Date.now(), engine: 2, main: 'index.html', version: '1.0.0' };
+    const sql = 'CREATE TABLE plants (id INTEGER PRIMARY KEY, name TEXT NOT NULL);';
+    const server = { entry: 'server/main.logic', requires: { apiVersion: 1, capabilities: ['sql'] },
+      database: { kind: 'private-sqlite', migrations: ['server/migrations/001.sql'] },
+      routes: [{ method: 'GET', path: '/api/plants', authorization: 'anonymous', transaction: 'read', handler: 'firstPlant' }] };
+    const backendFile = (id: string) => softnUpload(id + '.softn', {
+      'manifest.json': JSON.stringify({ ...manifest, id, server }),
+      'index.html': '<h1>Backend donor page</h1>',
+      'server/main.logic': 'function firstPlant(req) { return { status: 200, body: softn.sql.first("SELECT name FROM plants ORDER BY id LIMIT 1", []) }; }',
+      'server/migrations/001.sql': sql,
+    });
+    const files = {
+      'manifest.json': JSON.stringify(manifest),
+      'index.html': '<h1>My garden</h1><p id="plant"></p><script type="module" src="./garden.js"></script>',
+      'garden.js': 'import { api } from "softn:api"; async function draw() { const reply = await api.fetch("/api/plants"); document.getElementById("plant").textContent = (await reply.json()).name; } draw();',
+    };
+    // A database from an earlier SoftN host has a ledger recording the migration already applied.
+    const { DatabaseSync } = await import('node:sqlite');
+    const databasePath = info.outputPath('application.sqlite');
+    const old = new DatabaseSync(databasePath);
+    try {
+      old.exec(sql);
+      old.exec('CREATE TABLE _migrations(name TEXT PRIMARY KEY, sha256 TEXT NOT NULL, applied_at INTEGER NOT NULL)');
+      old.prepare('INSERT INTO _migrations VALUES (?, ?, ?)').run('server/migrations/001.sql', createHash('sha256').update(sql).digest('hex'), 1);
+      old.prepare('INSERT INTO plants(name) VALUES (?)').run('Lemon thyme');
+    } finally { old.close(); }
+    const key = { appId: manifest.id, keyHex: randomBytes(32).toString('hex'), cryptoDomains: { hmac: 'garden:hmac:v1', seal: 'garden:seal:v1' } };
+
+    await page.goto('/apps/new?type=upload');
+    await page.getByLabel('Choose an app ZIP').setInputFiles(softnUpload('garden.softn', files));
+    const chooseBackend = page.getByLabel('Choose the file with its backend', { exact: true });
+    const create = page.getByRole('button', { name: 'Create from this file', exact: true });
+    await chooseBackend.setInputFiles(backendFile('other.app'));
+    await expect(page.getByRole('alert').filter({ hasText: /another app.s backend/ })).toBeVisible();
+    await expect(create).toBeDisabled();
+    await page.getByRole('button', { name: 'Skip separate backend', exact: true }).click();
+    await expect(create).toBeEnabled();
+    await chooseBackend.setInputFiles(backendFile(manifest.id));
+    await page.getByLabel('Choose its database', { exact: true }).setInputFiles(databasePath);
+    const chooseKey = page.getByLabel('Choose its key file', { exact: true });
+    const keyFile = (appId: string) => ({ name: 'config.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ ...key, appId })) });
+    await chooseKey.setInputFiles(keyFile('other.app'));
+    await expect(page.getByRole('alert').filter({ hasText: 'That key belongs to other.app' })).toBeVisible();
+    await expect(create).toBeDisabled();
+    await chooseKey.setInputFiles(keyFile(manifest.id));
+    await expect(create).toBeEnabled();
+    await create.click();
+    const id = await workspaceAppId(page);
+    const installed = (await nativeProject(context, id))!;
+    expect(installed.version).toBe(2);
+    expect(installed.files['index.html']).toBe(files['index.html']);
+    expect(installed.files['server/migrations/001.sql']).toBe(sql);
+    await openAppSection(page, 'Settings');
+    await page.getByRole('radio', { name: /Anyone with the link/ }).check();
+    await expect.poll(async () => (await nativeProject(context, id))?.access).toBe('application');
+    await openAppSection(page, 'Edit');
+    await page.getByRole('button', { name: 'Publish', exact: true }).click();
+    await expect(page.getByText('Live', { exact: true }).first()).toBeVisible();
+    const { app } = await (await context.request.get(`/api/apps/${id}`)).json();
+    const visitor = await browser.newContext({ baseURL });
+    try {
+      const live = await visitor.newPage();
+      await observe(live);
+      await live.goto('/app/' + app.slug);
+      await expect.poll(() => guestText(live, '#plant')).toBe('Lemon thyme');
+      expect(await guestText(live, 'h1')).toBe('My garden');
+    } finally { await visitor.close(); }
   });
 
   test('uploaded without a backend: a browser-only app is added under its own name, runs, downloads as it came, and is given a backend from its Data tab', async ({ page, context }) => {
@@ -235,8 +851,8 @@ test.describe('hosted SoftN apps', () => {
     const path = join(tmpdir(), `softn-client-${Date.now()}.softn`);
     writeFileSync(path, Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([p, source]) => [p, strToU8(source)])))));
     await page.goto('/apps/new?type=softn');
-    await page.getByText('Upload a .softn file', { exact: true }).click();
-    await page.getByLabel('Choose a .softn file').setInputFiles(path);
+    await page.getByText('Upload an app ZIP', { exact: true }).click();
+    await page.getByLabel('Choose an app ZIP').setInputFiles(path);
     // Read at once: what it is, and that no name has to be typed.
     await expect(page.getByTestId('softn-drop-zone')).toContainText(`${name} · runs in the browser, no backend`);
     await expect(page.locator('#softn-app-name')).toHaveAttribute('placeholder', name);
@@ -250,18 +866,18 @@ test.describe('hosted SoftN apps', () => {
     await preview(page).getByRole('button', { name: 'Add one', exact: true }).click();
     await expect(preview(page).getByText('Count: 1', { exact: true })).toBeVisible();
     // With no backend it has no database here, and the Data section says so.
-    await section(page, 'Data').click();
-    await expect(page.getByText('This app has no database on the server.', { exact: true })).toBeVisible();
+    await openAppSection(page, 'Data');
+    await expect(page.getByRole('heading', { name: 'Add a backend', exact: true })).toBeVisible();
     // What the owner downloads is what was uploaded.
-    await section(page, 'Edit').click();
+    await openAppSection(page, 'Edit');
     const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Download as .softn', exact: true }).click();
+    await page.getByRole('button', { name: 'Download app ZIP', exact: true }).click();
     const saved = join(tmpdir(), `softn-client-download-${Date.now()}.softn`);
     await (await download).saveAs(saved);
     expect(Object.fromEntries(Object.entries(unzipSync(readFileSync(saved))).map(([p, bytes]) => [p, strFromU8(bytes)]))).toEqual(files);
     // Its Data section gives it a backend designed in the database designer, an empty diagram to
     // start: one table with one detail, installed as its next version, the page kept.
-    await section(page, 'Data').click();
+    await openAppSection(page, 'Data');
     await page.getByRole('button', { name: 'Design its database', exact: true }).click();
     const designer = page.getByRole('dialog', { name: 'Design the database', exact: true });
     await designer.getByRole('button', { name: 'Add a table', exact: true }).first().click();
@@ -297,7 +913,7 @@ test.describe('hosted SoftN apps', () => {
     const path = join(tmpdir(), `softn-seeded-${Date.now()}.softn`);
     writeFileSync(path, Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([p, source]) => [p, strToU8(source)])))));
     await page.goto('/apps/new?type=upload');
-    await page.getByLabel('Choose a .softn file').setInputFiles(path);
+    await page.getByLabel('Choose an app ZIP').setInputFiles(path);
     await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
     await workspaceAppId(page);
     await expect(preview(page).getByText('Notes: 40', { exact: true })).toBeVisible({ timeout: 60000 });
@@ -326,7 +942,7 @@ test.describe('hosted SoftN apps', () => {
     const path = join(tmpdir(), `softn-bigseed-${Date.now()}.softn`);
     writeFileSync(path, Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([p, source]) => [p, strToU8(source)])))));
     await page.goto('/apps/new?type=upload');
-    await page.getByLabel('Choose a .softn file').setInputFiles(path);
+    await page.getByLabel('Choose an app ZIP').setInputFiles(path);
     await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
     await workspaceAppId(page);
     await expect(preview(page).getByText('Tags: 2', { exact: true })).toBeVisible({ timeout: 60000 });
@@ -360,7 +976,7 @@ test.describe('hosted SoftN apps', () => {
     const path = join(tmpdir(), `softn-model-${Date.now()}.softn`);
     writeFileSync(path, Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([p, source]) => [p, strToU8(source)])))));
     await page.goto('/apps/new?type=upload');
-    await page.getByLabel('Choose a .softn file').setInputFiles(path);
+    await page.getByLabel('Choose an app ZIP').setInputFiles(path);
     await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
     await workspaceAppId(page);
     await expect(preview(page).getByText(/^Model: (loaded|error)$/)).toBeVisible({ timeout: 60000 });
@@ -381,7 +997,7 @@ test.describe('hosted SoftN apps', () => {
     await page.route('**/api/ai/chat', async route => {
       const body = route.request().postDataJSON();
       if (body.aiTools !== undefined) { await agent.handle(route, body); return; }
-      const result = { app: { id: appRecord.id, name, slug: appRecord.slug }, version: 1, request, workspaceUrl: `/apps/${appRecord.id}/softn`, next: 'Created.' };
+      const result = { app: { id: appRecord.id, name, slug: appRecord.slug }, version: 1, request, workspaceUrl: `/apps/${appRecord.id}/web`, next: 'Created.' };
       const frames = [
         `data: ${JSON.stringify({ type: 'tool_result', id: 'tool-1', name: 'create_softn_app', status: 'done', result })}\n\n`,
         `event: delta\ndata: ${JSON.stringify({ content: 'I made your app; AI Studio is building it now.' })}\n\n`,
@@ -396,7 +1012,7 @@ test.describe('hosted SoftN apps', () => {
     await page.getByRole('button', { name: 'Open chat' }).click();
     await page.getByRole('textbox', { name: 'Chat message' }).fill(request);
     await page.getByRole('button', { name: 'Send message' }).click();
-    await expect(page).toHaveURL(new RegExp(`/apps/${appRecord.id}/softn$`), { timeout: 30000 });
+    await expect(page).toHaveURL(new RegExp(`/apps/${appRecord.id}/web$`), { timeout: 30000 });
     await watchStudioBuild(page, request, '<Text>Weeknight Dinners</Text>');
     expect((await nativeProject(context, appRecord.id))!.files['ui/main.ui']).toContain('<Text>Weeknight Dinners</Text>');
   });
@@ -415,7 +1031,7 @@ test.describe('hosted SoftN apps', () => {
       const body = route.request().postDataJSON();
       if (body.aiTools !== undefined) { await agent.handle(route, body); return; }
       // What edit_softn_app answers (ChatToolsService): the app, the request, and that it is an edit.
-      const result = { app: { id: appRecord.id, name, slug: appRecord.slug }, version: 1, request, edit: true, workspaceUrl: `/apps/${appRecord.id}/softn`, next: 'Handed to AI Studio.' };
+      const result = { app: { id: appRecord.id, name, slug: appRecord.slug }, version: 1, request, edit: true, workspaceUrl: `/apps/${appRecord.id}/web`, next: 'Handed to AI Studio.' };
       const frames = [
         `data: ${JSON.stringify({ type: 'tool_result', id: 'tool-1', name: 'edit_softn_app', status: 'done', result })}\n\n`,
         `event: delta\ndata: ${JSON.stringify({ content: 'AI Studio is making that change now.' })}\n\n`,
@@ -426,7 +1042,7 @@ test.describe('hosted SoftN apps', () => {
     });
 
     // The person is already on the app's page when they ask: the hand-off is to the address they are at.
-    await page.goto(`/apps/${appRecord.id}/softn`);
+    await page.goto(`/apps/${appRecord.id}/web`);
     await expect(page.getByRole('button', { name: 'Open chat' })).toBeVisible({ timeout: 30000 });
     await page.getByRole('button', { name: 'Open chat' }).click();
     await page.getByRole('textbox', { name: 'Chat message' }).fill(request);

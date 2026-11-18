@@ -1,3 +1,5 @@
+import { downloadProjectZip } from './downloadProjectZip';
+
 export interface HostedAction {
   source: string;
   access: "owner" | "member";
@@ -126,13 +128,5 @@ export async function downloadHostedClient(
   const entries = Object.fromEntries(
     Object.entries(client).map(([path, source]) => [path, strToU8(source)]),
   );
-  const bytes = zipSync(entries);
-  const url = URL.createObjectURL(
-    new Blob([bytes as BlobPart], { type: "application/zip" }),
-  );
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${name.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80) || "app"}.softn`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadProjectZip(zipSync(entries), name);
 }

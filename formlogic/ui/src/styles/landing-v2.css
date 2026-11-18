@@ -27,7 +27,7 @@
   --lv2-ink: #101629;
   --lv2-body: #5d6678;
   --lv2-body-2: #687187;
-  --lv2-faint: #8b91a1;
+  --lv2-faint: #626c7e;
   --lv2-line: #e7e8ee;
   --lv2-line-soft: #ececf1;
   --lv2-label: #5c3de0;
@@ -35,7 +35,7 @@
   --lv2-tile-violet-bg: #eeeafe;
   --lv2-tile-violet-fg: #6949df;
   --lv2-tile-cyan-bg: #e6f9fe;
-  --lv2-tile-cyan-fg: #198fb2;
+  --lv2-tile-cyan-fg: #146e87;
   --lv2-tile-lime-bg: #f0fbdc;
   --lv2-tile-lime-fg: #5c8914;
   --lv2-tile-amber-bg: #fff4dc;
@@ -43,7 +43,7 @@
   --lv2-tile-rose-bg: #fff0f3;
   --lv2-tile-rose-fg: #c45170;
   --lv2-tile-green-bg: #edf9ed;
-  --lv2-tile-green-fg: #43804a;
+  --lv2-tile-green-fg: #376e40;
   --lv2-tile-blue-bg: #edf4ff;
   --lv2-tile-blue-fg: #4075bf;
   --lv2-card-shadow: 0 20px 50px -37px rgba(32, 40, 72, 0.36);
@@ -67,7 +67,7 @@
   --lv2-ink: #eef1f8;
   --lv2-body: #9aa4b8;
   --lv2-body-2: #8d97ac;
-  --lv2-faint: #6c7689;
+  --lv2-faint: #99a4b8;
   --lv2-line: rgba(151, 165, 190, 0.16);
   --lv2-line-soft: rgba(151, 165, 190, 0.12);
   --lv2-label: #a795ff;
@@ -2176,7 +2176,7 @@
 
 .lv2-minidesk__cards small {
   margin-top: 2px;
-  color: #6e798d;
+  color: #99a4b8;
   font-size: 9.5px;
 }
 
@@ -2715,13 +2715,13 @@
   gap: 12px;
   flex-wrap: wrap;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
-  color: #5f697c;
+  color: #99a4b8;
   font-size: 11px;
   padding-top: 18px;
 }
 
 .lv2-footer__bottom a {
-  color: #5f697c;
+  color: inherit;
   transition: color 140ms ease;
 }
 

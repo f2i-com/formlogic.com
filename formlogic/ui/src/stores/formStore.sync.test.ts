@@ -380,6 +380,26 @@ describe('a save of the fields says what it started from', () => {
   });
 });
 
+it.each(['initialize', 'refreshForms'] as const)('%s preserves form details loaded during a list request', async action => {
+  useFormStore.setState({ forms: [], storageMode: 'api', isInitialized: false, isLoading: false });
+  let received!: () => void;
+  const waiting = new Promise<void>(resolve => { received = resolve; });
+  let finish!: () => void;
+  const summary = makeForm('f1', { fieldCount: 1, fields: [] });
+  const full = makeForm('f1', { fieldCount: 1, fields: [{ id: 'email', type: 'email', label: 'Email', required: false, properties: {}, order: 0 }] });
+  vi.mocked(api.getForms).mockImplementationOnce(() => {
+    received();
+    return new Promise(resolve => { finish = () => resolve({ data: { forms: [summary] } } as never); });
+  });
+  mocked.getForm.mockResolvedValueOnce({ data: { form: full } } as never);
+  const loading = useFormStore.getState()[action]();
+  await waiting;
+  await useFormStore.getState().loadFullForm('f1');
+  finish();
+  await loading;
+  expect(useFormStore.getState().getForm('f1')?.fields).toEqual(full.fields);
+});
+
 describe('initialize when the API does not answer', () => {
   beforeEach(() => useFormStore.setState({ isInitialized: false, isLoading: false, error: null }));
 

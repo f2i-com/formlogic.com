@@ -51,7 +51,16 @@ export const HOST_JS_DOCUMENT = '/hosted-runtime/host.html';
  * accept. Anything that is not host JavaScript — including an id this page does not know, which
  * will fall back — is the document every hosted app has always been mounted on.
  */
-export function frameSource(id: string | undefined): string {
+export function usesWebContainer(client: Record<string, string>): boolean {
+  try {
+    const manifest = JSON.parse(client['manifest.json']);
+    return (manifest?.engine === 2 || manifest?.container === true) &&
+      (typeof manifest.main !== 'string' || !manifest.main || /\.html?$/i.test(manifest.main));
+  } catch { return false; }
+}
+
+export function frameSource(id: string | undefined, web = false): string {
+  if (web) return ZIPP_DOCUMENT + '?format=web';
   return id === HOST_JS_ENGINE ? HOST_JS_DOCUMENT : ZIPP_DOCUMENT;
 }
 

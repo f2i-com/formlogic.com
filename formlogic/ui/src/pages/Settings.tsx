@@ -1,11 +1,11 @@
-import { useState, useEffect, type ReactNode } from 'react';
+import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { deferEffect } from '../lib/deferredEffect';
 import { useCurrentTime } from '../hooks/useCurrentTime';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Header } from '../components/layout/Header';
 import { PageBody } from '../components/layout/PageBody';
 import { SectionNav } from '../components/ui/SectionNav';
-import { Panel, PANEL_COLUMNS } from '../components/ui/Panel';
+import { Panel, PANEL_ANCHOR, PANEL_COLUMNS } from '../components/ui/Panel';
 import { Modal } from '../components/ui/Modal';
 import { Input } from '../components/ui/Input';
 import { PasswordInput } from '../components/ui/PasswordInput';
@@ -47,6 +47,7 @@ import {
   Sparkles,
   Sun,
   Moon,
+  Search,
   type LucideIcon,
 } from 'lucide-react';
 import { useUIStore, type ThemeColor } from '../stores/uiStore';
@@ -118,6 +119,51 @@ const PANEL_LABELS: Record<string, string> = {
 /** What the shared demo account is not shown: it has no sign-in of its own to protect, and its route table has no /trash. */
 const NOT_IN_THE_DEMO: readonly string[] = ['two-factor', 'support-access', 'passes', 'vault', 'trash'];
 
+const SEARCH_TERMS: Readonly<Record<string, string>> = {
+  profile: 'name email timezone', notifications: 'email alerts', appearance: 'theme colour color dark light',
+  'form-defaults': 'navigation defaults', ai: 'site ai provider model chat', 'local-runtime': 'oaiy pairing computer',
+  'linked-desktops': 'computer connection relay', mcp: 'mcp connection token assistant', 'two-factor': '2fa mfa authenticator',
+  passes: 'access receipts age verification', vault: 'encryption keys', audit: 'history log', backup: 'import restore download',
+  trash: 'recover deleted', danger: 'remove account',
+};
+
+function SettingsSearch({ isDemo }: { isDemo: boolean }) {
+  const [query, setQuery] = useState('');
+  const input = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+  const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const matches = words.length ? SECTIONS.flatMap(section => section.panels.filter(id => {
+    if (isDemo && NOT_IN_THE_DEMO.includes(id)) return false;
+    const keywords = [section.label, PANEL_LABELS[id], id, SEARCH_TERMS[id]].join(' ').toLowerCase();
+    return words.every(word => keywords.includes(word));
+  }).map(id => ({ id, group: section.label, label: PANEL_LABELS[id] }))) : [];
+  const close = () => setQuery('');
+  return (
+    <form role="search" aria-label="Account settings" className="relative my-2 w-full sm:w-60"
+      onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) close(); }}
+      onKeyDown={event => {
+        if (event.key === 'Escape' && query) { event.preventDefault(); close(); input.current?.focus(); }
+      }}
+      onSubmit={event => {
+        event.preventDefault();
+        if (matches[0]) { navigate({ hash: '#' + matches[0].id }, { state: { focusSetting: matches[0].id } }); close(); }
+      }}>
+      <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+      <input ref={input} type="search" value={query} onChange={e => setQuery(e.target.value)} aria-label="Find a setting"
+        placeholder="Find a setting" autoComplete="off" className="min-h-11 w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-gray-900 placeholder:text-slate-500 focus-visible:outline-2 focus-visible:outline-primary-500 sm:min-h-9 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+      {words.length > 0 && <div className="absolute inset-x-0 top-full z-30 mt-1 max-h-[min(52dvh,22rem)] overflow-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+        <span role="status" className={matches.length ? 'sr-only' : 'block p-2 text-sm text-slate-600 dark:text-slate-300'}>
+          {matches.length ? matches.length + (matches.length === 1 ? ' setting found.' : ' settings found.') : 'No matching settings.'}
+        </span>
+        {matches.map(item => <Link key={item.id} to={{ hash: '#' + item.id }} state={{ focusSetting: item.id }} onClick={close}
+          className="flex min-h-11 items-center justify-between gap-3 rounded-md px-2 text-sm text-slate-900 hover:bg-primary-50 focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-slate-100 dark:hover:bg-primary-950/40">
+          {item.label}<span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">{item.group}</span>
+        </Link>)}
+      </div>}
+    </form>
+  );
+}
+
 // API-key expiry choices (days; 'never' = no expiresAt sent)
 const EXPIRY_OPTIONS = [
   { value: 'never', label: 'Never expires' },
@@ -138,21 +184,38 @@ const SECTION_TOP = 'scroll-mt-[100vh]';
 /** What ends "keep the panel asked for in view": the person moving the page themselves. */
 const OWN_SCROLL = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
 
-/** One of the page's sections: a line of links to its panels where it has more than two (it
-    runs past a screen), then the panels. Every section stays mounted, as every tab did, so what
-    is typed in one is still there after a look at another and nothing is fetched twice; only
-    the open one shows. */
-function Section({ section, open, links, children }: { section: SettingsSection; open: boolean; links: readonly string[]; children: ReactNode }) {
+/** Keep drafts mounted while switching sections. Longer sections have a local index. */
+function Section({ section, open, links, requested, children }: {
+  section: SettingsSection; open: boolean; links: readonly string[]; requested: string; children: ReactNode;
+}) {
+  const navigate = useNavigate();
+  const hasIndex = links.length > 2;
+  const [visited, setVisited] = useState(open);
+  if (open && !visited) setVisited(true);
   return (
-    <section aria-label={section.label} hidden={!open} data-settings-section={section.id} className="mt-4">
-      {links.length > 2 && (
-        <nav aria-label={`${section.label} on this page`} className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-          {links.map((id) => (
-            <Link key={id} to={{ hash: `#${id}` }} replace className="inline-flex items-center font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-300 max-sm:min-h-11">{PANEL_LABELS[id]}</Link>
-          ))}
+    <section aria-label={section.label} hidden={!open} data-settings-section={section.id} className={cn('mt-4',
+      hasIndex && '@5xl/settings:grid @5xl/settings:grid-cols-[minmax(0,1fr)_11.5rem] @5xl/settings:items-start @5xl/settings:gap-6')}>
+      {hasIndex && (
+        <nav aria-label={`${section.label} on this page`}
+          className="mb-3 min-w-0 @5xl/settings:sticky @5xl/settings:top-[calc(var(--fl-workspace-header-h,4rem)+var(--fl-nav-top,0px)+var(--fl-system-top,0px)+var(--fl-demo-banner-h,0px)+.75rem)] @5xl/settings:col-start-2 @5xl/settings:row-start-1">
+          <select aria-label={`Jump to a setting in ${section.label}`} value=""
+            className="min-h-11 w-full max-w-xs cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 focus-visible:outline-2 focus-visible:outline-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 @5xl/settings:hidden"
+            onChange={event => navigate({ hash: '#' + event.target.value }, { replace: true })}>
+            <option disabled value="">Jump to a setting…</option>
+            {links.map(id => <option key={id} value={id}>{PANEL_LABELS[id]}</option>)}
+          </select>
+          <div className="hidden @5xl/settings:block">
+            <p className="mb-2 px-3 text-xs font-semibold text-slate-500 dark:text-slate-400">In this section</p>
+            <div className="grid max-h-[calc(100dvh-var(--fl-workspace-header-h,4rem)-var(--fl-nav-top,0px)-var(--fl-system-top,0px)-var(--fl-demo-banner-h,0px)-var(--fl-nav-bottom,0px)-4rem)] gap-0.5 overflow-y-auto border-l border-slate-200 pl-1 dark:border-slate-700">
+              {links.map(id => (
+                <Link key={id} to={{ hash: '#' + id }} replace tabIndex={0} aria-current={requested === id ? 'location' : undefined}
+                  className="rounded-r-md px-2 py-2 text-[13px] font-medium leading-tight text-slate-600 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-500 aria-[current]:bg-primary-50 aria-[current]:text-primary-800 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white dark:aria-[current]:bg-primary-500/10 dark:aria-[current]:text-primary-300">{PANEL_LABELS[id]}</Link>
+              ))}
+            </div>
+          </div>
         </nav>
       )}
-      {children}
+      <div className="min-w-0 @5xl/settings:col-start-1 @5xl/settings:row-start-1">{(open || visited) && children}</div>
     </section>
   );
 }
@@ -171,8 +234,12 @@ export function Settings() {
   useEffect(() => {
     // No panel named, or one this account is not shown (the demo's recycle bin): the section from its top.
     const target = panel ? document.getElementById(panel) : null;
-    if (!target) { window.scrollTo(0, 0); return; }
-    const show = () => target.scrollIntoView?.({ block: 'start' });
+    if (!target) {
+      if (requested && location.state?.focusSetting === requested) document.getElementById(requested)?.focus({ preventScroll: true });
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); return;
+    }
+    const show = () => target.scrollIntoView?.({ block: 'start', behavior: 'instant' });
+    target.focus({ preventScroll: true });
     show();
     // The panels fetch what they show after the first paint, and one that grows moves those after
     // it, into another column even. Until that settles, or the person moves the page themselves,
@@ -189,7 +256,7 @@ export function Settings() {
     const timer = window.setTimeout(stop, 3000);
     OWN_SCROLL.forEach((event) => window.addEventListener(event, stop, { passive: true }));
     return stop;
-  }, [location.key, panel]);
+  }, [location.key, location.state, panel, requested]);
   const user = useAuthStore((state) => state.user);
   const updateProfile = useAuthStore((state) => state.updateProfile);
   const isDemo = !!user?.isDemo;
@@ -453,10 +520,11 @@ export function Settings() {
     }
   };
 
-  // Load API keys on mount
+  // Refresh security data when its controls are open.
   useEffect(() => deferEffect(() => {
+    if (section.id !== 'security') return;
     loadApiKeys();
-  }), []);
+  }), [section.id]);
 
   // `silent`: used by the background poll below so a periodic refresh doesn't blank the
   // already-rendered list behind a loading spinner (or an error state) — same convention
@@ -484,17 +552,16 @@ export function Settings() {
     }
   };
 
-  // Load linked desktops on mount, then keep polling while this tab is visible so the
-  // "Online now" badge (derived from a freshness window) reflects a desktop that
-  // disconnects while Settings stays open, instead of only refreshing on next visit.
+  // Keep the online badge current while the person is viewing their linked desktops.
   useEffect(() => deferEffect(() => {
+    if (section.id !== 'connections') return;
     loadDesktopConnections();
     const timer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       loadDesktopConnections(true);
     }, 45_000);
     return () => clearInterval(timer);
-  }), []);
+  }), [section.id]);
 
   const handleCreateApiKey = async () => {
     if (!newKeyName.trim() || newKeyScopes.length === 0) return;
@@ -601,7 +668,7 @@ export function Settings() {
 
   const sectionProps = (id: string) => {
     const found = SECTIONS.find((candidate) => candidate.id === id) ?? SECTIONS[0];
-    return { section: found, open: section.id === found.id, links: found.panels.filter(shown) };
+    return { section: found, open: section.id === found.id, links: found.panels.filter(shown), requested };
   };
 
   return (
@@ -610,8 +677,8 @@ export function Settings() {
 
       {/* The sections are links under the header, and each one's panels start at the page's left
           and fill its width: one column on a phone, two on a laptop, three on a wide screen. */}
-      <PageBody>
-        <SectionNav label="Settings sections" current={section.id}
+      <PageBody className="@container/settings">
+        <SectionNav label="Settings sections" current={section.id} end={<SettingsSearch isDemo={isDemo} />}
           // A section adds a step to the history, as an app page's sections do: Back returns to
           // the one before. (The links to a panel inside a section replace the step they are on.)
           items={SECTIONS.map(({ id, label, icon, panels }) => ({ value: id, label, icon, to: { hash: `#${panels[0]}` } }))} />
@@ -784,8 +851,8 @@ export function Settings() {
             {/* This one draws its own box and heading (it is shared with the AI setup pages, where it
                 stands alone). Here its box takes the measure of the panels beside it, so their
                 edges and titles line up. */}
-            <section id="local-runtime" aria-label="Local desktop connection"
-              className="min-w-0 scroll-mt-[calc(6rem+var(--fl-demo-banner-h,0px))] [&>div]:border-gray-200 [&>div]:p-4 [&>div]:shadow-sm dark:[&>div]:border-slate-700 dark:[&>div]:bg-slate-900">
+            <section id="local-runtime" tabIndex={-1} aria-label="Local desktop connection"
+              className={cn(PANEL_ANCHOR, 'min-w-0 focus-visible:outline-2 focus-visible:outline-primary-500 [&>div]:border-gray-200 [&>div]:p-4 [&>div]:shadow-sm dark:[&>div]:border-slate-700 dark:[&>div]:bg-slate-900')}>
               <LocalRuntimePanel />
             </section>
 

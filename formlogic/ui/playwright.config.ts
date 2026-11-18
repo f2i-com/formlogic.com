@@ -46,6 +46,7 @@ if (process.env.PW_FULL_MATRIX === '1') {
       name: 'phone-viewport',
       use: {
         ...devices['iPhone 13'],
+        browserName: 'chromium',
         channel: 'chrome',
       },
     }

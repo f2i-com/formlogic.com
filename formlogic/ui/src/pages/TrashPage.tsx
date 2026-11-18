@@ -4,6 +4,7 @@ import { PageBody } from '../components/layout/PageBody';
 import { Button } from '../components/ui/Button';
 import { Spinner } from '../components/ui/Spinner';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { LoadFailure } from '../components/ui/LoadFailure';
 import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { api } from '../lib/api';
@@ -88,6 +89,7 @@ export function TrashPage() {
   const [isPurging, setIsPurging] = useState(false);
 
   const load = useCallback(async () => {
+    setError(null);
     const res = await api.listTrash();
     if (res.error || !res.data) {
       setError(res.error || 'Could not load the recycle bin');
@@ -172,7 +174,7 @@ export function TrashPage() {
           )}
 
           {error && (
-            <p role="alert" className="rounded-xl border border-red-200 bg-red-50/60 px-3 py-2.5 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">{error}</p>
+            <LoadFailure compact title="Couldn’t load the recycle bin" message={error} onRetry={() => void load()} />
           )}
 
           {/* Nothing deleted: one line where the list would be. */}

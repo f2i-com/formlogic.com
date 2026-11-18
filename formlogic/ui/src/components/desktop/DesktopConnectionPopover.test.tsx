@@ -260,7 +260,7 @@ describe('DesktopConnectionPopover — local presence', () => {
 
   it('is a line of the sidebar where it is placed there, lying over nothing, and says no desktop is linked', async () => {
     h.presence = { kind: 'none' };
-    await renderPopover('/apps/a1/softn/edit', 'sidebar');
+    await renderPopover('/apps/a1/web/edit', 'sidebar');
     expect(trigger().dataset.placement).toBe('sidebar');
     expect(trigger().className).not.toContain('fixed');
     expect(trigger().getAttribute('aria-label')).toBe('Desktop connection: No desktop');

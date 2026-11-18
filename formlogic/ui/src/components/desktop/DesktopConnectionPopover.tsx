@@ -116,7 +116,7 @@ export function DesktopConnectionPopover({ placement = 'floating' }: { placement
     return subscribeOaiyStatus((info) => setOaiyDetected(info.available), { probe: oaiyDetected });
   }, [isDemo, oaiyDetected]);
   const view = deriveConnectionView(presence, isDemo, undefined, oaiyDetected);
-  const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
+  const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed && !s.sidebarFloating);
   const isMobile = useUIStore((s) => s.isMobile);
   const addToast = useToastStore((s) => s.addToast);
   const navigate = useNavigate();

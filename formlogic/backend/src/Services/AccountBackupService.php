@@ -1506,6 +1506,14 @@ final class AccountBackupService
             if (!is_array($project)) {
                 throw new \RuntimeException("Native project payload for app {$oldAppId} is not valid JSON");
             }
+            // Older archives may have included an operator key file in the source.
+            // Only the separate authenticated recovery payload can supply a host key.
+            $portable = NativeAppService::portableProject($project);
+            if ($portable !== $project) {
+                $project = $portable;
+                $raw = json_encode($project, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            }
+            unset($portable);
             try {
                 NativeAppService::validateProject($project);
             } catch (\InvalidArgumentException $e) {

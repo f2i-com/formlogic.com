@@ -39,7 +39,7 @@ async function render() {
     root = createRoot(host!);
     root.render(
       <MemoryRouter>
-        <OverviewStep app={app} appForms={[]} formsById={{}} roles={[]} flows={[]} blueprint={null} memberCount={0} onStepChange={() => {}} onReloadApp={async () => {}} />
+        <OverviewStep app={app} appForms={[]} formsById={{}} roles={[]} flows={[]} blueprint={null} memberCount={0} onReloadApp={async () => {}} />
       </MemoryRouter>
     );
   });

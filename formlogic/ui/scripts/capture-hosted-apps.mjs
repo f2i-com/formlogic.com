@@ -82,17 +82,17 @@ try {
   const zip = join(scratch, 'pottery-classes.zip');
   await writeFile(zip, zipSync(project));
   const page = await open('dark', { width: 1440, height: 900 });
-  await page.goto('/apps/new?type=site');
-  await page.getByLabel('App name').fill(SITE);
-  await page.locator('#site-app-build').setInputFiles(zip);
+  await page.goto('/apps/new?type=upload');
+  await page.getByLabel(/^App name/).fill(SITE);
+  await page.getByLabel('Choose an app ZIP').setInputFiles(zip);
   await expect(page.getByText('pottery-classes.zip', { exact: true })).toBeVisible();
   await capture(page, new URL('javascript-app-create.jpg', docs), await pageArea(page));
-  await page.getByRole('button', { name: 'Create from this build', exact: true }).click();
-  await page.waitForURL(/\/apps\/[^/]+\/softn\/edit$/);
-  const siteId = /\/apps\/([^/]+)\/softn/.exec(page.url())[1];
+  await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
+  await page.waitForURL(/\/apps\/[^/]+\/web\/edit$/);
+  const siteId = /\/apps\/([^/]+)\/web/.exec(page.url())[1];
   /** The app's own page with the app running in it: its timetable is read from its backend. */
   const running = async (shown) => {
-    await shown.goto(`/apps/${siteId}/softn/edit`);
+    await shown.goto(`/apps/${siteId}/web/edit`);
     await expect(shown.getByRole('button', { name: 'Upload a new build (.zip)', exact: true })).toBeVisible();
     await expect(shown.getByTestId('softn-app-preview').frameLocator('iframe').locator('.class')).toHaveCount(4, { timeout: 30000 });
     assert(await shown.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
@@ -110,10 +110,10 @@ try {
     await phone.context().close();
   }
   // Open to anyone with the link, and live: what someone who is not signed in gets at its address.
-  await page.goto(`/apps/${siteId}/softn/settings`);
+  await page.goto(`/apps/${siteId}/web/settings`);
   await page.getByText('Anyone with the link', { exact: true }).click();
   await expect(page.getByText('Now anyone with the link can use it.')).toBeVisible({ timeout: 20000 });
-  await page.goto(`/apps/${siteId}/softn`);
+  await page.goto(`/apps/${siteId}/web`);
   await page.getByRole('button', { name: 'Publish', exact: true }).first().click();
   await expect(page.getByText(/^Live, version \d+$/)).toBeVisible({ timeout: 30000 });
   const { slug } = (await (await context.request.get(`/api/apps/${siteId}`)).json()).app;
@@ -132,7 +132,7 @@ try {
   const files = Object.fromEntries(Object.entries(await fixture('studio-jobs')).map(([path, bytes]) => [path, bytes.toString('utf8')]));
   const installed = await context.request.put(`/api/apps/${softn.id}/native`, { headers, data: { project: { version: 0, home: true, access: 'members', assets: {}, files }, expectedVersion: 0 } });
   assert(installed.ok(), await installed.text());
-  await page.goto(`/apps/${softn.id}/softn/edit`);
+  await page.goto(`/apps/${softn.id}/web/edit`);
   await expect(page.getByTestId('softn-app-preview').frameLocator('iframe').getByText('4 jobs to do', { exact: true })).toBeVisible({ timeout: 40000 });
   await capture(page, new URL('softn-app-page.jpg', docs), await pageArea(page));
   await page.getByRole('button', { name: 'Edit the source code', exact: true }).click();

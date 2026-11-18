@@ -510,7 +510,7 @@ export function FlowsWorkspace() {
     // the bar and the room kept for the floating chat button), so the workspace fills the screen
     // exactly and only its pane scrolls. It took 5rem off, the padding as it once was, and the page
     // under it scrolled 48px as well: one swipe moved the pane, the next the whole page.
-    <div className="flex h-[calc(100dvh-var(--fl-mobile-reserve)-var(--fl-demo-banner-h,0px))] flex-col overflow-hidden md:h-[calc(100dvh-var(--fl-demo-banner-h,0px))]">
+    <div className="flex h-[calc(100dvh-var(--fl-mobile-reserve)-var(--fl-demo-banner-h,0px))] flex-col overflow-hidden md:h-[calc(100dvh-var(--fl-nav-top,0px)-var(--fl-nav-bottom,0px)-var(--fl-system-top,0px)-var(--fl-demo-banner-h,0px))]">
       {/* The page Header renders only on the start page — an open flow takes the FULL page
           (diagram-style: the editor toolbar carries the back link).
           This workspace is a fixed-height box that already sits BELOW the demo/acting
@@ -521,7 +521,7 @@ export function FlowsWorkspace() {
           the offset; the root's own height calc is unaffected (custom properties only
           inherit DOWNWARD from this wrapper). */}
       {!selectedFlow && (
-        <div className="[--fl-demo-banner-h:0px]">
+        <div className="[--fl-demo-banner-h:0px] [--fl-nav-top:0px] [--fl-system-top:0px]">
           <Header
             title="Automations"
             actions={

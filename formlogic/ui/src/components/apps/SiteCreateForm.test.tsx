@@ -42,7 +42,7 @@ async function render(disabled = false) {
   root = createRoot(container);
   await act(async () => root.render(<MemoryRouter initialEntries={['/apps/new']}><Probe /><Routes>
     <Route path="/apps/new" element={<SiteCreateForm disabled={disabled} />} />
-    <Route path="/apps/:appId/softn/*" element={<p>workspace</p>} />
+    <Route path="/apps/:appId/web/*" element={<p>workspace</p>} />
   </Routes></MemoryRouter>));
 }
 const type = async (element: HTMLInputElement, value: string) => {
@@ -97,7 +97,7 @@ describe('SiteCreateForm', () => {
     expect([id, expected]).toEqual(['app-1', 0]);
     expect(JSON.parse(project.files['manifest.json'])).toEqual({ name: 'Shop', version: '1.0.0', site: { entry: 'index.html' } });
     expect(Object.keys(project.assets).sort()).toEqual(['site/assets/app.js', 'site/index.html']);
-    expect(seen.path).toBe('/apps/app-1/softn/edit');
+    expect(seen.path).toBe('/apps/app-1/web/edit');
     // What was left out of the build first, then what in it will not work when hosted. A file
     // named from the site's root (/assets/app.js) is neither: the hosted page finds it.
     expect(seen.state).toEqual({ siteWarnings: [
@@ -111,7 +111,7 @@ describe('SiteCreateForm', () => {
     await type(nameField(), 'Shop');
     await pick(build({ 'index.html': '<script type="module" src="./assets/app.js"></script>', 'assets/app.js': 'console.log(1)' }));
     await create();
-    expect(seen.path).toBe('/apps/app-1/softn/edit');
+    expect(seen.path).toBe('/apps/app-1/web/edit');
     expect(seen.state).toBeNull();
   });
 
@@ -159,7 +159,7 @@ describe('SiteCreateForm', () => {
     await act(async () => { finish({ data: { app } }); });
     await settle(() => seen.path !== '/apps/new');
     expect(mocks.createApp).toHaveBeenCalledTimes(1);
-    expect(seen.path).toBe('/apps/app-1/softn/edit');
+    expect(seen.path).toBe('/apps/app-1/web/edit');
   });
 
   it('creates nothing where apps are not hosted (the shared demo)', async () => {

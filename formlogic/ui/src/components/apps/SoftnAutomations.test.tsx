@@ -30,7 +30,7 @@ it('shows the app’s flows and what starts them, and sends the flow editor back
   await mount();
   expect(mocks.listFlows).toHaveBeenCalledWith('app-1');
   expect(container.querySelector('[data-testid="step"]')!.textContent).toBe('1 flows');
-  expect(mocks.step).toMatchObject({ app, flows: [flow], bindings: [{ id: 'b1', flowDefinitionId: 'f1' }], returnTo: { path: '/apps/app-1/softn/automations', label: 'Recipes' } });
+  expect(mocks.step).toMatchObject({ app, flows: [flow], bindings: [{ id: 'b1', flowDefinitionId: 'f1' }], returnTo: { path: '/apps/app-1/web/automations', label: 'Recipes' } });
   // A SoftN app's automations start from its own tables: no forms are handed over.
   expect(mocks.step!.appForms).toEqual([]);
 });

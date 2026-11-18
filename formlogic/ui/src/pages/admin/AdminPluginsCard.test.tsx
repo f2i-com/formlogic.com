@@ -60,7 +60,7 @@ describe('AdminPluginsCard', () => {
     expect(text).toContain('Reach verify.twilio.com over HTTPS, through this site');
     expect(text).toContain('Ask each app\'s owner for: Account SID, Verify service SID and Auth token.');
     expect(text).toContain('Auth token: a secret, sent only to verify.twilio.com. Kept on this site and filled in by the site itself, never given to its code.');
-    expect(text).toContain('Take from the key file of an app\'s earlier SoftN host, when its owner brings the app\'s data and says so: Account SID (sms.TWILIO_SID) and Auth token (sms.TWILIO_TOKEN). Nothing else of that file.');
+    expect(text).toContain('Take from the key file of an app\'s previous host, when its owner brings the app\'s data and says so: Account SID (sms.TWILIO_SID) and Auth token (sms.TWILIO_TOKEN). Nothing else of that file.');
     // An installed one lists the hosts it reaches, and an update says the ones it adds.
     expect(text).toContain('Reach api.sms.example over HTTPS');
     expect(text).toContain('New in this version: it would also reach api2.sms.example.');

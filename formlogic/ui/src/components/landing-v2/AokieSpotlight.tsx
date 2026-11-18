@@ -115,7 +115,7 @@ export function AokieSpotlight() {
             <span>
               <ShieldCheck size={15} /> Auto-answer is always opt-in
             </span>
-            <Link to="/packs/aokie-receptionist">Open live console</Link>
+            <Link to="/packs/aokie-receptionist">Preview receptionist template</Link>
           </div>
         </div>
       </div>

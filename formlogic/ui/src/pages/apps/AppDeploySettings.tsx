@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useReturnTo } from '../../hooks/useReturnTo';
+import { useReturnTo, type ReturnToState } from '../../hooks/useReturnTo';
 import { Copy, Check, Globe, Smartphone, ExternalLink, CheckCircle2, Package, Download } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useAdminActing, useResourcePaths } from '../../components/admin/AdminActingContext';
 import { api } from '../../lib/api';
 import { cn, copyToClipboard } from '../../lib/utils';
 import { Header } from '../../components/layout/Header';
+import { useAppNavigationGuard } from '../../components/layout/useAppSectionSidebar';
 import { PageBody, PAGE_GUTTER } from '../../components/layout/PageBody';
 import { Panel } from '../../components/ui/Panel';
 import { Button } from '../../components/ui/Button';
@@ -47,7 +48,11 @@ export function AppDeploySettings() {
     || pwaThemeColor !== (app.settings?.pwaThemeColor ?? app.theme?.primaryColor ?? '#6366f1')
   );
   const dirty = logicDirty || pwaDirty;
-  const [pendingNav, setPendingNav] = useState<string | null>(null);
+  const [pendingNav, setPendingNav] = useState<{ to: string; state?: ReturnToState } | null>(null);
+  const navGuarded = (to: string, state?: ReturnToState) => {
+    if (dirty) setPendingNav({ to, state }); else navigate(to, { state });
+  };
+  useAppNavigationGuard(navGuarded);
   const [showUnpublish, setShowUnpublish] = useState(false);
 
   // Warn on tab close / refresh while there are unsaved edits.
@@ -195,7 +200,7 @@ export function AppDeploySettings() {
     <div className="min-h-screen">
       <Header
         title="Deploy & share"
-        back={{ onClick: () => { if (dirty) setPendingNav(backTo.path); else navigate(backTo.path, { state: backTo.state }); }, label: backTo.label ? `Back to ${backTo.label}` : 'Back to app settings' }}
+        back={{ onClick: () => navGuarded(backTo.path, backTo.state), label: backTo.label ? `Back to ${backTo.label}` : 'Back to app settings' }}
       />
       {/* Left-aligned and as wide as the page. The app's state in one strip, then what there is
           to share and install in two columns of panels; the app's logic and its flows, which
@@ -347,7 +352,7 @@ export function AppDeploySettings() {
       <ConfirmDialog
         isOpen={pendingNav !== null}
         onClose={() => setPendingNav(null)}
-        onConfirm={() => { const to = pendingNav; setPendingNav(null); if (to) navigate(to, { state: backTo.state }); }}
+        onConfirm={() => { const target = pendingNav; setPendingNav(null); if (target) navigate(target.to, { state: target.state }); }}
         title="Discard unsaved changes?"
         message="You have unsaved app logic or PWA settings on this page. Leaving now discards them."
         confirmLabel="Discard and leave"

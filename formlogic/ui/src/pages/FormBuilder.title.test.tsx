@@ -61,6 +61,21 @@ async function typeTitle(value: string) {
 }
 
 describe('closing the tab while typing a title', () => {
+  it('waits for the initial read before accepting edits to a cached draft', async () => {
+    let finish!: () => void;
+    const load = vi.spyOn(useFormStore.getState(), 'loadFullForm').mockImplementation(() => new Promise(resolve => {
+      finish = () => resolve(undefined);
+    }));
+    try {
+      await openBuilder('New form');
+      expect(host.querySelector('[aria-label="Add short text field"]')).toBeNull();
+      await act(async () => finish());
+      expect(host.querySelector('[aria-label="Add short text field"]')).not.toBeNull();
+    } finally {
+      load.mockRestore();
+    }
+  });
+
   it('is held up by a title that has not reached the store', async () => {
     await openBuilder('Intake');
     expect(unloadIsHeldUp()).toBe(false);

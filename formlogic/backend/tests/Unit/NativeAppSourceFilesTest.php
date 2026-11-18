@@ -43,6 +43,26 @@ final class NativeAppSourceFilesTest extends TestCase
         $this->assertSame($files, NativeAppService::validateProject(['files' => $files])[0]);
     }
 
+    public function testMigrationDeclarationsAreListsOfDistinctProjectFiles(): void
+    {
+        $path = 'server/migrations/001.sql';
+        $server = ['entry' => 'server/main.logic', 'requires' => ['apiVersion' => 1, 'capabilities' => ['sql']], 'routes' => []];
+        $files = ['index.html' => '<h1>Notes</h1>', 'server/main.logic' => '', $path => 'CREATE TABLE notes(id INTEGER PRIMARY KEY)'];
+        foreach ([
+            [$path, 'must be a list'], [(object) [0 => $path], 'must be a list'], [(object) [], 'must be a list'],
+            [[$path, $path], 'is listed more than once'], [[null], 'must name an existing SQL file'],
+            [['server/migrations/002.sql'], 'server/migrations/002.sql is listed'],
+        ] as [$listed, $problem]) {
+            $files['manifest.json'] = self::manifest(['server' => $server + ['database' => ['kind' => 'private-sqlite', 'migrations' => $listed]]]);
+            try { NativeAppService::validateProject(['files' => $files]); $this->fail('Invalid migrations were accepted'); }
+            catch (\InvalidArgumentException $refused) { $this->assertStringContainsString($problem, $refused->getMessage()); }
+        }
+        foreach ([[], ['migrations' => null], ['migrations' => []], ['migrations' => [$path]]] as $valid) {
+            $files['manifest.json'] = self::manifest(['server' => $server + ['database' => ['kind' => 'private-sqlite'] + $valid]]);
+            $this->assertSame($files, NativeAppService::validateProject(['files' => $files])[0]);
+        }
+    }
+
     public function testABackendStaysDotLogicAndOutOfThePage(): void
     {
         $server = ['entry' => 'server/main.logic', 'requires' => ['apiVersion' => 1, 'capabilities' => ['sql']], 'database' => ['kind' => 'private-sqlite', 'migrations' => ['server/migrations/001.sql']], 'routes' => []];
@@ -72,7 +92,7 @@ final class NativeAppSourceFilesTest extends TestCase
     public static function otherKinds(): iterable
     {
         // The case and the spelling SoftN writes, and nothing beside them: no other script, no module, no binary.
-        foreach (['index.htm', 'main.JS', 'main.mjs', 'main.ts', 'App.jsx', 'styles.scss', 'logic/code.wasm', 'page.HTML', 'notes.txt', 'logo.svg'] as $path) yield $path => [$path];
+        foreach (['index.htm', 'main.JS', 'styles.scss', 'logic/code.wasm', 'page.HTML', 'notes.txt', 'logo.svg'] as $path) yield $path => [$path];
     }
 
     public function testANameWithTwoDotsTogetherOrOtherCharactersIsRefusedByName(): void

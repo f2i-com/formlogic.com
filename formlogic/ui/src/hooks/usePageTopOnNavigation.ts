@@ -6,7 +6,7 @@ import { useLocation, useNavigationType } from 'react-router-dom';
  * themselves from its top when they mean to: the SoftN app page opens a section from its top, and
  * a version or a table opened inside one where the list was (SoftnAppWorkspace).
  */
-const KEEP_THEIR_OWN_PLACE: readonly RegExp[] = [/^\/apps\/[^/]+\/softn(?=\/|$)/];
+const KEEP_THEIR_OWN_PLACE: readonly RegExp[] = [/^\/apps\/[^/]+\/web(?=\/|$)/];
 
 /** Whether a move from one address to the other is within one of those pages. */
 function withinOwnPage(from: string, to: string): boolean {

@@ -247,7 +247,7 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
       return null;
     } finally { lock.current = false; if (alive.current) setBusy(false); }
   }
-  async function save({ confirmConflict = true, project: given, notice: message = 'Installed. The app uses its private SQLite database and ZIPP backend. Existing records were preserved.', raise = false }: { confirmConflict?: boolean; project?: NativeProject; notice?: string; raise?: boolean } = {}): Promise<NativeProject | null> {
+  async function save({ confirmConflict = true, project: given, notice: message, raise = false }: { confirmConflict?: boolean; project?: NativeProject; notice?: string; raise?: boolean } = {}): Promise<NativeProject | null> {
     const project = given ?? current.current;
     if (!project || lock.current || !ready || readOnly) {
       if (raise) throw new Error(readOnly ? 'This app is read-only.' : 'The app is busy. Try again in a moment.');
@@ -277,7 +277,7 @@ export function useNativeProjectDraft(app: { id: string; slug: string; name: str
       installed.current = result.data.project; current.current = result.data.project; setInstalledFiles(result.data.project.files); setInstalledAccess(result.data.project.access);
       // The server decided the engine again from the project just installed (a `.py` added or removed changes it).
       takeEngine(result.data);
-      setNotice(message);
+      setNotice(message ?? `Version ${result.data.project.version} is installed.`);
       onInstalled.current?.(result.data.project);
       return result.data.project;
     } finally { lock.current = false; if (alive.current) setBusy(false); }

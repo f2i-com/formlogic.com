@@ -9,8 +9,8 @@
 //               a 10-minute tool grant is minted per turn (POST /api/ai/chat-tool-grant)
 //               and confirm-mode tool_proposal frames surface as approve/deny cards
 //               answered via desktopTunnel.postInput ({type:'tool_approval',…}).
-//   'custom'  → the browser-local AI-services registry. Tools are UNSUPPORTED there —
-//               the reply carries an honest text-only note instead of fake activity.
+//   'custom'  → a browser-local provider. Compatible endpoints with an explicit workspace-tools
+//               grant run account actions through the authenticated chat handlers.
 //
 // INTEGRATION NOTE (final pass): plan §5.1 puts toolMode/toolGrant inside the sealed
 // tunnel body, but the Wave-1 desktopTunnel.ts public API builds only
@@ -24,6 +24,7 @@
 import { api, type ChatToolGrant, type DesktopAiApiResponse } from '../../lib/api';
 import { resolveBackendApiUrl } from '../../lib/apiBase';
 import { logger } from '../../lib/logger';
+import { currentSessionGeneration } from '../../lib/sessionGeneration';
 import { generateId } from '../../lib/utils';
 import { useAuthStore } from '../../stores/authStore';
 import { CODEX_PROVIDER_ID, chatViaTunnel,
@@ -37,6 +38,8 @@ import {
 } from '../../client-runtime/flows/aiDefault';
 import {
   extractByPath,
+  customToolConnection,
+  supportsWorkspaceTools,
   renderRequestTemplate,
   resolveProviderRequest,
   type ResolvedAiProvider,
@@ -340,6 +343,8 @@ export interface ChatToolProposal {
   input: unknown;
   status: 'pending' | 'approved' | 'denied' | 'failed';
   error?: string;
+  /** A browser-local custom provider pauses its own tool loop until the account owner answers. */
+  respond?: (approved: boolean) => boolean;
 }
 
 export interface ChatTurnEvents {
@@ -357,7 +362,7 @@ export interface SendChatTurnOptions {
    *  resolves without asking. The TOOLS stay the authority on ownership.
    *  'appStudio' carries the six-step wizard's active step so the AI can guide
    *  the user through the studio and knows where its tool effects appear. */
-  pageContext?: { kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen' | 'appStudio' | 'softnApp'; id: string; step?: string } | null;
+  pageContext?: { kind: 'createApp' } | { kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen' | 'appStudio' | 'softnApp'; id: string; step?: string } | null;
   /** Demo account: chat works, tool actions are disabled (banner + tools:false). */
   isDemo?: boolean;
   /** Force a tools-off turn (e.g. the compaction summary — pure text, no actions). */
@@ -563,11 +568,11 @@ function toolLinkFromResult(toolName: string, result: unknown): ChatToolActivity
  * rather than nothing.
  */
 const TOOL_LABELS: Record<string, string> = {
-  create_softn_app: 'Create your SoftN app',
+  create_softn_app: 'Create your web app',
   edit_softn_app: 'Hand the change to AI Studio',
   get_softn_app: 'Look over the app',
-  get_softn_guide: 'Read how SoftN apps are written',
-  lookup_softn_components: 'Look up SoftN components',
+  get_softn_guide: 'Read the app development guide',
+  lookup_softn_components: 'Look up classic app components',
   get_native_app_record: 'Read a record of the app',
   change_native_app_record: 'Save a record in the app',
   list_app_members: 'Look at who can use the app',
@@ -666,6 +671,7 @@ export async function answerToolProposal(
   approved: boolean,
   deps: ChatEngineDeps = {}
 ): Promise<{ ok: boolean; error?: string }> {
+  if (proposal.respond) return proposal.respond(approved) ? { ok: true } : { ok: false, error: 'This action is no longer pending.' };
   const post = deps.postInputFn ?? postInput;
   const res = await post(proposal.requestId, { type: 'tool_approval', callId: proposal.callId, approved });
   if (!res.ok) {
@@ -936,7 +942,7 @@ async function runDesktopSource(
   let note: string | undefined;
   if (opts.isDemo) {
     note = 'Tool actions are disabled in the demo.';
-  } else {
+  } else if (!opts.noTools) {
     // One 10-minute grant per turn (plan §5.4); a mint failure never blocks the reply —
     // the turn goes out without record actions and says so.
     const mint = deps.mintToolGrant ?? ((instanceId?: string) => api.mintChatToolGrant(instanceId));
@@ -995,7 +1001,6 @@ async function runCustomSource(
   opts: SendChatTurnOptions,
   deps: ChatEngineDeps
 ): Promise<ChatTurnOutcome> {
-  const NOTE = 'Tools aren’t supported on the Custom source — this reply is text-only.';
   const providerId = prefs.customProviderId?.trim() ?? '';
   if (!providerId) {
     return {
@@ -1024,6 +1029,22 @@ async function runCustomSource(
     };
   }
 
+  if (!opts.noTools && !opts.isDemo && prefs.customToolConnection && supportsWorkspaceTools(provider)
+      && await customToolConnection(providerId, provider.url) === prefs.customToolConnection) {
+    const generation = currentSessionGeneration();
+    const { runCustomWorkspaceChat } = await import('./customWorkspaceChat');
+    try {
+      return await runCustomWorkspaceChat(provider, prefs.customToolConnection, opts, deps.fetchFn ?? fetch,
+        deps.apiBase ?? resolveBackendApiUrl, (deps.csrfToken ?? readCsrfToken)(), async () => {
+          const fresh = await (deps.fetchPreferences ?? (() => getAiPreferences({ fresh: true })))();
+          return currentSessionGeneration() === generation && fresh.ok && fresh.data.aiSource === 'custom' && fresh.data.customProviderId === providerId
+            && fresh.data.customToolConnection === prefs.customToolConnection;
+        });
+    } catch (reason) {
+      if (opts.signal?.aborted) throw reason;
+      return { ok: false, source: 'custom', error: { code: 'transport', message: 'The connection was interrupted during this tool-enabled chat. Check the actions shown before retrying.' } };
+    }
+  }
   const { messages } = opts;
   const systemRaw = messages.find((m) => m.role === 'system')?.content;
   const system = systemRaw === undefined ? undefined : chatTextOf(systemRaw);
@@ -1092,7 +1113,10 @@ async function runCustomSource(
   if (typeof content !== 'string') {
     return { ok: false, source: 'custom', error: { code: 'request_failed', message: `Default AI service '${provider.name}' returned no text.` } };
   }
-  return { ok: true, source: 'custom', content, note: NOTE };
+  const note = supportsWorkspaceTools(provider)
+    ? 'This reply is text-only. Enable workspace tools for this provider in AI settings to create and edit apps from chat.'
+    : 'This provider uses a text-only request format. Open a starter in Studio or Builder, or connect an assistant through MCP in Settings.';
+  return { ok: true, source: 'custom', content, ...(!opts.noTools ? { note } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1145,7 +1169,9 @@ export async function sendChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDe
 async function routeChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDeps, deadline: TurnDeadline): Promise<ChatTurnOutcome> {
   // Page context rides the message list as a trailing system hint — identical for all
   // three sources, so "this form" means the same thing everywhere.
-  if (opts.pageContext && /^[A-Za-z0-9-]{1,64}$/.test(opts.pageContext.id)) {
+  if (opts.pageContext?.kind === 'createApp') {
+    opts = { ...opts, messages: [...opts.messages, { role: 'system', content: 'The user is on Create app. There is no app ID yet. When asked to build a new web app, use create_softn_app with their brief and the requested template (javascript for Vanilla JS, react for React JSX, vue for Vue). For a forms app use create_app and create_app_form. If the user only asks a question, answer it before creating anything.' }] };
+  } else if (opts.pageContext && /^[A-Za-z0-9-]{1,64}$/.test(opts.pageContext.id)) {
     const { kind, id } = opts.pageContext;
     const studioStep =
       opts.pageContext.step && ['plan', 'data', 'screens', 'automations', 'access', 'publish'].includes(opts.pageContext.step)
@@ -1157,7 +1183,7 @@ async function routeChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDeps, de
       kind === 'formScreen'
         ? `Page context: the user is in the custom-screen Studio for form ${id} (a sandboxed frontend rendered instead of the form's default field UI). When they say "this screen" or ask for pages/changes without naming a target, they mean this form's customScreen: read the current one with get_form (formId ${id}), write it with set_form_screen — send the COMPLETE screen (all files) each time.`
         : kind === 'softnApp'
-          ? `Page context: the user is in the workspace of SoftN app ${id}: a hosted app whose interface, private backend and database are its SoftN project, not forms. When they say "this app" or ask for changes without naming a target, they mean this one: get_softn_app (appId ${id}) says how it stands. To change how it looks or behaves, hand the request to AI Studio with edit_softn_app (appId ${id}): the person watches the change being made and reviews it before it is published. Only a small correction to a file you have just read (get_native_app_project) is made with update_native_app_files, using the version you read. Its data is read with list_native_app_records (search, filter and sort) and get_native_app_record, and a record is added or corrected with change_native_app_record; its people with list_app_members.`
+          ? `Page context: the user is in the workspace of web app ${id}: a hosted app whose interface, private backend and database are part of its app project. When they say "this app" or ask for changes without naming a target, they mean this one: get_softn_app (appId ${id}) says how it stands. To change how it looks or behaves, hand the request to AI Studio with edit_softn_app (appId ${id}): the person watches the change being made and reviews it before it is published. Only a small correction to a file you have just read (get_native_app_project) is made with update_native_app_files, using the version you read. Its data is read with list_native_app_records (search, filter and sort) and get_native_app_record, and a record is added or corrected with change_native_app_record; its people with list_app_members.`
         : kind === 'appScreen'
           ? `Page context: the user is in the custom-screen Studio for the HOME screen of app ${id}. When they say "this screen" or ask for pages/changes without naming a target, they mean this app's customScreen: read the app's forms with list_forms/get_form, write the screen with set_app_home (appId ${id}) — send the COMPLETE screen (all files) each time.`
           : kind === 'appStudio'
@@ -1206,6 +1232,14 @@ async function routeChatTurn(opts: SendChatTurnOptions, deps: ChatEngineDeps, de
   }
   opts = { ...opts, messages };
 
+  if (!opts.noTools && !opts.isDemo) {
+    const { getWorkspaceMcp } = await import('../../lib/workspaceMcp');
+    const selection = getWorkspaceMcp();
+    if (selection) {
+      const { runAttachedMcpChat } = await import('./attachedMcpChat');
+      return runAttachedMcpChat(selection.id, prefs, opts, deps);
+    }
+  }
   switch (prefs.aiSource) {
     case 'site':
       return runSiteSource(opts, deps, deadline);

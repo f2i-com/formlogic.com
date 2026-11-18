@@ -1,0 +1,113 @@
+/* The bar measures its own available width, including when the chat occupies a second rail. */
+.fl-horizontal {
+  --dock-gutter: 1.25rem;
+  container: horizontal-dock / inline-size;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  height: 100%;
+  padding-inline: var(--dock-gutter);
+}
+.fl-horizontal[data-edge="bottom"] { box-shadow: 0 -3px 14px rgb(15 23 42 / .06); }
+.fl-horizontal-menu { display: flex; min-width: 0; flex: 0 1 auto; }
+.fl-horizontal-trigger, .fl-horizontal-link, .fl-horizontal-create {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  font-weight: 600;
+  border-radius: .5rem;
+}
+.fl-horizontal-trigger:is(:focus-visible), .fl-horizontal-link:is(:focus-visible) {
+  outline: 2px solid var(--color-primary-500);
+  outline-offset: -2px;
+}
+.fl-horizontal-trigger { gap: .5rem; min-width: 0; height: 2.5rem; padding: 0 .45rem; font-size: .9375rem; }
+.fl-horizontal-name { max-width: 11rem; overflow: hidden; text-overflow: ellipsis; }
+.fl-horizontal-panel {
+  position: absolute;
+  z-index: 5;
+  left: var(--dock-gutter);
+  width: min(18rem, calc(100% - 2 * var(--dock-gutter)));
+  height: min(38rem, calc(100dvh - var(--fl-nav-height) - var(--fl-system-top, 0px) - var(--fl-demo-banner-h, 0px) - 1rem));
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-radius: .875rem;
+}
+.fl-horizontal[data-edge="top"] .fl-horizontal-panel { top: calc(100% + .35rem); }
+.fl-horizontal[data-edge="bottom"] .fl-horizontal-panel { bottom: calc(100% + .35rem); }
+/* Keep the links scrollable even on a short landscape display with large text. */
+.fl-horizontal-panel > aside { min-height: 23rem; }
+.fl-horizontal-links {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: .15rem;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.fl-horizontal-links::-webkit-scrollbar { display: none; }
+.fl-horizontal-link {
+  position: relative;
+  flex: none;
+  gap: .4rem;
+  height: 2.25rem;
+  padding: 0 .7rem;
+  font-size: .85rem;
+}
+.fl-horizontal-link[aria-current="page"]::after {
+  content: '';
+  position: absolute;
+  inset-inline: .8rem;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+}
+.fl-horizontal[data-edge="bottom"] .fl-horizontal-links { margin-inline: auto; }
+.fl-horizontal[data-edge="bottom"] .fl-horizontal-link {
+  flex-direction: column;
+  min-width: 3.75rem;
+  height: 2.7rem;
+  gap: .15rem;
+  padding-inline: .65rem;
+  font-size: .75rem;
+  line-height: 1;
+}
+.fl-horizontal[data-edge="bottom"] .fl-horizontal-link[aria-current="page"]::after {
+  inset: 0 .85rem auto;
+}
+.fl-horizontal-actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: .25rem;
+  padding-left: .75rem;
+  border-left-width: 1px;
+}
+.fl-horizontal[data-edge="top"] .fl-horizontal-actions { margin-left: auto; }
+.fl-horizontal-create { gap: .3rem; min-height: 2.25rem; padding-inline: .6rem; font-size: .82rem; }
+@container horizontal-dock (max-width: 75rem) {
+  .fl-horizontal-manage:not([aria-current]) { display: none; }
+}
+@container horizontal-dock (max-width: 63rem) {
+  .fl-horizontal-create { display: none; }
+  .fl-horizontal-name { max-width: 8.5rem; }
+  .fl-horizontal-link { padding-inline: .5rem; }
+}
+@container horizontal-dock (max-width: 51rem) {
+  .fl-horizontal-name { max-width: 6.5rem; }
+  .fl-horizontal-actions { padding-left: .35rem; gap: .1rem; }
+  .fl-horizontal[data-edge="top"] .fl-horizontal-link:not([aria-current]) > svg { display: none; }
+  .fl-horizontal[data-edge="bottom"] .fl-horizontal-link { padding-inline: .45rem; min-width: 2.7rem; }
+}
+@container horizontal-dock (max-width: 34rem) {
+  .fl-horizontal-name { display: none; }
+}
+@media (forced-colors: active) {
+  .fl-horizontal-link[aria-current="page"] { outline: 2px solid Highlight; outline-offset: -2px; }
+}

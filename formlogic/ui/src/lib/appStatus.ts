@@ -27,8 +27,10 @@ export function statusLabel(app: StatusSource): string {
  * one its own page shows, where the list's summary knows it: `publishedVersion` counts the times
  * the app went from draft to live, so it stayed at 1 through every later version.
  */
-export function listedStatus(app: StatusSource, summary?: { softn: boolean; version: number | null } | null): string {
-  return statusLabel(summary?.softn && summary.version ? { ...app, publishedVersion: summary.version } : app);
+export function listedStatus(app: StatusSource & Partial<Pick<App, 'settings'>>, summary?: { softn: boolean; version: number | null } | null): string {
+  if (summary?.softn) return statusLabel({ status: app.status, publishedVersion: summary.version ?? 0 });
+  if (app.settings?.softnApp === true) return statusLabel({ status: app.status });
+  return statusLabel(app);
 }
 
 /** Badge tone that matches `statusLabel`, so colour and word never disagree. */

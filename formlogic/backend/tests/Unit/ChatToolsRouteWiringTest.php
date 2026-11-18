@@ -52,6 +52,14 @@ class ChatToolsRouteWiringTest extends TestCase
         );
     }
 
+    public function testBrowserCustomProviderUsesSessionAndPerUserRateLimit(): void
+    {
+        $this->assertMatchesRegularExpression(
+            '/\\$app->post\(\'\/api\/ai\/chat-tools\/custom\'.*?->executeCustom\(.*?\);\s*\}\)->add\(\\$chatToolsRateLimiter\)->add\(\\$authRequired\);/s',
+            self::$source
+        );
+    }
+
     public function testExecuteRouteIsFlkOnly(): void
     {
         $s = self::$source;

@@ -40,6 +40,7 @@ export interface PackBrowseOptions {
 
 export interface PackBrowseResult {
   packs: CatalogPack[];
+  total: number | null;
   totalPages: number;
   /** True whenever what is displayed does not yet answer the current query. */
   loading: boolean;
@@ -53,6 +54,7 @@ export interface PackBrowseResult {
 interface SettledResult {
   key: string;
   packs: CatalogPack[];
+  total: number | null;
   totalPages: number;
   error: string | null;
 }
@@ -102,12 +104,14 @@ export function usePackBrowse(options: PackBrowseOptions): PackBrowseResult {
               ? {
                   key,
                   packs: [],
+                  total: null,
                   totalPages: 1,
                   error: typeof result.error === 'string' ? result.error : 'Could not load the marketplace catalog.',
                 }
               : {
                   key,
                   packs: result.data?.packs ?? [],
+                  total: result.data?.total ?? null,
                   totalPages: result.data?.totalPages ?? 1,
                   error: null,
                 }
@@ -120,6 +124,7 @@ export function usePackBrowse(options: PackBrowseOptions): PackBrowseResult {
           setSettled({
             key,
             packs: [],
+            total: null,
             totalPages: 1,
             error: 'Could not load the marketplace catalog. Check your connection and try again.',
           });
@@ -142,6 +147,7 @@ export function usePackBrowse(options: PackBrowseOptions): PackBrowseResult {
   const answered = settled !== null && settled.key === key;
   return {
     packs: answered ? settled.packs : [],
+    total: answered ? settled.total : null,
     totalPages: answered ? settled.totalPages : 1,
     // Disabled means nothing is pending: not loading, simply without an answer.
     loading: enabled && !answered,

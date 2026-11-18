@@ -19,7 +19,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock('./api', () => ({ api: { saveNativeProject: mocks.saveNativeProject, deleteApp: mocks.deleteApp, isDemoMode: () => mocks.demo } }));
 vi.mock('../stores/appStore', () => ({ useAppStore: { getState: () => ({ createApp: mocks.createApp, error: mocks.storeError }), setState: mocks.setState } }));
 
-const { SITE_PATH, SITE_RUNS, createSiteApp, importSiteBuild, siteBuildWarnings, siteOf, sitePathProblem } = await import('./siteApps');
+const { SITE_PATH, SITE_RUNS, appArchiveKind, createSiteApp, importSiteBuild, siteBuildWarnings, siteOf, sitePathProblem } = await import('./siteApps');
+const { createFormProject } = await import('./formProject');
+const { createSoftnApp, projectFromUpload } = await import('./softnApps');
 const { NATIVE_LIMITS, exportNativeProject } = await import('./nativeHosting');
 
 const MB = 1024 * 1024;
@@ -31,6 +33,64 @@ const zippable = (tree: Tree): Zippable => Object.fromEntries(Object.entries(tre
 const zip = (tree: Tree, name = 'dist.zip') => new File([zipSync(zippable(tree), { level: 1 })], name);
 const manifestOf = (name: string) => `${JSON.stringify({ name, version: '1.0.0', site: { entry: 'index.html' } }, null, 2)}\n`;
 const PAGE = '<!doctype html><script type="module" src="./assets/app.js"></script>';
+
+describe('the common app ZIP importer', () => {
+  it.each(['app.js', 'App.jsx', 'App.vue'])('keeps an editable %s project, including its original source and entry page', async filename => {
+    const source = filename.endsWith('.vue') ? '<template><p>Ready</p></template>'
+      : filename.endsWith('.jsx') ? 'export default function App() { return <p>Ready</p> }' : 'document.body.textContent = "Ready"';
+    const archive = zip({ project: { 'manifest.json': JSON.stringify({ name: 'Field Notes', engine: 2, main: 'index.html' }), 'index.html': PAGE, [filename]: source } });
+    expect(await appArchiveKind(archive)).toBe('editable');
+    const project = await projectFromUpload(archive);
+    expect(project.files[filename]).toBe(source);
+    expect(project.files['index.html']).toBe(PAGE);
+    expect(siteOf(project)).toBeNull();
+    const exported = new File([Uint8Array.from(exportNativeProject(project)).buffer], 'field-notes.zip');
+    expect(await projectFromUpload(exported)).toEqual(project);
+  });
+
+  it('reopens a generated forms project ZIP with its editable screens and instructions', async () => {
+    const { files, warnings } = createFormProject({
+      app: { id: 'team', name: 'Team' }, origin: 'https://formlogic.example', forms: [
+        { id: 'team-notes', title: 'Team notes', fields: [{ id: 'note', type: 'short_text', label: 'Note' }, { id: 'map', type: 'map', label: 'Map' }] },
+      ],
+    });
+    const archive = zip(files, 'Team.zip');
+    expect(files['README.md']).toContain('choose this ZIP');
+    expect(files['README.md']).toContain(warnings[0]);
+    expect(files['README.md']).not.toMatch(/softn/i);
+    const reopened = await projectFromUpload(archive);
+    expect(reopened.files['ui/main.ui']).toBe(files['ui/main.ui']);
+    expect(reopened.files['formlogic.modules.json']).toBe(files['formlogic.modules.json']);
+  });
+
+  it('recognises build folders and web manifests without confusing them with editable projects', async () => {
+    const build = zip({ dist: { 'index.html': PAGE, 'manifest.json': '{"name":"My site","start_url":"/"}', assets: { 'app.js': 'void 0' } } });
+    expect(await appArchiveKind(build)).toBe('site');
+    const project = await projectFromUpload(build, 'My app');
+    expect(project.files['manifest.json']).toBe(manifestOf('My app'));
+    expect(project.assets['site/assets/app.js']).toBe(b64('void 0'));
+    const exported = new File([Uint8Array.from(exportNativeProject(project)).buffer], 'site.zip');
+    expect(await projectFromUpload(exported)).toEqual(project);
+  });
+
+  it('routes the outer pack to its review even when it includes an entire app', async () => {
+    const nested = { 'manifest.json': '{"main":"index.html"}', 'index.html': PAGE };
+    const marketplace = zip({ 'manifest.json': '{"formatVersion":1,"packMeta":{},"forms":[]}', 'pack.json': '{}', 'install.json': '{}', projects: { app: nested } });
+    const signed = zip({ 'manifest.json': '{"kind":"formlogic.applicationPackage"}', 'pack.json': '{}', 'signature.json': '{}', projects: { app: nested } });
+    expect(await appArchiveKind(marketplace)).toBe('pack');
+    expect(await appArchiveKind(signed)).toBe('application-package');
+    for (const file of [marketplace, signed]) await expect(projectFromUpload(file)).rejects.toThrow('review and install');
+  });
+
+  it('refuses raw npm source and a private backend without a project manifest before creating anything', async () => {
+    mocks.demo = false;
+    mocks.createApp.mockClear();
+    await expect(createSoftnApp({ name: 'Source', start: { kind: 'upload', file: zip({ 'index.html': PAGE, 'package.json': '{}', 'App.vue': '<template/>' }) } })).rejects.toThrow('build');
+    await expect(createSoftnApp({ name: 'Mispacked', start: { kind: 'upload', file: zip({ 'index.html': PAGE, 'private/config.json': '{}' }) } })).rejects.toThrow('private backend');
+    await expect(createSoftnApp({ name: 'Mispacked API', start: { kind: 'upload', file: zip({ 'index.html': PAGE, 'server/api.js': 'export default {}' }) } })).rejects.toThrow('private backend');
+    expect(mocks.createApp).not.toHaveBeenCalled();
+  });
+});
 
 describe('SITE_PATH and sitePathProblem', () => {
   it('is the rule the server holds an upload to (NativeAppService::SITE_PATH)', () => {
@@ -266,7 +326,9 @@ describe('importSiteBuild: the limits', () => {
     await expect(importSiteBuild(zip({ dist: { 'index.html': PAGE, media: { 'intro.mp4': NATIVE_LIMITS.mediaFileBytes + 1 } } }), 'Shop'))
       .rejects.toThrow('dist/media/intro.mp4 is larger than a hosted app keeps (32 MB per file).');
     const project = await importSiteBuild(zip({ 'index.html': PAGE, 'intro.mp4': NATIVE_LIMITS.mediaFileBytes }), 'Shop');
-    expect(atob(project.assets['site/intro.mp4'])).toHaveLength(NATIVE_LIMITS.mediaFileBytes);
+    const media = project.assets['site/intro.mp4'];
+    if (typeof media !== 'string') throw new Error('The imported video must carry its base64 bytes.');
+    expect(atob(media)).toHaveLength(NATIVE_LIMITS.mediaFileBytes);
     // A source map of any size is left out before it is measured.
     await expect(importSiteBuild(zip({ 'index.html': PAGE, 'app.js.map': NATIVE_LIMITS.mediaFileBytes + 1 }), 'Shop')).resolves.toBeTruthy();
   });

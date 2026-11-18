@@ -3,15 +3,17 @@ import { Plug, Copy, Loader2, Trash2, ShieldAlert, Sparkles, ChevronDown } from 
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
+import { connectWorkspaceMcp, disconnectWorkspaceMcp, getWorkspaceMcp, invalidateWorkspaceMcp, useWorkspaceMcp } from '../../lib/workspaceMcp';
 import { LoadFailure } from '../ui/LoadFailure';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
+import { useAppStore } from '../../stores/appStore';
 import { formatRelativeTime, formatTimeUntil, copyToClipboard } from '../../lib/utils';
 
 type Session = { id: string; appId: string | null; creator?: boolean; scopes?: string[]; expiresAt: string; idleTimeout: number; lastUsedAt: string | null; createdAt: string };
 type NewToken = { token: string; mcpUrl: string; expiresAt: string; idleTimeout: number };
 
-export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = false }: { isOpen: boolean; onClose: () => void; appId?: string; appName?: string; creator?: boolean }) {
+export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = false, workspaceChat = false }: { isOpen: boolean; onClose: () => void; appId?: string; appName?: string; creator?: boolean; workspaceChat?: boolean }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   // A failed read must not render as "No active connections": these are live grants
   // that let an outside AI act in this account, so an owner who cannot see one cannot
@@ -21,6 +23,16 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   const [fresh, setFresh] = useState<NewToken | null>(null);
   // The OAuth paste-the-URL path is primary; the manual flm_ token flow lives behind this.
   const [showManual, setShowManual] = useState(false);
+  const [showWorkspace, setShowWorkspace] = useState(false);
+  const [chatScope, setChatScope] = useState<'creator' | 'app' | 'account'>('creator');
+  const [selectedAppId, setSelectedAppId] = useState('');
+  const apps = useAppStore(s => s.apps);
+  const fetchApps = useAppStore(s => s.fetchApps);
+  const userId = useAuthStore(s => s.user?.id);
+  const selectedApp = apps.find(app => app.id === selectedAppId && app.ownerId === userId);
+  const [chatError, setChatError] = useState('');
+  const attachment = useWorkspaceMcp();
+  const workspace = workspaceChat || showWorkspace;
   // Opt-in: also let the AI drive this account's OAIY connectors (e.g. the Aokie phone).
   const [connectorAccess, setConnectorAccess] = useState(false);
   // Opt-in: also let the AI read submitted responses/data (`responses:read`).
@@ -34,9 +46,13 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   // The MCP endpoint on THIS deployment — exactly what users paste into Claude/ChatGPT
   // (the server derives its OAuth issuer/resource from the same origin).
   const mcpUrl = `${window.location.origin}/api/mcp`;
+  useEffect(() => {
+    if (isOpen && workspace && !appId && chatScope === 'app') void fetchApps();
+  }, [isOpen, workspace, appId, chatScope, fetchApps]);
 
   // Fetch only inside the async callback (no synchronous setState in the effect body).
   const load = useCallback(() => {
+    const selected = getWorkspaceMcp();
     api.listMcpTokens(appId)
       .then((r) => {
         if (r.error || !r.data) {
@@ -45,12 +61,17 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
         }
         setSessions(r.data.sessions || []);
         setSessionsError(null);
+        if (!appId && selected?.status === 'connected' && !r.data.sessions.some(item => item.id === selected.id)) invalidateWorkspaceMcp(selected.id);
       })
       .catch((e: unknown) => setSessionsError(e instanceof Error ? e.message : 'Please try again.'));
   }, [appId]);
   useEffect(() => { if (isOpen) load(); }, [isOpen, load]);
 
-  const handleClose = () => { setFresh(null); setShowManual(false); onClose(); };
+  const handleClose = () => {
+    setFresh(null); setShowManual(false); setShowWorkspace(false); setChatScope('creator'); setSelectedAppId(''); setChatError('');
+    setConnectorAccess(false); setResponsesAccess(false); setResponsesWriteAccess(false);
+    onClose();
+  };
 
   const generate = async () => {
     setGenerating(true);
@@ -58,16 +79,33 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
       ...(responsesAccess || responsesWriteAccess ? ['responses:read'] : []),
       ...(responsesWriteAccess ? ['responses:write'] : []),
     ];
-    const r = await api.createMcpToken(appId, creator, connectorAccess, extraScopes);
-    setGenerating(false);
-    if (r.error || !r.data) { toast.error('Could not create a connection.'); return; }
-    setFresh(r.data);
-    load();
+    try {
+      if (workspace) {
+        setChatError('');
+        const onlyCreated = !isDemo && !appId && chatScope === 'creator';
+        const projectId = appId ?? (chatScope === 'app' ? selectedApp?.id : undefined);
+        if (chatScope === 'app' && !projectId) { setChatError('Choose an app to connect.'); return; }
+        await connectWorkspaceMcp({
+          appId: projectId, creator: onlyCreated, connectors: !isDemo && connectorAccess, extraScopes: isDemo ? [] : extraScopes,
+          scopeLabel: isDemo ? 'Demo · read only' : projectId ? (appName || selectedApp?.name || 'This app') : onlyCreated ? 'Apps made by this connection' : 'Entire account',
+        });
+        toast.success('MCP connected to workspace chat');
+      } else {
+        const r = await api.createMcpToken(appId, creator, connectorAccess, extraScopes);
+        if (r.error || !r.data) { toast.error('Could not create a connection.'); return; }
+        setFresh(r.data);
+      }
+      load();
+    } catch (e) {
+      if (workspace) setChatError(e instanceof Error ? e.message : 'Could not connect workspace chat.');
+      else toast.error('Could not create a connection.');
+    } finally { setGenerating(false); }
   };
 
   const revoke = async (id: string) => {
     const r = await api.revokeMcpToken(id);
     if (r.error) { toast.error('Could not revoke.'); return; }
+    invalidateWorkspaceMcp(id);
     toast.success('Connection revoked.');
     setSessions((s) => s.filter((x) => x.id !== id));
   };
@@ -90,7 +128,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
 
   const title = (
     <span className="flex items-center gap-2">
-      <Plug className="h-5 w-5 text-primary-600 dark:text-primary-400" /> Connect an AI
+      <Plug className="h-5 w-5 text-primary-600 dark:text-primary-400" /> {workspace ? 'Workspace chat access' : 'Connect an AI'}
       <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">Beta</span>
     </span>
   );
@@ -98,7 +136,9 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title={title} size="lg">
       <div className="p-5 sm:p-6 space-y-5">
-        {isDemo ? (
+        {workspace ? (
+          <p className="text-sm leading-6 text-gray-600 dark:text-slate-300">Your selected AI provider receives the tool requests and results, which can include private source files and any records you grant access to. This tab keeps the connection credential in memory.</p>
+        ) : isDemo ? (
           <p className="text-sm text-gray-600 dark:text-slate-300">
             Give an external AI (Claude, Cursor, …) <span className="font-medium">read-only</span> access to explore {appName ? <span className="font-medium">{appName}</span> : 'this demo'} over MCP — it can view the forms, apps and submitted data, but <span className="font-medium">can&apos;t change anything</span> in this shared demo. The connection is <span className="font-medium">temporary</span>: it expires when idle and you can revoke it anytime.
           </p>
@@ -110,7 +150,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
 
         {/* PRIMARY: paste the MCP URL into a connector-capable client — OAuth handles the rest
             (the browser opens FormLogic's consent page; no token copying). */}
-        <div className="space-y-3 rounded-xl border border-primary-200 dark:border-primary-500/30 bg-primary-50/50 dark:bg-primary-500/10 p-4">
+        {!workspace && <div className="space-y-3 rounded-xl border border-primary-200 dark:border-primary-500/30 bg-primary-50/50 dark:bg-primary-500/10 p-4">
           <p className="text-sm font-medium text-gray-900 dark:text-white">Add FormLogic to Claude or ChatGPT</p>
           <div>
             <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">MCP server URL</p>
@@ -124,11 +164,12 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
             <li><span className="font-medium">ChatGPT:</span> Settings → Apps &amp; Connectors → Create → paste the URL.</li>
             <li>Approve access when your browser opens FormLogic{isDemo ? '' : ' — you can limit it to one app there'}.</li>
           </ol>
-        </div>
+        </div>}
+        {!workspace && <Button variant="secondary" onClick={() => { setFresh(null); setConnectorAccess(false); setResponsesAccess(false); setResponsesWriteAccess(false); setShowWorkspace(true); }}>{attachment ? 'Manage workspace chat access' : 'Connect workspace chat'}</Button>}
 
         {/* Other MCP clients: the manual flm_ token flow (collapsible) */}
         <div>
-          <button
+          {!workspace && <button
             type="button"
             onClick={() => setShowManual((v) => !v)}
             aria-expanded={showManual}
@@ -136,11 +177,21 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
           >
             <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showManual ? '' : '-rotate-90'}`} />
             Other MCP clients (manual token)
-          </button>
+          </button>}
 
-          {showManual && (
+          {(showManual || workspace) && (
             <div className="mt-3 space-y-4">
-              {fresh ? (
+              {workspace && attachment ? (
+                <div className="space-y-3 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                  <p role="status" className="text-sm font-semibold">{attachment.status === 'connected' ? 'Connected' : attachment.status === 'connecting' ? 'Connecting…' : attachment.status === 'expired' ? 'Expired' : 'Connection unavailable'} · {attachment.scopeLabel}</p>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">{attachment.status === 'connected' ? 'Expires ' + formatTimeUntil(attachment.expiresAt) + ' or after 15 minutes of inactivity.' : 'Disconnect this selection before choosing new access.'}</p>
+                  <Button size="sm" variant="secondary" disabled={generating} onClick={async () => {
+                    setGenerating(true); setChatError('');
+                    try { await disconnectWorkspaceMcp(attachment.id); load(); } catch (e) { setChatError(e instanceof Error ? e.message : 'Could not disconnect.'); }
+                    finally { setGenerating(false); }
+                  }}>Disconnect workspace chat</Button>
+                </div>
+              ) : fresh && !workspace ? (
                 <div className="space-y-3 rounded-xl border border-primary-200 dark:border-primary-500/30 bg-primary-50/50 dark:bg-primary-500/10 p-4">
                   <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
                     <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
@@ -186,11 +237,26 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                 </div>
               ) : (
                 <div className="space-y-3">
+                  {workspace && <fieldset className="space-y-2 rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-700">
+                    <legend className="px-1 font-medium">App access</legend>
+                    {!isDemo && <p className="text-xs leading-5 text-slate-600 dark:text-slate-400">Chat can read, change and delete app content within the scope you choose.</p>}
+                    {isDemo || appId ? <p>{isDemo ? 'Demo apps and records · read only' : (appName || 'This app') + ' only'}</p> :
+                      (['creator', 'app', 'account'] as const).map(scope => <label key={scope} className="flex items-center gap-2">
+                        <input type="radio" name="mcp-chat-scope" checked={chatScope === scope} onChange={() => setChatScope(scope)} />
+                        {scope === 'creator' ? 'Apps made by this connection' : scope === 'app' ? 'One existing app' : 'Entire account'}
+                      </label>)}
+                    {!appId && !isDemo && chatScope === 'app' && <label className="block pt-1">Choose an app
+                      <select value={selectedAppId} onChange={event => setSelectedAppId(event.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
+                        <option value="">Select an app you own</option>
+                        {apps.filter(app => app.ownerId === userId).map(app => <option key={app.id} value={app.id}>{app.name}</option>)}
+                      </select>
+                    </label>}
+                  </fieldset>}
                   {!isDemo && (
                     <>
                       <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
                         <input type="checkbox" checked={connectorAccess} onChange={(e) => setConnectorAccess(e.target.checked)} className="mt-0.5 accent-primary-600" />
-                        <span>Also let this AI <span className="font-medium">control your OAIY</span> connectors — e.g. answer/hang up calls on the Aokie phone (<code>connector_command</code>). Needs a linked, running desktop.</span>
+                        <span>Also let this AI <span className="font-medium">control your OAIY</span> connectors across your account, including calls on a linked Aokie phone.</span>
                       </label>
                       <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
                         <input type="checkbox" checked={responsesAccess || responsesWriteAccess} disabled={responsesWriteAccess} onChange={(e) => setResponsesAccess(e.target.checked)} className="mt-0.5 accent-primary-600" />
@@ -203,15 +269,16 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                     </>
                   )}
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs text-gray-500 dark:text-slate-400">For clients without OAuth support (Cursor, custom scripts): generate a temporary Bearer token.</p>
-                    <Button onClick={generate} disabled={generating} leftIcon={generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}>
-                      {generating ? 'Generating…' : 'Generate connection'}
+                    <p className="text-xs text-gray-500 dark:text-slate-400">{workspace ? 'Access lasts one hour and expires after 15 minutes of inactivity.' : 'For clients without OAuth support (Cursor, custom scripts): generate a temporary Bearer token.'}</p>
+                    <Button onClick={generate} disabled={generating || (workspace && !appId && chatScope === 'app' && !selectedApp)} leftIcon={generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}>
+                      {generating ? 'Connecting…' : workspace ? 'Use in workspace chat' : 'Generate connection'}
                     </Button>
                   </div>
                 </div>
               )}
             </div>
           )}
+          {workspace && chatError && <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-300">{chatError}</p>}
         </div>
 
         <div>
@@ -231,7 +298,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                 <div key={s.id} className="p-3 flex items-center justify-between gap-2">
                   <div className="min-w-0 text-xs">
                     <p className="text-gray-700 dark:text-slate-200">
-                      {s.creator ? 'New apps only' : s.appId ? 'One app' : 'All apps'}
+                      {s.id === attachment?.id && 'Workspace chat · '}{s.creator ? 'New apps only' : s.appId ? 'One app' : 'All apps'}
                       {(s.scopes || []).includes('responses:write')
                         ? <span className="text-amber-600 dark:text-amber-400 font-medium"> · reads &amp; writes records</span>
                         : (s.scopes || []).includes('responses:read')

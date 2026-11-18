@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
 import { E2E_FRONTEND_BASE_URL, sessionHeaders } from './session-request';
+import { openAppSection } from './app-sections';
 
 // The age gate plugin (docs/AGE_GATE_AND_SITE_AI.md): an administrator installs the plugin that
 // ships with FormLogic, an owner makes an app ask for its pass, and a member is stopped until they
@@ -76,8 +77,8 @@ async function publishGatedApp(context: BrowserContext, name: string) {
 
 /** The owner turns the requirement on the way an owner does, in the SoftN app's Settings section. */
 async function turnOnTheGate(page: Page, appId: string) {
-  await page.goto(`/apps/${appId}/softn`);
-  await page.getByRole('navigation', { name: 'App sections' }).getByRole('link', { name: 'Settings', exact: true }).click();
+  await page.goto(`/apps/${appId}/web`);
+  await openAppSection(page, 'Settings');
   await page.getByRole('switch', { name: 'Only for people over an age' }).click();
   await expect(page.getByText('Members are asked before it opens.', { exact: true })).toBeVisible();
 }
@@ -162,7 +163,7 @@ test('on its own domain the pass is met on FormLogic, and the member comes back 
   const name = `grown-ups-domain-${RUN}`;
   const app = await publishGatedApp(page.context(), name);
   await turnOnTheGate(page, app.id);
-  await page.goto(`/apps/${app.id}/softn/domains`);
+  await page.goto(`/apps/${app.id}/web/domains`);
   await page.getByLabel('Custom domain').fill(DOMAIN);
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await page.getByRole('button', { name: 'Verify', exact: true }).click();

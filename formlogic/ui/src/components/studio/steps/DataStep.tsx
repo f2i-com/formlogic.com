@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ChevronRight,
@@ -106,6 +106,8 @@ export function DataStep({
   nativeDatabase?: NativeTableState;
 }) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const designFirstForm = searchParams.get('new') === 'form';
   const acting = useAdminActing();
   const paths = useResourcePaths();
   // Deep surfaces opened from this section return here via their Back buttons.
@@ -123,9 +125,11 @@ export function DataStep({
   );
   const [sharedWith, setSharedWith] = useState<Record<string, string[]>>({});
   const [tab, setTab] = useState<'fields' | 'relationships'>('fields');
-  const [showAddType, setShowAddType] = useState(false);
+  const [showAddType, setShowAddType] = useState(designFirstForm);
   const [newTypeName, setNewTypeName] = useState('');
   const [creatingType, setCreatingType] = useState(false);
+  const creatingForm = useRef(false);
+  const [draftToAttach, setDraftToAttach] = useState<Form | null>(null);
   const [addingField, setAddingField] = useState(false);
   const [newFieldLabel, setNewFieldLabel] = useState('');
   const [newFieldType, setNewFieldType] = useState<FieldType>('short_text');
@@ -190,44 +194,64 @@ export function DataStep({
     return false;
   };
 
+  const createDraftForm = async (name: string) => {
+    // The store's createForm applies the user's default form settings and the
+    // demo-local path; addFormToApp then syncs + attaches it to this app.
+    const form = await trackStudioSave(`${name} created`, useFormStore.getState().createForm(name), (f) => !!f);
+    if (!form) {
+      toast.error('Could not create the form');
+      return null;
+    }
+    if (isPrivateDefault) {
+      try {
+        const { enableFormEncryption, markFormPrivate } = await import('../../../lib/crypto/formCrypto');
+        await enableFormEncryption(form.id, JSON.stringify(form.fields ?? []));
+        markFormPrivate(form.id);
+      } catch (e) {
+        // Never leave a form behind that the user believes is private.
+        let removed = true;
+        try {
+          await useFormStore.getState().deleteForm(form.id);
+        } catch {
+          removed = false;
+        }
+        const message = e instanceof Error ? e.message : 'Encryption setup failed.';
+        toast.error(
+          removed ? 'Private form was not created' : 'Encryption failed — delete this form',
+          removed
+            ? `${message} The draft was removed rather than left unencrypted.`
+            : `${message} The draft could not be removed automatically and is NOT encrypted.`
+        );
+        return null;
+      }
+    }
+    return form;
+  };
+
+  const closeFormDialog = () => {
+    if (creatingForm.current) return;
+    setShowAddType(false);
+    setDraftToAttach(null);
+    if (designFirstForm) {
+      const remaining = new URLSearchParams(searchParams);
+      remaining.delete('new');
+      setSearchParams(remaining, { replace: true });
+    }
+  };
+
   const createDataType = async () => {
     const name = newTypeName.trim();
-    if (!name || creatingType) return;
-    if (isPrivateDefault && !(await ensurePrivateReady('create-type'))) return;
+    if (!name || creatingForm.current) return;
+    creatingForm.current = true;
     setCreatingType(true);
     try {
-      // The store's createForm applies the user's default form settings and the
-      // demo-local path; addFormToApp then syncs + attaches it to this app.
-      const form = await trackStudioSave(`${name} created`, useFormStore.getState().createForm(name), (f) => !!f);
-      if (!form) {
-        toast.error('Could not create the form');
-        return;
-      }
-      if (isPrivateDefault) {
-        try {
-          const { enableFormEncryption, markFormPrivate } = await import('../../../lib/crypto/formCrypto');
-          await enableFormEncryption(form.id, JSON.stringify(form.fields ?? []));
-          markFormPrivate(form.id);
-        } catch (e) {
-          // Never leave a form behind that the user believes is private.
-          let removed = true;
-          try {
-            await useFormStore.getState().deleteForm(form.id);
-          } catch {
-            removed = false;
-          }
-          const message = e instanceof Error ? e.message : 'Encryption setup failed.';
-          toast.error(
-            removed ? 'Private form was not created' : 'Encryption failed — delete this form',
-            removed
-              ? `${message} The draft was removed rather than left unencrypted.`
-              : `${message} The draft could not be removed automatically and is NOT encrypted.`
-          );
-          return;
-        }
-      }
+      if (isPrivateDefault && !(await ensurePrivateReady('create-type'))) return;
+      const form = draftToAttach ?? await createDraftForm(name);
+      if (!form) return;
+      setDraftToAttach(form);
       const attached = await trackStudioSave(`${name} attached`, addFormToApp(app.id, form.id, name), (ok) => !!ok);
       if (!attached) return;
+      setDraftToAttach(null);
       toast.success(
         isPrivateDefault ? 'Private form created' : 'Form created',
         isPrivateDefault
@@ -236,9 +260,16 @@ export function DataStep({
       );
       setShowAddType(false);
       setNewTypeName('');
+      if (designFirstForm) {
+        navigate(paths.builder(form.id, app.id), { replace: true, state: studioReturn });
+        return;
+      }
       await onReloadForms();
       setSelectedFormId(form.id);
+    } catch (error) {
+      toast.error('Could not finish adding the form', error instanceof Error ? error.message : undefined);
     } finally {
+      creatingForm.current = false;
       setCreatingType(false);
     }
   };
@@ -378,6 +409,13 @@ export function DataStep({
     setVaultAction(null);
     if (action === 'create-type') { setShowAddType(true); void createDataType(); }
     if (action === 'add-field') void addField();
+  };
+
+  const cancelVaultAction = () => {
+    setShowVaultSetup(false);
+    setShowVaultUnlock(false);
+    if (vaultAction === 'create-type') setShowAddType(true);
+    setVaultAction(null);
   };
 
   /** Open the builder with the clicked field already selected, not the first one. */
@@ -847,10 +885,10 @@ export function DataStep({
         </section>
       )}
 
-      <Modal isOpen={showAddType} onClose={() => setShowAddType(false)} title="Add a form" size="sm">
-        <div className="space-y-4 p-4 sm:p-5">
+      <Modal isOpen={showAddType} onClose={closeFormDialog} title={designFirstForm ? 'Add your first form' : 'Add a form'} size="sm">
+        <form className="space-y-4 p-4 sm:p-5" onSubmit={event => { event.preventDefault(); void createDataType(); }}>
           <p className="text-sm text-gray-500 dark:text-slate-400">
-            A form defines the fields, powers the generated screens, and stores the records.
+            {designFirstForm ? `Name the form for ${app.name}. You’ll add its questions in the designer.` : 'Responses to this form become records in your app.'}
           </p>
           {isPrivateDefault && (
             <div className="flex gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-xs leading-5 text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/[0.08] dark:text-emerald-200">
@@ -861,23 +899,24 @@ export function DataStep({
               </p>
             </div>
           )}
-          <Input
+          <Input label="Form name"
             value={newTypeName}
             onChange={(e) => setNewTypeName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void createDataType(); }}
-            placeholder="e.g. Customer, Job, Invoice"
-            aria-label="Form name"
+            placeholder="e.g. Workshop request"
+            required
+            disabled={creatingType || !!draftToAttach}
             autoFocus
           />
-          <div className="flex items-center justify-between gap-2">
-            <Button variant="ghost" size="sm" onClick={() => { setShowAddType(false); navigate(`/apps/${app.id}/forms`, { state: studioReturn }); }}>
-              Attach an existing form instead
+          {draftToAttach && !creatingType && <p role="status" className="text-sm text-amber-700 dark:text-amber-300">The draft is saved in Forms. Retry to attach it to this app.</p>}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button variant="ghost" size="sm" type="button" disabled={creatingType} onClick={() => navigate(`/apps/${app.id}/forms`, { replace: designFirstForm, state: studioReturn })}>
+              Use an existing form
             </Button>
-            <Button onClick={createDataType} isLoading={creatingType} disabled={!newTypeName.trim()}>
-              Create
+            <Button type="submit" isLoading={creatingType} disabled={!newTypeName.trim()}>
+              {draftToAttach && !creatingType ? 'Retry attachment' : designFirstForm ? 'Open form designer' : 'Create'}
             </Button>
           </div>
-        </div>
+        </form>
       </Modal>
       <RelationFormModal
         isOpen={showRelation}
@@ -888,12 +927,12 @@ export function DataStep({
       />
       <VaultSetupWizard
         isOpen={showVaultSetup}
-        onClose={() => setShowVaultSetup(false)}
+        onClose={cancelVaultAction}
         onComplete={resumeVaultAction}
       />
       <VaultUnlockDialog
         isOpen={showVaultUnlock}
-        onClose={() => setShowVaultUnlock(false)}
+        onClose={cancelVaultAction}
         onUnlocked={resumeVaultAction}
         title="Unlock your vault to continue"
       />

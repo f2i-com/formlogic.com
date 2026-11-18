@@ -14,8 +14,9 @@
 //   them via api.putAiPreferences, which also outdates the cache the engine reads.
 // - Z-order: z-40, under the z-50 offline/maintenance banners and mobile nav (plan
 //   Phase 6 step 5), matching the DesktopConnectionPopover trigger.
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { motion, useDragControls, useMotionValue } from 'framer-motion';
 import {
   ArrowUpRight,
@@ -54,6 +55,7 @@ import {
   type ChatToolProposal,
   type ChatTurnError,
   type ChatTurnOutcome,
+  type SendChatTurnOptions,
   SUMMARY_PREFIX,
   sinceLastSummary,
   historyFor,
@@ -71,9 +73,6 @@ const PAGE_SIZE = 30;
  * this one, and moving to another thread lets Send go without stopping the turn.
  */
 const runningTurns = new Set<{ threadId: string; controller: AbortController }>();
-/** Desktop panel dock size (w-96 x h-[34rem]) used to clamp a restored drag offset. */
-const PANEL_WIDTH = 384;
-const PANEL_HEIGHT = 544;
 
 // ---------------------------------------------------------------------------
 // Per-turn transient state (tool cards + notes are live-turn only; history is text).
@@ -194,13 +193,13 @@ function ToolProposalCard({
 // The widget.
 // ---------------------------------------------------------------------------
 
-export function SiteChatWidget() {
+export function SiteChatWidget({ inlineTarget = null }: { inlineTarget?: HTMLDivElement | null } = {}) {
   const userId = useAuthStore((s) => s.user?.id ?? 'anonymous');
   // A different account receives a fresh transcript, pending turn and preferences.
-  return <AccountChatWidget key={userId} />;
+  return <AccountChatWidget key={userId} inlineTarget={inlineTarget} />;
 }
 
-function AccountChatWidget() {
+function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | null }) {
   const user = useAuthStore((s) => s.user);
   const isMobile = useUIStore((s) => s.isMobile);
   const chatOpen = useUIStore((s) => s.chatOpen);
@@ -222,8 +221,12 @@ function AccountChatWidget() {
   // §11B O5a: what the user is looking at rides each chat turn, so "this form" just
   // works — the builder's chat button counts on this.
   const location = useLocation();
-  const pageContextRef = useRef<{ kind: 'form' | 'app' | 'diagram' | 'formScreen' | 'appScreen' | 'appStudio' | 'softnApp'; id: string; step?: string } | null>(null);
+  const pageContextRef = useRef<SendChatTurnOptions['pageContext']>(null);
   useEffect(() => {
+    if (matchPath('/apps/new', location.pathname)) {
+      pageContextRef.current = { kind: 'createApp' };
+      return;
+    }
     const form =
       matchPath('/builder/:formId', location.pathname) ?? matchPath('/preview/:formId', location.pathname);
     // The screen Studios are their own context kind: "this screen" must resolve to the
@@ -236,7 +239,7 @@ function AccountChatWidget() {
     const appStudioStep = matchPath('/apps/:appId/studio/:step', location.pathname);
     const appStudioRoot = matchPath('/apps/:appId/studio', location.pathname);
     // The page and any of its sections (…/softn/data/<table>): all one app's page.
-    const softnWorkspace = matchPath('/apps/:appId/softn/*', location.pathname);
+    const softnWorkspace = matchPath('/apps/:appId/web/*', location.pathname);
     const app = matchPath('/apps/:appId/*', location.pathname);
     const diagram = matchPath('/diagrams/:diagramId', location.pathname);
     pageContextRef.current = form?.params.formId
@@ -304,6 +307,7 @@ function AccountChatWidget() {
 
   const dragControls = useDragControls();
   const constraintsRef = useRef<HTMLDivElement>(null);
+  const floatingPanelRef = useRef<HTMLDivElement>(null);
   const x = useMotionValue(0);
   const y = useMotionValue(0);
 
@@ -406,7 +410,7 @@ function AccountChatWidget() {
       if (cancelled) return;
       setThreads(list);
       setStorePersistent(store.persistent);
-      if (list.length > 0) void selectThread(list[0].id);
+      if (list.length > 0 && !activeThreadIdRef.current && !useUIStore.getState().chatLaunch?.newThread) void selectThread(list[0].id);
     })();
     void (async () => {
       const res = await getAiPreferences();
@@ -420,16 +424,28 @@ function AccountChatWidget() {
     };
   }, [panelVisible, userId, selectThread]);
 
-  // Restore the persisted drag offset, clamped so the panel stays on screen.
-  useEffect(() => {
-    if (isMobile || !panelVisible || typeof window === 'undefined') return;
-    const pos = useUIStore.getState().chatPosition;
-    if (!pos) return;
-    const minX = -Math.max(0, window.innerWidth - PANEL_WIDTH - 24);
-    const minY = -Math.max(0, window.innerHeight - PANEL_HEIGHT - 24);
-    x.set(Math.min(0, Math.max(minX, pos.x)));
-    y.set(Math.min(0, Math.max(minY, pos.y)));
-  }, [isMobile, panelVisible, x, y]);
+  // Moving a navigation rail can resize the drag area without resizing the window.
+  useLayoutEffect(() => {
+    const area = constraintsRef.current, panel = floatingPanelRef.current;
+    if (!area || !panel) return;
+    const clamp = (left: number, top: number) => {
+      const minX = Math.min(0, panel.offsetWidth - area.clientWidth);
+      const minY = Math.min(0, panel.offsetHeight - area.clientHeight);
+      x.set(Math.min(0, Math.max(minX, left)));
+      y.set(Math.min(0, Math.max(minY, top)));
+    };
+    const saved = useUIStore.getState().chatPosition;
+    clamp(saved?.x ?? 0, saved?.y ?? 0);
+    const keepVisible = () => clamp(x.get(), y.get());
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', keepVisible);
+      return () => window.removeEventListener('resize', keepVisible);
+    }
+    const observer = new ResizeObserver(keepVisible);
+    observer.observe(area);
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [isMobile, panelVisible, chatDocked, userId, x, y]);
 
   // Keep the transcript pinned to the bottom while streaming (unless reading older), and while the
   // guided demo works: a card it adds, or its "Thinking…", is its newest line too.
@@ -590,7 +606,7 @@ function AccountChatWidget() {
     }
   }, [pendingImages]);
 
-  const handleSend = useCallback(async (textOverride?: string, imageOverride?: string[]) => {
+  const handleSend = useCallback(async (textOverride?: string, imageOverride?: string[], newThread = false) => {
     const text = (textOverride ?? input).trim();
     const images = textOverride === undefined ? pendingImages : (imageOverride ?? []);
     if ((text === '' && images.length === 0) || sending || demoRunning || !userId) return false;
@@ -601,13 +617,16 @@ function AccountChatWidget() {
     const store = getChatStore(userId);
     let threadId = activeThreadId;
     let prior = messages;
-    if (!threadId) {
+    if (!threadId || newThread) {
       const thread = await store.createThread(chatThreadTitle(text !== '' ? text : 'Image attachment'));
       threadId = thread.id;
       prior = [];
       setThreads((existing) => [thread, ...existing]);
       setActiveThread(thread.id);
       setHasMore(false);
+      setLiveTurn(null);
+      setView('chat');
+      setConfirmingDeleteId(null);
     }
     const userMessage = await store.appendMessage(threadId, 'user', text, undefined, images);
     setStorePersistent(store.persistent);
@@ -631,7 +650,7 @@ function AccountChatWidget() {
     if (!chatOpen || !chatLaunch || sending || demoRunning || !userId || launchInFlightRef.current) return;
     const launch = chatLaunch;
     launchInFlightRef.current = true;
-    void handleSend(launch.text, launch.images ?? [])
+    void handleSend(launch.text, launch.images ?? [], launch.newThread)
       .then((sent) => {
         if (!sent || useUIStore.getState().chatLaunch !== launch) return;
         setChatLaunch(null);
@@ -769,6 +788,7 @@ function AccountChatWidget() {
         desktopProviderId: fresh.data.desktopProviderId,
         desktopModel: fresh.data.desktopModel,
         customProviderId: fresh.data.customProviderId,
+          ...(fresh.data.customToolConnection ? { customToolConnection: fresh.data.customToolConnection } : {}),
         chatToolMode: next,
         desktopReasoning: fresh.data.desktopReasoning ?? null,
       });
@@ -824,7 +844,7 @@ function AccountChatWidget() {
   }
 
   const onHeaderPointerDown = (event: React.PointerEvent) => {
-    if (isMobile) return;
+    if (isMobile || inlineTarget) return;
     if ((event.target as HTMLElement).closest('button, a, input, textarea, select')) return;
     dragControls.start(event);
   };
@@ -835,7 +855,7 @@ function AccountChatWidget() {
         onPointerDown={onHeaderPointerDown}
         className={cn(
           'flex items-center gap-2 border-b border-gray-200/80 px-3 py-2 dark:border-slate-700/60',
-          !isMobile && 'cursor-grab touch-none select-none active:cursor-grabbing'
+          !isMobile && !inlineTarget && 'cursor-grab touch-none select-none active:cursor-grabbing'
         )}
       >
         <MessageCircle className="h-4 w-4 flex-shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />
@@ -949,7 +969,7 @@ function AccountChatWidget() {
             <Shrink className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
-        {!isMobile && !isDemo && canDockChat && (
+        {!isMobile && !isDemo && canDockChat && !inlineTarget && (
           <button
             type="button"
             aria-label={chatDocked ? 'Float the chat' : 'Dock the chat beside the workspace'}
@@ -1265,7 +1285,11 @@ function AccountChatWidget() {
               ? 'Pick a guided build below — or ask what this demo can do.'
               : prefs?.aiSource === 'site' && prefs.siteAiActions === false
                 ? 'Ask anything. This site’s AI answers in words: it can’t make changes for you.'
-                : 'Ask anything — I can create forms, apps and flows.'}
+                : prefs?.aiSource === 'site' && confirmMode
+                  ? 'Ask Site AI to plan, or approve changes with an MCP connection.'
+                  : prefs?.aiSource === 'custom' && !prefs.customToolConnection
+                    ? 'Ask a question, or enable workspace tools in AI settings to build.'
+                    : 'Ask anything — I can create forms, apps and flows.'}
           className="max-h-28 min-h-[3.5rem] min-w-0 flex-1 resize-none rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-primary-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
         />
         {sending ? (
@@ -1294,11 +1318,15 @@ function AccountChatWidget() {
 
   return (
     <>
+      {inlineTarget && panelVisible && createPortal(
+        <section aria-label="App creation chat" className="flex h-[clamp(22rem,65dvh,48rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">{panelBody}</section>,
+        inlineTarget
+      )}
       {/* On a phone the studio owns its bottom edge: the launcher, the desktop chip
           and the mobile nav used to stack there, over whatever control the section
           ended with. Chat is still reachable inside the studio — from its app menu
           and from the command palette — and the chat PANEL still opens normally. */}
-      {!panelVisible && !(isMobile && pathClaimsBottomEdge(location.pathname)) && (
+      {!inlineTarget && !panelVisible && !(isMobile && pathClaimsBottomEdge(location.pathname)) && (
         <button
           type="button"
           aria-label={chatOpen ? 'Restore chat' : 'Open chat'}
@@ -1310,14 +1338,14 @@ function AccountChatWidget() {
             'fixed z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary-600 text-primary-foreground shadow-lg transition-colors hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
             isMobile
               ? 'right-4 bottom-[var(--fl-mobile-float)]'
-              : 'bottom-4 right-4'
+              : 'bottom-[calc(1rem+var(--fl-nav-bottom,0px))] right-[calc(1rem+var(--fl-nav-right,0px))]'
           )}
         >
           <MessageCircle className="h-5 w-5" aria-hidden="true" />
         </button>
       )}
 
-      {panelVisible && isMobile && (
+      {!inlineTarget && panelVisible && isMobile && (
         <section
           role="dialog"
           aria-label="Site chat"
@@ -1330,20 +1358,25 @@ function AccountChatWidget() {
       {/* §11B O5 co-creation shell: docked = a full-height right rail beside the live
           workspace (AppShell clears space for it) — chat and canvas as coordinated
           surfaces instead of an overlay. */}
-      {panelVisible && !isMobile && chatDocked && (
+      {!inlineTarget && panelVisible && !isMobile && chatDocked && (
         <div
           role="dialog"
           aria-label="Site chat"
-          className="fixed inset-y-0 right-0 z-40 flex w-96 flex-col overflow-hidden border-l border-gray-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900"
+          className="fixed top-[var(--fl-system-top,0px)] bottom-0 right-0 z-40 flex w-96 flex-col overflow-hidden border-l border-gray-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900"
         >
           {panelBody}
         </div>
       )}
-      {panelVisible && !isMobile && !chatDocked && (
+      {!inlineTarget && panelVisible && !isMobile && !chatDocked && (
         // The fixed inset layer is the drag-constraints boundary: framer-motion clamps
         // the panel to it, so the chat can never be dragged off screen.
-        <div ref={constraintsRef} className="pointer-events-none fixed inset-3 z-40">
+        <div ref={constraintsRef} className="pointer-events-none fixed inset-3 z-40" style={{
+          top: 'calc(.75rem + var(--fl-nav-top, 0px) + var(--fl-system-top, 0px))',
+          bottom: 'calc(.75rem + var(--fl-nav-bottom, 0px))', right: 'calc(.75rem + var(--fl-nav-right, 0px))',
+          left: 'calc(.75rem + var(--fl-nav-left, 0px))',
+        }}>
           <motion.div
+            ref={floatingPanelRef}
             role="dialog"
             aria-label="Site chat"
             drag

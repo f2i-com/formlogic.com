@@ -8,6 +8,9 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { downloadProjectZip } from '../../lib/downloadProjectZip';
+
+vi.mock('../../lib/downloadProjectZip', () => ({ downloadProjectZip: vi.fn() }));
 
 vi.mock('../../client-runtime/flows/aiDefault', () => ({ resolveDefaultLlm: vi.fn(), resolveDefaultLlmTools: vi.fn(), editorAiLabel: vi.fn(async () => 'Desktop AI (OAIY) — oaiy-engine · flash'), TOOLS_UNSUPPORTED: 'tools-unsupported' }));
 vi.mock('fflate', () => ({
@@ -155,6 +158,29 @@ describe('AppEditorDialog save acknowledgement', () => {
     expect(sent().filter(m => m.kind === 'save-result')).toEqual([{ kind: 'save-result', id: 'save-2', ok: false, error: 'The project changed. Reload before importing.' }]);
     expect(onClose).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain('The project changed.');
+  });
+});
+
+describe('editable project ZIP downloads', () => {
+  it('downloads the open draft from an earlier editor and keeps editing', async () => {
+    const onApply = vi.fn(async () => {});
+    const { sent, editorSays, onClose } = await mount(onApply);
+    await editorSays({ id: sent().find(m => m.method === 'open')!.id, ok: true, value: { opened: true } });
+    const download = Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Download ZIP')!;
+    expect(download.disabled).toBe(false);
+    await act(async () => download.click());
+    const bytes = Uint8Array.of(7, 4);
+    await editorSays({ id: sent().find(m => m.method === 'export')!.id, ok: true, value: bytes });
+    expect(downloadProjectZip).toHaveBeenCalledWith(bytes, 'App');
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(download.disabled).toBe(false);
+  });
+
+  it('leaves the download action inside an editor that supplies its own ZIPs', async () => {
+    const { sent, editorSays } = await mount(vi.fn(), 'studio', { kind: 'formlogic-editor-ready', protocol: 1, projectZip: true });
+    await editorSays({ id: sent().find(m => m.method === 'open')!.id, ok: true, value: { opened: true } });
+    expect(document.body.textContent).not.toContain('Download ZIP');
   });
 });
 

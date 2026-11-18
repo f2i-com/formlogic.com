@@ -1,7 +1,5 @@
 // @vitest-environment jsdom
-// App Studio smoke: the six-section shell loads real app data (mocked api),
-// derives what each section holds from actual state, and the section links
-// + footer route between sections.
+// App Studio and its shared app navigation, including direct links and the standalone picker.
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -9,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppStudio } from './AppStudio';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
+import { bumpSessionGeneration } from '../../lib/sessionGeneration';
 import { toast } from '../../stores/toastStore';
 
 type AuthUser = NonNullable<ReturnType<typeof useAuthStore.getState>['user']>;
@@ -48,6 +47,7 @@ const h = vi.hoisted(() => {
 vi.mock('../../hooks/usePublicConfig', () => ({ usePublicConfig: () => ({ plans: { siteAiEnabled: false } }) }));
 vi.mock('../../lib/api', () => ({
   api: {
+    getAppsSummary: vi.fn(async () => ({ data: { apps: {} } })),
     getNativeRecords: vi.fn(async () => ({ data: { installed: false, tables: [] } })),
     getNativeEntry: vi.fn(async () => ({ data: { home: false } })),
     getApp: vi.fn(async () => ({ data: { app: h.app } })),
@@ -111,6 +111,7 @@ function PathProbe() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  bumpSessionGeneration();
   pathRef.current = '';
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
   useAuthStore.setState({ user: { id: 'u1', email: 'o@example.com', name: 'Owner' } as unknown as AuthUser });
@@ -134,7 +135,8 @@ async function renderStudio(path: string) {
           <Route path="/apps/:appId/studio" element={<AppStudio />} />
           <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
           <Route path="/apps/:appId/settings" element={<div />} />
-          <Route path="/apps/:appId/softn/*" element={<div data-testid="softn-page" />} />
+          <Route path="/apps/:appId/web/*" element={<div data-testid="softn-page" />} />
+          <Route path="/app/:slug" element={<div data-testid="app-runtime" />} />
           <Route path="/apps" element={<div />} />
         </Routes>
       </MemoryRouter>
@@ -145,6 +147,22 @@ async function renderStudio(path: string) {
 }
 
 describe('AppStudio', () => {
+  it('opens the runtime for a member and keeps owner navigation out of the page', async () => {
+    vi.mocked(api.getApp).mockResolvedValueOnce({ data: { app: { ...h.app, ownerId: 'another-user', canManage: false } } } as never);
+    await renderStudio('/apps/a1/studio/data?new=form');
+    expect(pathRef.current).toBe('/app/plumbing-ops');
+    expect(container.querySelector('[data-testid="app-runtime"]')).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(api.getNativeRecords).not.toHaveBeenCalled();
+  });
+
+  it('uses the manage capability even when the app response omits its owner ID', async () => {
+    vi.mocked(api.getApp).mockResolvedValueOnce({ data: { app: { ...h.app, ownerId: undefined, canManage: true } } } as never);
+    await renderStudio('/apps/a1/studio/plan');
+    expect(container.querySelector('header h1')?.textContent).toBe(h.app.name);
+    expect(container.querySelector('nav[aria-label="App sections"]')).not.toBeNull();
+  });
+
   // The studio is for forms apps: a SoftN app is managed on its own page, which has what each part
   // of the studio did for it. Every address of the studio that names one lands on the matching part.
   it('sends an address that names a SoftN app to that app\'s own page, section for section', async () => {
@@ -155,8 +173,8 @@ describe('AppStudio', () => {
     vi.mocked(api.getAppForms).mockImplementation(async () => ({ data: { forms: [] } }) as never);
     try {
       for (const [from, to] of [
-        ['', '/apps/a1/softn/settings'], ['/data', '/apps/a1/softn/data'], ['/screens', '/apps/a1/softn/edit'], ['/automations', '/apps/a1/softn/automations'],
-        ['/access', '/apps/a1/softn/members'], ['/publish', '/apps/a1/softn'], ['/plan', '/apps/a1/softn'], ['/nonsense', '/apps/a1/softn/settings'],
+        ['', '/apps/a1/web/settings'], ['/data', '/apps/a1/web/data'], ['/screens', '/apps/a1/web/edit'], ['/automations', '/apps/a1/web/automations'],
+        ['/access', '/apps/a1/web/members'], ['/publish', '/apps/a1/web'], ['/plan', '/apps/a1/web'], ['/nonsense', '/apps/a1/web/settings'],
       ]) {
         await renderStudio(`/apps/a1/studio${from}`);
         expect(pathRef.current, `studio${from}`).toBe(to);
@@ -174,20 +192,38 @@ describe('AppStudio', () => {
 
   // Some SoftN apps made before the two kinds were told apart also hold forms. Their forms, the
   // relations between them and their screens have no other home, so such an app keeps its studio.
-  it('keeps the studio for a SoftN app that also holds forms, and says where the rest of the app is', async () => {
+  it('keeps a mixed app’s forms and web project reachable in the same section picker', async () => {
     const settings = h.app.settings;
     h.app.settings = { softnApp: true } as never;
     try {
+      vi.mocked(api.getAppsSummary).mockResolvedValueOnce({ data: { apps: { a1: { installed: true, backend: true } } } } as never);
       await renderStudio('/apps/a1/studio/data');
       expect(pathRef.current).toBe('/apps/a1/studio/data');
       expect(container.querySelector('[data-testid="softn-page"]')).toBeNull();
-      expect(container.textContent).toContain('This is a SoftN app that also holds forms.');
-      expect(container.querySelector('a[href="/apps/a1/softn"]')!.textContent).toBe('Open the app’s page');
+      expect(container.querySelector('nav[aria-label="App sections"] a[href="/apps/a1/web/edit"]')?.textContent).toBe('Edit');
       // Its forms are there to be worked on.
       expect(container.textContent).toContain('Repair request');
+      await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true })); });
+      const results = document.body.querySelector('[role="group"][aria-label="Sections"]')!;
+      expect(results.textContent).toContain('Form records');
+      expect(results.textContent).toContain('API');
+      const edit = Array.from(results.querySelectorAll('button')).find(result => result.textContent === 'Edit')!;
+      await act(async () => edit.click());
+      expect(pathRef.current).toBe('/apps/a1/web/edit');
     } finally {
       h.app.settings = settings;
     }
+  });
+
+  it('offers the first FormLogic form on a web app and returns to its data section on cancel', async () => {
+    vi.mocked(api.getApp).mockResolvedValueOnce({ data: { app: { ...h.app, settings: { softnApp: true } } } } as never);
+    vi.mocked(api.getAppForms).mockResolvedValueOnce({ data: { forms: [] } } as never);
+    await renderStudio('/apps/a1/studio/data?new=form');
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('Add your first form');
+    const close = dialog.querySelector<HTMLButtonElement>('button[aria-label="Close modal"]')!;
+    await act(async () => close.click());
+    expect(pathRef.current).toBe('/apps/a1/web/data');
   });
 
   it('does not send a SoftN app away on a read of its forms that failed: it may hold some', async () => {
@@ -370,41 +406,27 @@ describe('AppStudio', () => {
     expect(publish.disabled).toBe(false);
   });
 
-  it('moves forward with an in-flow link at the end of the section, not a fixed bar', async () => {
-    await renderStudio('/apps/a1/studio/plan');
-    // No wizard framing: no step counter, no Previous/Continue bar over the content.
-    expect(container.textContent).not.toContain('Step 1 of 6');
-    expect(container.textContent).not.toContain('Continue to Data');
-    expect(container.textContent).not.toContain('Saved automatically');
-    expect(container.textContent).toContain('Next: Data & forms');
+  it('opens an existing forms app at Overview', async () => {
+    await renderStudio('/apps/a1/studio');
+    expect(pathRef.current).toBe('/apps/a1/studio/plan');
+    expect(container.querySelector('h2')?.textContent).toBe('Overview');
+    expect(container.querySelector('nav[aria-label="Previous and next Studio sections"]')).toBeNull();
   });
 
-  it('the section nav states what each section holds and navigates between them', async () => {
+  it('uses the shared section picker to switch between forms, app records and publishing', async () => {
     await renderStudio('/apps/a1/studio/data');
-    const nav = container.querySelector('nav[aria-label="App Studio sections"]')!;
-    expect(nav).toBeTruthy();
-    // Links, not buttons or tabs: each section is an address, so it opens in a new tab and
-    // Back returns to it.
-    const links = Array.from(nav.querySelectorAll('a'));
-    expect(links.map((a) => a.getAttribute('href'))).toEqual(
-      ['plan', 'data', 'screens', 'automations', 'access', 'publish'].map((step) => `/apps/a1/studio/${step}`),
-    );
-    // Counts, not completion ticks: 1 form, 2 screens (form + home), 1 automation.
-    const dataLink = links.find((a) => a.textContent?.startsWith('Data'))!;
-    // The mark is a bare number with an sr-only expansion, so its meaning is not
-    // trapped in a hover title on a touch screen; the number itself is not read twice.
-    expect(dataLink.textContent).toContain('Data & forms');
-    expect(dataLink.querySelector('.sr-only')!.textContent).toBe('1 form');
-    expect(dataLink.querySelector('span[aria-hidden="true"]')!.textContent).toBe('1');
-    expect(dataLink.getAttribute('aria-current')).toBe('page');
-    // The app has a release with a change since: the publish section says how many wait.
-    const publishLink = links.find((a) => a.getAttribute('href') === '/apps/a1/studio/publish')!;
-    expect(publishLink.querySelector('.sr-only')!.textContent).toBe('1 change not published yet');
-    expect(publishLink.getAttribute('aria-current')).toBeNull();
-    await act(async () => { publishLink.click(); });
-    await act(async () => { await Promise.resolve(); });
+    const nav = container.querySelector<HTMLElement>('nav[aria-label="App sections"]')!;
+    expect(nav.hidden).toBe(true);
+    const picker = container.querySelector<HTMLButtonElement>('button[aria-controls="' + nav.id + '"]')!;
+    await act(async () => picker.click());
+    expect(nav.hidden).toBe(false);
+    expect(nav.querySelector<HTMLAnchorElement>('a[aria-current="page"]')?.textContent).toBe('Forms');
+    expect(nav.querySelector('a[href="/apps/a1/records"]')?.textContent).toBe('Records');
+    expect(nav.querySelector('a[href="/apps/a1/settings"]')?.textContent).toBe('Settings');
+    await act(async () => nav.querySelector<HTMLAnchorElement>('a[href="/apps/a1/studio/publish"]')!.click());
     expect(pathRef.current).toBe('/apps/a1/studio/publish');
-    expect(nav.querySelector('a[aria-current="page"]')?.getAttribute('href')).toBe('/apps/a1/studio/publish');
+    expect(nav.hidden).toBe(true);
+    expect(nav.querySelector('a[aria-current="page"]')?.textContent).toBe('Publish');
     expect(container.querySelector('h2')?.textContent).toBe('Review & publish');
   });
 
@@ -422,13 +444,13 @@ describe('AppStudio', () => {
 
   it('opens the app menu from the header, which a narrow screen shows in place of the actions', async () => {
     await renderStudio('/apps/a1/studio/data');
-    const menu = container.querySelector<HTMLButtonElement>('header button[aria-label="Plumbing Operations — app menu"]')!;
+    const menu = container.querySelector<HTMLButtonElement>('header button[aria-label="Plumbing Operations — app actions"]')!;
     expect(menu.getAttribute('aria-haspopup')).toBe('dialog');
     await act(async () => { menu.click(); });
-    const sheet = document.body.querySelector('[role="dialog"][aria-labelledby="studio-app-menu-title"]')!;
+    const sheet = document.body.querySelector('[role="dialog"][aria-label="App actions"]')!;
     expect(sheet).toBeTruthy();
     // Every action the header holds on a wide screen, by the same name.
-    for (const name of ['Open app', 'Review & publish', 'Search App Studio', 'App settings', 'Records', 'Deploy & share']) {
+    for (const name of ['Open app', 'Review & publish', 'Search App Studio']) {
       expect(sheet.querySelector(`button[aria-label="${name}"]`), name).toBeTruthy();
     }
   });
@@ -471,11 +493,9 @@ describe('AppStudio', () => {
     expect(container.textContent).toContain('Owner');
   });
 
-  // The header control opens real settings, not the directory of tiles: a button
-  // labelled "Manage app" that landed on a nine-tile menu never opened a setting.
-  it('opens App settings from the Studio header', async () => {
+  it('opens app settings from the same section picker as a web app', async () => {
     await renderStudio('/apps/a1/studio/data');
-    const settings = container.querySelector<HTMLButtonElement>('button[aria-label="App settings"]')!;
+    const settings = container.querySelector<HTMLAnchorElement>('nav[aria-label="App sections"] a[href="/apps/a1/settings"]')!;
     expect(settings).toBeTruthy();
     await act(async () => { settings.click(); });
     expect(pathRef.current).toBe('/apps/a1/settings');

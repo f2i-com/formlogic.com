@@ -41,7 +41,8 @@ vi.mock('../../client-runtime/flows/desktopService', () => ({
   listAiSources: (...args: unknown[]) => listAiSourcesMock(...args),
 }));
 
-vi.mock('../../client-runtime/flows/aiProviders', () => ({
+vi.mock('../../client-runtime/flows/aiProviders', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../client-runtime/flows/aiProviders')>(),
   listProviders: (...args: unknown[]) => listProvidersMock(...args),
   providerSupports: () => true,
 }));
@@ -335,7 +336,7 @@ describe('AiSourceCard', () => {
     getAiPreferencesMock.mockResolvedValue({
       data: prefs({ aiSource: 'custom', customProviderId: 'cp1' }),
     });
-    listProvidersMock.mockReturnValue([{ id: 'cp1', name: 'My OpenAI', enabled: true }]);
+    listProvidersMock.mockReturnValue([{ id: 'cp1', name: 'My OpenAI', baseUrl: 'https://provider.example/v1', enabled: true }]);
     await mount();
 
     expect(radio(container!, 'custom').checked).toBe(true);

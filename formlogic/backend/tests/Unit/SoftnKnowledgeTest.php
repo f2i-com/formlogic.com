@@ -48,14 +48,14 @@ final class SoftnKnowledgeTest extends TestCase
     public function testTheFirstPageIsFormLogicsOwnThenWhatElseThereIsToRead(): void
     {
         $start = self::service()->start();
-        $this->assertStringStartsWith('# SoftN apps on FormLogic', $start);
+        $this->assertStringStartsWith('# Hosting a web app on FormLogic', $start);
         $this->assertStringContainsString('## What else to read', $start);
         // The guide's sections, the Python guide, the components, and each published guide by its name.
         $this->assertStringContainsString('`language`', $start);
         $this->assertStringContainsString('files, a-page, logic-js, this-app-s-private-backend-server', $start);
         $this->assertStringContainsString('`language-python`', $start);
         $this->assertStringContainsString('- ui-language: The SoftN UI language — sections: the-shape, bindings', $start);
-        $this->assertStringContainsString('Softn v9.9.9', $start);
+        $this->assertStringContainsString('Sandbox reference version v9.9.9', $start);
         $this->assertSame($start, self::service()->topic('')['text']);
     }
 
@@ -150,7 +150,7 @@ final class SoftnKnowledgeTest extends TestCase
         $this->assertMatchesRegularExpression('/^[a-f0-9]{40}$/', (string) ($guide['source']['commit'] ?? ''));
         foreach (['javascript', 'python'] as $language) {
             $text = $guide[$language];
-            $this->assertStringStartsWith('# How to build a SoftN app', $text);
+            $this->assertStringStartsWith('# Classic component projects', $text);
             $this->assertStringContainsString("## This app's private backend (server/)", $text);
             // What only SoftN Studio's own agent has: its tools and its preview.
             foreach (['write_file', 'run_app_function', 'check_app', 'Allow in preview'] as $studios) $this->assertStringNotContainsString($studios, $text, "{$language}: {$studios}");

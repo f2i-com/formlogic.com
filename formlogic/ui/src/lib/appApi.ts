@@ -82,14 +82,16 @@ export function apiOf(manifestText: string | undefined | null): ApiDescription |
       ? 'This server routes addresses under /api/ made of letters, digits, hyphens, underscores and slashes.'
       : !METHODS.includes(method)
         ? 'This server takes GET, POST, PUT and DELETE only.'
-        : authorization === 'hosttoken'
-          ? 'It asks for a host key, which this server does not hold.'
-          : null;
+        : method === 'GET' && route.path === '/api/meta'
+          ? 'The host reserves GET /api/meta for its runtime metadata. Choose another address for this handler.'
+          : authorization === 'hosttoken'
+            ? 'It asks for a host key, which this server does not hold.'
+            : null;
     const siteOnly = route.path.toLowerCase().startsWith(SITE_ROUTE_PREFIX);
     routes.push({ method, path: route.path, handler: typeof route.handler === 'string' && route.handler !== '' ? route.handler : null, transaction, authorization, unserved, siteOnly });
   }
   const database = record(server.database);
-  const migrations = Array.isArray(database?.migrations) ? database.migrations.filter((path): path is string => typeof path === 'string') : [];
+  const migrations = Array.isArray(database?.migrations) ? database.migrations.filter((path): path is string => typeof path === 'string').sort() : [];
   return { routes, migrations, database: database !== null };
 }
 

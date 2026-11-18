@@ -64,7 +64,7 @@ body {
 
 .fb-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 14px 16px; }
 .fb-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
-.fb-card-side { display: flex; gap: 8px; }
+.fb-card-side { display: flex; flex-wrap: wrap; gap: 8px; }
 .fb-step { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--surface-soft); border: 1px solid var(--border); font-weight: 600; font-size: 12px; }
 
 .fb-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
@@ -78,7 +78,7 @@ body {
 .fb-row label { margin: 0; }
 .fb-check { display: flex !important; align-items: center; gap: 6px; color: var(--text) !important; margin-bottom: 8px !important; }
 .fb input[type='text'], .fb input[type='number'], .fb textarea { font: inherit; color: var(--text); background: var(--surface-soft); border: 1px solid var(--border); border-radius: var(--r-ctl); padding: 6px 9px; }
-.fb input[type='text'] { flex: 1; min-width: 220px; }
+.fb input[type='text'] { flex: 1; min-width: min(100%, 220px); }
 .fb input[type='number'] { width: 76px; }
 .fb textarea { width: 100%; font-family: var(--font-mono); resize: vertical; }
 
@@ -91,7 +91,7 @@ body {
 .fb-facts { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; margin: 0 0 8px; }
 .fb-facts dt { color: var(--muted); }
 .fb-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.fb-mono { font-family: var(--font-mono); font-size: 12px; }
+.fb-mono { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
 
 .fb-note { padding: 8px 11px; border-radius: var(--r-ctl); background: var(--surface-soft); margin: 8px 0 0 !important; }
 .fb-note.is-warn { background: var(--amber-soft); }
@@ -110,3 +110,11 @@ body {
 .fb-item { flex: 1; min-width: 200px; overflow-wrap: anywhere; }
 .fb-item small { display: block; color: var(--muted); }
 .fb-item-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+@media (max-width: 480px) {
+  .fb { padding: 12px; }
+  .fb-head { flex-direction: column; gap: 6px; }
+  .fb-card-side { width: 100%; }
+  .fb-button { min-height: 44px; white-space: normal; }
+  .fb-item { min-width: min(100%, 200px); }
+}

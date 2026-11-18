@@ -76,13 +76,13 @@ afterEach(() => {
   host = null;
 });
 
-async function render(current: Form = form()) {
+async function render(current: Form = form(), search = '') {
   host = document.createElement('div');
   document.body.appendChild(host);
   await act(async () => {
     root = createRoot(host!);
     root.render(
-      <MemoryRouter initialEntries={[`/apps/a1/studio/data`]}>
+      <MemoryRouter initialEntries={[`/apps/a1/studio/data${search}`]}>
         <WhereAmI />
         <DataStep app={app} appForms={[attachment]} formsById={{ f1: current }} unreadableFormIds={[]} formsResolving={false} onReloadForms={onReloadForms as never} />
       </MemoryRouter>
@@ -107,6 +107,25 @@ async function quickAdd(label: string) {
   const [, body] = h.updateForm.mock.calls.at(-1)!;
   return body as { fields: FormField[]; expectedFieldsRevision?: string };
 }
+
+it('retries attaching the same draft before opening the first form in the designer', async () => {
+  const createForm = vi.spyOn(useFormStore.getState(), 'createForm').mockResolvedValue(form({ id: 'new-form', fields: [] }));
+  const addFormToApp = vi.spyOn(useAppStore.getState(), 'addFormToApp').mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  try {
+    await render(form(), '?new=form');
+    const name = document.body.querySelector<HTMLInputElement>('input[placeholder="e.g. Workshop request"]')!;
+    setInput(name, 'Requests');
+    await act(async () => button('Open form designer').click());
+    expect(name.disabled).toBe(true);
+    await act(async () => button('Retry attachment').click());
+    expect(createForm).toHaveBeenCalledTimes(1);
+    expect(addFormToApp.mock.calls).toEqual([['a1', 'new-form', 'Requests'], ['a1', 'new-form', 'Requests']]);
+    expect(h.location).toBe('/builder/new-form?appId=a1');
+  } finally {
+    createForm.mockRestore();
+    addFormToApp.mockRestore();
+  }
+});
 
 describe('quick-adding a field', () => {
   // Value, Count, Finance and Format are refused by the server; Class, Case and New save, and

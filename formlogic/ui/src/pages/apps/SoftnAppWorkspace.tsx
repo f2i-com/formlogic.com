@@ -13,13 +13,15 @@
 // address of it that names a SoftN app comes here (lib/softnApps: softnPathForStudio).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Braces, Check, Code2, Copy, Database, Download, ExternalLink, FolderOpen, Globe, History as HistoryIcon, LayoutDashboard, Lock, MessageSquare, Mic, PackagePlus, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wallet, Wand2, Workflow } from 'lucide-react';
+import { Braces, Check, ClipboardList, Code2, Copy, Download, ExternalLink, FolderOpen, Globe, Lock, MessageSquare, Mic, PackagePlus, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wallet, Wand2 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Textarea } from '../../components/ui/Textarea';
 import { Switch } from '../../components/ui/Switch';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { SectionNav } from '../../components/ui/SectionNav';
+import { AppSectionBar } from '../../components/apps/AppSectionBar';
+import { useHostedWorkspaceNavigation } from '../../components/layout/useFormsWorkspaceNavigation';
+import { useAppSectionSidebar } from '../../components/layout/useAppSectionSidebar';
 import { Panel, PANEL_COLUMNS } from '../../components/ui/Panel';
 import { PAGE_GUTTER } from '../../components/layout/PageBody';
 import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
@@ -37,13 +39,14 @@ import { BringDataPanel } from '../../components/apps/BringDataPanel';
 import { AddBackendPanel } from '../../components/apps/AddBackendPanel';
 import { DatabaseDesigner } from '../../components/design/DatabaseDesigner';
 import { designedBackend, designRoutes, type DatabaseDesign } from '../../lib/databaseDesign';
-import { withBackend } from '../../lib/softnBackend';
+import { customApiProject, withBackend } from '../../lib/softnBackend';
 import { RequirementsSetting } from '../../components/apps/RequirementsSetting';
 import { AppEditorDialog, type AppEditorKind } from '../../components/studio/AppEditorDialog';
 import type { EditorBrief } from '../../components/studio/editorAgent';
 import { AppEngineSelect } from '../../components/studio/AppEngineSelect';
+import { usesWebContainer } from '../../lib/formlogic/frameEngine';
 import { AppTorchSwitch } from '../../components/studio/AppTorchSwitch';
-import { NativeEditor } from '../../components/studio/NativeAppPanel';
+import { NativeEditorView } from '../../components/studio/NativeAppPanel';
 import { NativeAppView } from '../../components/studio/NativeAppView';
 import type { SiteProblem } from '../../components/studio/SiteAppFrame';
 import { importSiteBuild, siteBuildWarnings, siteOf, siteOutsideOf, withNewBuild, withOutsideSites } from '../../lib/siteApps';
@@ -56,6 +59,7 @@ import { AiConnectNotice } from '../../components/ai/AiConnectNotice';
 import { api } from '../../lib/api';
 import { apiOf } from '../../lib/appApi';
 import { declaresFormlogicAi, declaresFormlogicPayments, exportNativeProject, importNativeProject, phoneCodeProvider, type NativeProject, type NativeProjectBytes } from '../../lib/nativeHosting';
+import { declaredAppId } from '../../lib/appKeyFile';
 import { withMediaBytes } from '../../lib/nativeMedia';
 import { isSoftnApp, projectFromUpload, projectHasBackend, SOFTN_SECTIONS, softnWorkspacePath, type SoftnSection } from '../../lib/softnApps';
 import { cn, copyToClipboard } from '../../lib/utils';
@@ -63,20 +67,25 @@ import { useAppStore } from '../../stores/appStore';
 import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { useUIStore, type SoftnOpen } from '../../stores/uiStore';
-import type { App, AppRequirement, SoftnLook } from '../../types/app';
+import { viewerOwnsApp, type App, type AppRequirement, type SoftnLook } from '../../types/app';
 
-const SECTIONS: readonly (readonly [SoftnSection, string, typeof Globe])[] = [
-  ['overview', 'Overview', LayoutDashboard], ['data', 'Data', Database], ['api', 'API', Braces], ['members', 'Members', Users], ['edit', 'Edit', PencilRuler],
-  ['automations', 'Automations', Workflow], ['history', 'History', HistoryIcon], ['domains', 'Domains', Globe], ['settings', 'Settings', SettingsIcon],
-];
 const DATA_VIEWS: readonly DataView[] = ['browse', 'structure', 'export', 'import'];
 /** The parts of the address after /softn/, decoded; a part that is not valid text is dropped. */
 const addressParts = (rest: string) => rest.split('/').filter(Boolean).map(part => { try { return decodeURIComponent(part); } catch { return ''; } });
-type Opened = { kind: AppEditorKind; bundle: Uint8Array; brief?: EditorBrief };
+type Opened = { kind: AppEditorKind; bundle: Uint8Array; brief?: EditorBrief; preview?: boolean };
+
+/** A browser refresh can revisit an app whose first version still needs installing. */
+function starterFromHistory(appId: string, state: unknown): SoftnOpen | null {
+  const starter = (state as { starter?: Partial<SoftnOpen> } | null)?.starter;
+  if (!starter || (starter.editor !== 'builder' && starter.editor !== 'studio')) return null;
+  if (starter.template !== 'javascript' && starter.template !== 'react' && starter.template !== 'vue') return null;
+  return { appId, editor: starter.editor, template: starter.template, preview: true };
+}
 
 export function SoftnAppWorkspace() {
   const { appId = '' } = useParams();
   const navigate = useNavigate();
+  const userId = useAuthStore(s => s.user?.id);
   const app = useAppStore(s => s.apps.find(candidate => candidate.id === appId));
   const fetchApps = useAppStore(s => s.fetchApps);
   // Which app was looked for on the server: moving to another app's workspace looks again.
@@ -88,13 +97,14 @@ export function SoftnAppWorkspace() {
   }, [app, looked, appId, fetchApps]);
   if (!app) {
     return <div className="min-h-screen">
-      <Header title="SoftN app" back={{ onClick: () => navigate('/apps'), label: 'Back to apps' }} />
+      <Header title="Web app" back={{ onClick: () => navigate('/apps'), label: 'Back to apps', text: 'Apps' }} />
       <div className="px-4 py-10 text-sm text-slate-600 dark:text-slate-400 sm:px-6">
         {looked ? <p role="alert">This app was not found, or it is not yours to manage.</p> : <p role="status">Loading your app…</p>}
       </div>
     </div>;
   }
-  // A forms app is managed in its App Studio; this page would install a SoftN starter over it.
+  if (!viewerOwnsApp(app, userId)) return <Navigate to={`/app/${encodeURIComponent(app.slug)}`} replace />;
+  // Keep form-only bookmarks away from source installation.
   if (!isSoftnApp(app)) return <Navigate to={`/apps/${app.id}/studio`} replace />;
   return <Workspace key={app.id} app={app} />;
 }
@@ -147,7 +157,7 @@ function Workspace({ app }: { app: App }) {
     return () => window.clearTimeout(timer);
   }, [location.hash, section, hasProject]);
   const [editor, setEditor] = useState<Opened | null>(null);
-  const [advanced, setAdvanced] = useState(false);
+  const [advanced, setAdvanced] = useState<'project' | 'backend' | null>(null);
   const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
   const [change, setChange] = useState('');
   const [publishing, setPublishing] = useState(false);
@@ -167,15 +177,18 @@ function Workspace({ app }: { app: App }) {
   const published = app.status === 'published';
   const userId = useAuthStore(s => s.user?.id);
   const isOwner = app.ownerId === userId;
-  // How many forms the app also holds. Almost none do; one that does keeps its App Studio for
-  // them (pages/apps/AppStudio), and Settings then says where that is. Asked once Settings is open.
-  const [heldForms, setHeldForms] = useState(0);
+  // Current app-list responses include the attachment count. Older ones need one lookup.
+  const [attachmentCount, setAttachmentCount] = useState<number>();
+  const formCount = app.formCount ?? attachmentCount;
+  const hasForms = (formCount ?? 0) > 0;
   useEffect(() => {
-    if (section !== 'settings' || !isOwner) return;
+    if (!isOwner || app.formCount !== undefined) return;
     let current = true;
-    void api.getAppForms(app.id).then(result => { if (current && !result.error) setHeldForms(result.data?.forms?.length ?? 0); });
+    void api.getAppForms(app.id).then(result => {
+      if (current && result.data?.forms) setAttachmentCount(result.data.forms.length);
+    }).catch(() => {});
     return () => { current = false; };
-  }, [app.id, section, isOwner]);
+  }, [app.id, app.formCount, isOwner]);
   // Who can use the app is its owner's to decide, and not while the page only shows it (readOnly).
   const managesMembers = isOwner && !readOnly;
   const liveUrl = `${window.location.origin}/app/${encodeURIComponent(app.slug)}${project?.home ? '' : '/native'}`;
@@ -195,7 +208,8 @@ function Workspace({ app }: { app: App }) {
   const showsCodes = isOwner && backend && (namesCodeProvider || keptCodes);
   // The live app's backend (its installed manifest.json), which answers calls whatever the draft holds: the API
   // section is there while the live app or the draft has one, and shows the live app's.
-  const liveBackend = useMemo(() => apiOf(draft.installedFiles?.['manifest.json']) !== null, [draft.installedFiles]);
+  const installedApi = useMemo(() => apiOf(draft.installedFiles?.['manifest.json']), [draft.installedFiles]);
+  const liveBackend = installedApi !== null;
 
   // The page holds the app's media by name (lib/nativeMedia): an editor and a download are given
   // their bytes first, read from the server once. Nothing else starts on them while they are read.
@@ -220,11 +234,11 @@ function Workspace({ app }: { app: App }) {
     finally { preparingNow.current = false; if (mounted.current) setPreparing(null); }
   };
   /** Opens the editor once the app's media are read; true when it opened. */
-  const prepareEditor = (kind: AppEditorKind, from: NativeProject, brief?: EditorBrief) =>
-    withBytes('editor', from, bytes => { setEditor({ kind, bundle: exportNativeProject(bytes), brief }); return true; }, 'Could not prepare this app for the editor.');
+  const prepareEditor = (kind: AppEditorKind, from: NativeProject, brief?: EditorBrief, preview?: boolean) =>
+    withBytes('editor', from, bytes => { setEditor({ kind, bundle: exportNativeProject(bytes), brief, preview }); return true; }, 'Could not prepare this app for the editor.');
   const openEditor = (kind: AppEditorKind, brief?: EditorBrief, from: NativeProject | null = project): Promise<boolean | null> | undefined => {
     if (!from) return;
-    if (kind === 'studio' && ai.ready !== true) { toast.info('Connect an AI first', 'AI Studio uses your AI connection. Choose one in Settings → AI, or edit visually instead.'); return; }
+    if (brief && ai.ready !== true) { toast.info('Connect an AI first', 'Choose a provider in Settings → AI to send this request.'); return; }
     return prepareEditor(kind, from, brief);
   };
 
@@ -232,12 +246,13 @@ function Workspace({ app }: { app: App }) {
   // setup choices come first for an app with nothing installed; the request waits for them.
   // The editor opens once the app's media are read (prepareEditor), so the request is taken here.
   const taken = useRef<SoftnOpen | null>(null);
-  const seed = softnOpen && softnOpen.appId === app.id && ready && project && !editor ? softnOpen : null;
+  const pendingOpen = softnOpen?.appId === app.id ? softnOpen : null;
+  const seed = ready && !readOnly && project && !editor ? pendingOpen : null;
   useEffect(() => {
     if (!seed || seed === taken.current || !project) return;
     taken.current = seed;
     setSoftnOpen(null);
-    void prepareEditor(seed.editor, project, seed.brief);
+    void prepareEditor(seed.editor, project, seed.brief, seed.preview);
     // Once for each request; prepareEditor is the page's own and reads what it is given.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seed, project, setSoftnOpen]);
@@ -246,7 +261,7 @@ function Workspace({ app }: { app: App }) {
   // installed at once and the preview shows them; a published app keeps them as a draft to publish.
   const applyEditorChanges = async (bytes: Uint8Array) => {
     if (!project) return;
-    const returned = await importNativeProject(new File([new Uint8Array(bytes)], `${app.slug}.softn`));
+    const returned = await importNativeProject(new File([new Uint8Array(bytes)], `${app.slug}.zip`));
     const next: NativeProject = { ...returned, version, home: project.home, access: project.access };
     draft.edit(next);
     if (!published) {
@@ -389,9 +404,8 @@ function Workspace({ app }: { app: App }) {
   const download = () => {
     if (!project) return;
     void withBytes('download', project, bytes => {
-      const url = URL.createObjectURL(new Blob([new Uint8Array(exportNativeProject(bytes))], { type: 'application/octet-stream' }));
-      // A JavaScript app's download is the zip its upload takes back; a SoftN app's is a .softn file.
-      const link = document.createElement('a'); link.href = url; link.download = `${app.slug}.${isSite ? 'zip' : 'softn'}`; link.click();
+      const url = URL.createObjectURL(new Blob([new Uint8Array(exportNativeProject(bytes))], { type: 'application/zip' }));
+      const link = document.createElement('a'); link.href = url; link.download = `${app.slug}.zip`; link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }, 'The download could not be prepared.');
   };
@@ -406,6 +420,8 @@ function Workspace({ app }: { app: App }) {
   };
 
   const leave = (to: string) => { if (!dirty || window.confirm(draft.leaveMessage('Leave without publishing?'))) navigate(to); };
+  const navigation = useHostedWorkspaceNavigation(app.id, { isOwner, managesMembers, backend, liveBackend, hasForms }, !!project && ready);
+  const hasSidebar = useAppSectionSidebar(app, project && !editor && !advanced && known ? navigation : null, leave);
 
   // "This app can use AI. Set it up": the Settings section, at its AI panel.
   const openAiSettings = () => navigate(`${softnWorkspacePath(app.id, 'settings')}#app-ai-settings`);
@@ -414,18 +430,18 @@ function Workspace({ app }: { app: App }) {
   if (!known) return <Navigate to={softnWorkspacePath(app.id)} replace />;
 
   if (editor) {
-    return <AppEditorDialog kind={editor.kind} name={app.name} bundle={editor.bundle} brief={editor.brief}
+    return <AppEditorDialog kind={editor.kind} name={app.name} bundle={editor.bundle} brief={editor.brief} preview={editor.preview}
       applyLabel={published ? 'Keep changes' : 'Save changes'}
       // Back from an editor, the page shows the app running, with what was changed: its Edit section.
       onClose={() => { setEditor(null); if (section !== 'edit') navigate(softnWorkspacePath(app.id, 'edit'), { replace: true }); }} onApply={applyEditorChanges} />;
   }
   if (advanced) {
     // The app's files and nothing else: everything else the hosting dialog held is on this page.
-    return <NativeEditor app={app} surface="source" saveLabel={published ? 'Publish changes' : 'Save changes'}
-      onClose={() => { setAdvanced(false); setReloadKey(key => key + 1); setPreviewKey(key => key + 1); }} />;
+    return <NativeEditorView app={app} draft={draft} surface="source" initialTab={advanced}
+      saveLabel={published ? 'Publish changes' : 'Save changes'} onClose={() => setAdvanced(null)} />;
   }
 
-  const actions = project && !readOnly ? <div className="flex items-center gap-2">
+  const actions = section !== 'overview' && project && !readOnly ? <div className="flex items-center gap-2">
     <a href={liveUrl} target="_blank" rel="noopener noreferrer" className="hidden min-h-10 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5 sm:inline-flex"><ExternalLink className="h-4 w-4" />Open</a>
     {/* Its words show where the header has room for them, as every page's header actions do
         (Header's @container): on a phone they took the room the app's name needs, and the name
@@ -440,44 +456,50 @@ function Workspace({ app }: { app: App }) {
   const statusLine = <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
     <StatusPill live={published} />
     {project && <span className="text-xs text-slate-500 dark:text-slate-400">Version {version}{dirty ? ` · unpublished changes${draft.keeping ? ` (${DRAFT_KEEPING[draft.keeping][0]})` : ''}` : ''}</span>}
-    {published && project && <button type="button" onClick={copyLink} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-primary-600 hover:bg-primary-50 max-sm:min-h-11 dark:text-primary-300 dark:hover:bg-primary-500/10">{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? 'Link copied' : liveUrl.replace(/^https?:\/\//, '')}</button>}
+    {published && project && <button type="button" onClick={copyLink} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-primary-600 hover:bg-primary-50 max-sm:min-h-11 dark:text-primary-300 dark:hover:bg-primary-500/10">{copied ? <Check className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}{copied ? 'Link copied' : 'Copy app link'}</button>}
   </div>;
 
+  const currentLabel = navigation.find(item => item.value === section)?.label ?? (section === 'api' ? 'API' : section[0].toUpperCase() + section.slice(1));
+  const trail: { label: string; to?: string }[] = [{ label: currentLabel }];
+  if (dataTable) {
+    trail[0].to = dataPath;
+    trail.push({ label: dataTable, to: dataView === 'browse' ? undefined : softnWorkspacePath(app.id, 'data', dataTable) });
+    if (dataView !== 'browse') trail.push({ label: dataView[0].toUpperCase() + dataView.slice(1) });
+  } else if (historyOpen) {
+    trail[0].to = softnWorkspacePath(app.id, 'history');
+    trail.push({ label: `Version ${historyOpen}` });
+  }
+
   return <div className="min-h-screen">
-    <Header title={app.name} mark={<AppTile app={app} size="sm" className="h-7 w-7 rounded-md" />} back={{ onClick: () => leave('/apps'), label: 'Back to apps' }} actions={actions} />
+    <Header title={app.name} mark={<AppTile app={app} size="sm" className="h-7 w-7 rounded-md" />} back={{ onClick: () => leave('/apps'), label: 'Back to apps', text: 'Apps' }} actions={actions} />
     {/* Every section starts at the left and takes the page's whole width: its panels flow into
         more columns as the screen widens, and stack on a phone.
         On a wide screen the data section is the rest of the window below the page's header: the
         page does not scroll, the table list and the rows scroll inside it, and the pager stays in
         view. Narrower, it flows with the page as the other sections do. */}
-    <div className={cn('w-full pb-24 pt-3', PAGE_GUTTER, section === 'data' &&'lg:flex lg:h-[calc(100dvh-4rem-var(--fl-demo-banner-h,0px))] lg:flex-col lg:pb-3')}>
+    <div className={cn('w-full pb-6 pt-3', PAGE_GUTTER, section === 'data' && liveBackend && 'lg:flex lg:h-[calc(100dvh-var(--fl-workspace-header-h,4rem)-var(--fl-demo-banner-h,0px)-var(--fl-nav-top,0px)-var(--fl-nav-bottom,0px)-var(--fl-system-top,0px))] lg:flex-col lg:pb-3')}>
       {/* An app with nothing installed has no sections yet: its state stands alone. */}
       {!project && statusLine}
 
       <Messages draft={draft} />
 
       {!ready && !draft.error && <p role="status" className="mt-8 text-sm text-slate-500">Loading your app…</p>}
-      {ready && !project && !readOnly && <Setup app={app} aiReady={ai.ready} aiReason={ai.reason} onAiRecheck={ai.recheck} initialRequest={softnOpen?.appId === app.id ? softnOpen.brief?.prompt ?? '' : ''}
+      {ready && !project && !readOnly && <Setup app={app} aiReady={ai.ready} aiReason={ai.reason} onAiRecheck={ai.recheck} pendingOpen={pendingOpen ?? starterFromHistory(app.id, location.state)}
         onInstalled={open => { setSoftnOpen(open); setReloadKey(key => key + 1); }} />}
       {ready && !project && readOnly && <p className="mt-8 text-sm text-slate-500">This app has nothing installed yet.</p>}
 
       {project && <>
         {/* An app that can use AI, with its AI off: one line for its owner, never for anyone else. */}
         {app.ownerId === userId && backend && !readOnly && section !== 'settings' && declaresFormlogicAi(project) && <AppAiPrompt appId={app.id} onSetUp={openAiSettings} />}
-        {/* One row for the page's sections and its state, so the section itself starts higher.
-            Links, not tabs: each section is an address, so it opens in a new tab and the back button returns to it. */}
-        <SectionNav label="App sections" className="mt-2" current={section}
-          // Members are the owner's to manage: nobody else is shown the section. Automations start
-          // from the app's own tables, so they are the owner's too, of an app that has a backend.
-          // The app's earlier versions are its source: the owner's alone to see and to go back to.
-          // Its API is its backend's, and the owner's alone: an app with none has no API.
-          items={SECTIONS.filter(([value]) => (value !== 'members' || managesMembers) && (value !== 'automations' || (managesMembers && backend)) && (value !== 'history' || isOwner) && (value !== 'api' || (isOwner && (backend || liveBackend))))
-            .map(([value, label, icon]) => ({ value, label, icon, to: softnWorkspacePath(app.id, value) }))}
-          // On a phone the Data section keeps the screen for the rows: the status is on every other section.
-          end={<div className={cn('py-0.5', section === 'data' && 'max-sm:hidden')}>{statusLine}</div>} />
+        <div className={cn(section === 'overview' && hasSidebar && 'md:[[data-dock=top]_&]:sr-only md:[[data-dock=bottom]_&]:sr-only')}>
+          <AppSectionBar items={navigation} section={section} trail={trail} hasSidebar={hasSidebar} onLeave={leave}
+          status={section !== 'overview' && <div className={cn(section === 'data' && !dirty && 'max-sm:hidden')}>{statusLine}</div>} />
+        </div>
 
-        {section === 'overview' && <SoftnOverview app={app} project={project} version={version} published={published} dirty={dirty} readOnly={readOnly} backend={backend}
-          isOwner={app.ownerId === userId} liveUrl={liveUrl} busy={publishing || busy} onPublish={() => void publish()} />}
+        {section === 'overview' && <SoftnOverview app={app} project={project} version={version} published={published} dirty={dirty} readOnly={readOnly} installedApi={installedApi}
+          isOwner={app.ownerId === userId} liveUrl={liveUrl} busy={publishing || busy} canPublish={ready}
+          installedAccess={draft.installedAccess ?? project.access} draftStatus={dirty && draft.keeping ? DRAFT_KEEPING[draft.keeping][0] : undefined}
+          formCount={formCount} onLeave={leave} onPublish={() => void publish()} />}
 
         {section === 'members' && (managesMembers
           ? <SoftnMembers app={app} project={project} onReloadApp={fetchApps} />
@@ -485,7 +507,7 @@ function Workspace({ app }: { app: App }) {
 
         {section === 'automations' && (!managesMembers
           ? <p className="mt-6 text-sm text-slate-600 dark:text-slate-400">Only the app&rsquo;s owner manages its automations.</p>
-          : backend
+          : liveBackend
             ? <SoftnAutomations key={app.id} app={app} />
             : <p className="mt-6 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-400">
               <span className="font-semibold text-slate-900 dark:text-white">This app has no database on the server yet.</span> Automations run when a record in the app&rsquo;s own database changes, so they start once it has a backend.{' '}
@@ -560,7 +582,7 @@ function Workspace({ app }: { app: App }) {
               <Button className="w-full justify-start" disabled={busy || !!preparing} leftIcon={<Upload className="h-4 w-4" />} onClick={() => buildUpload.current?.click()}>Upload a new build (.zip)</Button>
               <p className="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">Build your app, zip the folder the build made (dist or build) and upload it. {backend ? 'Its backend and its records stay as they are.' : 'What visitors saved in their browsers stays.'}</p>
               <div className="mt-4 border-t border-slate-100 pt-4 dark:border-white/5">
-                <Button variant="secondary" className="w-full justify-start" leftIcon={<Code2 className="h-4 w-4" />} onClick={() => setAdvanced(true)}>{backend ? 'Edit the backend code' : 'Edit the app’s manifest'}</Button>
+                <Button variant="secondary" className="w-full justify-start" leftIcon={<Code2 className="h-4 w-4" />} onClick={() => setAdvanced(backend ? 'backend' : 'project')}>{backend ? 'Edit the backend code' : 'Edit the app’s manifest'}</Button>
                 <p className="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">{backend
                   ? 'The app’s API routes, server code and database changes in a code editor.'
                   : <>The file that names the app and its first page. This app has no backend yet. <Link to={softnWorkspacePath(app.id, 'data')} className="font-medium text-primary-600 underline-offset-2 hover:underline dark:text-primary-300">Add a backend</Link></>}</p>
@@ -592,9 +614,9 @@ function Workspace({ app }: { app: App }) {
                     const asked = change.trim();
                     void openEditor('studio', { prompt: asked, kind: 'edit' })?.then(opened => { if (opened) setChange(current => current.trim() === asked ? '' : current); });
                   }}>Make this change</Button>
-                <Button size="sm" variant="secondary" disabled={ai.ready !== true || busy || !!preparing} onClick={() => openEditor('studio')}>Open AI Studio</Button>
+                <Button size="sm" variant="secondary" disabled={busy || !!preparing} onClick={() => openEditor('studio')}>Open AI Studio</Button>
               </div>
-              {ai.ready === false && <AiConnectNotice lead="AI Studio needs an AI connection" reason={ai.reason} onConnected={ai.recheck} />}
+              {ai.ready === false && <AiConnectNotice lead="Connect an AI to request changes in Studio" reason={ai.reason} onConnected={ai.recheck} />}
               {/* The two ways that need no AI, as equals: by hand on the page, or in the files. The code
                   editor used to sit third under "Files", as a quiet link below Upload and Download. */}
               <div className="mt-4 space-y-3 border-t border-slate-100 pt-4 dark:border-white/5">
@@ -603,16 +625,16 @@ function Workspace({ app }: { app: App }) {
                   <p className="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">Drag in components and change text and styles in the Visual Builder. No AI needed.</p>
                 </div>
                 <div>
-                  <Button variant="secondary" className="w-full justify-start" leftIcon={<Code2 className="h-4 w-4" />} onClick={() => setAdvanced(true)}>Edit the source code</Button>
+                  <Button variant="secondary" className="w-full justify-start" leftIcon={<Code2 className="h-4 w-4" />} onClick={() => setAdvanced('project')}>Edit the source code</Button>
                   <p className="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">Every file of the app in a code editor: its pages, logic, styles{backend ? ', backend and database changes' : ''}.</p>
                 </div>
               </div>
             </Panel>
             <Panel title="Files" icon={<FolderOpen className="h-4 w-4" />}>
-              <input ref={upload} type="file" accept=".softn,.zip" className="hidden" aria-label="Upload a new version" onChange={event => { void uploadVersion(event.target.files?.[0]); event.target.value = ''; }} />
+              <input ref={upload} type="file" accept=".zip,.softn" className="hidden" aria-label="Upload a new version" onChange={event => { void uploadVersion(event.target.files?.[0]); event.target.value = ''; }} />
               <div className="flex flex-col gap-2">
-                <Button size="sm" variant="secondary" className="justify-start max-sm:min-h-11" disabled={busy || !!preparing} leftIcon={<Upload className="h-4 w-4" />} onClick={() => upload.current?.click()}>Upload a new version (.softn)</Button>
-                <Button size="sm" variant="secondary" className="justify-start max-sm:min-h-11" disabled={!!preparing} isLoading={preparing === 'download'} leftIcon={<Download className="h-4 w-4" />} onClick={download}>Download as .softn</Button>
+                <Button size="sm" variant="secondary" className="justify-start max-sm:min-h-11" disabled={busy || !!preparing} leftIcon={<Upload className="h-4 w-4" />} onClick={() => upload.current?.click()}>Upload a new version (.zip)</Button>
+                <Button size="sm" variant="secondary" className="justify-start max-sm:min-h-11" disabled={!!preparing} isLoading={preparing === 'download'} leftIcon={<Download className="h-4 w-4" />} onClick={download}>Download app ZIP</Button>
               </div>
               <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{backend
                 ? <>Records stay in the app&apos;s database when you upload a new version. Downloads hold the source only.</>
@@ -621,17 +643,18 @@ function Workspace({ app }: { app: App }) {
           </aside>}
         </div>}
 
-        {section === 'data' && (backend
+        {section === 'data' && (liveBackend
           ? <section aria-label="Data" className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 lg:min-h-0 lg:flex-1">
             {/* The table, its view and what is being looked at in it (search, filters, sort, page, the
                 open row) are the address: Back, a reload and a copied link return to the same thing. */}
             <DataManager key={app.id} appId={app.id} appSlug={app.slug} version={version} readOnly={readOnly} table={dataTable} view={dataView}
+              emptyAction={isOwner && installedApi.routes.length > 0 && <Link to={softnWorkspacePath(app.id, 'api')} className="mt-2 inline-flex min-h-10 items-center gap-2 font-medium text-primary-700 hover:underline dark:text-primary-300"><Braces className="size-4" aria-hidden="true" />Open API routes</Link>}
               query={location.search.replace(/^\?/, '')}
               onNavigate={(table, view, query, options) => navigate(
                 softnWorkspacePath(app.id, 'data', ...(table ? [table, ...(view === 'browse' ? [] : [view])] : [])) + (query ? `?${query}` : ''),
                 { replace: options?.replace })}
               importPanel={app.ownerId === userId && !readOnly
-                ? <BringDataPanel appId={app.id} disabled={busy} waiting={dirty ? 'Publish or discard your unpublished changes first: bringing data installs the app again.' : null}
+                ? <BringDataPanel appId={app.id} manifestId={declaredAppId(draft.installedFiles?.['manifest.json'])} disabled={busy} waiting={dirty ? 'Publish or discard your unpublished changes first: bringing data installs the app again.' : null}
                   onImported={result => {
                     setReloadKey(key => key + 1); setPreviewKey(key => key + 1);
                     toast.success('Data brought in', result.keyImported ? 'With the key it was kept under.' : 'The app keeps its own key here.');
@@ -640,17 +663,36 @@ function Workspace({ app }: { app: App }) {
                   }} />
                 : undefined} />
           </section>
-          : <section aria-label="Data" className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-5"><div className="flex items-start gap-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
-            <Database className="mt-0.5 h-5 w-5 shrink-0 text-slate-400" aria-hidden="true" />
-            <div className="min-w-0 space-y-3">
-              <p><span className="font-semibold text-slate-900 dark:text-white">This app has no database on the server.</span> It has no backend of its own, so what it saves stays in each visitor&apos;s browser. To keep data here and see it in this tab, give the app a backend: add one below, or ask AI Studio to.</p>
+          : backend ? <section aria-label="Data" className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900 sm:p-6">
+            <h2 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-white">Your backend is in the draft.</h2>
+            <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">{published
+              ? 'Publishing applies all draft changes to the live app and makes its routes available.'
+              : 'Save your changes to install the backend and try its routes. Your app stays private until you publish it.'}</p>
+            {isOwner && !readOnly && <div className="mt-4 flex flex-wrap gap-2">
+              <Button disabled={busy || !draft.available} isLoading={busy} onClick={() => void draft.save({ notice: 'Backend installed. Open API to try its routes.' })}>{published ? 'Publish draft changes' : 'Save backend'}</Button>
+              <Button variant="secondary" disabled={busy} onClick={() => setAdvanced('backend')}>Continue editing the backend</Button>
+            </div>}
+          </section> : <section aria-label="Data" className="mt-4 space-y-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50 sm:p-6">
+            <header>
+              <h2 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">{isOwner && !readOnly ? 'Add a backend' : 'Browser storage'}</h2>
+              <p className="mt-1.5 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-400">{isOwner && !readOnly
+                ? 'Give your app a shared database or a private handler it can call through an API.'
+                : 'This app has no database on the server. Its local records stay in each visitor’s browser.'}</p>
+            </header>
               {project && app.ownerId === userId && !readOnly && <AddBackendPanel project={project} disabled={busy}
                 waiting={dirty ? 'Publish or discard your unpublished changes first: adding a backend makes a new version.' : null}
                 onDesign={() => navigate(`${dataPath}?design=diagram`)}
+                onWrite={() => {
+                  try {
+                    draft.edit(customApiProject(project));
+                    draft.setNotice('GET /api/status is in your draft. Edit its handler under Backend and its route in manifest.json. After saving, open API to try it.');
+                    setAdvanced('backend');
+                  } catch (reason) { draft.setError(reason instanceof Error ? reason.message : 'The backend draft could not be created.'); }
+                }}
                 onAdd={next => addBackend(next, 'Its backend is added: this page as it was, with the routes and database of the file you chose.')} />}
-            </div>
-          </div></section>)}
+          </section>)}
         {designing && project && <DatabaseDesigner appId={app.id} appName={app.name} access={project.access} mode={designing}
+          client={isSite ? 'site' : usesWebContainer(project.files) ? 'web' : 'classic'}
           onMode={mode => navigate(`${dataPath}?design=${mode}`, { replace: true })} onClose={() => navigate(dataPath)}
           waiting={dirty ? 'Publish or discard your unpublished changes first: making the backend makes a new version.' : null}
           onCreate={createDesigned} />}
@@ -740,14 +782,13 @@ function Workspace({ app }: { app: App }) {
             <SoftnLookPanel appId={app.id} project={project} look={app.settings?.softnLook} themeColor={app.settings?.pwaThemeColor} disabled={readOnly} onSave={changeLook} />
           </Panel>}
           {!isSite && draft.engine && draft.enginePolicy && <Panel id="settings-engine" title="Engine" icon={<SettingsIcon className="h-4 w-4" />}>
-            <AppEngineSelect appId={app.id} engine={draft.engine} policy={draft.enginePolicy} disabled={busy || readOnly} onChanged={() => void draft.refreshEngine()} />
+            <AppEngineSelect appId={app.id} engine={draft.engine} policy={draft.enginePolicy} webContainer={!!project && usesWebContainer(project.files)} disabled={busy || readOnly} onChanged={() => void draft.refreshEngine()} />
             <div className="mt-4"><AppTorchSwitch appId={app.id} policy={draft.enginePolicy} disabled={busy || readOnly} /></div>
           </Panel>}
           <Panel id="settings-more" title="More tools" icon={<Code2 className="h-4 w-4" />}>
             <div className="flex flex-col items-start gap-1">
-              <Button variant="ghost" size="sm" onClick={() => setAdvanced(true)} leftIcon={<Code2 className="h-4 w-4" />}>{isSite ? (backend ? 'Edit the backend code' : 'Edit the app’s manifest') : 'Edit the source code'}</Button>
-              {/* Only for an app that also holds forms: the studio is where those are worked on, and no other SoftN app has one. */}
-              {heldForms > 0 && <Button variant="ghost" size="sm" onClick={() => leave(`/apps/${app.id}/studio/data`)} leftIcon={<SettingsIcon className="h-4 w-4" />}>This app’s forms (App Studio)</Button>}
+              <Button variant="ghost" size="sm" onClick={() => setAdvanced(isSite && backend ? 'backend' : 'project')} leftIcon={<Code2 className="h-4 w-4" />}>{isSite ? (backend ? 'Edit the backend code' : 'Edit the app’s manifest') : 'Edit the source code'}</Button>
+              {isOwner && !readOnly && <Button variant="ghost" size="sm" onClick={() => leave(`/apps/${app.id}/studio/data?new=form`)} leftIcon={<ClipboardList className="h-4 w-4" />}>Add a form</Button>}
               {app.ownerId === userId && !readOnly && <Button variant="ghost" size="sm" onClick={() => leave(`/apps/${app.id}/settings`)} leftIcon={<SettingsIcon className="h-4 w-4" />}>Name, address and deleting the app</Button>}
             </div>
           </Panel>
@@ -761,17 +802,19 @@ function Workspace({ app }: { app: App }) {
 }
 
 /** An app with nothing installed: the three ways to start, as on "Create app". */
-function Setup({ app, aiReady, aiReason, onAiRecheck, initialRequest, onInstalled }: { app: App; aiReady: boolean | null; aiReason: string | null; onAiRecheck: () => Promise<unknown>; initialRequest: string; onInstalled: (open: import('../../stores/uiStore').SoftnOpen | null) => void }) {
-  const [request, setRequest] = useState(initialRequest);
+function Setup({ app, aiReady, aiReason, onAiRecheck, pendingOpen, onInstalled }: { app: App; aiReady: boolean | null; aiReason: string | null; onAiRecheck: () => Promise<unknown>; pendingOpen: SoftnOpen | null; onInstalled: (open: SoftnOpen | null) => void }) {
+  const [request, setRequest] = useState(pendingOpen?.brief?.prompt ?? '');
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
   const file = useRef<HTMLInputElement>(null);
-  const start = async (open: import('../../stores/uiStore').SoftnOpen | null) => {
+  const start = async (open: SoftnOpen) => {
     setWorking(true); setError('');
     try {
-      const result = await api.installNativeStarter(app.id);
+      const result = await api.installNativeStarter(app.id, open.template ?? 'javascript');
       if (result.error) { setError(result.error); return; }
       onInstalled(open);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not install the starter. Please try again.');
     } finally { setWorking(false); }
   };
   const fromFile = async (chosen: File | undefined) => {
@@ -784,6 +827,16 @@ function Setup({ app, aiReady, aiReason, onAiRecheck, initialRequest, onInstalle
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not read that file.'); }
     finally { setWorking(false); }
   };
+  if (pendingOpen?.template) {
+    const framework = { javascript: 'Vanilla JS', react: 'React', vue: 'Vue' }[pendingOpen.template];
+    const editorName = pendingOpen.editor === 'studio' ? 'Studio' : 'Builder';
+    return <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+      <h2 className="text-lg font-semibold">Finish setting up {app.name}</h2>
+      <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Your app is saved. Install the {framework} starter to open its preview in {editorName}.</p>
+      {error && <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">{error}</p>}
+      <Button className="mt-4" disabled={working} isLoading={working} onClick={() => void start(pendingOpen)}>Retry in {editorName}</Button>
+    </section>;
+  }
   return <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-6">
     <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Set up {app.name}</h2>
     <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Your app has nothing in it yet. Choose how to start; you can change everything later.</p>
@@ -801,9 +854,9 @@ function Setup({ app, aiReady, aiReason, onAiRecheck, initialRequest, onInstalle
         <Button size="sm" variant="secondary" className="mt-3" disabled={working} onClick={() => void start({ appId: app.id, editor: 'builder' })}>Start building</Button>
       </div>
       <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
-        <p className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><Upload className="h-4 w-4 text-primary-500" />Upload a .softn file</p>
-        <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">A SoftN app you already have, with its interface and backend.</p>
-        <input ref={file} type="file" accept=".softn,.zip" className="hidden" aria-label="Upload a .softn file" onChange={event => { void fromFile(event.target.files?.[0]); event.target.value = ''; }} />
+        <p className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><Upload className="h-4 w-4 text-primary-500" />Upload an app ZIP</p>
+        <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">A project ZIP with its interface, assets and optional backend.</p>
+        <input ref={file} type="file" accept=".zip,.softn" className="hidden" aria-label="Upload an app ZIP" onChange={event => { void fromFile(event.target.files?.[0]); event.target.value = ''; }} />
         <Button size="sm" variant="secondary" className="mt-3" disabled={working} onClick={() => file.current?.click()}>Choose a file</Button>
       </div>
     </div>
@@ -816,7 +869,7 @@ function Messages({ draft }: { draft: ReturnType<typeof useNativeProjectDraft> }
   const needsRuntime = !project || projectHasBackend(project);
   return <div className="mt-4 space-y-3 empty:hidden">
     {readOnly && <p role="note" className="rounded-xl bg-slate-100 p-3 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-300">This is the shared demo, so this app is read-only.</p>}
-    {ready && !readOnly && needsRuntime && !available && !preflight && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">This server needs the app runtime installed before it can run SoftN apps. Ask your administrator.</p>}
+    {ready && !readOnly && needsRuntime && !available && !preflight && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">This server needs the app runtime installed before it can run this app. Ask your administrator.</p>}
     {ready && !readOnly && needsRuntime && preflight && !preflight.ok && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
       <p className="font-medium">The app runtime is installed but cannot start on this server yet.</p>
       <ul className="mt-2 list-disc space-y-1 pl-5">{preflight.checks.filter(check => !check.ok).map(check => <li key={check.id}>{check.message}</li>)}</ul>

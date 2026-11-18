@@ -66,6 +66,98 @@ final class NativeAppServiceTest extends TestCase
         $this->assertSame('members', $this->service->install('notes', $silent, 0)['access']);
     }
 
+    public function testOlderUploadedHostConfigStaysOutOfSourceAndVersionRestores(): void
+    {
+        $path = 'Private/Config.json';
+        $project = $this->project();
+        $project['files']['private/preferences.json'] = '{"language":"en"}';
+        $legacyFiles = $project['files'] + [$path => '{"keyHex":"old-host-fixture"}'];
+        try { $this->service->install('notes', ['files' => $legacyFiles] + $project, 0); $this->fail('An ordinary project contained a host key file'); }
+        catch (\InvalidArgumentException $refused) { $this->assertStringContainsString('host key file', $refused->getMessage()); }
+        $installed = $this->service->install('notes', $project, 0, null, ['by' => 'author', 'summary' => 'Original']);
+        $root = $this->storage . '/' . hash('sha256', 'notes');
+        $history = new \FormLogic\Services\NativeAppVersions($this->service);
+        // An existing installation and pinned head written before the key file was reserved.
+        $rawText = json_encode($legacyFiles, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $digest = hash('sha256', $rawText);
+        file_put_contents($root . '/project.json', json_encode(['files' => $legacyFiles] + $installed, JSON_THROW_ON_ERROR));
+        $indexFile = $root . '/history/index.json';
+        $index = json_decode(file_get_contents($indexFile), true);
+        $index['head']['text'] = $digest;
+        $index['head']['pinned'] = true;
+        $index['head']['changes']['paths']['added'][] = $path;
+        $index['head']['changes']['added']++;
+        file_put_contents($indexFile, json_encode($index, JSON_THROW_ON_ERROR));
+
+        foreach ([$this->service->get('notes'), $this->service->project('notes'), $this->service->ownerProject('notes'),
+                  $this->service->summary('notes'), $this->service->runtimeProject('notes')['project']] as $visible) {
+            $this->assertSame($project['files'], $visible['files']);
+        }
+        $detail = $history->get('notes', 1)['version'];
+        $this->assertTrue($detail['pinned']);
+        $this->assertNotContains($path, $detail['changes']['paths']['added']);
+        $this->assertSame($project['files']['private/preferences.json'], $history->file('notes', 1, 'private/preferences.json')['text']);
+
+        $v2 = $project;
+        $v2['files']['ui/main.ui'] = '<Text>Second</Text>';
+        $this->service->install('notes', $v2, 1);
+        $index = json_decode(file_get_contents($indexFile), true);
+        $this->assertSame('Original', $index['versions'][0]['summary']);
+        $this->assertTrue($index['versions'][0]['pinned']);
+        $this->assertNotSame($digest, $index['versions'][0]['text'], 'New snapshots contain only portable files');
+        // A previously archived text still has its old content digest. Reading and restoring it
+        // must verify those original bytes, then strip just the host configuration.
+        $index['versions'][0]['text'] = $digest;
+        file_put_contents($indexFile, json_encode($index, JSON_THROW_ON_ERROR));
+        $object = $root . '/history/texts/' . $digest . '.json';
+        file_put_contents($object, $rawText . ' ');
+        try { $history->restore('notes', 1, 2); $this->fail('A damaged historical object was restored'); }
+        catch (\RuntimeException $refused) { $this->assertSame(409, $refused->getCode()); }
+        file_put_contents($object, $rawText);
+        try { $history->file('notes', 1, $path); $this->fail('The archived key file was visible'); }
+        catch (\RuntimeException $refused) { $this->assertSame(404, $refused->getCode()); }
+        $this->assertSame(3, $history->restore('notes', 1, 2)['version']);
+        $this->assertSame($project['files'], $this->service->project('notes')['files']);
+        $this->assertSame(201, $this->createNote('Restored page')['status']);
+    }
+
+    public function testAttachingACustomBackendKeepsTheHomePageAndMemberAccessThroughARetry(): void
+    {
+        $project = $this->clientProject();
+        $project['home'] = true;
+        $project['access'] = 'members';
+        $this->service->install('notes', $project, 0);
+        $backend = $this->project();
+        unset($backend['access'], $backend['home']);
+        $manifest = json_decode($project['files']['manifest.json'], true);
+        $manifest['server'] = json_decode($backend['files']['manifest.json'], true)['server'];
+        $backend['files'] = $project['files'] + $backend['files'];
+        $backend['files']['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR);
+
+        $broken = $backend;
+        $broken['files']['server/migrations/001.sql'] = 'ALTER TABLE missing_table ADD COLUMN title TEXT';
+        try { $this->service->install('notes', $broken, 1); $this->fail('An invalid first migration should have failed'); }
+        catch (\RuntimeException $refused) { $this->assertSame(422, $refused->getCode()); }
+        $this->assertFalse($this->service->describe('notes')['hasDatabase']);
+        $this->assertSame($project['files'], $this->service->get('notes')['files']);
+
+        $saved = $this->service->install('notes', $backend, 1);
+        $this->assertSame([2, true, 'members'], [$saved['version'], $saved['home'], $saved['access']]);
+        $history = new \FormLogic\Services\NativeAppVersions($this->service);
+        $changes = $history->list('notes')['versions'][0]['changes'];
+        $this->assertSame([true, false, false], [$changes['database'], $changes['home'], $changes['access']]);
+        $this->assertSame(201, $this->createNote('First note')['status']);
+
+        try { $this->service->install('notes', ['access' => 'member'] + $backend, 2); $this->fail('An unknown access setting was accepted'); }
+        catch (\InvalidArgumentException $refused) { $this->assertStringContainsString('access', $refused->getMessage()); }
+        $unchanged = $this->service->get('notes');
+        $this->assertSame([2, true, 'members'], [$unchanged['version'], $unchanged['home'], $unchanged['access']]);
+        $this->assertSame('First note', $this->service->records('notes', 'notes')['rows'][0]['title']);
+
+        $changed = $this->service->install('notes', ['home' => false, 'access' => 'application'] + $backend, 2);
+        $this->assertSame([false, 'application'], [$changed['home'], $changed['access']]);
+    }
+
     /**
      * An app's server logic is one file (the runner reads `server.entry` and nothing else), so a
      * source file may be 1,500,000 bytes (it was 1,000,000). The whole path takes it: the check, the
@@ -218,6 +310,22 @@ final class NativeAppServiceTest extends TestCase
         $listed = $this->service->request('ai-app', ['method' => 'GET', 'path' => '/api/items', 'client_ip' => '127.0.0.1']);
         $this->assertSame(200, $listed['status'], json_encode($listed));
         $this->assertStringContainsString('AI tool review', json_encode($listed['body']));
+    }
+
+    public function testJavaScriptStarterServesWebSourceAndSavesAnItemInItsPrivateDatabase(): void
+    {
+        $project = NativeAppService::starterProject('Meet <Sam> & friends', 'notes', 'javascript');
+        $installed = $this->service->install('notes', $project, 0);
+        $client = NativeAppService::clientFiles($installed);
+        $manifest = json_decode($client['manifest.json'], true, flags: JSON_THROW_ON_ERROR);
+        $this->assertSame(2, $manifest['engine']);
+        $this->assertStringContainsString('Meet &lt;Sam&gt; &amp; friends', $client[$manifest['main']]);
+        $this->assertArrayHasKey('app.js', $client);
+        $this->assertArrayNotHasKey('server/main.logic', $client);
+        $created = $this->service->request('notes', ['method' => 'POST', 'path' => '/api/items', 'body' => ['title' => 'First note'], 'client_ip' => '127.0.0.1']);
+        $this->assertSame(201, $created['status'], json_encode($created));
+        $listed = $this->service->request('notes', ['method' => 'GET', 'path' => '/api/items', 'client_ip' => '127.0.0.1']);
+        $this->assertSame('First note', $listed['body']['items'][0]['title']);
     }
 
     // ── audit FL-03: runtime preflight ────────────────────────────────────────
@@ -519,6 +627,65 @@ final class NativeAppServiceTest extends TestCase
         $this->assertCount(2, $this->service->records('notes', 'notes')['rows']);
     }
 
+    public function testWebContainerSourceAndBackendUseTheSameInstalledProject(): void
+    {
+        $project = $this->project();
+        $manifest = json_decode($project['files']['manifest.json'], true);
+        $manifest['engine'] = 2;
+        $manifest['main'] = 'index.html';
+        $project['files']['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR);
+        $project['files']['index.html'] = '<main id="root"></main><script type="module" src="./main.mjs"></script>';
+        $project['files']['main.mjs'] = 'import "./src/App.jsx";';
+        $project['files']['src/App.jsx'] = 'export default function App() { return <h1>Notes</h1>; }';
+        $project['files']['src/App.vue'] = '<template><h1>Notes</h1></template>';
+        unset($project['files']['ui/main.ui']);
+
+        $this->service->install('notes', $project, 0);
+        $owned = $this->service->get('notes');
+        $this->assertSame($project['files'], $owned['files']);
+        $client = NativeAppService::clientFiles($owned);
+        $this->assertArrayNotHasKey('server/main.logic', $client);
+        $this->assertArrayNotHasKey('server/migrations/001.sql', $client);
+        $public = json_decode($client['manifest.json'], true);
+        $this->assertSame(2, $public['engine']);
+        $this->assertTrue($public['container']);
+        $this->assertArrayNotHasKey('server', $public);
+        $this->assertSame(201, $this->createNote('Web app note')['status']);
+        $this->assertSame('Web app note', $this->service->records('notes', 'notes')['rows'][0]['title']);
+    }
+
+    public function testPublishedComponentKeepsItsSourceAndRunnableVersionTogether(): void
+    {
+        $source = '<template><h1>Été</h1></template>';
+        $header = "// Generated by SoftN from component source.\n";
+        $module = '__softn_generated__/App.vue.js';
+        $project = ['assets' => [], 'files' => [
+            'manifest.json' => '{"name":"Seasons","main":"index.html","engine":2}',
+            'index.html' => '<main></main>',
+            'App.vue' => $source,
+            $module => $header . 'export default {};',
+        ]];
+        $this->service->install('seasons', $project, 0); // Earlier editor, no digest.
+        $project['files']['App.vue'] = $changed = str_replace('Été', 'Hiver', $source);
+        try {
+            $this->service->install('seasons', $project, 1);
+            $this->fail('A source-only edit kept the previous runnable module');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('App.vue has changed', $e->getMessage());
+        }
+        $project['files'][$module] = $header . '// SoftN source SHA-256: ' . hash('sha256', "App.vue\0" . $changed) . "\nexport default {};";
+        $project['files']['App.vue'] = "\xEF\xBB\xBF" . $changed;
+        $this->service->install('seasons', $project, 1);
+        $project['files']['App.vue'] = $source;
+        try {
+            $this->service->install('seasons', $project, 2);
+            $this->fail('A stale module with a digest was accepted');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('App.vue has changed', $e->getMessage());
+        }
+        $this->assertSame(2, $this->service->get('seasons')['version']);
+    }
+
     /** A SoftN app with no backend: its pages, logic, seed data and a picture, and no id, as most declare none. */
     private function clientProject(): array
     {
@@ -785,10 +952,17 @@ final class NativeAppServiceTest extends TestCase
         $result = $this->service->request('notes', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Event note'], 'client_ip' => '127.0.0.1'], [], [['event' => 'app.record.created.notes', 'bindings' => ['binding-1']]]);
         $this->assertSame(201, $result['status'], json_encode($result));
         $firstId = null;
+        $retainedReader = null;
         try {
-            $this->service->dispatchRecordEvents('notes', function ($id) use (&$firstId) { $firstId = $id; throw new \RuntimeException('Queue temporarily unavailable'); });
+            $this->service->dispatchRecordEvents('notes', function ($id, $event, $data, $bindings, $readRow) use (&$firstId, &$retainedReader) {
+                $firstId = $id;
+                $retainedReader = $readRow;
+                $this->assertSame('Event note', $readRow('notes', 'id', 1)['title']);
+                throw new \RuntimeException('Queue temporarily unavailable');
+            });
             $this->fail('Delivery failure was swallowed');
         } catch (\RuntimeException $error) { $this->assertSame('Queue temporarily unavailable', $error->getMessage()); }
+        $this->assertNull($retainedReader('notes', 'id', 1), 'A reader retained after delivery must release the installation database.');
         $this->assertSame(1, $this->service->dispatchRecordEvents('notes', function ($id, $event, $data, $bindings) use ($firstId) {
             $this->assertSame($firstId, $id);
             $this->assertSame('app.record.created.notes', $event);
@@ -889,6 +1063,60 @@ final class NativeAppServiceTest extends TestCase
         $this->assertSame(['notes'], $this->service->records('notes')['tables']);
         $this->assertSame('Keep this note', $this->service->records('notes', 'notes')['rows'][0]['title']);
         $this->assertSame(201, $this->createNote('Still writable')['status']);
+    }
+
+    public function testWebAppUpdatesAndRollbacksCanBeInstalledOnAFreshDatabase(): void
+    {
+        $original = $this->project();
+        $manifest = json_decode($original['files']['manifest.json'], true, flags: JSON_THROW_ON_ERROR);
+        $manifest['engine'] = 2;
+        $manifest['main'] = 'index.html';
+        $first = 'server/migrations/010.sql';
+        $manifest['server']['database']['migrations'] = [$first];
+        $original['files']['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR);
+        $original['files']['index.html'] = '<h1>Notes</h1>';
+        $original['files'][$first] = $original['files']['server/migrations/001.sql'];
+        unset($original['files']['server/migrations/001.sql'], $original['files']['ui/main.ui']);
+        $this->service->install('notes', $original, 0);
+        $this->assertSame(201, $this->createNote('Keep across versions')['status']);
+
+        $update = $original;
+        $update['access'] = 'members';
+        $update['files']['index.html'] = '<h1>Tagged notes</h1>';
+        $earlier = 'server/migrations/002.sql';
+        $sql = "ALTER TABLE notes ADD COLUMN tag TEXT;";
+        $update['files'][$earlier] = $sql;
+        $manifest['server']['database']['migrations'] = [$first, $earlier];
+        $update['files']['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR);
+        // The runners sort paths. This ALTER works on the installed database but runs
+        // before CREATE TABLE on a fresh database, even when listed last in the manifest.
+        try { $this->service->install('fresh-invalid', $update, 0); $this->fail('Installed an ALTER before its table exists'); }
+        catch (\RuntimeException $error) { $this->assertSame(422, $error->getCode()); }
+        try { $this->service->install('notes', $update, 1); $this->fail('An update that breaks a clean installation was accepted'); }
+        catch (\InvalidArgumentException $error) { $this->assertStringContainsString($first, $error->getMessage()); }
+        $this->assertSame(1, $this->service->get('notes')['version']);
+        $this->assertSame('Keep across versions', $this->service->records('notes', 'notes')['rows'][0]['title']);
+
+        unset($update['files'][$earlier]);
+        $second = 'server/migrations/011.sql';
+        $update['files'][$second] = $sql;
+        // The manifest's list order is immaterial: these file names sort in the right order.
+        $manifest['server']['database']['migrations'] = [$second, $first];
+        $update['files']['manifest.json'] = json_encode($manifest, JSON_THROW_ON_ERROR);
+        $this->service->install('notes', $update, 1);
+        $history = new \FormLogic\Services\NativeAppVersions($this->service);
+        $this->assertSame([$second], $history->restore('notes', 1, 2)['databaseAhead']);
+        $owner = $this->service->project('notes');
+        $this->assertSame(['members', 3, '<h1>Notes</h1>'], [$owner['access'], $owner['version'], $owner['files']['index.html']]);
+        $public = NativeAppService::clientFiles($owner);
+        $this->assertTrue(json_decode($public['manifest.json'], true)['container']);
+        $this->assertArrayNotHasKey($second, $public);
+        $this->assertSame(201, $this->createNote('After rollback')['status']);
+        $this->assertCount(2, $this->service->records('notes', 'notes')['rows']);
+        $this->service->install('fresh', $owner, 0);
+        $note = $this->service->request('fresh', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'New installation'], 'client_ip' => '127.0.0.1']);
+        $this->assertSame(201, $note['status']);
+        $this->assertSame('New installation', $note['body']['title']);
     }
 
     public function testCapabilityUpdatesPreserveKeysAndRollBackWithFailedSource(): void

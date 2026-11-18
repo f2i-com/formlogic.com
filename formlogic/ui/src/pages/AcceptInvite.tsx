@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
@@ -13,6 +14,7 @@ import { CheckCircle2, AlertCircle, Loader2, Mail } from 'lucide-react';
  * so unauthenticated visitors are routed to sign in / sign up and returned here.
  */
 export function AcceptInvite() {
+  useDocumentTitle('App invitation');
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const token = searchParams.get('token') || '';
@@ -58,12 +60,12 @@ export function AcceptInvite() {
   const redirect = `/accept-invite?token=${encodeURIComponent(token)}`;
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-transparent flex items-center justify-center p-6">
+    <main className="min-h-[100dvh] bg-gray-50 dark:bg-transparent flex items-center justify-center p-4 sm:p-6">
       <div className="w-full max-w-md">
         <div className="flex justify-center mb-8">
           <Link to="/"><Logo size="lg" /></Link>
         </div>
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20 text-center">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5 sm:p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20 text-center">
           {!token ? (
             <>
               <div className="w-12 h-12 mx-auto rounded-full bg-red-50 dark:bg-red-500/10 flex items-center justify-center mb-4">
@@ -135,7 +137,7 @@ export function AcceptInvite() {
           )}
         </div>
       </div>
-    </div>
+    </main>
   );
 }
 

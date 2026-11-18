@@ -4,19 +4,19 @@
 [Connect your AI](FREE_PLANS_AND_AI_SETUP.md) · [MCP reference](MCP.md)
 
 Use a connected workspace when you want an editable app interface over forms
-and records that already live in FormLogic. The client is a Softn app; FormLogic
+and records that already live in FormLogic. The client is an editable app project; FormLogic
 supplies the authenticated host, navigation and data permissions. OAIY adds local
 models, device plugins and flow execution when your app needs them.
 
 ## Create a connected dashboard
 
 In the app studio, open **Screens** and choose **Create connected dashboard**.
-This publishes an editable Softn client that lists current forms and tools, shows
+This publishes an editable client project that lists current forms and tools, shows
 permitted recent records, and opens existing form screens. Choose **Use as app home**
 to use it as the landing screen. The original home is retained and can be restored.
 This starter does not automatically convert existing dashboard chart widgets.
 
-**Download starter** exports a `.softn` archive without account tokens, provider keys
+**Download starter** exports a project ZIP without account tokens, provider keys
 or private backend actions. Its host bridge uses `workspaceInfo`,
 `workspaceRecords {formId}` and `workspaceOpen {formId}`. Every operation resolves the
 current app, confines forms to that app and retains server-side record permissions.
@@ -108,7 +108,7 @@ package/action format and backups.
 
 ## Aokie portable front desk
 
-The Aokie starter opens a real Softn client, authored in
+The Aokie starter opens an editable app client, authored in
 `softn.com/examples/aokie-workspace/ui/main.ui` and `logic/main.logic`.
 It reads Calls, Appointments, Transcript Turns, Hardware Events and Follow-ups through
 the host-session bridge. Stable pack aliases survive form renaming. Records keep their
@@ -116,14 +116,14 @@ server permissions; the client does not receive account credentials. Refresh, pa
 page search and expandable full record details are available. Appointment requests are
 explicitly distinguished from confirmed bookings.
 
-Use **Download editable app** to export its `.softn` client. In App Studio's connected
+Use **Download editable app** to export its client ZIP. In App Studio's connected
 dashboard panel, choose **Use the Aokie front desk interface**, create the project, then
 use it as app home. Existing hosted projects are never overwritten by this starter action.
 
 To add Aokie to an existing app, choose **Add from another app** in the destination's
 App Studio and share Aokie's forms. Sharing Calls and Appointments adds a **Front desk**
 route (`/app/:slug/aokie`) alongside the destination's existing home, including a hosted
-Softn home. Share the other receptionist forms for transcripts, logs and follow-ups.
+app home. Share the other receptionist forms for transcripts, logs and follow-ups.
 The records are shared, not copied. Automation remains in the source unless the explicit
 **Move automation here too** option is selected and its connector capabilities approved.
 Review destination member roles before granting access.
@@ -153,5 +153,5 @@ npm run build
 The sync script updates the generic and Aokie client resource copies used by both
 the UI and PHP tools. The runtime comes from the latest Softn release (or `SOFTN_REPO`
 with `npm run build:hosted-runtime` for a source checkout).
-Generated runtime assets must be included in deployment; a `.softn` download
+Generated runtime assets must be included in deployment; a project ZIP download
 contains the client, not its live records or an authenticated account session.

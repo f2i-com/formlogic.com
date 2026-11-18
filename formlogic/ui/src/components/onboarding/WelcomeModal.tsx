@@ -8,7 +8,7 @@ interface WelcomeModalProps {
   onBlank: () => void;
   onTemplate: () => void;
   onAI: () => void;
-  /** Go to making an app instead: building one, or bringing a .softn file. */
+  /** Create an app or upload an existing project as a ZIP. */
   onApp?: () => void;
 }
 
@@ -63,7 +63,7 @@ export function WelcomeModal({ isOpen, onClose, onBlank, onTemplate, onAI, onApp
             <p className="text-xs text-gray-500 dark:text-slate-400 min-w-0">
               Making an app instead?{' '}
               <button type="button" onClick={onApp} className="font-semibold text-primary-600 dark:text-primary-400 hover:underline rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 cursor-pointer">
-                Create one, or bring a .softn file
+                Create one or upload an app ZIP
               </button>
             </p>
           ) : (

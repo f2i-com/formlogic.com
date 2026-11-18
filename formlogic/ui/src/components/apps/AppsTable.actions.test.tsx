@@ -27,8 +27,24 @@ const summaries = { live: { tables: 3, bytes: 1000 }, draft: { tables: 1, bytes:
 
 async function mount(props: Partial<AppsTableProps> = {}) {
   await act(async () => root.render(<MemoryRouter><AppsTable apps={[LIVE_SOFTN, DRAFT_SOFTN, FORMS]} summaries={summaries} packNames={{}}
-    canManage={() => true} managePath={item => `/apps/${item.id}`} onDelete={vi.fn()} {...props} /></MemoryRouter>));
+    userId="u1" onDelete={vi.fn()} {...props} /></MemoryRouter>));
 }
+
+it('shows a SoftN version only once its installed version is known', async () => {
+  const apps = [{ ...LIVE_SOFTN, publishedVersion: 1 }, { ...FORMS, status: 'published' as const, publishedVersion: 3 }];
+  await mount({ apps, summaries: {} });
+  const rows = container.querySelector('tbody')!;
+  const exactBadge = (label: string) => [...rows.querySelectorAll('span')].some(span => span.textContent === label);
+  expect(rows.textContent).toContain('Live v3');
+  expect(exactBadge('Live')).toBe(true);
+  expect(rows.textContent).not.toContain('Live v1');
+  await mount({ apps, summaries: { live: { ...summaries.live, softn: true, version: null } } });
+  expect(exactBadge('Live')).toBe(true);
+  expect(rows.textContent).not.toContain('Live v1');
+  await mount({ apps, summaries: { live: { ...summaries.live, softn: true, version: 2 } } });
+  expect(rows.textContent).toContain('Live v2');
+  expect(rows.textContent).toContain('Live v3');
+});
 /** What stands in each place of a row's actions: the action's title, or '' for a place left empty. */
 const places = () => [...container.querySelectorAll('table tbody tr')].map(row =>
   [...row.lastElementChild!.querySelectorAll(':scope > span > *')].map(node => (node.hasAttribute('data-empty-action') ? '' : node.getAttribute('title'))));
@@ -52,7 +68,7 @@ it('keeps no place for an action that no app in the list has', async () => {
   await mount({ apps: [DRAFT_SOFTN, FORMS], onDelete: undefined });
   expect(places()).toEqual([['Data', 'Settings'], ['', 'Settings']]);
   // Apps that are only looked at have nothing but Open.
-  await mount({ apps: [LIVE_SOFTN], canManage: () => false, onDelete: undefined });
+  await mount({ apps: [LIVE_SOFTN], userId: 'another-user', onDelete: undefined });
   expect(places()).toEqual([['Open the app']]);
 });
 

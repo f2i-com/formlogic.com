@@ -27,8 +27,14 @@ describe('createSoftnApp', () => {
     mocks.installNativeStarter.mockResolvedValue({ data: { project } });
     const created = await createSoftnApp({ name: '  Recipes ', description: ' Favourites ', start: { kind: 'starter' } });
     expect(mocks.createApp).toHaveBeenCalledWith({ name: 'Recipes', description: 'Favourites', settings: { softnApp: true } });
-    expect(mocks.installNativeStarter).toHaveBeenCalledWith('app-1');
+    expect(mocks.installNativeStarter).toHaveBeenCalledWith('app-1', undefined);
     expect(created).toEqual({ app, project });
+  });
+
+  it.each(['javascript', 'react', 'vue'] as const)('installs the selected %s starter', async template => {
+    mocks.installNativeStarter.mockResolvedValue({ data: { project } });
+    await createSoftnApp({ name: 'Reading list', start: { kind: 'starter', template } });
+    expect(mocks.installNativeStarter).toHaveBeenCalledWith('app-1', template);
   });
 
   it('installs an uploaded file for members only, open at the app address', async () => {
@@ -72,21 +78,21 @@ describe('isSoftnApp and its workspace', () => {
     expect(isSoftnApp({ settings: { softnApp: true } as never })).toBe(true);
     expect(isSoftnApp({ settings: { appKind: 'custom' } as never })).toBe(false);
     expect(isSoftnApp(null)).toBe(false);
-    expect(softnWorkspacePath('a-1')).toBe('/apps/a-1/softn');
-    expect(softnWorkspacePath('a-1', 'automations')).toBe('/apps/a-1/softn/automations');
+    expect(softnWorkspacePath('a-1')).toBe('/apps/a-1/web');
+    expect(softnWorkspacePath('a-1', 'automations')).toBe('/apps/a-1/web/automations');
   });
 
   it('has a section of the app\'s page for each part of the App Studio, and the settings for the studio itself', () => {
-    expect(softnPathForStudio('a-1')).toBe('/apps/a-1/softn/settings');
-    expect(softnPathForStudio('a-1', 'data')).toBe('/apps/a-1/softn/data');
-    expect(softnPathForStudio('a-1', 'screens')).toBe('/apps/a-1/softn/edit');
-    expect(softnPathForStudio('a-1', 'automations')).toBe('/apps/a-1/softn/automations');
-    expect(softnPathForStudio('a-1', 'access')).toBe('/apps/a-1/softn/members');
-    expect(softnPathForStudio('a-1', 'publish')).toBe('/apps/a-1/softn');
-    expect(softnPathForStudio('a-1', 'plan')).toBe('/apps/a-1/softn');
+    expect(softnPathForStudio('a-1')).toBe('/apps/a-1/web/settings');
+    expect(softnPathForStudio('a-1', 'data')).toBe('/apps/a-1/web/data');
+    expect(softnPathForStudio('a-1', 'screens')).toBe('/apps/a-1/web/edit');
+    expect(softnPathForStudio('a-1', 'automations')).toBe('/apps/a-1/web/automations');
+    expect(softnPathForStudio('a-1', 'access')).toBe('/apps/a-1/web/members');
+    expect(softnPathForStudio('a-1', 'publish')).toBe('/apps/a-1/web');
+    expect(softnPathForStudio('a-1', 'plan')).toBe('/apps/a-1/web');
     // A part the studio never had, and a name every object has, are the settings too.
-    expect(softnPathForStudio('a-1', 'elsewhere')).toBe('/apps/a-1/softn/settings');
-    expect(softnPathForStudio('a-1', 'constructor')).toBe('/apps/a-1/softn/settings');
+    expect(softnPathForStudio('a-1', 'elsewhere')).toBe('/apps/a-1/web/settings');
+    expect(softnPathForStudio('a-1', 'constructor')).toBe('/apps/a-1/web/settings');
   });
 
   it('reads a backend from the manifest\'s server block, and nothing else', () => {
