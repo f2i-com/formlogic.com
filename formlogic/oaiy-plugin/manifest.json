@@ -2,7 +2,7 @@
   "schemaVersion": 4,
   "id": "formlogic-backups",
   "name": "FormLogic Backups",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "FormLogic",
   "description": "Sealed backups of your FormLogic apps and forms, kept on this computer. They open with twelve words you write down, so they outlive it.",
   "pluginApiVersion": 1,

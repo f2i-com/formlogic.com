@@ -1,6 +1,6 @@
 [package]
 name = "formlogic-backups"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "FormLogic Backups: sealed backups of a FormLogic account's apps and forms, kept on a computer running OAIY"
 publish = false
