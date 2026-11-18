@@ -36,6 +36,7 @@ function saveNote() {
   } };
   const saved = await context.request.put(`/api/apps/${app.id}/native`, { headers, data: { project, expectedVersion: existing.project?.version ?? 0 } });
   expect(saved.status(), await saved.text()).toBe(200);
+  const installedVersion = (await saved.json()).project.version;
   const flowSlug = 'native-record-review';
   const currentFlows = (await (await context.request.get(`/api/apps/${app.id}/flows`)).json()).flows;
   const flowPayload = { name: 'Review new record', slug: flowSlug, enabled: true, executionLocation: 'auto', flowJson: {
@@ -129,7 +130,7 @@ function saveNote() {
   await source.press('Enter');
   await page.keyboard.insertText('// Saved through the FormLogic backend editor.');
   await page.getByRole('button', { name: 'Publish changes', exact: true }).click();
-  await expect(page.getByText('Installed. The app uses its private SQLite database and ZIPP backend. Existing records were preserved.', { exact: true })).toBeVisible();
+  await expect(modal.getByRole('status')).toHaveText(`Version ${installedVersion + 1} is installed.`);
   const updated = await (await context.request.get(`/api/apps/${app.id}/native`)).json();
   expect(updated.project.files['server/main.logic']).toContain('Saved through the FormLogic backend editor.');
   const preserved = await (await context.request.get(`/api/apps/${app.id}/native/records?table=notes`)).json();

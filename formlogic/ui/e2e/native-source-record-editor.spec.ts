@@ -19,6 +19,7 @@ test('Native source highlighting and full-record CRUD work on desktop and mobile
   project.files['ui/main.ui'] = '<logic>\nvar message = "Hello";\n</logic>\n<style>\n.demo { color: red; padding: 12px; }\n</style>\n<Stack><Text>{message}</Text></Stack>';
   const install = await context.request.put(`/api/apps/${app.id}/native`, { headers, data: { project, expectedVersion: existing.project?.version ?? 0 } });
   expect(install.ok(), await install.text()).toBe(true);
+  const installedVersion = (await install.json()).project.version;
   const browserErrors: string[] = [];
   page.on('pageerror', error => browserErrors.push(error.message));
   await page.goto(`/apps/${app.id}/records`);
@@ -44,7 +45,7 @@ test('Native source highlighting and full-record CRUD work on desktop and mobile
   await source.press('Control+End'); await page.keyboard.insertText('should not be saved');
   await expect.poll(async () => (await colours('Private backend source editor')).length).toBeGreaterThanOrEqual(2);
   await hosting.getByRole('button', { name: 'Publish changes', exact: true }).click();
-  await expect(hosting.getByText('Installed. The app uses its private SQLite database and ZIPP backend. Existing records were preserved.', { exact: true })).toBeVisible();
+  await expect(hosting.getByRole('status')).toHaveText(`Version ${installedVersion + 1} is installed.`);
   const saved = await (await context.request.get(`/api/apps/${app.id}/native`)).json();
   expect(saved.project.files['server/main.logic']).toContain('Source editor browser review');
   expect(saved.project.files['server/migrations/001.sql']).toBe(project.files['server/migrations/001.sql']);
