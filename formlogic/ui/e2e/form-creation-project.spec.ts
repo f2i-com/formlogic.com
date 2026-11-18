@@ -53,9 +53,9 @@ for (const width of [1440, 390]) test(`Unnamed form, rename and editable app dow
   const downloadEvent = page.waitForEvent('download');
   await exporter.getByRole('button', { name: 'Download project', exact: true }).click();
   const download = await downloadEvent;
+  expect(download.suggestedFilename()).toBe('Customer-enquiries.zip');
   const archive = testInfo.outputPath(download.suggestedFilename());
   await download.saveAs(archive);
-  expect(archive).toMatch(/\.softn$/);
   const files = unzipSync(await readFile(archive));
   const manifest = JSON.parse(strFromU8(files['manifest.json']));
   expect(manifest.files.ui).toHaveLength(2);

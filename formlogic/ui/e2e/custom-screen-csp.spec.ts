@@ -58,7 +58,12 @@ test('sandboxed custom screen has no working data-egress vector', async ({ page 
     + `<style>html,body{margin:0}</style></head><body><script>${code}</script></body></html>`;
 
   try {
-    await page.goto('about:blank');
+    // Custom screens run inside a page with the FormLogic site's HTTP origin.
+    await page.route('**/__custom-screen-test__', route => route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><title>Custom screen host</title><body></body>',
+    }));
+    await page.goto('/__custom-screen-test__');
     await page.evaluate((doc) => {
       const f = document.createElement('iframe');
       f.setAttribute('sandbox', 'allow-scripts');
