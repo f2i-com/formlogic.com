@@ -1,11 +1,11 @@
 {
   "kind": "formlogic.ecosystemCompatibilityManifest",
   "formatVersion": 1,
-  "generatedAt": "2026-11-15T08:26:05.498Z",
+  "generatedAt": "2026-11-18T13:56:45.844Z",
   "note": "Source revisions and digests of files present in the tree at generation time. Release workflows must recompute digests of the artifacts they actually ship; provenance is not verification of downloaded bytes.",
   "components": {
     "formlogic": {
-      "revision": "8f229e13903e3fde5d9bbf09e45dc581d2e38a75",
+      "revision": "226bc5738610a6e6d96a9d6553adb8bcae09b398",
       "backupFormat": {
         "current": 2,
         "importable": [
@@ -17,9 +17,9 @@
     },
     "softn": {
       "pinnedBy": "latest GitHub release of f2i-com/softn.com (scripts/fetch-softn-release.mjs); SOFTN_RELEASE pins a tag; a release run freezes one record (--resolve-only) that every job installs (--frozen) and the release gate checks with --exact",
-      "release": "v0.0.42",
-      "revision": "9f820a9d74a6e2713d202f056fef372408ccf091",
-      "archiveSha256": "741827ae7cb20df09954cfa8a3e14e803aceeb0e47cc75ca755e5f6be943acf3",
+      "release": "v0.0.47",
+      "revision": "7f014dfc8ae90576de07045d47c745f677ccb73b",
+      "archiveSha256": "e6d55086cb46a5300b35097c4f049820f66fe8f752c692f66c5da2ade801a5ca",
       "frozen": null,
       "nativeProtocol": 1,
       "recordEvents": 1,
@@ -27,7 +27,7 @@
       "formlogicAdapter": {
         "vendoredAt": "formlogic/ui/src/lib/softn/project.ts",
         "source": "softn.com/packages/@softn/core/src/integrations/formlogic.ts",
-        "sha256": "def81b2405f0c470bc549b1c3aaffbd6bcf475c04d7afb4c88ef29feb112f42e"
+        "sha256": "af6403c9004f92a4bca7de36b91c88d1bc29ca4caad6030079f111047bda865b"
       }
     },
     "xdb": {
