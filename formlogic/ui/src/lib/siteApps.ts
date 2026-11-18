@@ -129,6 +129,14 @@ function unpack(zip: Uint8Array, wanted: ZipEntry[], label: string): Uint8Array[
 
 export type AppArchiveKind = 'editable' | 'site' | 'pack' | 'application-package';
 
+/** A build starts at its shallowest index.html. Break ties by path so ZIP entry order is irrelevant. */
+function buildRoot(entries: ZipEntry[]): string | undefined {
+  const depth = (path: string) => path.split('/').length;
+  const page = entries.filter(entry => entry.path === 'index.html' || entry.path.endsWith('/index.html'))
+    .sort((a, b) => depth(a.path) - depth(b.path) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))[0];
+  return page?.path.slice(0, -'index.html'.length);
+}
+
 /** Route by the outer project's contents before handing it to its own validator.
  * A marketplace pack may itself carry editable projects and HTML: its install review comes first. */
 export async function appArchiveKind(file: File): Promise<AppArchiveKind> {
@@ -138,8 +146,11 @@ export async function appArchiveKind(file: File): Promise<AppArchiveKind> {
   const names = new Set(entries.map(entry => entry.path));
   const manifests = entries.filter(entry => entry.path === 'manifest.json' || entry.path.endsWith('/manifest.json'));
   const root = manifests.find(entry => entry.path === 'manifest.json');
-  // Read a bounded amount of metadata. Actual code and assets are opened by the chosen importer.
-  const candidates = root ? [root] : manifests;
+  const siteRoot = buildRoot(entries);
+  // Manifests below the site's first page belong to embedded examples. A manifest beside
+  // or above that page can still identify the archive as an editable project.
+  const candidates = root ? [root] : manifests.filter(entry =>
+    siteRoot === undefined || !entry.path.startsWith(siteRoot) || entry.path === `${siteRoot}manifest.json`);
   if (candidates.length > 24) throw new Error('Choose one app or a FormLogic export to import.');
   for (const entry of candidates) {
     if (entry.size > 200000) {
@@ -157,8 +168,8 @@ export async function appArchiveKind(file: File): Promise<AppArchiveKind> {
     if ('main' in manifest || 'server' in manifest || 'engine' in manifest) return 'editable';
   }
   // An unsigned application-package archive can omit manifest.json. The server validates its pack.json.
-  if (names.has('pack.json') && (names.has('signature.json') || !entries.some(entry => /(^|\/)index\.html$/.test(entry.path)))) return 'application-package';
-  if (entries.some(e => /(^|\/)index\.html$/.test(e.path) || /(^|\/)package\.json$/.test(e.path))) return 'site';
+  if (names.has('pack.json') && (names.has('signature.json') || siteRoot === undefined)) return 'application-package';
+  if (siteRoot !== undefined || entries.some(e => /(^|\/)package\.json$/.test(e.path))) return 'site';
   return root ? 'pack' : 'editable';
 }
 
@@ -204,11 +215,8 @@ function exportedProject(zip: Uint8Array, entries: ZipEntry[], label: string): P
  * kept at the same place under site/.
  */
 function builtSite(entries: ZipEntry[], name: string): Plan {
-  const depth = (path: string) => path.split('/').length;
-  const pages = entries.filter(entry => entry.path === 'index.html' || entry.path.endsWith('/index.html'))
-    .sort((a, b) => depth(a.path) - depth(b.path) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  if (!pages.length) throw new Error('This zip has no index.html: zip the folder your build made (dist or build).');
-  const root = pages[0].path.slice(0, -'index.html'.length);
+  const root = buildRoot(entries);
+  if (root === undefined) throw new Error('This zip has no index.html: zip the folder your build made (dist or build).');
   if (entries.some(entry => /(^|\/)(?:private\/config\.json|(?:server|backend)\/.*\.(?:logic|sql|[cm]?[jt]s|py))$/i.test(entry.path))) {
     throw new Error('This ZIP contains a private backend. Include its project manifest to import the backend, or upload only the public build folder.');
   }
