@@ -204,11 +204,14 @@ test.describe('accessibility smoke (axe)', () => {
     await page.goto('/packs');
     const facets = await (await facetsReady).json();
     await page.getByRole('heading', { level: 1 }).first().waitFor({ timeout: 20_000 });
-    // Scan the loaded category counts too, rather than racing the catalogue fetch.
+    const picker = page.getByRole('combobox', { name: 'Category', exact: true });
+    await expect(picker).toBeVisible();
+    // Wait for the loaded category labels and counts before scanning the gallery.
     for (const category of facets.categories ?? facets.data?.categories ?? []) {
-      await expect(page.getByRole('button', { name: `${category.name} ${category.count}`, exact: true })).toBeVisible();
+      const option = picker.getByRole('option', { name: `${category.name} (${category.count})`, exact: true });
+      await expect(option).toHaveAttribute('value', category.name);
     }
-    await expect(page.getByRole('status', { name: 'Loading apps' })).toBeHidden();
+    await expect(page.getByRole('status', { name: 'Loading templates' })).toBeHidden();
     await expectNoSeriousViolations(page, 'marketplace gallery');
   });
 
