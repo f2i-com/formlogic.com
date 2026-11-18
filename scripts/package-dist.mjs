@@ -45,7 +45,7 @@ import { checkReleaseRuntime, checkAppEditors, checkNativeRuntime, checkDistEngi
 import { checkSiteZipp, withSiteZipp } from './site-zipp.mjs';
 
 import { checkSandbox } from './runtime-provenance.mjs';
-import { runtimeIdentity, checkZippTree, checkZippVariantTree, checkTorchCopies } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { runtimeIdentity, checkZippTree, checkZippVariantTree, checkTorchCopies, verifiedContainerEngines } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 
 const isWindows = process.platform === 'win32';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -505,12 +505,15 @@ for (const f of ['index.html', '.htaccess', 'assets']) {
   if (!existsSync(path.join(distDir, f))) fail(`UI build incomplete: formlogic/ui/dist/${f} is missing`);
 }
 
-// Every ZIPP engine the build emitted (found by its exports, whatever Vite
-// named it) is the installed release's, and the app's own copy is among them.
+// Verify the site's own engines and the separately versioned hosted container
+// modules against their respective releases, including their locations in dist.
 try {
-  // The page's engines are the site's ZIPP: the Softn release's trees carry none (v0.0.35 on).
-  const engines = await checkDistEngines(distDir, siteSource, { web: siteSource.variants?.web ?? null });
-  info(`${engines.length} ZIPP engine copies in formlogic/ui/dist, all ${siteSource.sha256.slice(0, 12)}${siteSource.variants?.web ? ` but the one web variant asset (${siteSource.variants.web.sha256.slice(0, 12)})` : ''}`);
+  const hostedFiles = softnRelease
+    ? softnRelease.generation?.inventory?.['hosted-runtime'] ?? {}
+    : JSON.parse(readFileSync(path.join(uiDir, 'public/hosted-runtime/runtime-manifest.json'), 'utf8')).files;
+  const containerEngines = verifiedContainerEngines(hostedFiles, zippSource, readFileSync(path.join(zippDir, 'RELEASE-SHA256SUMS')), 'hosted-runtime/');
+  const engines = await checkDistEngines(distDir, siteSource, { web: siteSource.variants?.web ?? null, containerEngines });
+  info(`Verified ${engines.length} ZIPP engine assets in formlogic/ui/dist, including ${containerEngines.size} hosted container modules.`);
 } catch (error) { fail(error.message); }
 
 // The site's ZIPP folder (publish-zipp.mjs): a runtime or an editor built with another ZIPP than

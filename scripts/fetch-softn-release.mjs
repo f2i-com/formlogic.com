@@ -93,7 +93,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve, basename, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readArchive } from './lib/archive.mjs';
-import { runtimeIdentity, assertMatchingRuntime, checkEntryDocuments, checkRuntimeArtifact, checkZippTree, checkZippVariantTree, checkZippTorchTree, checkTorchCopies, isZippEngineWasm, isZippTorchWasm, zippReleaseIdentity, zippVariantIdentity, zippTorchIdentity, artifactFiles, LINKED_ASSET } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
+import { runtimeIdentity, assertMatchingRuntime, checkEntryDocuments, checkRuntimeArtifact, checkZippTree, checkZippVariantTree, checkZippTorchTree, checkTorchCopies, isZippEngineWasm, isZippTorchWasm, zippReleaseIdentity, zippVariantIdentity, zippTorchIdentity, artifactFiles, verifiedContainerEngines, LINKED_ASSET } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 import { checkAppEditors } from '../formlogic/ui/scripts/check-app-editors.mjs';
 import { KnowledgeError, KnowledgeMissingError, checkSoftnKnowledge, writeSoftnKnowledge } from './softn-knowledge.mjs';
 import { checkNativeRuntime, nativeImportProblems } from './release-runtime.mjs';
@@ -447,20 +447,16 @@ export async function verifyArchive(zip, { sidecarDigest, paths, archiveName }) 
     const engine = webTree.get('zipp_wasm_bg.wasm');
     if (!engine || !isZippEngineWasm(engine)) throw new ReleaseError(`Softn ${release.tag} ships a zipp-web/ tree but softn-release.json records no zipp.variants.web; FormLogic installs only what the release describes.`);
   }
-  // By content, not by name: a hashed asset or a renamed copy is still found. A per-path rule:
-  // every engine copy is the primary, except the one path that holds the variant when the
-  // release records one — and that path may hold nothing else.
+  // Detect engines by content so even a renamed copy is checked.
+  // The web variant and specialized container engines each have known release paths.
   const copies = [];
-  const sums = zippTree.get('RELEASE-SHA256SUMS')?.toString().split(/\r?\n/) ?? [];
+  let containerEngines;
+  try { containerEngines = verifiedContainerEngines(release.files, zipp, zippTree.get('RELEASE-SHA256SUMS')); }
+  catch (error) { throw new ReleaseError(error.message); }
   for (const [name, entry] of entries) {
     if (!isZippEngineWasm(entry.data)) continue;
     const digest = sha256(entry.data);
-    // Web containers and embedded editors share two specialized builds. Only their
-    // installed paths and the matching upstream release checksums qualify.
-    const tier = /^hosted-runtime\/assets\/container-runtime\/[0-9a-f]{12}\/engines\/zipp-(javascript-lite|typescript)\.wasm$/.exec(name)?.[1];
-    if (tier) {
-      const bundle = `zipp-${zipp.version}-${tier === 'typescript' ? 'javascript-typescript' : tier}.wasm`;
-      if (!sums.some(line => line.trim().split(/\s+\*?/).join(' ') === `${digest} ${bundle}`)) throw new ReleaseError(`${name} differs from ${bundle} in the ZIPP release checksums.`);
+    if (containerEngines.get(name) === digest) {
       copies.push(name);
       continue;
     }

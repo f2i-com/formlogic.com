@@ -19,11 +19,10 @@ const APP_ENGINE_ASSET = /^assets\/zipp_wasm_bg-[^/]+\.wasm$/;
  * when the vendor tree formlogic/ui/vendor/zipp-wasm-web is installed, or
  * null. With it, the build must ALSO carry the variant — as one more hashed
  * `assets/zipp_wasm_bg-*.wasm`, the asset the page's second byte broker
- * fetches, and there alone: the hosted runtime and the editors carry only the
- * primary, and a variant under any other name is a second engine nobody
- * serves. Without it, a second digest anywhere is refused as it always was.
+ * fetches. `containerEngines` holds the exact paths and upstream digests of
+ * the hosted runtime's specialized engines, verified against the SoftN install.
  */
-export async function checkDistEngines(directory, source, { label = 'formlogic/ui/dist', skip = ['api'], web = null } = {}) {
+export async function checkDistEngines(directory, source, { label = 'formlogic/ui/dist', skip = ['api'], web = null, containerEngines = new Map() } = {}) {
   const engines = [];
   const webCopies = [];
   const walk = async prefix => {
@@ -39,6 +38,11 @@ export async function checkDistEngines(directory, source, { label = 'formlogic/u
       const bytes = await readFile(resolve(directory, path));
       if (!isZippEngineWasm(bytes)) continue;
       const digest = sha256(bytes);
+      if (containerEngines.has(path)) {
+        if (digest !== containerEngines.get(path)) throw new Error(`${label}/${path} differs from the verified SoftN container engine.`);
+        engines.push(path);
+        continue;
+      }
       if (web && digest === web.sha256) {
         if (!APP_ENGINE_ASSET.test(path)) throw new Error(`${label}/${path} is the installed ZIPP ${source.release ?? source.version} web variant (${digest.slice(0, 12)}) under a name other than the app's hashed engine asset (assets/zipp_wasm_bg-*.wasm); the variant is served from that asset alone. Rebuild the UI after node scripts/fetch-softn-release.mjs`);
         webCopies.push(path);
@@ -50,6 +54,9 @@ export async function checkDistEngines(directory, source, { label = 'formlogic/u
     }
   };
   await walk('');
+  for (const path of containerEngines.keys()) {
+    if (!engines.includes(path)) throw new Error(`${label}/${path} is missing or is not the verified SoftN container engine.`);
+  }
   engines.sort();
   // Sorted for the same reason `engines` is. These names reach a person only
   // inside an error message, and `readdir` returns them in whatever order the

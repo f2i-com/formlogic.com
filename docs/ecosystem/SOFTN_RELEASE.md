@@ -106,12 +106,13 @@ The expected identity is derived from the release, never from this tree:
   `zipp_start`, `engine_evalInContext`) rather than its file name, has the
   recorded digest, and every copy Softn's packager places is found: `zipp/` and
   `native-runtime/wasm/`. A copy in `hosted-runtime/` or an editor is held to
-  the digest where it is present and not required. The page downloads `zipp/`'s
+  the digest where it is present. Specialized engines have separate release
+  checksums and installation paths (see below). The page downloads `zipp/`'s
   engine once (the build's `assets/zipp_wasm_bg-*.wasm`, sent as its brotli twin
   where the browser asks for one) and gives it to the app frame when it starts
   and, from Softn v0.0.35, to Builder and Studio when it connects to them
   (`AppEditorDialog`'s `engine` capability), so a release from then on carries
-  no copy there; releases through v0.0.34 carry one in each, and through v0.0.27
+  no copy of the primary engine there; releases through v0.0.34 carry one in each, and through v0.0.27
   a second at `assets/core-runtime/zipp_wasm_bg.wasm`. A Softn page posts the
   engine it compiled to every worker it starts, so no worker reads a copy.
 
@@ -237,6 +238,17 @@ variant up through a glob (`src/lib/formlogic/zipp-bytes.ts`) that emits
 nothing when the tree is absent, so a build works either way; the frame hands
 `zipp-web` the variant's bytes from a second byte broker, and falls back to
 `zipp-web-python` when the build holds none.
+
+### Hosted JavaScript-lite and TypeScript engines
+
+SoftN v0.0.48 includes two additional modules for web apps. The release
+inventory records each file under `hosted-runtime/assets/container-runtime/<id>/engines/`.
+The installer and packager check `zipp-javascript-lite.wasm` against the ZIPP
+release's `javascript-lite` checksum and `zipp-typescript.wasm` against its
+`javascript-typescript` checksum. The final UI must contain both at the exact
+paths recorded by that installation. Older releases without these modules
+continue to use their own inventory. The site's primary engine and web variant
+keep their separate checks.
 
 ### The torch package
 

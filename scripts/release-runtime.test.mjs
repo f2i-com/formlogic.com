@@ -13,6 +13,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkDistEngines, checkReleaseRuntime, zippLicensesText, engineIdentity, checkNativeRuntime, relativeImports, nativeImportProblems, NATIVE_MODULES } from './release-runtime.mjs';
 import { createHash } from 'node:crypto';
+import { verifiedContainerEngines } from '../formlogic/ui/scripts/hosted-runtime-artifact.mjs';
 import { wasmModule, writeZippTree, zippEngineWasm, zippReleaseFixture } from '../formlogic/ui/scripts/zipp-release-fixture.mjs';
 
 const RELEASE = zippReleaseFixture();
@@ -133,6 +134,33 @@ const webDist = (extra = {}) => ({
   'hosted-runtime/assets/core-runtime/zipp_wasm_bg.wasm': WITH_WEB.wasm,
   'app-editors/studio/assets/zipp_wasm_bg-CAyqw9Mx.wasm': WITH_WEB.wasm,
   ...extra,
+});
+
+test('the built UI must keep both hosted container engines at their verified SoftN paths', async (t) => {
+  const folder = 'assets/container-runtime/012345abcdef/engines';
+  const liteFile = `${folder}/zipp-javascript-lite.wasm`;
+  const tsFile = `${folder}/zipp-typescript.wasm`;
+  const lite = zippEngineWasm('lite');
+  const ts = zippEngineWasm('typescript');
+  const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+  const sums = Buffer.from(`${sha(lite)}  zipp-0.0.36-javascript-lite.wasm\n${sha(ts)}  zipp-0.0.36-javascript-typescript.wasm\n`);
+  const hosted = { version: '0.0.36', release: 'v0.0.36', sumsSha256: sha(sums) };
+  const inventory = { [liteFile]: sha(lite), [tsFile]: sha(ts) };
+  const containerEngines = verifiedContainerEngines(inventory, hosted, sums, 'hosted-runtime/');
+  const options = { web: WITH_WEB.variant, containerEngines };
+  const litePath = `hosted-runtime/${liteFile}`;
+  const tsPath = `hosted-runtime/${tsFile}`;
+  const assets = { [litePath]: lite, [tsPath]: ts };
+  const check = async files => checkDistEngines(await tree(t, webDist(files)), WITH_WEB.source, options);
+
+  assert.deepEqual(containerEngines, new Map([[litePath, sha(lite)], [tsPath, sha(ts)]]));
+  assert.ok((await check(assets)).includes(tsPath));
+  assert.throws(() => verifiedContainerEngines({ [litePath]: sha(ts) }, hosted, sums), /differs from zipp-0.0.36-javascript-lite/);
+  assert.throws(() => verifiedContainerEngines(inventory, hosted, Buffer.from('changed')), /checksums differ/);
+  await assert.rejects(check({ [litePath]: ts, [tsPath]: lite }), /differs from the verified SoftN container engine/);
+  await assert.rejects(check({ [litePath]: lite }), /missing or is not the verified SoftN container engine/);
+  await assert.rejects(check({ ...assets, 'assets/other.wasm': lite }), /other.wasm is a ZIPP engine/);
+  await assert.rejects(check({ ...assets, 'hosted-runtime/assets/container-runtime/111111111111/engines/zipp-typescript.wasm': ts }), /other than the installed ZIPP/);
 });
 
 test('checkDistEngines accepts the web variant as one more hashed app asset when the install carries it, and requires it then', async (t) => {

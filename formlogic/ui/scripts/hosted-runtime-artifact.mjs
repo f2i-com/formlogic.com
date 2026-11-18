@@ -332,6 +332,22 @@ function parseSums(text, name) {
   return sums;
 }
 
+/** Match container paths in SoftN's file inventory to the specialized modules in ZIPP's verified release checksums. */
+export function verifiedContainerEngines(files, source, releaseSums, prefix = '') {
+  const engines = new Map();
+  if (digest(releaseSums) !== source.sumsSha256) throw new Error(`The hosted engine checksums differ from the ZIPP ${source.release} release record.`);
+  const sums = parseSums(releaseSums.toString('utf8'), 'RELEASE-SHA256SUMS');
+  for (const [file, sha256] of Object.entries(files)) {
+    const path = prefix + file;
+    const tier = /^hosted-runtime\/assets\/container-runtime\/[0-9a-f]{12}\/engines\/zipp-(javascript-lite|typescript)\.wasm$/.exec(path)?.[1];
+    if (!tier) continue;
+    const bundle = `zipp-${source.version}-${tier === 'typescript' ? 'javascript-typescript' : tier}.wasm`;
+    if (sums.get(bundle) !== sha256) throw new Error(`${path} differs from ${bundle} in the ZIPP release checksums.`);
+    engines.set(path, sha256);
+  }
+  return engines;
+}
+
 /**
  * A ZIPP engine tree as Softn ships it (the archive's zipp/, installed as
  * formlogic/ui/vendor/zipp-wasm): `source` is a directory or a Map of
