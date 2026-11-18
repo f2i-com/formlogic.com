@@ -28,7 +28,18 @@ Frontend (`formlogic/ui`):
 npm run lint && npm test && npm run build
 node scripts/check-pack-screens.mjs
 node scripts/check-security-invariants.mjs
+npm audit
 ```
+
+The frontend lockfile pins the reviewed `@ryotsu/picomatch@4.0.7-a` parser
+fix for Vite, Vitest and their tooling. Track the upstream advisory while the
+alias is in use and switch back when upstream publishes a patched version.
+[Upstream advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) ·
+[Pinned patch](https://github.com/ryotsu-kankichi/secured-picomatch/commit/3ab5a7627d480259e3d9ca67fbc14c125d374f0e)
+
+Workbox Build uses an override for `glob@14.0.6` to pick up the cancellation
+fix. Remove the override once Workbox accepts the patched major itself.
+[Glob advisory](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4)
 
 End-to-end golden paths (`formlogic/ui`, needs the local stack):
 `npx playwright test`. The release pipeline (`package.yml`) hard-requires the
