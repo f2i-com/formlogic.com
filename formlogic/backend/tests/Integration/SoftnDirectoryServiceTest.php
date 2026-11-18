@@ -363,7 +363,7 @@ final class SoftnDirectoryServiceTest extends TestCase
         self::assertSame($net, $service->draft($this->owner, $draft['draftId'])['permissions']);
         // Not a bundle with a permission.json: such keys there are that file's, which the directory refuses.
         $this->project['files']['permission.json'] = '{"permissions":{"network":{"enabled":true}}}';
-        $this->assertRefused(fn () => $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']), 'capabilities SoftN does not have: network');
+        $this->assertRefused(fn () => $service->createDraft($this->owner, $this->appId, ['name' => 'Booking', 'category' => 'tools']), 'unsupported capabilities: network');
     }
 
     /**
@@ -375,7 +375,7 @@ final class SoftnDirectoryServiceTest extends TestCase
     {
         $service = $this->service('https://dir.test');
         foreach ([
-            ['{"permissions":{"network":{"enabled":true}}}', 'capabilities SoftN does not have: network'],
+            ['{"permissions":{"network":{"enabled":true}}}', 'unsupported capabilities: network'],
             ['{"permissions":{"net":{"enabled":"yes"}}}', 'boolean "enabled". Not so for: net'],
             ['{"permissions":{"camera":true}}', 'boolean "enabled". Not so for: camera'],
             ['{"permissions":["net"]}', '"permissions" must be an object'],

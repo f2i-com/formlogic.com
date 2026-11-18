@@ -93,7 +93,7 @@ final class NativeImportDataTest extends TestCase
         $this->assertSame('That file is not a SQLite database.', $this->refusal($import($notSqlite)));
         $this->assertStringContainsString('has a trigger (wipe)', $this->refusal($import($this->database("CREATE TRIGGER wipe AFTER INSERT ON notes BEGIN DELETE FROM notes; END"))));
         $this->assertStringContainsString('has a view (everything)', $this->refusal($import($this->database('CREATE VIEW everything AS SELECT * FROM notes'))));
-        $this->assertStringContainsString('(_secrets), which is not a SoftN host', $this->refusal($import($this->database('CREATE TABLE _secrets(x)'))));
+        $this->assertStringContainsString('table the host keeps for itself (_secrets)', $this->refusal($import($this->database('CREATE TABLE _secrets(x)'))));
         $this->assertStringContainsString('no record of the migrations', $this->refusal($import($this->database('', []))));
         $this->assertStringContainsString('does not list (server/migrations/002.sql)', $this->refusal($import($this->database('', [['server/migrations/001.sql', hash('sha256', self::MIGRATION)], ['server/migrations/002.sql', 'x']]))));
         $this->assertStringContainsString('is not this version\'s file', $this->refusal($import($this->database('', [['server/migrations/001.sql', hash('sha256', 'something else')]]))));
