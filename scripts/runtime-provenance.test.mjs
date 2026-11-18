@@ -26,8 +26,10 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const REVISION = 'c'.repeat(40);
 const RUSTC_WINDOWS = 'rustc 1.92.0 (ded5c06cf 2025-12-08)\nbinary: rustc\ncommit-hash: ded5c06cf\nhost: x86_64-pc-windows-msvc\nrelease: 1.92.0\nLLVM version: 21.1.3\n';
 const RUSTC_LINUX = RUSTC_WINDOWS.replace('x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu');
+const HOST_RUSTC_WINDOWS = 'rustc 1.95.0 (59807616e 2026-04-14)\nhost: x86_64-pc-windows-msvc\n';
+const HOST_RUSTC_LINUX = HOST_RUSTC_WINDOWS.replace('x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu');
 const GUEST_TOML = '[package]\nname = "formlogic-runtime-guest"\n\n[dependencies]\nzipp-vm = { path = "../../../.runtime-source/zipp/src/crates/zipp-vm", default-features = false, features = ["safe-sandbox", "wasm-no-fs-loader", "wasm-single-agent"] }\nserde_json = "1"\n';
-const HOST_LOCK = 'version = 4\n\n[[package]]\nname = "wasmtime"\nversion = "44.0.3"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n';
+const HOST_LOCK = 'version = 4\n\n[[package]]\nname = "wasmtime"\nversion = "48.0.9"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n';
 const ciEnv = (runId, image = 'ubuntu24') => ({ GITHUB_ACTIONS: 'true', GITHUB_RUN_ID: runId, GITHUB_REPOSITORY: 'f2i-com/formlogic.com', GITHUB_SERVER_URL: 'https://github.com', ImageOS: image, ImageVersion: '20260907.1' });
 const FORMLOGIC = { commit: 'd'.repeat(40), dirty: false };
 
@@ -58,6 +60,7 @@ async function tree(t) {
     '.runtime-source/zipp/source.json': JSON.stringify({ repository: 'https://github.com/f2i-com/zipp.org', release: record.release, version: record.version, revision: REVISION, cargoLockSha256: 'b'.repeat(64) }),
     'formlogic/runtime/guest/Cargo.toml': GUEST_TOML,
     'formlogic/runtime/guest/Cargo.lock': 'version = 4\n# generated from ZIPP\'s lock\n',
+    'formlogic/runtime/host/Cargo.toml': '[package]\nname = "formlogic-runtime"\nrust-version = "1.95.0"\n',
     'formlogic/runtime/host/Cargo.lock': HOST_LOCK,
     'formlogic/runtime/host/formlogic-runtime-guest.wasm': 'guest wasm',
     'formlogic/backend/bin/runtime/formlogic-runtime-linux-x86_64': elf({ label: 'linux launcher' }),
@@ -73,8 +76,8 @@ async function tree(t) {
 /** Records the guest and both launchers the way one CI run does (guest and Linux in one job, Windows in another). */
 function recordAll(root, { runId = '42' } = {}) {
   writeFragment(root, 'guest', { rustcVerbose: RUSTC_LINUX, env: ciEnv(runId) });
-  writeFragment(root, 'linux', { rustcVerbose: RUSTC_LINUX, env: ciEnv(runId) });
-  writeFragment(root, 'windows', { rustcVerbose: RUSTC_WINDOWS, env: ciEnv(runId, 'win22') });
+  writeFragment(root, 'linux', { rustcVerbose: HOST_RUSTC_LINUX, env: ciEnv(runId) });
+  writeFragment(root, 'windows', { rustcVerbose: HOST_RUSTC_WINDOWS, env: ciEnv(runId, 'win22') });
 }
 
 const withoutBuiltAt = (source) => ({ ...source, build: { ...source.build, builtAt: null } });
@@ -94,7 +97,8 @@ test('the records of one CI run merge into SOURCE.json, and only the build time 
     artifact: 'formlogic-runtime-guest.wasm', sha256: sha256('guest wasm'), target: 'wasm32-wasip1', rustc: 'rustc 1.92.0 (ded5c06cf 2025-12-08)', rustcHost: 'x86_64-unknown-linux-gnu',
     cargoLockSha256: sha256('version = 4\n# generated from ZIPP\'s lock\n'), defaultFeatures: false, features: ['safe-sandbox', 'wasm-no-fs-loader', 'wasm-single-agent'], runner: 'ubuntu24/20260907.1',
   });
-  assert.deepEqual(first.host, { wasmtime: '44.0.3' });
+  assert.deepEqual(first.host, { wasmtime: '48.0.9' });
+  assert.ok(first.launchers.every((launcher) => launcher.rustc === HOST_RUSTC_WINDOWS.split('\n')[0] && launcher.cargoLockSha256 === sha256(HOST_LOCK)));
   assert.deepEqual(first.launchers.map((launcher) => [launcher.artifact, launcher.target, launcher.linkage ?? null, launcher.runner]), [
     ['formlogic-runtime-linux-x86_64', 'x86_64-unknown-linux-musl', 'static-pie', 'ubuntu24/20260907.1'],
     ['formlogic-runtime-windows-x86_64.exe', 'x86_64-pc-windows-msvc', null, 'win22/20260907.1'],
@@ -118,13 +122,42 @@ test('a launcher or guest that is not the recorded one is refused', async (t) =>
   assert.throws(() => writeProvenance(root, { formlogic: FORMLOGIC }), /formlogic-runtime-guest\.wasm is not the guest \.runtime-source\/sandbox\/guest\.json records/);
 });
 
+test('a matching guest cannot relabel an earlier Wasmtime launcher after a host dependency update', async (t) => {
+  const root = await tree(t);
+  const { hostLock, hostToml } = runtimePaths(root);
+  recordAll(root);
+  await writeFile(hostLock, HOST_LOCK.replace(/\n/g, '\r\n'));
+  writeProvenance(root, { formlogic: FORMLOGIC });
+  assert.throws(() => writeFragment(root, 'windows', { rustcVerbose: RUSTC_WINDOWS }), /host requires rustc 1\.95\.0/);
+  await writeFile(hostLock, HOST_LOCK.replace('48.0.9', '48.0.10'));
+  assert.throws(() => writeProvenance(root, { formlogic: FORMLOGIC }), /does not record the current host\/Cargo\.lock/);
+  await assert.rejects(checkSandbox(root, { frozen: null }), /does not record the current host\/Cargo\.lock/);
+  assert.ok(pruneLauncher(root, 'linux').length, 'a skipped launcher built against the previous lock cannot be reused');
+  await rm(hostToml);
+  await rm(hostLock);
+  writeFragment(root, 'guest', { rustcVerbose: RUSTC_LINUX });
+  assert.equal(toolchain(root), '1.92.0', 'guest builds resolve their compiler independently');
+});
+
+test('the Windows job can read the host compiler without installing a guest or a Softn release', async (t) => {
+  const root = await tree(t);
+  const { current, hostToml } = runtimePaths(root);
+  await rm(current);
+  const compiler = () => spawnSync(process.execPath, [script, 'host-toolchain', '--root', root], { encoding: 'utf8' });
+  assert.equal(compiler().stdout.trim(), '1.95.0');
+  await writeFile(hostToml, '[package]\r\nrust-version = "1.95"\r\n[package.metadata]\r\nrust-version = "1.99.9"\r\n');
+  const invalid = compiler();
+  assert.equal(invalid.status, 1);
+  assert.match(invalid.stderr, /rust-version to an exact X.Y.Z/);
+});
+
 test('a launcher built before the guest was rebuilt is refused, and so is one nobody recorded', async (t) => {
   const root = await tree(t);
   recordAll(root);
   const { guestWasm, bin } = runtimePaths(root);
   await writeFile(guestWasm, 'a rebuilt guest');
   writeFragment(root, 'guest', { rustcVerbose: RUSTC_LINUX, env: ciEnv('42') });
-  writeFragment(root, 'linux', { rustcVerbose: RUSTC_LINUX, env: ciEnv('42') });
+  writeFragment(root, 'linux', { rustcVerbose: HOST_RUSTC_LINUX, env: ciEnv('42') });
   assert.throws(() => writeProvenance(root, { formlogic: FORMLOGIC }), /formlogic-runtime-windows-x86_64\.exe embeds guest [0-9a-f]{12}, not the recorded guest [0-9a-f]{12}: rebuild it after the guest \(scripts\/build-runtime\.sh windows\)/);
   await rm(resolve(runtimePaths(root).fragments, 'windows.json'));
   writeProvenance(root, { formlogic: FORMLOGIC });
@@ -173,12 +206,14 @@ test('--deployed asks only what a running backend needs: the recorded launchers,
   const root = await tree(t);
   recordAll(root);
   writeProvenance(root, { formlogic: FORMLOGIC });
-  const { current, guestWasm, bin } = runtimePaths(root);
+  const { current, guestWasm, bin, hostLock, hostToml } = runtimePaths(root);
   const installed = JSON.parse(await readFile(current, 'utf8'));
   // A source checkout given a release zip's bin/runtime: no guest, and a later Softn release naming the same ZIPP.
   await rm(guestWasm);
   await writeFile(current, JSON.stringify({ ...installed, tag: 'v0.0.16', sha256: 'f'.repeat(64) }));
   await assert.rejects(checkSandbox(root, { frozen: null }), /formlogic-runtime-guest\.wasm is missing/);
+  await rm(hostToml);
+  await rm(hostLock);
   await checkSandbox(root, { frozen: null, deployed: true, require: ['linux'] });
   const cli = spawnSync(process.execPath, [script, 'check', '--deployed', '--require', 'linux', '--root', root], { encoding: 'utf8', env: { ...process.env, SOFTN_FROZEN: '' } });
   assert.equal(cli.status, 0, cli.stderr);
@@ -193,12 +228,12 @@ test('--deployed asks only what a running backend needs: the recorded launchers,
 test('a local or mixed build is recorded as local, and a release takes only one CI run\'s', async (t) => {
   const root = await tree(t);
   recordAll(root);
-  writeFragment(root, 'windows', { rustcVerbose: RUSTC_WINDOWS, env: {} });
+  writeFragment(root, 'windows', { rustcVerbose: HOST_RUSTC_WINDOWS, env: {} });
   const mixed = writeProvenance(root, { formlogic: FORMLOGIC });
   assert.deepEqual({ ...mixed.build, builtAt: null }, { by: 'local', runId: null, runUrl: null, builtAt: null });
   assert.equal(mixed.launchers.find((launcher) => launcher.artifact === LAUNCHERS.windows.artifact).runner, 'local');
   await assert.rejects(checkSandbox(root, { frozen: null, ci: true }), /built by local, not by one CI run/);
-  writeFragment(root, 'windows', { rustcVerbose: RUSTC_WINDOWS, env: ciEnv('43', 'win22') });
+  writeFragment(root, 'windows', { rustcVerbose: HOST_RUSTC_WINDOWS, env: ciEnv('43', 'win22') });
   assert.equal(writeProvenance(root, { formlogic: FORMLOGIC }).build.by, 'local', 'two runs are not one build');
 });
 
@@ -213,7 +248,7 @@ test('a launcher `all` skips stays only if it embeds the guest just built, so th
   await writeFile(guestWasm, 'the guest of a newer ZIPP');
   writeFragment(root, 'guest', { rustcVerbose: RUSTC_WINDOWS, env: {} });
   await writeFile(resolve(bin, LAUNCHERS.windows.artifact), 'windows launcher, newer guest');
-  writeFragment(root, 'windows', { rustcVerbose: RUSTC_WINDOWS, env: {} });
+  writeFragment(root, 'windows', { rustcVerbose: HOST_RUSTC_WINDOWS, env: {} });
   assert.throws(() => writeProvenance(root, { formlogic: FORMLOGIC }), /formlogic-runtime-linux-x86_64 embeds guest [0-9a-f]{12}, not the recorded guest/, 'what `all` ran into before it pruned');
   assert.deepEqual(pruneLauncher(root, 'linux'), ['formlogic/backend/bin/runtime/formlogic-runtime-linux-x86_64', '.runtime-source/sandbox/linux.json']);
   assert.equal(existsSync(linux), false);
@@ -286,7 +321,7 @@ test('the Linux launcher must be a static x86-64 ELF, read from its own headers'
   assert.throws(() => elfLinkage(elf().subarray(0, 100)), /program headers are cut short/);
   const root = await tree(t);
   await writeFile(resolve(runtimePaths(root).bin, LAUNCHERS.linux.artifact), elf({ interpreter: true }));
-  assert.throws(() => writeFragment(root, 'linux', { rustcVerbose: RUSTC_LINUX, env: {} }), /dynamically linked/);
+  assert.throws(() => writeFragment(root, 'linux', { rustcVerbose: HOST_RUSTC_LINUX, env: {} }), /dynamically linked/);
   assert.equal(existsSync(resolve(runtimePaths(root).fragments, 'linux.json')), false, 'nothing recorded');
 });
 
@@ -300,12 +335,12 @@ test('record parsers: rustc -Vv, features, wasmtime, BUILD-INFO rustc, who built
   assert.deepEqual(guestFeatures(GUEST_TOML), { defaultFeatures: false, features: ['safe-sandbox', 'wasm-no-fs-loader', 'wasm-single-agent'] });
   assert.deepEqual(guestFeatures('[dependencies]\nzipp-vm = { path = "x" }\n'), { defaultFeatures: true, features: [] });
   assert.throws(() => guestFeatures('[dependencies]\nserde = "1"\n'), /no zipp-vm dependency/);
-  assert.equal(wasmtimeVersion(HOST_LOCK.replace(/\n/g, '\r\n')), '44.0.3');
+  assert.equal(wasmtimeVersion(HOST_LOCK.replace(/\n/g, '\r\n')), '48.0.9');
   assert.equal(buildInfoRustc('version=0.0.18\r\nrustc=rustc 1.92.0 (ded5c06cf 2025-12-08)\r\n'), 'rustc 1.92.0 (ded5c06cf 2025-12-08)');
   assert.equal(buildInfoRustc('version=0.0.18\n'), null);
   assert.deepEqual(buildContext({}), { by: 'local', runId: null, runUrl: null, runner: 'local' });
   assert.equal(smokeValue('{"type":"log"}\n{"type":"done","results":[{"id":"smoke","ok":true,"value":42}]}\n'), 42);
   assert.throws(() => smokeValue(''), /no done frame/);
   assert.throws(() => smokeValue('{"type":"done","results":[{"id":"smoke","ok":false,"error":"ReferenceError: validators is not defined"}]}'), /the job failed: .*validators is not defined/);
-  assert.throws(() => mergeProvenance({ current: { tag: 'v0.0.14', zipp: { version: '0.0.18', sha256: 'a'.repeat(64) } }, guest: null, launchers: [], formlogic: FORMLOGIC, hostLockText: HOST_LOCK }), /The installed Softn release names no ZIPP release/);
+  assert.throws(() => mergeProvenance({ current: { tag: 'v0.0.14', zipp: { version: '0.0.18', sha256: 'a'.repeat(64) } }, guest: null, launchers: [], formlogic: FORMLOGIC }), /The installed Softn release names no ZIPP release/);
 });

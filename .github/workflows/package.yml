@@ -129,11 +129,10 @@ jobs:
           name: sandbox-guest
           path: ${{ github.workspace }}
 
-      # The toolchain the guest was built with: ZIPP's release toolchain.
-      - name: Rust toolchain
+      - name: Install the launcher's Rust toolchain
         id: rust
         run: |
-          toolchain="$(node scripts/runtime-provenance.mjs toolchain)"
+          toolchain="$(node scripts/runtime-provenance.mjs host-toolchain)"
           rustup toolchain install "$toolchain" --profile minimal --no-self-update
           lock="$(sha256sum formlogic/runtime/host/Cargo.lock | cut -c1-16)"
           echo "cache-key=sandbox-deps-${ImageOS:-unknown}-${ImageVersion:-unknown}-rust${toolchain}-host${lock}" >> "$GITHUB_OUTPUT"

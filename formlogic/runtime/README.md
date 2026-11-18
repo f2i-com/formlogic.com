@@ -41,7 +41,7 @@ have LF endings. So a new ZIPP release reaches the server with no commit here,
 and the server and the browser are always one ZIPP release. Nothing built is
 committed: the guest wasm, its `Cargo.lock` and both launchers are generated,
 and `backend/bin/runtime/SOURCE.json` records where every byte came from (the
-ZIPP release and commit, the Softn archive, the toolchain, each digest, and
+ZIPP release and commit, the Softn archive, each artifact's compiler and digest, and
 which CI run or machine built it).
 
 ## Modes
@@ -106,8 +106,8 @@ scripts/build-runtime.sh check
   `build.rs` precompiles the guest with Cranelift for the build's `TARGET`, named
   explicitly, so the artifact is baseline x86-64 and not tuned to the builder's
   ISA extensions, and embeds it.
-- `linux` builds the static musl launcher: natively where `musl-gcc` exists
-  (CI), otherwise in Docker (`rust:<toolchain>-bookworm` plus `musl-tools`).
+- `linux` builds the static musl launcher natively where `musl-gcc` exists
+  (CI), otherwise in Docker (`rust:<host-toolchain>-bookworm` plus `musl-tools`).
   wasmtime's runtime carries a small C helper, and cross-compiling C for musl
   from Windows needs a toolchain a Windows machine does not have; a container
   has it for free. A dynamically linked result is refused (read from the ELF
@@ -131,7 +131,7 @@ scripts/build-runtime.sh check
   running backend needs (the recorded launchers, of the installed release's ZIPP),
   which is what `install.sh` asks of a launcher it finds already in place.
 
-The toolchain is the one ZIPP's release was built with. For a ZIPP published as
+The guest uses the Rust toolchain that built the ZIPP release. For a ZIPP published as
 zip bundles (up to 0.0.25) that is the `rustc` line of the installed bundle's
 `BUILD-INFO.txt` (`ui/vendor/zipp-wasm/`), which the Softn release's ZIPP record
 must repeat. A ZIPP published as plain modules (0.0.26 on) names no rustc, so it
@@ -166,13 +166,18 @@ path of its source), so a Windows-built guest differs from CI's Linux-built one;
 both CI launchers embed the one Linux-built guest, and a local build records
 `build.by` `local`, which `scripts/package-dist.mjs --release` refuses.
 
-## Why wasmtime 44
+## Maintaining the Wasmtime host
 
-wasmtime is FormLogic's own choice, fixed by the committed `host/Cargo.toml`
-(`"44"`) and `host/Cargo.lock` (44.0.3); the toolchain is not. The toolchain
-follows the installed ZIPP release (above) with no commit here, and a newer
-rustc builds wasmtime 44 unchanged. 44 is the newest line whose minimum Rust
-(`rust-version` 1.92.0) the toolchain ZIPP v0.0.18 through v0.0.33 were built
-with (1.92.0) meets. Moving to a newer line (wasmtime 48 needs 1.95.0) is a FormLogic commit to
-`host/Cargo.toml` and `host/Cargo.lock`, and builds only once the installed ZIPP
-release's toolchain reaches that line's minimum.
+The Windows and Linux launchers use Wasmtime and Wasmtime-WASI 48.0.9,
+resolved in `host/Cargo.lock`. Both use the Rust compiler named by
+`rust-version` in `host/Cargo.toml` (currently 1.95.0). This lets FormLogic
+take host security fixes while building the embedded guest with ZIPP's
+release compiler. The host precompiles and loads the guest with the same
+locked Wasmtime version and engine settings.
+
+After updating the launcher dependencies, run
+`cargo audit --file formlogic/runtime/host/Cargo.lock` from the repository
+root and rebuild and smoke-test the launchers before packaging. The
+provenance check compares each launcher's recorded host compiler and lockfile
+digest with the checkout, so an older launcher must be rebuilt even if it
+contains the same guest.

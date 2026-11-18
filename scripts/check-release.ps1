@@ -10,7 +10,7 @@
 #   powershell -File scripts/check-release.ps1 -NativeRuntime  # + native-runtime clippy/check/build
 #   powershell -File scripts/check-release.ps1 -DistSmoke      # + package + boot the zip (FL-30)
 #   powershell -File scripts/check-release.ps1 -Fmt            # + cargo fmt --check, both Rust roots (FL-31)
-#   powershell -File scripts/check-release.ps1 -RustAudit      # + cargo audit, both Rust roots (FL-31)
+#   powershell -File scripts/check-release.ps1 -RustAudit      # + cargo audit for the native runtime and backend sandbox host
 #   powershell -File scripts/check-release.ps1 -Msrv           # + compile with the pinned 1.90 MSRV (FL-31)
 #   powershell -File scripts/check-release.ps1 -Android        # + native-runtime Android target check (FL-31)
 #
@@ -122,6 +122,9 @@ if ($Fmt) {
 }
 if ($RustAudit) {
     Invoke-Gate 'native-runtime: cargo audit (RustSec)' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
+        cargo audit
+    }
+    Invoke-Gate 'sandbox host: cargo audit (RustSec)' (Join-Path $repo 'formlogic/runtime/host') {
         cargo audit
     }
 } else {

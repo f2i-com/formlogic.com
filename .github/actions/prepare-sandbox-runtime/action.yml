@@ -86,7 +86,7 @@ runs:
     # After the source is proved: a ZIPP release published as plain modules
     # (0.0.26 on) states no rustc, and its toolchain is the one its release
     # workflow pins in that source.
-    - name: ZIPP's release toolchain
+    - name: Read the ZIPP guest and Wasmtime host toolchains
       id: toolchain
       if: inputs.mode == 'build'
       shell: bash
@@ -94,20 +94,24 @@ runs:
       env:
         REVISION: ${{ steps.zipp.outputs.revision }}
       run: |
-        toolchain="$(node scripts/runtime-provenance.mjs toolchain)"
-        echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+        guest="$(node scripts/runtime-provenance.mjs toolchain)"
+        host="$(node scripts/runtime-provenance.mjs host-toolchain)"
+        echo "guest=$guest" >> "$GITHUB_OUTPUT"
+        echo "host=$host" >> "$GITHUB_OUTPUT"
         lock="$(sha256sum formlogic/runtime/host/Cargo.lock | cut -c1-16)"
-        echo "cache-key=sandbox-deps-${ImageOS:-unknown}-${ImageVersion:-unknown}-rust${toolchain}-zipp${REVISION}-host${lock}" >> "$GITHUB_OUTPUT"
-    - name: Rust toolchain (ZIPP's release toolchain) and musl-gcc
+        echo "cache-key=sandbox-deps-${ImageOS:-unknown}-${ImageVersion:-unknown}-guest${guest}-host${host}-zipp${REVISION}-lock${lock}" >> "$GITHUB_OUTPUT"
+    - name: Install both Rust targets and musl-gcc
       if: inputs.mode == 'build'
       shell: bash
       env:
-        TOOLCHAIN: ${{ steps.toolchain.outputs.toolchain }}
+        GUEST_TOOLCHAIN: ${{ steps.toolchain.outputs.guest }}
+        HOST_TOOLCHAIN: ${{ steps.toolchain.outputs.host }}
       run: |
-        rustup toolchain install "$TOOLCHAIN" --profile minimal --no-self-update --target wasm32-wasip1,x86_64-unknown-linux-musl
+        rustup toolchain install "$GUEST_TOOLCHAIN" --profile minimal --no-self-update --target wasm32-wasip1
+        rustup toolchain install "$HOST_TOOLCHAIN" --profile minimal --no-self-update --target x86_64-unknown-linux-musl
         sudo apt-get update -qq
         sudo apt-get install -y -qq musl-tools
-    # Dependencies only, one entry per runner image, toolchain, ZIPP commit and
+    # Dependencies only, one entry per runner image, toolchain pair, ZIPP commit and
     # host lock: the guest, zipp-vm and the launcher are local packages, so
     # cargo recompiles them (and re-precompiles the guest) every run.
     - name: Cargo dependency cache

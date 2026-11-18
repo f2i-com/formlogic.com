@@ -87,3 +87,12 @@ updates:
         patterns: [ed25519-dalek, chacha20poly1305, getrandom, sha2]
       native-cargo-minor-patch:
         update-types: [minor, patch]
+
+  # The backend expression sandbox builds its Wasmtime launcher from this lockfile.
+  - package-ecosystem: cargo
+    directory: /formlogic/runtime/host
+    schedule:
+      interval: weekly
+    groups:
+      wasmtime:
+        patterns: [wasmtime, wasmtime-wasi]

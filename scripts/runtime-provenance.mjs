@@ -11,10 +11,11 @@
 // the files there, that record and the installed Softn release agree.
 //
 //   node scripts/runtime-provenance.mjs toolchain                    the Rust toolchain ZIPP's release was built with
+//   node scripts/runtime-provenance.mjs host-toolchain               the launcher's pinned Rust toolchain
 //   node scripts/runtime-provenance.mjs fragment guest               record the guest just built
 //   node scripts/runtime-provenance.mjs fragment linux|windows [--rustc "<rustc -Vv>"]
 //                                                                    record a launcher just built
-//   node scripts/runtime-provenance.mjs prune linux|windows          drop that launcher unless it embeds the recorded guest
+//   node scripts/runtime-provenance.mjs prune linux|windows          drop that launcher unless its guest and host inputs match
 //   node scripts/runtime-provenance.mjs provenance                   merge the records into bin/runtime/SOURCE.json
 //   node scripts/runtime-provenance.mjs check                        files, SOURCE.json and the installed release agree
 //
@@ -57,6 +58,7 @@ export function runtimePaths(root) {
     guestWasm: resolve(root, 'formlogic/runtime/host', GUEST.artifact),
     guestToml: resolve(root, 'formlogic/runtime/guest/Cargo.toml'),
     guestLock: resolve(root, 'formlogic/runtime/guest/Cargo.lock'),
+    hostToml: resolve(root, 'formlogic/runtime/host/Cargo.toml'),
     hostLock: resolve(root, 'formlogic/runtime/host/Cargo.lock'),
     bin: resolve(root, 'formlogic/backend/bin/runtime'),
     source: resolve(root, 'formlogic/backend/bin/runtime/SOURCE.json'),
@@ -98,6 +100,26 @@ export function guestFeatures(tomlText) {
 /** The wasmtime version FormLogic's committed host/Cargo.lock builds the launcher with. */
 export function wasmtimeVersion(lockText) {
   return /\[\[package\]\]\r?\nname = "wasmtime"\r?\nversion = "([^"]+)"/.exec(String(lockText))?.[1] ?? null;
+}
+
+export function hostToolchain(root) {
+  const toml = readFileSync(runtimePaths(root).hostToml, 'utf8');
+  const pkg = toml.split(/^[ \t]*\[package\][ \t]*(?:#.*)?\r?$/m)[1]?.split(/^[ \t]*\[/m)[0];
+  const version = /^[ \t]*rust-version[ \t]*=[ \t]*["'](\d+\.\d+\.\d+)["'][ \t]*(?:#.*)?\r?$/m.exec(pkg ?? '')?.[1];
+  if (!version) throw new Error('formlogic/runtime/host/Cargo.toml must pin [package] rust-version to an exact X.Y.Z compiler version.');
+  return version;
+}
+
+// Both CI runners use the same Cargo.lock, even with a Windows CRLF checkout.
+function hostInputs(root) {
+  const lock = readFileSync(runtimePaths(root).hostLock, 'utf8').replace(/\r\n/g, '\n');
+  return { toolchain: hostToolchain(root), cargoLockSha256: sha256(lock), wasmtime: wasmtimeVersion(lock) };
+}
+
+function launcherHostProblem(launcher, host) {
+  if (!launcher.rustc?.startsWith(`rustc ${host.toolchain} `)) return `${launcher.artifact} records ${launcher.rustc ?? 'no compiler'}; the host requires rustc ${host.toolchain}: rebuild the launcher`;
+  if (launcher.cargoLockSha256 !== host.cargoLockSha256) return `${launcher.artifact} does not record the current host/Cargo.lock: rebuild the launcher`;
+  return null;
 }
 
 /**
@@ -161,7 +183,7 @@ export function guestFragment({ stamp, guestBytes, guestLockText, guestTomlText,
   };
 }
 
-export function launcherFragment({ platform, bytes, guestBytes, rustcVerbose, env = process.env }) {
+export function launcherFragment({ platform, bytes, guestBytes, host, rustcVerbose, env = process.env }) {
   const launcher = LAUNCHERS[platform];
   if (!launcher) throw new Error(`Unknown launcher platform ${platform}; expected ${Object.keys(LAUNCHERS).join(' or ')}.`);
   const context = buildContext(env);
@@ -173,6 +195,7 @@ export function launcherFragment({ platform, bytes, guestBytes, rustcVerbose, en
       sha256: sha256(bytes),
       target: launcher.target,
       ...rustcInfo(rustcVerbose),
+      cargoLockSha256: host.cargoLockSha256,
       ...(linkage && { linkage }),
       guestSha256: sha256(guestBytes),
       runner: context.runner,
@@ -187,7 +210,7 @@ export function launcherFragment({ platform, bytes, guestBytes, rustcVerbose, en
  * release names, and a launcher that embeds another guest. Only the build
  * time differs between two merges of the same records.
  */
-export function mergeProvenance({ current, guest, launchers, formlogic, hostLockText, now = new Date() }) {
+export function mergeProvenance({ current, guest, launchers, formlogic, host, now = new Date() }) {
   let zipp;
   try { zipp = zippReleaseIdentity(current?.zipp); }
   catch (error) { throw new Error(`The installed Softn release names no ZIPP release: ${error.message} Run node scripts/fetch-softn-release.mjs.`); }
@@ -203,6 +226,8 @@ export function mergeProvenance({ current, guest, launchers, formlogic, hostLock
   for (const { launcher } of launchers) {
     if (seen.has(launcher.artifact)) throw new Error(`Two records describe ${launcher.artifact}.`);
     seen.add(launcher.artifact);
+    const problem = launcherHostProblem(launcher, host);
+    if (problem) throw new Error(problem);
     if (launcher.guestSha256 !== guest.guest.sha256) {
       throw new Error(`${launcher.artifact} embeds guest ${short(launcher.guestSha256)}, not the recorded guest ${short(guest.guest.sha256)}: rebuild it after the guest (scripts/build-runtime.sh ${Object.keys(LAUNCHERS).find((key) => LAUNCHERS[key].artifact === launcher.artifact)}).`);
     }
@@ -216,7 +241,7 @@ export function mergeProvenance({ current, guest, launchers, formlogic, hostLock
     softnRelease: { tag: current.tag ?? null, commit: current.commit ?? null, archiveSha256: current.sha256 ?? null },
     formlogic,
     guest: guest.guest,
-    host: { wasmtime: wasmtimeVersion(hostLockText) },
+    host: { wasmtime: host.wasmtime },
     launchers: launchers.map((record) => record.launcher).sort((a, b) => a.artifact.localeCompare(b.artifact)),
     build: { by: oneRun ? 'ci' : 'local', runId: oneRun ? builds[0].runId : null, runUrl: oneRun ? builds[0].runUrl : null, builtAt: now.toISOString() },
   };
@@ -228,7 +253,7 @@ export function mergeProvenance({ current, guest, launchers, formlogic, hostLock
  * bin/runtime to its bytes, `guestBytes` is runtime/host's guest (or null).
  * `deployed` leaves out the build inputs (the guest file, the Softn archive).
  */
-export function provenanceProblems({ source, current, frozen = null, guestBytes, binFiles, require = [], ci = false, deployed = false }) {
+export function provenanceProblems({ source, current, frozen = null, guestBytes, binFiles, host, require = [], ci = false, deployed = false }) {
   const problems = [];
   if (source?.formatVersion !== PROVENANCE_FORMAT) return [`bin/runtime/SOURCE.json has formatVersion ${source?.formatVersion}; expected ${PROVENANCE_FORMAT}.`];
   const zipp = current?.zipp ?? {};
@@ -250,6 +275,10 @@ export function provenanceProblems({ source, current, frozen = null, guestBytes,
   }
   const recorded = new Map((source.launchers ?? []).map((launcher) => [launcher.artifact, launcher]));
   for (const [artifact, launcher] of recorded) {
+    if (!deployed) {
+      const problem = launcherHostProblem(launcher, host);
+      if (problem) problems.push(problem);
+    }
     const bytes = binFiles.get(artifact);
     if (!bytes) problems.push(`${artifact} is recorded but missing`);
     else if (sha256(bytes) !== launcher.sha256) problems.push(`${artifact} is ${short(sha256(bytes))}; SOURCE.json records ${short(launcher.sha256)}`);
@@ -288,8 +317,8 @@ function readFragment(root, kind) {
  * ZIPP published as plain modules (0.0.26 on) states no rustc, so for one the
  * toolchain is the one its release workflow pins, read from the ZIPP source
  * scripts/zipp-source.mjs fetched and proved to be the recorded commit (its
- * stamp says so). With no Softn release installed (CI's Windows job), the one
- * the guest was built with.
+ * stamp says so). With only the sandbox-guest artifact installed, use its
+ * recorded compiler version.
  */
 export function toolchain(root) {
   const { current, buildInfo, stamp } = runtimePaths(root);
@@ -328,7 +357,10 @@ export function writeFragment(root, kind, { rustcVerbose = null, env = process.e
     if (!launcher) throw new Error(`Unknown sandbox component ${kind}; expected guest, linux or windows.`);
     const file = resolve(paths.bin, launcher.artifact);
     if (!existsSync(file)) throw new Error(`formlogic/backend/bin/runtime/${launcher.artifact} is missing.`);
-    fragment = launcherFragment({ platform: kind, bytes: readFileSync(file), guestBytes, rustcVerbose: verbose, env });
+    const host = hostInputs(root);
+    fragment = launcherFragment({ platform: kind, bytes: readFileSync(file), guestBytes, host, rustcVerbose: verbose, env });
+    const problem = launcherHostProblem(fragment.launcher, host);
+    if (problem) throw new Error(problem);
   }
   mkdirSync(paths.fragments, { recursive: true });
   writeFileSync(fragmentFile(root, kind), JSON.stringify(fragment, null, 2) + '\n');
@@ -337,7 +369,7 @@ export function writeFragment(root, kind, { rustcVerbose = null, env = process.e
 
 /**
  * Removes `platform`'s launcher and its build record unless the record
- * describes that very file embedding the guest the guest record names.
+ * describes that file, its embedded guest and the current host build inputs.
  * scripts/build-runtime.sh all runs it for the Linux launcher it skips on
  * Windows without Docker: one left from an earlier build embeds another guest
  * (unless the guest came out byte-identical), and SOURCE.json records one
@@ -351,7 +383,10 @@ export function pruneLauncher(root, platform) {
   const record = readFragment(root, platform);
   const guest = readFragment(root, 'guest');
   const present = existsSync(file);
-  if (present && record && guest && record.launcher?.guestSha256 === guest.guest?.sha256 && sha256(readFileSync(file)) === record.launcher?.sha256) return [];
+  if (present && record?.launcher && guest?.guest
+      && record.launcher.guestSha256 === guest.guest.sha256
+      && !launcherHostProblem(record.launcher, hostInputs(root))
+      && sha256(readFileSync(file)) === record.launcher.sha256) return [];
   const removed = [];
   if (present) { rmSync(file); removed.push(`formlogic/backend/bin/runtime/${launcher.artifact}`); }
   if (record) { rmSync(fragmentFile(root, platform)); removed.push(`.runtime-source/sandbox/${platform}.json`); }
@@ -383,7 +418,7 @@ export function writeProvenance(root, { env = process.env, formlogic = null, now
     launchers.push(record);
   }
   // The site's ZIPP, which is the Softn release's unless zipp-release.json pins another (site-zipp.mjs).
-  const source = mergeProvenance({ current: withSiteZipp(readJson(paths.current), root), guest, launchers, formlogic: formlogic ?? formlogicCommit(root, env), hostLockText: readFileSync(paths.hostLock, 'utf8'), now });
+  const source = mergeProvenance({ current: withSiteZipp(readJson(paths.current), root), guest, launchers, formlogic: formlogic ?? formlogicCommit(root, env), host: hostInputs(root), now });
   mkdirSync(paths.bin, { recursive: true });
   writeFileSync(paths.source, JSON.stringify(source, null, 2) + '\n');
   return source;
@@ -405,6 +440,7 @@ export async function checkSandbox(root, { frozen = process.env.SOFTN_FROZEN || 
     frozen: await loadFrozen(frozen, root),
     guestBytes: existsSync(paths.guestWasm) ? readFileSync(paths.guestWasm) : null,
     binFiles,
+    host: deployed ? null : hostInputs(root),
     require,
     ci,
     deployed,
@@ -422,6 +458,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       case 'toolchain':
         console.log(toolchain(root));
         break;
+      case 'host-toolchain':
+        console.log(hostToolchain(root));
+        break;
       case 'fragment': {
         const record = writeFragment(root, args[1], { rustcVerbose: option('--rustc') });
         const entry = record.guest ?? record.launcher;
@@ -432,8 +471,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         const removed = pruneLauncher(root, args[1]);
         const artifact = LAUNCHERS[args[1]].artifact;
         console.log(removed.length
-          ? `   removed ${removed.join(' and ')}: not a launcher for the guest just built (build it again: scripts/build-runtime.sh ${args[1]} smoke provenance, or install CI's sandbox-${args[1]})`
-          : existsSync(resolve(runtimePaths(root).bin, artifact)) ? `   kept ${artifact}: it embeds the guest just built` : `   no ${artifact} to keep`);
+          ? `   removed ${removed.join(' and ')}: launcher or build inputs changed (build it again: scripts/build-runtime.sh ${args[1]} smoke provenance, or install CI's sandbox-${args[1]})`
+          : existsSync(resolve(runtimePaths(root).bin, artifact)) ? `   kept ${artifact}: its guest and host build inputs match` : `   no ${artifact} to keep`);
         break;
       }
       case 'provenance': {
@@ -447,7 +486,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         break;
       }
       default:
-        console.error('usage: node scripts/runtime-provenance.mjs toolchain | fragment guest|linux|windows [--rustc "<rustc -Vv>"] | prune linux|windows | provenance | check [--require linux,windows] [--ci] [--deployed]');
+        console.error('usage: node scripts/runtime-provenance.mjs toolchain | host-toolchain | fragment guest|linux|windows [--rustc "<rustc -Vv>"] | prune linux|windows | provenance | check [--require linux,windows] [--ci] [--deployed]');
         process.exit(2);
     }
   } catch (error) {

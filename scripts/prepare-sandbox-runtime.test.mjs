@@ -113,6 +113,18 @@ test('build mode checks out ZIPP at the release current.json names and verifies 
   for (const uses of action.matchAll(/uses: ([^\s]+)/g)) assert.match(uses[1], /@[0-9a-f]{40}$/, `${uses[1]} is pinned by SHA`);
 });
 
+test('the guest and each launcher use their own Rust compiler and cache', () => {
+  const script = text('scripts/build-runtime.sh');
+  assert.match(script, /build_guest\(\) \{[^}]*use_toolchain toolchain\n  ensure_target wasm32-wasip1/);
+  assert.match(script, /use_toolchain host-toolchain\n  ensure_target x86_64-pc-windows-msvc/);
+  assert.match(script, /build_linux\(\) \{[^}]*use_toolchain host-toolchain/);
+  assert.match(action, /rustup toolchain install "\$GUEST_TOOLCHAIN"[^\n]*--target wasm32-wasip1\n/);
+  assert.match(action, /rustup toolchain install "\$HOST_TOOLCHAIN"[^\n]*--target x86_64-unknown-linux-musl\n/);
+  assert.match(action, /cache-key=[^\n]*guest\$\{guest\}-host\$\{host\}-zipp\$\{REVISION\}-lock\$\{lock\}/);
+  const windows = job(workflows['package.yml'], 'sandbox-windows');
+  assert.match(windows, /toolchain="\$\(node scripts\/runtime-provenance\.mjs host-toolchain\)"/);
+});
+
 test('every job that runs the PHP suites gets the sandbox first, with the PHP preflight on', () => {
   const suites = [
     ['ci.yml', 'backend', { mode: 'build' }],

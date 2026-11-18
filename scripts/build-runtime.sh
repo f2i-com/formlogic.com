@@ -15,17 +15,18 @@
 # Docker it builds the Windows one, says the Linux one was skipped, and still
 # smoke-tests and records what it built (packaging needs both, so it refuses
 # until the Linux launcher is built or installed from CI). A Linux launcher
-# left from an earlier build stays only if it embeds the guest just built.
+# left from an earlier build stays only if its guest, host compiler and lock match.
 #
 # Several steps run in the order given: scripts/build-runtime.sh guest linux smoke provenance
 #
 # Needs an installed Softn release (node scripts/fetch-softn-release.mjs): its
 # current.json names the ZIPP release, and nothing in this tree does. The ZIPP
 # source is cloned at that release's tag, or taken read-only from a local
-# checkout with ZIPP_SOURCE_DIR=../zipp.org. The Rust toolchain is the one
+# checkout with ZIPP_SOURCE_DIR=../zipp.org. The guest's Rust toolchain is the one
 # ZIPP's release was built with: its BUILD-INFO rustc, in the same record, or,
 # for a release ZIPP published as plain modules (0.0.26 on), the toolchain its
-# release workflow pins in that source (scripts/runtime-provenance.mjs).
+# release workflow pins in that source. The launcher uses host/Cargo.toml's
+# exact rust-version so Wasmtime can move independently of the guest.
 #
 # The guest is the zipp JavaScript engine compiled for WASI (formlogic/runtime/guest).
 # The launcher (formlogic/runtime/host) embeds a wasmtime-precompiled copy of it,
@@ -44,13 +45,11 @@ mkdir -p "$OUT"
 
 on_windows() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return 1 ;; esac; }
 
-# The toolchain ZIPP's release was built with, for every cargo call below.
+# Set the component's compiler for cargo, rustup and the provenance record.
 use_toolchain() {
-  if [ -z "${SANDBOX_TOOLCHAIN:-}" ]; then
-    SANDBOX_TOOLCHAIN="$(node "$ROOT/scripts/runtime-provenance.mjs" toolchain)"
-    export RUSTUP_TOOLCHAIN="$SANDBOX_TOOLCHAIN"
-    echo "   rust toolchain $SANDBOX_TOOLCHAIN (ZIPP's release toolchain)"
-  fi
+  RUSTUP_TOOLCHAIN="$(node "$ROOT/scripts/runtime-provenance.mjs" "$1")"
+  export RUSTUP_TOOLCHAIN
+  echo "   $1: Rust $RUSTUP_TOOLCHAIN"
 }
 
 # A pinned toolchain is a separate rustup install from `stable`, targets included.
@@ -69,7 +68,7 @@ build_zipp_source() {
 
 build_guest() {
   echo "== guest (wasm32-wasip1)"
-  use_toolchain
+  use_toolchain toolchain
   ensure_target wasm32-wasip1
   node "$ROOT/scripts/zipp-source.mjs" --seed-lock
   (cd "$RUNTIME/guest" && cargo build --release --locked)
@@ -81,7 +80,7 @@ build_guest() {
 build_windows() {
   echo "== launcher (windows-x86_64)"
   on_windows || { echo "the Windows launcher is built on Windows (CI: package.yml's sandbox-windows job on windows-2022)" >&2; exit 2; }
-  use_toolchain
+  use_toolchain host-toolchain
   ensure_target x86_64-pc-windows-msvc
   (cd "$RUNTIME/host" && cargo build --release --locked)
   cp "$RUNTIME/host/target/release/formlogic-runtime.exe" "$OUT/formlogic-runtime-windows-x86_64.exe"
@@ -90,7 +89,7 @@ build_windows() {
 
 build_linux() {
   local rustc_vv
-  use_toolchain
+  use_toolchain host-toolchain
   if [ "$(uname -s)" = Linux ] && command -v musl-gcc >/dev/null 2>&1; then
     echo "== launcher (linux-x86_64, static musl)"
     ensure_target x86_64-unknown-linux-musl
@@ -172,7 +171,7 @@ for step in "$@"; do
       if on_windows && ! command -v docker >/dev/null 2>&1; then
         echo "== launcher (linux-x86_64) SKIPPED: building it on Windows needs Docker. The Windows launcher is enough to run and test here;"
         echo "   packaging needs both (install Docker and run scripts/build-runtime.sh linux smoke provenance, or install CI's sandbox-linux)."
-        # One left from an earlier build is recorded only if it embeds this guest.
+        # Retain a previous build only if its guest and host build inputs match.
         node "$ROOT/scripts/runtime-provenance.mjs" prune linux
       else
         build_linux
