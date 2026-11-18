@@ -31,9 +31,9 @@ node scripts/check-security-invariants.mjs
 npm audit
 ```
 
-The frontend lockfile pins the reviewed `@ryotsu/picomatch@4.0.7-a` parser
-fix for Vite, Vitest and their tooling. Track the upstream advisory while the
-alias is in use and switch back when upstream publishes a patched version.
+The web UI and native client lockfiles pin the reviewed
+`@ryotsu/picomatch@4.0.7-a` parser fix for their Vite toolchains. Update both
+manifests when upstream publishes a patched version.
 [Upstream advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) ·
 [Pinned patch](https://github.com/ryotsu-kankichi/secured-picomatch/commit/3ab5a7627d480259e3d9ca67fbc14c125d374f0e)
 
