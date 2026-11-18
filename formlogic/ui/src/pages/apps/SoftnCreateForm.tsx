@@ -4,7 +4,8 @@ import { ArrowRight, Database, FileCheck2, FileUp, KeyRound } from 'lucide-react
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { declaredAppId, readKeyFile } from '../../lib/appKeyFile';
-import { formlogicAsks, importNativeProject, phoneCodeProvider } from '../../lib/nativeHosting';
+import { formlogicAsks, importNativeProject, phoneCodeProvider, type NativeProject } from '../../lib/nativeHosting';
+import { siteOf } from '../../lib/siteApps';
 import { holdsSignInSettings } from '../../lib/signInCodes';
 import { backendOf, withBackend } from '../../lib/softnBackend';
 import { api } from '../../lib/api';
@@ -17,7 +18,7 @@ type FileSlot = 'app' | 'backend' | 'database' | 'key';
 /** What a chosen .softn file holds, read as soon as it is chosen: its app's name, and whether it brings a backend. */
 /** `asks`: what the app asks of FormLogic itself (its AI, its payments), said before it is created. */
 /** `codes`: its manifest names a provider for the sign-in codes it sends by text. */
-interface FileReview { name: string; backend: boolean; backendId?: string; asks: string[]; codes: boolean }
+interface FileReview { project: NativeProject; notes: string[]; name: string; backend: boolean; backendId?: string; asks: string[]; codes: boolean }
 
 const isFileDrag = (event: React.DragEvent) => [...(event.dataTransfer?.types ?? [])].includes('Files');
 const dropSlot = (target: EventTarget): FileSlot => {
@@ -48,10 +49,10 @@ export function SoftnCreateForm({ disabled = false }: { disabled?: boolean }) {
   const latestKey = useRef<File | null>(null);
   const [useCodes, setUseCodes] = useState(true);
   // The chosen file's backend names a provider for its sign-in codes (with the page's own, below).
-  const [attachedBackend, setAttachedBackend] = useState<{ id?: string; codes: boolean } | null>(null);
+  const [attachedBackend, setAttachedBackend] = useState<{ file: File; project: NativeProject; id?: string; codes: boolean } | null>(null);
   const [dataError, setDataError] = useState('');
   // A file with no backend of its own, and the app's full file to take one from (optional).
-  const [backendFile, setBackendFile] = useState<File | null>(null);
+  const backendFile = attachedBackend?.file;
   const [backendError, setBackendError] = useState('');
   const [readingBackend, setReadingBackend] = useState(false);
   const backendInput = useRef<HTMLInputElement>(null);
@@ -74,16 +75,15 @@ export function SoftnCreateForm({ disabled = false }: { disabled?: boolean }) {
   /** Read the backend file and put it with the page at once, so what would refuse it shows now, not at Create. */
   const takeBackend = async (picked: File | null, page: File | null) => {
     latestBackend.current = picked;
-    setBackendFile(null); setBackendError(''); setAttachedBackend(null); setReadingBackend(!!picked && !!page);
+    setBackendError(''); setAttachedBackend(null); setReadingBackend(!!picked && !!page && !!review);
     chooseDatabase(null);
-    if (!picked || !page) return;
+    if (!picked || !page || !review) return;
     try {
       const backend = backendOf(await importNativeProject(picked));
       if (!backend) throw new Error(`${picked.name} has no backend either: its manifest.json has no server block. Choose the app's full file, the one with its server/ folder.`);
-      const together = withBackend(await projectFromUpload(page), backend);
+      const together = withBackend(review.project, backend);
       if (latestBackend.current === picked && latest.current === page) {
-        setBackendFile(picked);
-        setAttachedBackend({ id: declaredAppId(together.files['manifest.json']), codes: !!phoneCodeProvider(together) });
+        setAttachedBackend({ file: picked, project: together, id: declaredAppId(together.files['manifest.json']), codes: !!phoneCodeProvider(together) });
       }
     } catch (reason) {
       if (latestBackend.current === picked) setBackendError(reason instanceof Error ? reason.message : 'That file could not be read as an app project.');
@@ -108,11 +108,12 @@ export function SoftnCreateForm({ disabled = false }: { disabled?: boolean }) {
     setFile(picked); setReview(null); setFileError(''); setError('');
     chooseDatabase(null);
     // A backend chosen for the last file is not this one's.
-    latestBackend.current = null; setBackendFile(null); setBackendError(''); setReadingBackend(false); setAttachedBackend(null);
+    latestBackend.current = null; setBackendError(''); setReadingBackend(false); setAttachedBackend(null);
     if (!picked) return;
     try {
-      const project = await projectFromUpload(picked);
-      if (latest.current === picked) setReview({ name: uploadName(project, picked), backend: projectHasBackend(project), backendId: declaredAppId(project.files['manifest.json']), asks: formlogicAsks(project), codes: !!phoneCodeProvider(project) });
+      const notes: string[] = [];
+      const project = await projectFromUpload(picked, '', notes);
+      if (latest.current === picked) setReview({ project, notes, name: uploadName(project, picked), backend: projectHasBackend(project), backendId: declaredAppId(project.files['manifest.json']), asks: formlogicAsks(project), codes: !!phoneCodeProvider(project) });
     } catch (reason) {
       if (latest.current === picked) setFileError(reason instanceof Error ? reason.message : 'That file could not be read as an app project.');
     }
@@ -136,10 +137,14 @@ export function SoftnCreateForm({ disabled = false }: { disabled?: boolean }) {
   };
 
   const create = async () => {
-    if (!file || !canCreate || lock.current) return;
+    if (!file || !review || !canCreate || lock.current) return;
     lock.current = true; setCreating(true); setError('');
     try {
-      const created = await createSoftnApp({ name, start: { kind: 'upload', file, ...(backendFile && !review?.backend ? { backendFile } : {}) } });
+      // A renamed bare build gets its chosen name in the generated manifest. An exported
+      // site's own manifest is preserved by the same importer. Reuse all other reviews.
+      const renamedSite = name.trim() && name.trim() !== review.name && siteOf(review.project);
+      const start = renamedSite ? { backendFile } : { reviewed: { project: attachedBackend?.project ?? review.project, notes: review.notes } };
+      const created = await createSoftnApp({ name, start: { kind: 'upload', file, ...start } });
       if (created.error) toast.info('Your app was created', created.error);
       // Its data, once its first version is in: installed as the next version, or not at all.
       if (created.project && withItsBackend && data) {
@@ -192,6 +197,7 @@ export function SoftnCreateForm({ disabled = false }: { disabled?: boolean }) {
       <Button className={file ? undefined : 'mt-2'} variant="secondary" size="sm" disabled={creating || disabled} onClick={() => input.current?.click()}>{file ? 'Choose another file' : 'Choose a file'}</Button>
     </div>
     {review && review.asks.length > 0 && <ul className="mt-3 list-disc space-y-1 border-t border-gray-200 pt-3 pl-5 text-left text-xs text-gray-600 dark:border-white/10 dark:text-slate-300" data-testid="softn-asks">{review.asks.map(ask => <li key={ask}>{ask}</li>)}</ul>}
+    {review?.notes.map(note => <p key={note} className="mt-3 break-words rounded-lg bg-amber-50 p-3 text-left text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">{note}</p>)}
     {fileError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-left text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{fileError}</p>}
     {dropHint('app')}
   </div>;

@@ -357,6 +357,24 @@ cannot become "latest". The `softn-release` dispatch input still pins a tag
 for the whole run; without a frozen record (plain development use) the
 scripts install the latest release and the check stays compatibility-only.
 
+### Checking scripts against the OAIY CLI
+
+The CI workflow also accepts `oaiy-cli-release`. The script parity job
+installs that CLI and runs the JavaScript and Python test cases against it.
+Choose a SoftN release and an OAIY CLI built with the same ZIPP release.
+For example, SoftN `v0.0.47` and OAIY `v0.1.16` both use ZIPP `v0.0.35`.
+Leaving either input blank selects that project's latest published release.
+When the projects adopt a new engine at different times, the job reports
+the two engine versions so you can choose a matching pair.
+
+For a local check, install the SoftN release, set `OAIY_CLI` to the absolute
+path of the packaged `oaiy.mjs`, and run
+`npx vitest run src/lib/formlogic/oaiyScriptParity.test.ts` from
+`formlogic/ui`. Keep the package's `oaiy-cli.json` beside the executable.
+Results are written to `test-results/parity/` at the repository root.
+GitHub Actions publishes them in the `oaiy-parity` artifact. The CLI is
+only needed for this check. FormLogic serves hosted apps with its SoftN runtime.
+
 ## One generation per install
 
 The trees are staged beside their destinations and verified there

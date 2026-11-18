@@ -114,7 +114,9 @@ describe('project ZIP uploads', () => {
     expect(button(/Create from this file/).disabled).toBe(false);
     mocks.createSoftnApp.mockRejectedValueOnce(new Error('Native project exceeds 16 MB'));
     await act(async () => button(/Create from this file/).click());
-    expect(mocks.createSoftnApp).toHaveBeenCalledWith({ name: '', start: { kind: 'upload', file } });
+    expect(mocks.createSoftnApp).toHaveBeenCalledWith({ name: '', start: {
+      kind: 'upload', file, reviewed: { project: expect.objectContaining({ files: expect.objectContaining({ 'ui/main.ui': '<Text>Hi</Text>' }) }), notes: [] },
+    } });
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('exceeds 16 MB');
     expect(path.current).toBe('/apps/new');
     await act(async () => button(/Create from this file/).click());
@@ -200,6 +202,17 @@ describe('project ZIP uploads', () => {
     expect(container.textContent).toContain('Dropped · runs in the browser, no backend');
   });
 
+  it('reviews skipped build files before creation and passes the same notes with the hosted page', async () => {
+    await render();
+    const file = new File([zipSync({ 'index.html': strToU8('<h1>News</h1>'), 'team photo.jpg': new Uint8Array([1]) })], 'News.zip');
+    await pick(file);
+    expect(container.textContent).toContain('1 file was left out of the app: team photo.jpg');
+    await act(async () => button(/Create from this file/).click());
+    const { project, notes } = mocks.createSoftnApp.mock.calls[0][0].start.reviewed;
+    expect(project.assets).toEqual({ 'site/index.html': btoa('<h1>News</h1>') });
+    expect(notes).toEqual([expect.stringContaining('team photo.jpg')]);
+  });
+
   it('drops files onto their own attachments, preserving the selected app and ignoring misplaced files', async () => {
     const { api } = await import('../../lib/api');
     const bringData = vi.spyOn(api, 'importNativeData').mockResolvedValue({ data: {} } as never);
@@ -213,6 +226,8 @@ describe('project ZIP uploads', () => {
       }, { 'server/main.logic': 'function list() {}' }, 'server.softn');
       const database = new File(['fixture'], 'records.sqlite');
       const key = new File([JSON.stringify({ appId: 'test.notes', keyHex: 'aa'.repeat(32), cryptoDomains: { hmac: 'h', seal: 's' } })], 'server-key.json');
+      const readPage = vi.spyOn(frontend, 'arrayBuffer');
+      const readBackend = vi.spyOn(backend, 'arrayBuffer');
       await drop(container.firstElementChild!, frontend);
       await drop(button(/Choose the file with its backend/), backend);
       const summary = container.querySelector('[role="status"]')!;
@@ -231,7 +246,13 @@ describe('project ZIP uploads', () => {
         expect(button(/Create from this file/).disabled).toBe(false);
       }
       await act(async () => button(/Create from this file/).click());
-      expect(mocks.createSoftnApp).toHaveBeenCalledWith({ name: '', start: { kind: 'upload', file: frontend, backendFile: backend } });
+      expect(mocks.createSoftnApp).toHaveBeenCalledWith({ name: '', start: {
+        kind: 'upload', file: frontend, reviewed: {
+          project: expect.objectContaining({ files: expect.objectContaining({ 'ui/main.ui': '<Text>Hi</Text>', 'server/main.logic': 'function list() {}' }) }), notes: [],
+        },
+      } });
+      expect(readPage).toHaveBeenCalledTimes(1);
+      expect(readBackend).toHaveBeenCalledTimes(1);
       expect(bringData).toHaveBeenCalledWith('app-1', database, key, false);
     } finally { bringData.mockRestore(); }
   });

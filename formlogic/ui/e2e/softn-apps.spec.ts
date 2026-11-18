@@ -483,8 +483,8 @@ test.describe('hosted web apps', () => {
     const path = join(tmpdir(), `softn-upload-${Date.now()}.softn`);
     writeFileSync(path, Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([p, source]) => [p, strToU8(source)])))));
     await page.goto('/apps/new?type=softn');
+    await page.getByRole('link', { name: /Upload ZIP/ }).click();
     await page.locator('#softn-app-name').fill(`Uploaded ${Date.now()}`);
-    await page.getByText('Upload an app ZIP', { exact: true }).click();
     await page.getByLabel('Choose an app ZIP').setInputFiles(path);
     await page.getByRole('button', { name: 'Create from this file', exact: true }).click();
     const appId = await workspaceAppId(page);
@@ -851,7 +851,7 @@ function addWeather(req) {
     const path = join(tmpdir(), `softn-client-${Date.now()}.softn`);
     writeFileSync(path, Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([p, source]) => [p, strToU8(source)])))));
     await page.goto('/apps/new?type=softn');
-    await page.getByText('Upload an app ZIP', { exact: true }).click();
+    await page.getByRole('link', { name: /Upload ZIP/ }).click();
     await page.getByLabel('Choose an app ZIP').setInputFiles(path);
     // Read at once: what it is, and that no name has to be typed.
     await expect(page.getByTestId('softn-drop-zone')).toContainText(`${name} · runs in the browser, no backend`);

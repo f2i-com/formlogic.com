@@ -82,6 +82,17 @@ describe('the common app ZIP importer', () => {
     for (const file of [marketplace, signed]) await expect(projectFromUpload(file)).rejects.toThrow('review and install');
   });
 
+  it('hosts the outer site when its pages include downloadable project examples', async () => {
+    const example = { 'manifest.json': '{"main":"index.html"}', 'index.html': '<h1>Example</h1>' };
+    const guide = { 'index.html': '<h1>Documentation</h1>', examples: { timer: example } };
+    for (const archive of [zip(guide), zip({ dist: guide })]) {
+      expect(await appArchiveKind(archive)).toBe('site');
+      const project = await projectFromUpload(archive);
+      expect(project.assets['site/index.html']).toBe(b64(guide['index.html']));
+      expect(project.assets['site/examples/timer/manifest.json']).toBe(b64(example['manifest.json']));
+    }
+  });
+
   it('refuses raw npm source and a private backend without a project manifest before creating anything', async () => {
     mocks.demo = false;
     mocks.createApp.mockClear();
