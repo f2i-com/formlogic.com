@@ -166,12 +166,13 @@ function studioAgent(context: BrowserContext, appId: () => string, from: () => s
  * In AI Studio, opened with a request: wait for the agent to build and finish, pasting the
  * request into Studio's chat first when this Studio is from before agentRuns.
  */
-async function watchStudioBuild(page: Page, request: string, heading: string, aiLabel?: string) {
+async function watchStudioBuild(page: Page, request: string, heading: string, changeSummary: string, aiLabel?: string) {
   const studio = page.getByRole('dialog', { name: 'AI Studio', exact: true });
   await expect(studio).toBeVisible({ timeout: 30000 });
   const frame = page.frameLocator('iframe[title="App AI editor"]');
   const pasteNotice = studio.getByText('paste yours into its AI chat', { exact: false });
-  const finished = studio.getByRole('status').filter({ hasText: `Done: Built ${heading}.` });
+  // On the host, Studio reports the edit it applied, including the file that changed.
+  const finished = studio.getByRole('status').filter({ hasText: `Done: ${changeSummary}` });
   // "building your app" for a new one, "making your change" for a change to one that exists.
   await expect(pasteNotice.or(finished).or(studio.getByRole('status').filter({ hasText: /AI Studio is (building your app|making your change)/ }))).toBeVisible({ timeout: 90000 });
   if (await pasteNotice.isVisible()) {
@@ -468,7 +469,8 @@ test.describe('hosted web apps', () => {
     await prompt.fill(request);
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
 
-    await watchStudioBuild(page, request, '<h1>Family Recipes</h1>', 'FormLogic Site AI');
+    await watchStudioBuild(page, request, '<h1>Family Recipes</h1>',
+      `Replaced “${name}” with “Family Recipes” in index.html.`, 'FormLogic Site AI');
     const built = (await nativeProject(context, appId))!;
     expect(built.version).toBe(2);
     expect(built.files['index.html']).toContain('<h1>Family Recipes</h1>');
@@ -1013,7 +1015,8 @@ function addWeather(req) {
     await page.getByRole('textbox', { name: 'Chat message' }).fill(request);
     await page.getByRole('button', { name: 'Send message' }).click();
     await expect(page).toHaveURL(new RegExp(`/apps/${appRecord.id}/web$`), { timeout: 30000 });
-    await watchStudioBuild(page, request, '<Text>Weeknight Dinners</Text>');
+    await watchStudioBuild(page, request, '<Text>Weeknight Dinners</Text>',
+      `Replaced “${name}” with “Weeknight Dinners” in ui/main.ui.`);
     expect((await nativeProject(context, appRecord.id))!.files['ui/main.ui']).toContain('<Text>Weeknight Dinners</Text>');
   });
 
@@ -1047,7 +1050,8 @@ function addWeather(req) {
     await page.getByRole('button', { name: 'Open chat' }).click();
     await page.getByRole('textbox', { name: 'Chat message' }).fill(request);
     await page.getByRole('button', { name: 'Send message' }).click();
-    await watchStudioBuild(page, request, '<Text>Sunday Roasts</Text>');
+    await watchStudioBuild(page, request, '<Text>Sunday Roasts</Text>',
+      `Replaced “${name}” with “Sunday Roasts” in ui/main.ui.`);
     expect((await nativeProject(context, appRecord.id))!.files['ui/main.ui']).toContain('<Text>Sunday Roasts</Text>');
     // Studio was asked to change the app as it is, not to build one.
     expect(agent.requests.length).toBeGreaterThan(0);
