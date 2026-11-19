@@ -458,8 +458,7 @@ describe('live-call section screen (TSX)', () => {
 
     // (a) Nothing to show at all — no call anywhere.
     const bare = await runScreen(AOKIE_LIVE_CALL_SCREEN, baseFL({ ...remote, records: () => Promise.resolve([]) }));
-    await flush();
-    expect(bare.root.textContent).toContain('No call to show a transcript for yet.');
+    await expect.poll(() => bare.root.textContent).toContain('No call to show a transcript for yet.');
     expect(bare.root.querySelectorAll('.ttext').length).toBe(0);
 
     const recentCall = [
@@ -472,8 +471,7 @@ describe('live-call section screen (TSX)', () => {
       records: () => Promise.resolve(recentCall),
       queryRecords: () => Promise.resolve([]),
     }));
-    await flush();
-    expect(empty.root.textContent).toContain('No stored turns are visible to this console');
+    await expect.poll(() => empty.root.textContent).toContain('No stored turns are visible to this console');
     expect(empty.root.textContent).toContain('def456');
 
     // (c) Turns ARE readable and none belong to this call — a different fault
@@ -488,8 +486,7 @@ describe('live-call section screen (TSX)', () => {
         ]
         : []),
     }));
-    await flush();
-    expect(mismatched.root.textContent).toContain('Read 2 stored turns');
+    await expect.poll(() => mismatched.root.textContent).toContain('Read 2 stored turns');
     expect(mismatched.root.textContent).toContain('none belong to the latest call');
     expect(mismatched.root.textContent).toContain('def456');
 
@@ -502,8 +499,7 @@ describe('live-call section screen (TSX)', () => {
         ? Promise.reject(new Error('permission denied'))
         : Promise.resolve([])),
     }));
-    await flush();
-    expect(broken.root.textContent).toContain('could not be read');
+    await expect.poll(() => broken.root.textContent).toContain('could not be read');
     expect(broken.root.textContent).toContain('permission denied');
   });
 });
