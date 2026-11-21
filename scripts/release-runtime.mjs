@@ -156,9 +156,9 @@ export function nativeImportProblems(files, present) {
   for (const [name, text] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
     if (!name.endsWith('.mjs')) continue;
     for (const specifier of relativeImports(text)) {
-      const target = posix.normalize(posix.join(posix.dirname(name), specifier));
+      const target = posix.normalize(posix.join(posix.dirname(name), specifier)).replace(/\/$/, '');
       if (target === '..' || target.startsWith('../')) problems.push(`${name} imports ${specifier}, outside the native runtime`);
-      else if (!present.has(target)) problems.push(`${name} imports ${specifier}, which the native runtime does not ship`);
+      else if (!present.has(target) && (posix.basename(target).includes('.') || ![...present].some((entry) => entry.startsWith(`${target}/`)))) problems.push(`${name} imports ${specifier}, which the native runtime does not ship`);
     }
   }
   return problems;
@@ -197,6 +197,14 @@ export async function checkNativeRuntime(directory, expected) {
     const hash = createHash('sha256').update(await readFile(resolve(directory, notices.file)).catch(() => Buffer.from(''))).digest('hex');
     if (hash !== notices.sha256) throw new Error(`Native runtime runner licences are missing or changed: ${notices.file}`);
   }
+  const containerEngines = provenance.containerEngines ?? {};
+  for (const [name, digest] of Object.entries(containerEngines)) {
+    if (!/^zipp-[a-z0-9_-]+\.(?:wasm|glue\.js)$/.test(name)) throw new Error(`The native app runtime's provenance records a container engine it may not name: ${name}`);
+    const hash = createHash('sha256').update(await readFile(resolve(directory, 'wasm/container', name)).catch(() => Buffer.from(''))).digest('hex');
+    if (hash !== digest) throw new Error(`Native runtime container engine is missing or changed: wasm/container/${name}`);
+  }
+  const unrecordedContainer = [...present].filter(name => name.startsWith('wasm/container/') && !Object.hasOwn(containerEngines, name.slice('wasm/container/'.length)));
+  if (unrecordedContainer.length) throw new Error(`The native app runtime carries files under wasm/container/ its provenance does not record: ${unrecordedContainer.join(', ')}`);
   const texts = new Map();
   for (const name of present) if (name.endsWith('.mjs')) texts.set(name, await readFile(resolve(directory, name), 'utf8'));
   const problems = nativeImportProblems(texts, present);

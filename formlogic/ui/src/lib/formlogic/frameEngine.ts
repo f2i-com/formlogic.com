@@ -54,7 +54,8 @@ export const HOST_JS_DOCUMENT = '/hosted-runtime/host.html';
 export function usesWebContainer(client: Record<string, string>): boolean {
   try {
     const manifest = JSON.parse(client['manifest.json']);
-    return (manifest?.engine === 2 || manifest?.container === true) &&
+    const hasContainerFlag = manifest?.engine === 2 || manifest?.container === true || (manifest?.backend && typeof manifest.backend === 'object' && !Array.isArray(manifest.backend));
+    return Boolean(hasContainerFlag) &&
       (typeof manifest.main !== 'string' || !manifest.main || /\.html?$/i.test(manifest.main));
   } catch { return false; }
 }

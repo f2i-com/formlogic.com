@@ -2571,6 +2571,12 @@ class ApiClient {
     const headers: Record<string, string> = visitor ? { ...engine, 'X-FormLogic-Visitor': '1' } : engine;
     return this.request(`/app/${encodeURIComponent(slug)}/native/request`, { method: 'POST', body: JSON.stringify(input), signal, ...(Object.keys(headers).length ? { headers } : {}) });
   }
+  /** One HTTP request routed from a SoftN v2 Web Container to its FormLogic-hosted sandboxed backend. */
+  async runNativeContainerRequest(slug: string, input: Record<string, unknown>, signal?: AbortSignal, clientEngine?: string, visitor = false): Promise<ApiResponse<{ result: { status: number; headers: [string, string][]; bodyBase64: string } }>> {
+    const engine = clientEngineHeader(clientEngine).headers ?? {};
+    const headers: Record<string, string> = visitor ? { ...engine, 'X-FormLogic-Visitor': '1' } : engine;
+    return this.request(`/app/${encodeURIComponent(slug)}/native/request`, { method: 'POST', body: JSON.stringify(input), signal, ...(Object.keys(headers).length ? { headers } : {}) });
+  }
   /**
    * What a person said to a native app whose owner lets people speak to it (the app's
    * `formlogicDictate` bridge), as words: the recording, a 16 kHz mono 16-bit WAV in base64 with

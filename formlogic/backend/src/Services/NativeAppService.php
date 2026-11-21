@@ -137,9 +137,11 @@ class NativeAppService
      * frame or its runner is handed; none is ever served as a file of this site. The app page's
      * import reads the same list first (ui/src/lib/nativeHosting.ts).
      */
-    public const SOURCE_PATH = '~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|jsx|vue|mjs|ts|logic|py|css|json|sql|xdb)$~D';
+    public const SOURCE_PATH = '~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|jsx|vue|mjs|cjs|ts|tsx|logic|py|php|phtml|rs|toml|css|json|sql|xdb)$~D';
+    /** Sandboxed v2 container backend runtimes executed strictly inside ZIPP WASM safe-sandbox. */
+    public const CONTAINER_BACKEND_RUNTIMES = ['php', 'javascript', 'typescript', 'rust', 'python'];
     /** Said where a file of another kind is refused. */
-    public const SOURCE_KINDS = 'An app\'s source files are .html or .ui pages, .js, .jsx, .vue, .mjs, .ts or .logic source (.py for Python), .css, .json, .xdb seed data, and a backend\'s server/….logic and server/migrations/….sql; pictures, sound and other media go under assets/.';
+    public const SOURCE_KINDS = 'An app\'s source files are .html or .ui pages, .js, .jsx, .vue, .mjs, .cjs, .ts, .tsx or .logic source (.py for Python), .css, .json, .xdb seed data, and backend files (server/….logic, server/migrations/….sql, or sandboxed backend/ .php, .js, .ts, .rs, .py, .sql); pictures, sound and other media go under assets/.';
     public const MAX_SOURCE_FILE_BYTES = 1500000;
     public const MAX_MIGRATION_BYTES = 1000000;
     public const MAX_MEDIA_FILES = 1000;
@@ -501,6 +503,7 @@ class NativeAppService
             $config = $hostConfig ?? ['appId' => $identity, 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'cryptoDomains' => ['hmac' => $identity . ':hmac:v1', 'seal' => $identity . ':seal:v1']];
             $config['capabilities'] = $capabilities;
             $config['enableHostContext'] = true;
+            $config['containerPrimaryDatabase'] = 'application.sqlite';
             $this->writeHostConfig($root . '/private/config.json', json_encode($config, JSON_THROW_ON_ERROR));
             $database = 'none';
             if ($databaseSnapshot !== null) {
@@ -511,8 +514,9 @@ class NativeAppService
             $this->stageProject($staging, array_merge(self::runnerFiles($files, $manifest, $identity), $decoded));
             if (!rename($staging, $root . '/app')) throw new RuntimeException('Could not activate restored app source');
             // A client-only app has no backend to start, so there is nothing for the runner to check.
-            if (array_key_exists('server', $manifest)) {
-                $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
+            $isContainerBackend = is_array($manifest['backend'] ?? null) && !array_is_list($manifest['backend']);
+            if (array_key_exists('server', $manifest) || $isContainerBackend) {
+                $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false], [], [], false, $isContainerBackend);
                 if (($health['status'] ?? 500) !== 200) throw new RuntimeException('Restored native app failed validation: ' . ($health['body']['diagnostic'] ?? 'runtime unavailable'), 422);
             }
             $version = max(1, (int) ($project['version'] ?? 1));
@@ -1349,15 +1353,26 @@ class NativeAppService
     public static function clientFiles(array $project): array
     {
         $files = is_array($project['files'] ?? null) ? $project['files'] : [];
-        $publicPath = static fn($path) => !is_string($path) || !preg_match('~^(?:__softn_generated__/)?(?:server|backend|private)/|\.sql$~i', $path);
+        $publicPath = static fn($path) => !is_string($path) || !preg_match('~^(?:__softn_generated__/)?(?:server|backend|private)/|\.(?:sql|php|phtml|rs)$|(?:^|/)Cargo\.toml$~i', $path);
         $client = array_filter($files, $publicPath, ARRAY_FILTER_USE_KEY);
         $manifest = is_string($client['manifest.json'] ?? null) ? json_decode($client['manifest.json']) : null;
         if (is_object($manifest)) {
-            $changed = property_exists($manifest, 'server') || ($manifest->engine ?? null) === 2;
+            $changed = property_exists($manifest, 'server') || property_exists($manifest, 'backend') || property_exists($manifest, 'databases') || ($manifest->engine ?? null) === 2;
             // The runtime and public directory remove engine preferences (the host owns
             // that choice). Preserve SoftN's format declaration under its canonical alias.
             if (($manifest->engine ?? null) === 2) $manifest->container = true;
-            unset($manifest->server);
+            unset($manifest->server, $manifest->databases);
+            if (is_object($manifest->backend ?? null)) {
+                // Keep only minimal routing metadata for @softn/container so fetch('/api/...')
+                // dispatches over FormLogic's authenticated MessagePort without leaking backend entry paths.
+                $publicBackend = new \stdClass();
+                if (is_string($manifest->backend->runtime ?? null)) $publicBackend->runtime = $manifest->backend->runtime;
+                elseif (is_string($manifest->backend->engine ?? null)) $publicBackend->runtime = $manifest->backend->engine;
+                if (is_string($manifest->backend->mode ?? null)) $publicBackend->mode = $manifest->backend->mode;
+                if (is_array($manifest->backend->routes ?? null)) $publicBackend->routes = array_values(array_filter($manifest->backend->routes, 'is_string'));
+                if (is_array($manifest->backend->interceptOrigins ?? null)) $publicBackend->interceptOrigins = array_values(array_filter($manifest->backend->interceptOrigins, 'is_string'));
+                $manifest->backend = $publicBackend;
+            }
             if (is_object($manifest->files ?? null)) {
                 if (property_exists($manifest->files, 'server')) { unset($manifest->files->server); $changed = true; }
                 foreach ($manifest->files as $group => $paths) {
@@ -2085,14 +2100,26 @@ class NativeAppService
     }
 
     /**
-     * Whether a project has a backend: a `server` block in its manifest. A SoftN app without one is
-     * all client (its pages, logic, local data and media) and runs in the member's frame alone:
-     * nothing starts a runner for it, and it has no database.
+     * Whether a project declares a sandboxed SoftN v2 Container backend (`manifest.backend`)
+     * executed on the server inside ZIPP WASM safe-sandbox against `private/data/application.sqlite`.
+     */
+    public static function hasContainerBackend(array $project): bool
+    {
+        $manifest = json_decode((string) ($project['files']['manifest.json'] ?? ''), true);
+        if (!is_array($manifest) || !is_array($manifest['backend'] ?? null) || array_is_list($manifest['backend'])) return false;
+        $runtime = strtolower(trim((string) ($manifest['backend']['runtime'] ?? $manifest['backend']['engine'] ?? '')));
+        return in_array($runtime, self::CONTAINER_BACKEND_RUNTIMES, true);
+    }
+
+    /**
+     * Whether a project has a backend: a `server` block (v1 `.logic`) or a `backend` block
+     * (v2 sandboxed container backend). A SoftN app without either is all client and runs in
+     * the member's frame alone.
      */
     public static function hasBackend(array $project): bool
     {
         $manifest = json_decode((string) ($project['files']['manifest.json'] ?? ''), true);
-        return is_array($manifest) && array_key_exists('server', $manifest);
+        return is_array($manifest) && (array_key_exists('server', $manifest) || self::hasContainerBackend($project));
     }
 
     /** Early uploads could include an earlier host's key file among the author's source. */
@@ -2160,12 +2187,6 @@ class NativeAppService
             if (!is_string($path) || !preg_match(self::SOURCE_PATH, $path) || str_contains($path, '..') || !is_string($source)) throw new InvalidArgumentException(is_string($path) && preg_match('~^[\w./-]{1,200}$~', $path) ? "Invalid app source file: {$path}. " . (str_contains($path, '..') ? 'A name may not have two dots together.' : (preg_match(self::SOURCE_PATH, $path) ? 'Its content must be text.' : self::SOURCE_KINDS . ' A name is letters, digits, \'-\', \'_\' and \'.\', in folders.')) : 'Invalid app source file. ' . self::SOURCE_KINDS);
             // Said as the app page's import says it (nativeHosting.ts), which reads the same limit first.
             if (strlen($source) > self::MAX_SOURCE_FILE_BYTES) throw new InvalidArgumentException(preg_match('~^[\w./-]{1,200}$~', $path) ? "{$path} is larger than this host keeps (1.5 MB per source file)." : 'A source file is larger than this host keeps (1.5 MB per source file).');
-            // `.py` is CLIENT logic written in Python, which runs in the member's frame on the ZIPP
-            // web-python engine. The private tree is the native backend: it is executed by the Node
-            // runner as JavaScript, which would read a Python file as a syntax error at best, and
-            // nothing derives a language from it — so a `.py` there is refused rather than installed
-            // as a file no runtime can run. Lower case only, like every other extension here.
-            if (str_ends_with($path, '.py') && preg_match('~^(?:server|backend|private)/~i', $path)) throw new InvalidArgumentException('Python is a client logic language; the app backend stays JavaScript');
             // The runner takes a migration of at most this size, and would refuse a larger one as
             // the app is installed, with nothing to say which file it was.
             if (str_starts_with($path, 'server/migrations/') && str_ends_with($path, '.sql') && strlen($source) > self::MAX_MIGRATION_BYTES) throw new InvalidArgumentException("{$path} is larger than a migration may be (1 MB). Split it into two migrations.");
@@ -2261,7 +2282,61 @@ class NativeAppService
         if (($manifest['engine'] ?? null) === 2 || ($manifest['container'] ?? null) === true) {
             self::checkComponentModules($files);
         }
-        if (!array_key_exists('server', $manifest)) {
+        $hasServer = array_key_exists('server', $manifest);
+        $hasContainerBackend = array_key_exists('backend', $manifest);
+        if ($hasServer && $hasContainerBackend) {
+            throw new InvalidArgumentException('Declare either a server block or a backend block in manifest.json, not both.');
+        }
+        $containerRuntime = $hasContainerBackend && is_array($manifest['backend']) && !array_is_list($manifest['backend'])
+            ? strtolower(trim((string) ($manifest['backend']['runtime'] ?? $manifest['backend']['engine'] ?? '')))
+            : '';
+        // `.py` under server/backend/private is only permitted for a Python sandboxed container backend.
+        foreach (array_keys($files) as $path) {
+            if (is_string($path) && str_ends_with($path, '.py') && preg_match('~^(?:server|backend|private)/~i', $path)) {
+                if (!($hasContainerBackend && $containerRuntime === 'python' && preg_match('~^backend/~i', $path))) {
+                    throw new InvalidArgumentException('Python is a client logic language; the app backend stays JavaScript');
+                }
+            }
+        }
+        if ($hasContainerBackend) {
+            $backend = $manifest['backend'];
+            if (!is_array($backend) || array_is_list($backend)) {
+                throw new InvalidArgumentException('manifest.json\'s backend must be a JSON object.');
+            }
+            if (!in_array($containerRuntime, self::CONTAINER_BACKEND_RUNTIMES, true)) {
+                throw new InvalidArgumentException('manifest.json\'s backend.runtime must be one of: ' . implode(', ', self::CONTAINER_BACKEND_RUNTIMES) . '.');
+            }
+            $entry = (string) ($backend['entry'] ?? $backend['entrypoint'] ?? '');
+            if ($entry === '' || str_contains($entry, '..') || !isset($files[$entry])) {
+                throw new InvalidArgumentException('manifest.json\'s backend.entry must name an existing file in the project.');
+            }
+            if (array_key_exists('routes', $backend)) {
+                if (!is_array($backend['routes']) || !array_is_list($backend['routes']) || count($backend['routes']) > 64) {
+                    throw new InvalidArgumentException('manifest.json\'s backend.routes must be a list of up to 64 route prefixes.');
+                }
+                foreach ($backend['routes'] as $route) {
+                    if (!is_string($route) || !str_starts_with($route, '/') || strlen($route) > 256) {
+                        throw new InvalidArgumentException('Each entry in manifest.json\'s backend.routes must be a path starting with "/".');
+                    }
+                }
+            }
+            if (array_key_exists('databases', $manifest)) {
+                if (!is_array($manifest['databases']) || !array_is_list($manifest['databases']) || count($manifest['databases']) > 8) {
+                    throw new InvalidArgumentException('manifest.json\'s databases must be a list of database definitions.');
+                }
+                foreach ($manifest['databases'] as $dbDef) {
+                    if (!is_array($dbDef) || array_is_list($dbDef)) {
+                        throw new InvalidArgumentException('Each entry in manifest.json\'s databases must be an object.');
+                    }
+                    $seedSql = $dbDef['seedSql'] ?? null;
+                    if ($seedSql !== null && (!is_string($seedSql) || $seedSql === '' || str_contains($seedSql, '..') || !isset($files[$seedSql]))) {
+                        throw new InvalidArgumentException('A database seedSql must name an existing .sql file in the project.');
+                    }
+                }
+            }
+            return [$files, $decoded, $manifest, ['sql']];
+        }
+        if (!$hasServer) {
             // Client only. A private tree with no server block to run it would be source no runtime
             // ever starts, kept as if it were a backend: refused, so the owner adds the block.
             foreach (array_keys($files) as $path) {
@@ -2725,6 +2800,7 @@ class NativeAppService
             // then the configuration takes the new one, which the runner requires to match.
             $config['capabilities'] = $capabilities;
             $config['enableHostContext'] = true;
+            $config['containerPrimaryDatabase'] = 'application.sqlite';
             if ($identityFree && ($config['appId'] ?? null) !== $identity) {
                 $config['appId'] = $identity;
                 $config['cryptoDomains'] = ['hmac' => $identity . ':hmac:v1', 'seal' => $identity . ':seal:v1'];
@@ -2751,8 +2827,9 @@ class NativeAppService
             // This runs the native host's manifest and migration validation, using its real SQLite
             // database. A client-only app has no backend to start, so nothing runs for it.
 
-            if (array_key_exists('server', $manifest)) {
-                $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false]);
+            $isContainerBackend = is_array($manifest['backend'] ?? null) && !array_is_list($manifest['backend']);
+            if (array_key_exists('server', $manifest) || $isContainerBackend) {
+                $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false], [], [], false, $isContainerBackend);
                 if (($health['status'] ?? 500) !== 200) throw new RuntimeException(self::startupFailure((string) ($health['body']['diagnostic'] ?? '')), 422);
             }
             $this->advance($root, $journal, 'migrated');
@@ -3150,11 +3227,32 @@ class NativeAppService
         }
     }
 
-    private function invoke(string $root, array $request, array $identity = [], array $subscriptions = [], bool $bodyAsWritten = false): array
+    /**
+     * Dispatch one sandboxed SoftN v2 Container HTTP request through Node `runner.mjs` ->
+     * `container-backend.mjs` (ZIPP WASM safe-sandbox + `private/data/application.sqlite` +
+     * verified `SOFTN_HOST_CONTEXT`).
+     *
+     * @return array{status: int, headers: list<array{0: string, 1: string}>, bodyBase64: string}
+     */
+    public function containerRequest(string $appId, array $request, array $identity = [], ?int $generation = null): array
+    {
+        [$root, $lock] = $this->openShared($appId, null, false);
+        if ($lock === null) throw new RuntimeException('Native app not found', 404);
+        try {
+            $project = $this->runtimeCache($root)['project'];
+            if ($generation !== null && (int) ($project['version'] ?? 0) !== $generation) throw new RuntimeException('The app was updated while this request was in flight. Reload and try again.', 409);
+            if (!self::hasContainerBackend($project)) throw new RuntimeException('This app has no container backend', 404);
+            return $this->invokeContainer($root, $request, $identity);
+        } finally {
+            flock($lock, LOCK_UN); fclose($lock);
+        }
+    }
+
+    private function invoke(string $root, array $request, array $identity = [], array $subscriptions = [], bool $bodyAsWritten = false, bool $nodeOnly = false): array
     {
         $protocol = json_decode((string) file_get_contents($this->runtime() . '/host-protocol.json'), true);
         if ($subscriptions && (!is_file($this->runtime() . '/record-events.mjs') || ($protocol['recordEvents'] ?? null) !== self::RECORD_EVENTS_PROTOCOL)) throw new RuntimeException('Update the native runtime to enable record automations', 503);
-        $runner = $this->runnerBinary();
+        $runner = $nodeOnly ? null : $this->runnerBinary();
         if ($runner === null) $this->assertNodeMeetsMinimum(is_array($protocol) ? $protocol : null);
         $base = $root . '/private/request-' . bin2hex(random_bytes(12));
         $input = json_encode($request, JSON_THROW_ON_ERROR);
@@ -3212,6 +3310,66 @@ class NativeAppService
             // A visitor gets a general error, so this is all anyone will have to go on.
             if (!$answered && is_file($base . '.err') && filesize($base . '.err') > 0) {
                 error_log('Native runner failed in ' . basename($root) . ': ' . file_get_contents($base . '.err', false, null, 0, 4096));
+            }
+            foreach (['.in', '.out', '.err'] as $suffix) if (is_file($base . $suffix)) unlink($base . $suffix);
+        }
+    }
+
+    /**
+     * Execute one v2 container backend HTTP request via Node `runner.mjs` -> `container-backend.mjs`.
+     *
+     * @return array{status: int, headers: list<array{0: string, 1: string}>, bodyBase64: string}
+     */
+    private function invokeContainer(string $root, array $request, array $identity = []): array
+    {
+        $protocol = json_decode((string) file_get_contents($this->runtime() . '/host-protocol.json'), true);
+        if (!is_file($this->runtime() . '/container-backend.mjs')) {
+            throw new RuntimeException('Update the native runtime to enable container backends', 503);
+        }
+        $this->assertNodeMeetsMinimum(is_array($protocol) ? $protocol : null);
+        $base = $root . '/private/request-' . bin2hex(random_bytes(12));
+        $input = json_encode($request, JSON_THROW_ON_ERROR);
+        if (strlen($input) > 7800000) throw new InvalidArgumentException('Request exceeds the native host limit');
+        $process = null;
+        $slots = $this->heldRoot === $root ? [] : $this->takeSlots($root);
+        $this->lastRolledBack = false;
+        $answered = false;
+        try {
+            file_put_contents($base . '.in', $input);
+            unset($input);
+            $node = $this->nodeBinary();
+            $memory = Environment::nonEmpty('SOFTN_RUNNER_MEMORY_MB');
+            $env = self::nodeEnvironment(getenv(), [
+                'SOFTN_BACKEND_ROOT' => $root,
+                'SOFTN_HOST_CONTEXT' => json_encode($identity, JSON_THROW_ON_ERROR),
+                'SOFTN_RECORD_EVENTS' => '[]',
+            ] + ($memory !== null ? ['SOFTN_RUNNER_MEMORY_MB' => $memory] : []));
+            $command = self::runnerCommand($node, $this->runtime());
+            $process = proc_open($command, [0 => ['file', $base . '.in', 'r'], 1 => ['file', $base . '.out', 'w'], 2 => ['file', $base . '.err', 'w']], $pipes, $root, $env, ['bypass_shell' => true]);
+            if (!is_resource($process)) throw new RuntimeException('Native runtime could not start', 503);
+            $deadline = microtime(true) + 25;
+            do {
+                $status = proc_get_status($process);
+                if (!$status['running']) break;
+                if (microtime(true) >= $deadline) { proc_terminate($process); throw new RuntimeException('Native request timed out'); }
+                usleep(20000);
+            } while (true);
+            $output = is_file($base . '.out') ? file_get_contents($base . '.out', false, null, 0, 8000000) : '';
+            $result = json_decode((string) $output, true);
+            if (!is_array($result) || !is_int($result['status'] ?? null) || !is_array($result['headers'] ?? null) || !is_string($result['bodyBase64'] ?? null)) {
+                throw new RuntimeException('Native container runtime returned no response');
+            }
+            $answered = true;
+            return [
+                'status' => $result['status'],
+                'headers' => $result['headers'],
+                'bodyBase64' => $result['bodyBase64'],
+            ];
+        } finally {
+            if (is_resource($process)) proc_close($process);
+            $this->releaseSlots($slots);
+            if (!$answered && is_file($base . '.err') && filesize($base . '.err') > 0) {
+                error_log('Native container runner failed in ' . basename($root) . ': ' . file_get_contents($base . '.err', false, null, 0, 4096));
             }
             foreach (['.in', '.out', '.err'] as $suffix) if (is_file($base . $suffix)) unlink($base . $suffix);
         }

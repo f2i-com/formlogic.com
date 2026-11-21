@@ -535,10 +535,62 @@ class NativeAppController
                     $ticket = NativeAppService::siteTicket($built['key'], (string) $app['id'], $built['version'], null, is_string($frame) ? $frame : null);
                     $site = ['site' => ['url' => SiteAppController::address((string) $app['slug'], $ticket, $built['entry']), 'entry' => $built['entry'], 'proof' => NativeAppService::siteProof($built['key'], $ticket)]];
                 }
-                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client] + $served + ['access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope] + $files + $asked + $formlogic + $site]
+                $containerBackend = $plugin === null && NativeAppService::hasContainerBackend($project) ? ['containerBackend' => 'host'] : [];
+                return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client] + $served + ['access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope] + $files + $asked + $formlogic + $site + $containerBackend]
                     + $updates + $this->lookForRuntime($app, $plugin) + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();
+            if ($plugin === null && NativeAppService::hasContainerBackend($project)) {
+                $method = is_array($input) && is_string($input['method'] ?? null) ? strtoupper(trim($input['method'])) : '';
+                $path = is_array($input) && is_string($input['path'] ?? null) ? $input['path'] : '';
+                if ($path === '' || !str_starts_with($path, '/') || strlen($path) > 2048 || str_contains($path, '..') || preg_match('/[\x00-\x1f\x7f]/', $path) === 1 || !in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'], true)) {
+                    throw new \InvalidArgumentException('Provide a valid container API path and method');
+                }
+                if (str_starts_with(strtolower($path), PluginService::SITE_ROUTE_PREFIX)) throw new \RuntimeException('Not found', 404);
+                if (in_array($method, ['GET', 'POST', 'PUT', 'DELETE'], true)) {
+                    $call = ['method' => $method, 'path' => $path, 'caller' => $owner ? 'owner' : ($project['access'] === 'members' ? 'member' : 'visitor')];
+                    $manifest = is_string($project['files']['manifest.json'] ?? null) ? $project['files']['manifest.json'] : null;
+                }
+                if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true) && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) {
+                    throw new \RuntimeException('The app owner’s cloud access has expired. Records remain available to read and export.', 402);
+                }
+                $rawHeaders = is_array($input['headers'] ?? null) ? $input['headers'] : [];
+                $headers = [];
+                foreach ($rawHeaders as $k => $v) {
+                    if (!is_string($k) || !is_scalar($v)) continue;
+                    $lk = strtolower(trim($k));
+                    if ($lk === '' || strlen($lk) > 128 || str_starts_with($lk, 'x-formlogic-')) continue;
+                    $sv = (string) $v;
+                    if (strlen($sv) > 8192) continue;
+                    $headers[$lk] = $sv;
+                    if (count($headers) >= 64) break;
+                }
+                $query = '';
+                if (is_string($input['query'] ?? null)) {
+                    $query = ltrim($input['query'], '?');
+                } elseif (is_array($input['query'] ?? null)) {
+                    $query = http_build_query($input['query']);
+                }
+                $bodyBase64 = '';
+                if (is_string($input['bodyBase64'] ?? null)) {
+                    $bodyBase64 = $input['bodyBase64'];
+                } elseif (array_key_exists('body', $input) && $input['body'] !== null && !in_array($method, ['GET', 'HEAD'], true)) {
+                    $bodyBase64 = base64_encode(is_string($input['body']) ? $input['body'] : json_encode($input['body'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+                }
+                if (strlen($bodyBase64) > 7600000) throw new \RuntimeException('This request is larger than the app accepts.', 413);
+                $addresses = \FormLogic\Helpers\IpResolver::fromEnvironment();
+                $containerReq = [
+                    'method' => $method,
+                    'path' => $path,
+                    'query' => $query,
+                    'headers' => (object) $headers,
+                    'bodyBase64' => $bodyBase64,
+                    'client_ip' => $addresses->getClientIp($request),
+                ];
+                $result = $this->native->containerRequest($app['id'], $containerReq, $identity, (int) ($project['version'] ?? 0));
+                $outcome = ['status' => $result['status'], 'body' => null];
+                return ['result' => $result];
+            }
             if (!is_array($input) || !is_string($input['path'] ?? null) || !preg_match('~^/api/[a-zA-Z0-9/_-]+$~D', $input['path']) || !in_array($input['method'] ?? null, ['GET','POST','PUT','DELETE'], true)) throw new \InvalidArgumentException('Provide an app API path and method');
             // /api/site/ routes are the site's own to call (App AI's deliveries, a plugin's camera
             // check: CameraCheckService), never a page's, for every app.

@@ -35,7 +35,7 @@ export function mediaSize(value: NativeMedia): number {
  * page (settings.softnListen, settings.softnApps): to listen when a person speaks to it, and to
  * offer them the apps it makes. They are the page's to act on and are never sent into the frame.
  */
-export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: NativeMediaFiles; media?: { url: string; sha256: string; size: number; count: number }; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[]; files?: 'ask' | 'allow'; listen?: boolean; offers?: boolean; formlogic?: NativeFormlogic; site?: { url: string; entry: string; proof: string } }
+export interface NativeRuntimeProject { version: number; client: Record<string,string>; assets: NativeMediaFiles; media?: { url: string; sha256: string; size: number; count: number }; access: 'application' | 'members'; storageScope: NativeStorageScope; origins?: string[]; files?: 'ask' | 'allow'; listen?: boolean; offers?: boolean; formlogic?: NativeFormlogic; site?: { url: string; entry: string; proof: string }; containerBackend?: 'host' }
 /** An app's media as its page runs it: each file's bytes, or (from a server before the media pack) its base64. */
 export type NativeMediaFiles = Record<string, string | Uint8Array>;
 
@@ -227,13 +227,14 @@ export interface NativeStructure { table: string; rows: number; columns: NativeS
  * HTML pages), page logic (.js, or .logic; .py), stylesheets, JSON, seed data, and a backend's
  * .logic and .sql. All of it is text the app's frame or runner is handed, never a file this site serves.
  */
-const SOURCE_KINDS = /\.(html|ui|js|jsx|vue|mjs|ts|logic|py|css|json|sql|xdb)$/;
+const SOURCE_KINDS = /\.(html|ui|js|jsx|vue|mjs|cjs|ts|tsx|logic|py|php|phtml|rs|toml|css|json|sql|xdb)$/;
+const CONTAINER_BACKEND_RUNTIMES = ['php', 'javascript', 'typescript', 'rust', 'python'] as const;
 const isHostConfig = (path: string) => path.toLowerCase() === 'private/config.json';
-const SOURCE_PATH = /^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|jsx|vue|mjs|ts|logic|py|css|json|sql|xdb)$/;
+const SOURCE_PATH = /^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|jsx|vue|mjs|cjs|ts|tsx|logic|py|php|phtml|rs|toml|css|json|sql|xdb)$/;
 /** Why a name cannot be a source file of a hosted project, or null when it can: the rule an upload is held to. */
 export function sourceNameProblem(path: string): string | null {
   if (isHostConfig(path)) return 'This name is reserved for the host key file. Choose it separately when importing a database.';
-  if (!SOURCE_KINDS.test(path)) return 'A source file ends in .html, .ui, .js, .jsx, .vue, .mjs, .ts, .logic, .py, .css, .json, .sql or .xdb.';
+  if (!SOURCE_KINDS.test(path)) return 'A source file ends in .html, .ui, .js, .jsx, .vue, .mjs, .cjs, .ts, .tsx, .logic, .py, .php, .phtml, .rs, .toml, .css, .json, .sql or .xdb.';
   if (!SOURCE_PATH.test(path) || path.includes('..')) return 'A file name is letters, digits, - _ and . with folders before it (pages/about.html), and never two dots together.';
   return null;
 }
@@ -258,7 +259,44 @@ const record = (value: unknown): Record<string, unknown> | null => value !== nul
  * refused before any app is made for it.
  */
 export function backendProblem(manifest: Record<string, unknown>, files: Record<string, unknown>): string | null {
-  if (!('server' in manifest)) return null;
+  const hasServer = 'server' in manifest;
+  const hasBackend = 'backend' in manifest;
+  if (hasServer && hasBackend) {
+    return 'Declare either a server block or a backend block in manifest.json, not both.';
+  }
+  if (hasBackend) {
+    const backend = record(manifest.backend);
+    if (!backend) return 'manifest.json\'s backend must be a JSON object.';
+    const runtime = String(backend.runtime ?? backend.engine ?? '').trim().toLowerCase();
+    if (!CONTAINER_BACKEND_RUNTIMES.includes(runtime as typeof CONTAINER_BACKEND_RUNTIMES[number])) {
+      return `manifest.json's backend.runtime must be one of: ${CONTAINER_BACKEND_RUNTIMES.join(', ')}.`;
+    }
+    const entry = backend.entry ?? backend.entrypoint;
+    if (typeof entry !== 'string' || !entry || entry.includes('..') || !Object.hasOwn(files, entry)) {
+      return 'manifest.json\'s backend.entry must name an existing file in the project.';
+    }
+    if ('routes' in backend) {
+      if (!Array.isArray(backend.routes) || backend.routes.length > 64 || backend.routes.some(r => typeof r !== 'string' || !r.startsWith('/') || r.length > 256)) {
+        return 'Each entry in manifest.json\'s backend.routes must be a path starting with "/".';
+      }
+    }
+    if ('databases' in manifest) {
+      if (!Array.isArray(manifest.databases) || manifest.databases.length > 8) {
+        return 'manifest.json\'s databases must be a list of database definitions.';
+      }
+      for (const dbDef of manifest.databases) {
+        const dbObj = record(dbDef);
+        if (!dbObj) return 'Each entry in manifest.json\'s databases must be an object.';
+        if (dbObj.seedSql !== undefined && dbObj.seedSql !== null) {
+          if (typeof dbObj.seedSql !== 'string' || !dbObj.seedSql || dbObj.seedSql.includes('..') || !Object.hasOwn(files, dbObj.seedSql)) {
+            return 'A database seedSql must name an existing .sql file in the project.';
+          }
+        }
+      }
+    }
+    return null;
+  }
+  if (!hasServer) return null;
   const server = record(manifest.server);
   const requires = record(server?.requires);
   const database = record(server?.database);
@@ -305,7 +343,6 @@ export async function importNativeProject(file: File): Promise<NativeProjectByte
   for (const [path, bytes] of Object.entries(files)) {
     // A previous host's key can accompany a database import, separately from its source.
     if (isHostConfig(path)) continue;
-    if (path.endsWith('.py') && PRIVATE_TREE.test(path)) throw new Error('Python is a client logic language; the app backend stays JavaScript.');
     // .xdb is the app's seed data: JSON text kept with it.
     if (SOURCE_KINDS.test(path)) {
       if (!SOURCE_PATH.test(path) || path.includes('..')) throw new Error(`${path}: this host keeps file names made of letters, digits, '-', '_' and '.' (never two dots together). Rename it and try again.`);
@@ -323,7 +360,7 @@ export async function importNativeProject(file: File): Promise<NativeProjectByte
       let binary = '';
       for (let offset=0;offset<bytes.length;offset+=8192) binary += String.fromCharCode(...bytes.subarray(offset,offset+8192));
       assets[path] = btoa(binary);
-    } else if (!/^(README|LICENSE|NOTICE)(\.|$)/.test(path)) {
+    } else if (!/^(README|LICENSE|NOTICE)(\.|$)/.test(path) && path !== '.htaccess') {
       // A picture, sound, video, font or model outside assets/ (an icon beside the manifest is the
       // usual one): said as that, with where it goes, since removing it would leave the app
       // without it. Only for what can be nothing but media: a .txt, .md or .bin may be notes or
@@ -341,7 +378,12 @@ export async function importNativeProject(file: File): Promise<NativeProjectByte
   let manifest: Record<string, unknown> = {};
   try { manifest = record(JSON.parse(source['manifest.json'] ?? '{}')) ?? {}; } catch { /* the review above read it */ }
   if (manifest.id != null && (typeof manifest.id !== 'string' || !/^[a-zA-Z0-9._-]{1,120}$/.test(manifest.id))) throw new Error('manifest.json\'s id can only be letters, digits, \'.\', \'_\' and \'-\' (up to 120 of them).');
-  if (!('server' in manifest)) {
+  const backendRecord = record(manifest.backend);
+  const backendRuntime = backendRecord ? String(backendRecord.runtime ?? backendRecord.engine ?? '').trim().toLowerCase() : '';
+  const hasContainerBackend = CONTAINER_BACKEND_RUNTIMES.includes(backendRuntime as typeof CONTAINER_BACKEND_RUNTIMES[number]);
+  const badPy = Object.keys(source).find(path => path.endsWith('.py') && PRIVATE_TREE.test(path) && !(hasContainerBackend && backendRuntime === 'python' && /^backend\//i.test(path)));
+  if (badPy) throw new Error('Python is a client logic language; the app backend stays JavaScript.');
+  if (!('server' in manifest) && !('backend' in manifest)) {
     const backendFile = Object.keys(source).find(path => PRIVATE_TREE.test(path));
     if (backendFile) throw new Error(`${backendFile} is backend code, but manifest.json has no server block to run it. Add one, or remove the file.`);
   }

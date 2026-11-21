@@ -27,7 +27,7 @@ type FrameEngine = { id: string; revision: string };
 // `visitor`: the app asks for FormLogic's visitors (NativeFormlogic), so its requests carry the marker;
 // `wallet`: it takes payments, so it may open FormLogic's wallet.
 // `media`: the digest that names `assets` (the server's, of the app's media pack), where there is one.
-type NativeFrame = { assets: NativeMediaFiles; media?: string; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope; files?: boolean; look?: NativeLook | null; visitor?: boolean; wallet?: boolean };
+type NativeFrame = { assets: NativeMediaFiles; media?: string; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope; files?: boolean; look?: NativeLook | null; visitor?: boolean; wallet?: boolean; containerBackend?: 'host' };
 /** A newer version of a running app's files, to hand to its frame (the `update` prop). */
 type FrameUpdate = { version: number; client: Record<string, string>; assets?: NativeMediaFiles; media?: string; engine?: { id: string; revision: string } };
 /**
@@ -366,6 +366,7 @@ export function HostedAppFrame({
         files: data.project.files === 'allow' || (data.project.files === 'ask' && !!mountNative?.files),
         look: ("look" in data ? readLook(data.look) : null) ?? mountNative?.look,
         visitor: !!data.project.formlogic?.visitors, wallet: !!data.project.formlogic?.payments,
+        containerBackend: data.project.containerBackend,
       } : undefined;
       if (mountNative && (!nextNative || !scopeAllowed(nextNative))) {
         setError("This app could not verify its browser storage access. Please reload or sign in again.");
@@ -589,7 +590,7 @@ export function HostedAppFrame({
         // A request to the app's own backend may carry a photo (SoftN's upload routes take 5.6 MB;
         // the server holds each route to its own limit), and a save may be as large as the store
         // keeps (a game's saved state). Every other call is held to the 32 KB it always was.
-        const inputLimit = mountNative && action === "nativeRequest" ? NATIVE_REQUEST_INPUT
+        const inputLimit = mountNative && (action === "nativeRequest" || action === "containerHttp") ? NATIVE_REQUEST_INPUT
           : storage && action === "nativeStorage" && limits ? Math.max(32768, limits.input) : 32768;
         if (
           !input ||
@@ -625,6 +626,21 @@ export function HostedAppFrame({
             // mutation, rather than only when replying to the app afterward.
             if (!isCurrentMount()) { retireGuest(); return; }
             reply({ result: await storage.mutate(input) });
+            return;
+          }
+          if (webContainer && mountNative?.containerBackend === "host" && action === "containerHttp") {
+            const path = typeof input.path === "string" ? input.path : "";
+            const method = typeof input.method === "string" ? input.method.toUpperCase() : "GET";
+            if (!path.startsWith("/") || path.includes("..")) throw new Error("Invalid container request path");
+            const result = await api.runNativeContainerRequest(slug, {
+              method,
+              path,
+              query: typeof input.query === "string" ? input.query : "",
+              headers: input.headers && typeof input.headers === "object" && !Array.isArray(input.headers) ? input.headers : {},
+              bodyBase64: typeof input.bodyBase64 === "string" ? input.bodyBase64 : "",
+            }, controller.signal, clientEngine, !!mountNative.visitor);
+            if (isCurrentMount() && engineChanged(result)) void remountOnNewEngine();
+            reply(result.error ? { error: result.error } : result.data);
             return;
           }
           if (mountNative && action === "nativeRequest") {
@@ -762,6 +778,7 @@ export function HostedAppFrame({
           // handshake ignores the key and runs what it always ran.
           engine: chosen,
           ...(webContainer ? { python: !engineId || engineId === "zipp-web-python" } : {}),
+          ...(webContainer && mountNative?.containerBackend === "host" ? { containerBackend: "host" } : {}),
           // Clone the public bytes; never transfer/detach the page's cache. The key is ABSENT,
           // not undefined, for an engine that needs none: a structured clone carries an explicit
           // undefined across, and the host document must not be sent an engine field at all.

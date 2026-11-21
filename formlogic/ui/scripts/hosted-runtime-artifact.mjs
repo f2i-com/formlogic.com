@@ -332,6 +332,13 @@ function parseSums(text, name) {
   return sums;
 }
 
+const CONTAINER_ENGINE_BUNDLES = Object.freeze({
+  'javascript-lite': 'javascript-lite',
+  typescript: 'javascript-typescript',
+  php: 'javascript-php',
+  rust: 'javascript-rust',
+});
+
 /** Match container paths in SoftN's file inventory to the specialized modules in ZIPP's verified release checksums. */
 export function verifiedContainerEngines(files, source, releaseSums, prefix = '') {
   const engines = new Map();
@@ -339,9 +346,10 @@ export function verifiedContainerEngines(files, source, releaseSums, prefix = ''
   const sums = parseSums(releaseSums.toString('utf8'), 'RELEASE-SHA256SUMS');
   for (const [file, sha256] of Object.entries(files)) {
     const path = prefix + file;
-    const tier = /^hosted-runtime\/assets\/container-runtime\/[0-9a-f]{12}\/engines\/zipp-(javascript-lite|typescript)\.wasm$/.exec(path)?.[1];
+    const tier =
+      /^(?:hosted-runtime\/assets\/container-runtime\/[0-9a-f]{12}\/engines|native-runtime\/wasm\/container)\/zipp-(javascript-lite|typescript|php|rust)\.wasm$/.exec(path)?.[1];
     if (!tier) continue;
-    const bundle = `zipp-${source.version}-${tier === 'typescript' ? 'javascript-typescript' : tier}.wasm`;
+    const bundle = `zipp-${source.version}-${CONTAINER_ENGINE_BUNDLES[tier]}.wasm`;
     if (sums.get(bundle) !== sha256) throw new Error(`${path} differs from ${bundle} in the ZIPP release checksums.`);
     engines.set(path, sha256);
   }

@@ -109,7 +109,7 @@ describe('importNativeProject', () => {
     const php = readFileSync(resolve(process.cwd(), '../backend/src/Services/NativeAppService.php'), 'utf8');
     const server = /SOURCE_PATH = '~[^']*\\\.\(\?:([^)]*)\)\$~D'/.exec(php)?.[1];
     const browser = /SOURCE_PATH = \/[^\n]*\\\.\(\?:([^)]*)\)\$\//.exec(readFileSync(resolve(process.cwd(), 'src/lib/nativeHosting.ts'), 'utf8'))?.[1];
-    expect(server).toBe('html|ui|js|jsx|vue|mjs|ts|logic|py|css|json|sql|xdb');
+    expect(server).toBe('html|ui|js|jsx|vue|mjs|cjs|ts|tsx|logic|py|php|phtml|rs|toml|css|json|sql|xdb');
     expect(browser).toBe(server);
   });
 
@@ -151,5 +151,59 @@ describe('importNativeProject', () => {
   it('sends a FormLogic project with backend actions to a Forms app, where those run', async () => {
     const actions = { 'formlogic.json': JSON.stringify({ formatVersion: 1, storage: 'formlogic-forms-sqlite', actions: {} }) };
     await expect(importNativeProject(softn({ 'manifest.json': JSON.stringify({ name: 'Orders', main: 'ui/main.ui' }), 'ui/main.ui': '<Text>Orders</Text>', ...actions }))).rejects.toThrow('Screens → Hosting & app tools');
+  });
+
+  it('imports a SoftN v2 container app with PHP backend and SQLite database, and refuses invalid container manifests', async () => {
+    const phpContainer = {
+      'manifest.json': JSON.stringify({
+        id: 'test.orders',
+        name: 'Orders Desk',
+        version: '1.0.0',
+        engine: 2,
+        main: 'index.html',
+        backend: { runtime: 'php', entry: 'backend/index.php', mode: 'api', routes: ['/api/'] },
+        databases: [{ name: 'app', engine: 'sqlite', file: 'data/app.db', seedSql: 'backend/schema.sql', persist: true }],
+      }),
+      'index.html': '<!doctype html><html><body>Orders</body></html>',
+      'backend/index.php': '<?php echo json_encode(["ok" => true]);',
+      'backend/schema.sql': 'CREATE TABLE items (id INTEGER PRIMARY KEY);',
+      '.htaccess': 'RewriteEngine On\nRewriteRule ^api(/.*)?$ backend/index.php [L,QSA]\n',
+    };
+    const imported = await importNativeProject(softn(phpContainer));
+    expect(imported.files['backend/index.php']).toContain('json_encode');
+    expect(imported.files['backend/schema.sql']).toContain('CREATE TABLE');
+    // Root .htaccess from standalone Web Container bundles is stripped rather than stored on the host.
+    expect(imported.files['.htaccess']).toBeUndefined();
+    // Other dotfiles and nested .htaccess files are still refused.
+    await expect(importNativeProject(softn({ ...phpContainer, '.env': 'SECRET=1' }))).rejects.toThrow();
+    await expect(importNativeProject(softn({ ...phpContainer, 'backend/.htaccess': 'Deny from all' }))).rejects.toThrow();
+
+    await expect(
+      importNativeProject(softn({
+        ...phpContainer,
+        'manifest.json': JSON.stringify({
+          id: 'test.bad',
+          name: 'Bad',
+          engine: 2,
+          main: 'index.html',
+          backend: { runtime: 'ruby', entry: 'backend/index.php' },
+        }),
+      }))
+    ).rejects.toThrow(/runtime/i);
+
+    await expect(
+      importNativeProject(softn({
+        ...phpContainer,
+        'manifest.json': JSON.stringify({
+          id: 'test.both',
+          name: 'Both',
+          engine: 2,
+          main: 'index.html',
+          server: { entry: 'server/main.logic', requires: { apiVersion: 1, capabilities: ['sql'] }, database: { kind: 'private-sqlite', migrations: [] } },
+          backend: { runtime: 'php', entry: 'backend/index.php' },
+        }),
+        'server/main.logic': 'function ping() { return { status: 200 }; }',
+      }))
+    ).rejects.toThrow(/both/i);
   });
 });
