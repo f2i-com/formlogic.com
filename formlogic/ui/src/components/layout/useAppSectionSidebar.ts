@@ -8,8 +8,15 @@ export interface AppSidebarNavigation {
   leave: (to: string) => void;
 }
 
+export interface AppNavigationController {
+  register: (navigation: AppSidebarNavigation) => void;
+  clear: (navigation: AppSidebarNavigation) => void;
+  releaseOnUnmount: (navigation: AppSidebarNavigation) => void;
+}
+
 export const AppSectionNavigation = createContext<AppSidebarNavigation | null>(null);
 export const SetAppSectionNavigation = createContext<Dispatch<SetStateAction<AppSidebarNavigation | null>> | null>(null);
+export const AppNavigationControl = createContext<AppNavigationController | null>(null);
 export const AppManagementHeader = createContext<ReactNode>(null);
 
 export function useScopedAppNavigation(pathname: string) {
@@ -49,13 +56,39 @@ export function useAppNavigationGuard(leave: (to: string) => void) {
  * Share those decisions with its shell. A standalone page keeps its own section navigation. */
 export function useAppSectionSidebar(app: App | null | undefined, items: readonly AppSectionItem[] | null, leave: (to: string) => void) {
   const register = useContext(SetAppSectionNavigation);
+  const control = useContext(AppNavigationControl);
   const leavePage = useRef(leave);
+  const ownedRef = useRef<AppSidebarNavigation | null>(null);
   useLayoutEffect(() => { leavePage.current = leave; }, [leave]);
   useLayoutEffect(() => {
-    if (!register || !app || !items) return;
-    const navigation = { app, items, leave: (to: string) => leavePage.current(to) };
-    register(navigation);
-    return () => register(current => current === navigation ? null : current);
-  }, [app, items, register]);
-  return register !== null;
+    if (!control && !register) return;
+    if (!app || !items) {
+      const prev = ownedRef.current;
+      if (prev) {
+        ownedRef.current = null;
+        if (control) control.clear(prev);
+        else register?.(current => current === prev ? null : current);
+      }
+      return;
+    }
+    const navigation: AppSidebarNavigation = { app, items, leave: (to: string) => leavePage.current(to) };
+    ownedRef.current = navigation;
+    if (control) {
+      control.register(navigation);
+    } else {
+      register?.(navigation);
+    }
+  }, [app, items, control, register]);
+  // Separate unmount-only effect so transitioning to a sibling route of the same app
+  // NEVER flashes the global workspace menu while the incoming lazy route loads.
+  useLayoutEffect(() => {
+    return () => {
+      const prev = ownedRef.current;
+      if (!prev) return;
+      ownedRef.current = null;
+      if (control) control.releaseOnUnmount(prev);
+      else register?.(current => current === prev ? null : current);
+    };
+  }, [control, register]);
+  return control !== null || register !== null;
 }

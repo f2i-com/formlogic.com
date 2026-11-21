@@ -559,7 +559,22 @@ class NativeAppController
         if (!$app || !$this->apps->isRuntimeVisible($app, $request->getAttribute('userId'))) return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), ['home' => false]);
         return $this->respond($response, function () use ($app) {
             $project = $this->native->summary($app['id']);
-            return ['home' => (bool) ($project['home'] ?? false), 'access' => $project['access'] ?? 'members', 'native' => $project !== null];
+            $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+            $entry = ['home' => (bool) ($project['home'] ?? false), 'access' => $project['access'] ?? 'members', 'native' => $project !== null];
+            $demoSandboxSlug = is_string($settings['demoSandboxPackSlug'] ?? null) ? trim((string) $settings['demoSandboxPackSlug']) : '';
+            if ($demoSandboxSlug !== '' && !empty($settings['softnApp'])) {
+                $softnCatalog = new \FormLogic\Services\SoftnPackCatalog();
+                if ($softnCatalog->getMeta($demoSandboxSlug) !== null) {
+                    $entry['home'] = true;
+                    $entry['access'] = 'application';
+                    $entry['demoSandboxSlug'] = $demoSandboxSlug;
+                    $entry['appId'] = (string) ($app['id'] ?? '');
+                    $entry['appName'] = (string) ($app['name'] ?? '');
+                    $entry['linkedFormAppSlug'] = is_string($settings['linkedFormAppSlug'] ?? null) ? $settings['linkedFormAppSlug'] : null;
+                    $entry['linkedFormAppName'] = is_string($settings['linkedFormAppName'] ?? null) ? $settings['linkedFormAppName'] : null;
+                }
+            }
+            return $entry;
         });
     }
 

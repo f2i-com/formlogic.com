@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { ArrowLeft, Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff, Database, Eye, FileBarChart, Link2, PencilRuler, Rocket } from 'lucide-react';
+import { ArrowLeft, Box, ClipboardList, Home, Layers, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff, Database, Eye, FileBarChart, Link2, PencilRuler, Rocket } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { interleaveMenu, menuForms, menuLinks } from './appMenu';
 import { ThemeToggle } from '../ui/ThemeToggle';
@@ -107,13 +107,71 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   // We still give it a single, unobtrusive way into the submitted records — otherwise a custom
   // dashboard is a dead end for browsing data. Hidden on the records screens themselves.
   const hideNav = (config.app?.settings as { hideNav?: boolean } | undefined)?.hideNav === true;
+  const linkedSoftnSlug = config.app?.settings?.linkedSoftnAppSlug;
+  const linkedSoftnId = config.app?.settings?.linkedSoftnAppId;
+  const unifiedCompanionBar = linkedSoftnSlug ? (
+    <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 shadow-xs dark:border-slate-800 dark:bg-slate-900 sm:px-4">
+      <div className="flex min-w-0 items-center gap-2.5">
+        {isOwner() && (
+          <button
+            type="button"
+            onClick={() => navigate('/apps')}
+            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+            Apps
+          </button>
+        )}
+        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">
+          <ClipboardList className="h-4 w-4" aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">{config.app.name}</p>
+          <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">Management · Forms, Records &amp; Charts</p>
+        </div>
+      </div>
+
+      <nav aria-label="App mode switcher" className="inline-flex items-center rounded-xl border border-slate-200 bg-slate-100/90 p-0.5 dark:border-slate-700 dark:bg-slate-800/80">
+        <button
+          type="button"
+          onClick={() => navigate(`/app/${encodeURIComponent(linkedSoftnSlug)}`)}
+          className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold text-slate-700 transition hover:bg-white hover:text-slate-950 dark:text-slate-200 dark:hover:bg-slate-700 dark:hover:text-white"
+        >
+          <Box className="h-3.5 w-3.5" aria-hidden="true" />
+          SoftN App
+        </button>
+        <span
+          aria-current="page"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-xs font-semibold text-primary-foreground shadow-xs"
+        >
+          <ClipboardList className="h-3.5 w-3.5" aria-hidden="true" />
+          Management (Forms &amp; Charts)
+        </span>
+      </nav>
+
+      <div className="flex flex-wrap items-center gap-2">
+        {isOwner() && (
+          <button
+            type="button"
+            onClick={() => navigate(linkedSoftnId ? `/apps/${encodeURIComponent(linkedSoftnId)}/web` : `/apps/${encodeURIComponent(config.app.id)}/studio`)}
+            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            <Layers className="h-3.5 w-3.5" aria-hidden="true" />
+            Inspect Workspace
+          </button>
+        )}
+      </div>
+    </header>
+  ) : null;
   if (hideNav) {
     const path = location.pathname;
     const onRecordsView = path.includes('/records') || /\/form\/[^/]+\/responses/.test(path);
     const onReportsView = path.includes('/reports');
     const hasReports = (config.app?.reports?.length ?? 0) > 0 || isOwner();
     return (
-      <main id="app-main-content" ref={mainRef} tabIndex={-1} className="h-screen overflow-y-auto bg-gray-50 dark:bg-slate-950 outline-none">
+      <div className="flex h-dvh flex-col bg-gray-50 dark:bg-slate-950">
+        {unifiedCompanionBar}
+        <main id="app-main-content" ref={mainRef} tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto bg-gray-50 dark:bg-slate-950 outline-none">
         {/* No offline banner here, so the notice also names what waits while offline. */}
         <QueuedSubmissionsNotice offlineBannerShown={false} />
         {children}
@@ -137,13 +195,23 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
             </button>
           </div>
         )}
-        {/* Chromeless apps still get unobtrusive access to Records + Reports: a single compact
+        {/* Chromeless apps still get unobtrusive access to SoftN App + Records + Reports: a single compact
             cluster that rests at 60% opacity so it never fights the dashboard for attention. */}
-        {(!onRecordsView || !onReportsView) && (
+        {(!onRecordsView || !onReportsView || !!linkedSoftnSlug) && (
           <div
             className="group fixed bottom-4 right-4 z-40 flex items-center gap-1.5"
             style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
           >
+            {linkedSoftnSlug && (
+              <button
+                onClick={() => navigate(`/app/${encodeURIComponent(linkedSoftnSlug)}`)}
+                aria-label="Open companion SoftN app"
+                className="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold bg-white/90 dark:bg-slate-800/90 backdrop-blur-md text-primary-700 dark:text-primary-300 border border-primary-300/80 dark:border-primary-500/40 shadow-md shadow-black/10 opacity-85 group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-white dark:hover:bg-slate-800 transition duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
+              >
+                <Box className="h-3.5 w-3.5" />
+                SoftN App
+              </button>
+            )}
             {hasReports && !onReportsView && (
               <button
                 onClick={() => navigate(`/app/${appSlug}/reports`)}
@@ -166,7 +234,8 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
             )}
           </div>
         )}
-      </main>
+        </main>
+      </div>
     );
   }
 
@@ -239,6 +308,9 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
     return <DynamicIcon name={item.iconName} className={className} />;
   };
 
+  const urlFormId = location.pathname.match(/\/form\/([^/]+)/)?.[1] ?? null;
+  const currentFormId = urlFormId ?? activeFormId;
+
   const isActive = (id: string) => {
     if (location.pathname.includes('/profile')) return false;
     if (id === 'aokie') return onAokie;
@@ -246,7 +318,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
     if (id === 'reports') return onReports;
     if (id === 'records') return onRecords && !onReports;
     if (onRecords || onReports) return false; // on records/reports, no form/dashboard item is active
-    return id === activeFormId || (id === 'dashboard' && !activeFormId);
+    return id === currentFormId || (id === 'dashboard' && !currentFormId);
   };
 
   // Mobile bottom bar: Dashboard / Records / Reports own the fixed slots — forms live
@@ -286,7 +358,9 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   );
 
   return (
-    <div className="h-dvh flex bg-gray-50 dark:bg-slate-950">
+    <div className="h-dvh flex flex-col bg-gray-50 dark:bg-slate-950">
+      {unifiedCompanionBar}
+      <div className="min-h-0 flex-1 flex">
       <a
         href="#app-main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[60] focus:rounded-lg focus:bg-white dark:focus:bg-slate-900 focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg focus:ring-2 app-ring-primary"
@@ -355,6 +429,20 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
           ))}
         </nav>
         <div className="p-2 border-t border-gray-100 dark:border-slate-800/80">
+          {linkedSoftnSlug && (
+            <button
+              onClick={() => navigate(`/app/${encodeURIComponent(linkedSoftnSlug)}`)}
+              className={cn(
+                'flex items-center gap-3 w-full px-3 py-2 mb-1 rounded-lg text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50/70 dark:bg-primary-500/10 hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors duration-150 cursor-pointer',
+                'focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
+                sidebarCollapsed && 'justify-center px-0'
+              )}
+              title={sidebarCollapsed ? 'Open SoftN App' : undefined}
+            >
+              <Box className="h-4 w-4 shrink-0" />
+              {!sidebarCollapsed && <span className="truncate">Open SoftN App</span>}
+            </button>
+          )}
           {/* Owner bridge back to the App Studio (Use app ↔ Edit app). */}
           {isOwner() && (
             <button
@@ -544,6 +632,15 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
               ))}
             </nav>
             <div className="p-2 border-t border-gray-100 dark:border-slate-800/80">
+              {linkedSoftnSlug && (
+                <button
+                  onClick={() => { navigate(`/app/${encodeURIComponent(linkedSoftnSlug)}`); setMobileMenuOpen(false); }}
+                  className="flex items-center gap-3 w-full px-3 py-2.5 mb-1 rounded-lg text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50/70 dark:bg-primary-500/10 hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
+                >
+                  <Box className="h-4 w-4" />
+                  <span>Open SoftN App</span>
+                </button>
+              )}
               {isOwner() && (
                 <button
                   onClick={() => { navigate(`/apps/${config.app.id}/studio`); setMobileMenuOpen(false); }}
@@ -564,6 +661,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

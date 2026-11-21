@@ -17,6 +17,8 @@ type DemoApp = {
   accent?: string | null;
   packName?: string;
   tags?: string[];
+  softnAppSlug?: string | null;
+  softnAppName?: string | null;
 };
 
 // Pack-authored accents arrive as hex; anything else is ignored (the value lands in an
@@ -111,8 +113,13 @@ function DemoAppCard({ app, launching, disabled, onLaunch }: {
         {app.description && (
           <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-gray-500 dark:text-slate-400">{app.description}</p>
         )}
-        {tags.length > 0 && (
+        {(tags.length > 0 || app.softnAppSlug) && (
           <div className="mt-2 flex flex-wrap gap-1">
+            {app.softnAppSlug && (
+              <span className="fl-mono rounded-full border border-primary-300/70 bg-primary-50 px-2 py-0.5 text-[10px] font-semibold text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/15 dark:text-primary-300">
+                softn + forms
+              </span>
+            )}
             {tags.map((t) => (
               <span
                 key={t}
@@ -254,9 +261,9 @@ export function LiveDemoSection() {
               <DemoAppCard
                 key={app.slug}
                 app={app}
-                launching={launching === app.slug}
+                launching={launching === (app.softnAppSlug || app.slug)}
                 disabled={anyLaunching}
-                onLaunch={() => launch(app.slug)}
+                onLaunch={() => launch(app.softnAppSlug || app.slug)}
               />
             ))}
           </div>

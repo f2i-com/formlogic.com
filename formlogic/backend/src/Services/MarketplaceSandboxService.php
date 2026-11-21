@@ -1013,6 +1013,488 @@ JS;
         return false;
     }
 
+    /**
+     * List all user SQLite tables, rows, column definitions, and schema-matched FormLogic form
+     * definitions for the visitor's live ephemeral sandbox database.
+     *
+     * @param array<string, mixed> $catalog
+     * @return array<string, mixed>
+     */
+    public function listSandboxTables(array $catalog, string $token): array
+    {
+        $session = $this->verifySession($catalog, $token);
+        $pdo = $this->openSandboxSqlite($session['dir']);
+        $slug = (string) ($catalog['slug'] ?? '');
+        $formMetaByTable = $this->loadBundledFormSchemasByTable($slug);
+
+        $tableNames = $this->listSandboxTableNames($pdo);
+        $tables = [];
+        // Prefer bundled form order first so domain tables appear before internal settings/users tables.
+        $ordered = array_values(array_unique(array_merge(
+            array_values(array_intersect(array_keys($formMetaByTable), $tableNames)),
+            $tableNames
+        )));
+
+        foreach ($ordered as $tableName) {
+            $cols = $this->sandboxTableColumns($pdo, $tableName);
+            $pk = $this->primaryKeyColumn($cols);
+            $quoted = '"' . str_replace('"', '""', $tableName) . '"';
+            $count = (int) $pdo->query("SELECT COUNT(*) FROM {$quoted}")->fetchColumn();
+            $rawRows = $pdo->query("SELECT * FROM {$quoted} ORDER BY rowid DESC LIMIT 200")->fetchAll(\PDO::FETCH_ASSOC);
+            $rows = [];
+            foreach ($rawRows as $r) {
+                if (!is_array($r)) continue;
+                foreach (array_keys($r) as $rk) {
+                    if (preg_match('/(password|secret|token_hash|salt)/i', (string) $rk) === 1) {
+                        unset($r[$rk]);
+                    }
+                }
+                $rows[] = $r;
+            }
+            $visibleCols = array_values(array_filter(
+                $cols,
+                static fn(array $c): bool => preg_match('/(password|secret|token_hash|salt)/i', $c['name']) !== 1
+            ));
+
+            $formMeta = $formMetaByTable[$tableName] ?? null;
+            $statusCol = is_string($formMeta['statusColumn'] ?? null)
+                ? (string) $formMeta['statusColumn']
+                : $this->detectStatusColumn($visibleCols);
+            $fields = is_array($formMeta['fields'] ?? null) && $formMeta['fields'] !== []
+                ? $formMeta['fields']
+                : $this->deriveFormFieldsFromColumns($visibleCols, $pk);
+            $fields = $this->enrichFieldsWithForeignKeys($pdo, $tableName, $fields);
+
+            $tables[] = [
+                'name' => $tableName,
+                'title' => is_string($formMeta['title'] ?? null) && $formMeta['title'] !== ''
+                    ? (string) $formMeta['title']
+                    : ucwords(str_replace('_', ' ', (string) preg_replace('/^(?:ak|au|us|ohs)_/', '', $tableName))),
+                'icon' => is_string($formMeta['icon'] ?? null) ? (string) $formMeta['icon'] : 'Table2',
+                'description' => is_string($formMeta['description'] ?? null) ? (string) $formMeta['description'] : '',
+                'primaryKey' => $pk,
+                'statusColumn' => $statusCol,
+                'columns' => $visibleCols,
+                'fields' => $fields,
+                'rowCount' => $count,
+                'rows' => $rows,
+                'isFormTable' => $formMeta !== null,
+            ];
+        }
+
+        return [
+            'slug' => $slug,
+            'tables' => $tables,
+        ];
+    }
+
+    /**
+     * Insert a row directly into the visitor's live ephemeral sandbox SQLite database.
+     *
+     * @param array<string, mixed> $catalog
+     * @param array<string, mixed> $values
+     * @return array<string, mixed>
+     */
+    public function createSandboxRecord(array $catalog, string $token, string $table, array $values): array
+    {
+        $session = $this->verifySession($catalog, $token);
+        $pdo = $this->openSandboxSqlite($session['dir']);
+        $this->assertValidSandboxTable($pdo, $table);
+
+        $cols = $this->sandboxTableColumns($pdo, $table);
+        $colByName = [];
+        foreach ($cols as $c) {
+            $colByName[$c['name']] = $c;
+        }
+        $pk = $this->primaryKeyColumn($cols);
+        $nowIso = gmdate('Y-m-d\TH:i:s\Z');
+
+        $insertData = [];
+        foreach ($values as $k => $v) {
+            if (!is_string($k) || !isset($colByName[$k])) {
+                continue;
+            }
+            if ($v === '' && !$colByName[$k]['notnull']) {
+                $insertData[$k] = null;
+                continue;
+            }
+            $insertData[$k] = is_bool($v) ? ($v ? 1 : 0) : (is_array($v) ? json_encode($v, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : $v);
+        }
+
+        // Auto-assign TEXT primary key when omitted; INTEGER PRIMARY KEY is auto-assigned by SQLite.
+        if ($pk !== null && !array_key_exists($pk, $insertData) && isset($colByName[$pk])) {
+            $pkType = strtoupper($colByName[$pk]['type']);
+            if (!str_contains($pkType, 'INT')) {
+                $insertData[$pk] = 'rec_' . bin2hex(random_bytes(6));
+            }
+        }
+        // Populate standard timestamps & satisfy any remaining NOT NULL columns without defaults.
+        foreach ($cols as $c) {
+            $cn = $c['name'];
+            if (array_key_exists($cn, $insertData)) {
+                continue;
+            }
+            if ($c['pk'] && str_contains(strtoupper($c['type']), 'INT')) {
+                continue;
+            }
+            if (in_array(strtolower($cn), ['created_at', 'updated_at'], true)) {
+                $insertData[$cn] = $nowIso;
+                continue;
+            }
+            if ($c['notnull'] && $c['dflt_value'] === null) {
+                $upperType = strtoupper($c['type']);
+                $insertData[$cn] = (str_contains($upperType, 'INT') || str_contains($upperType, 'REAL') || str_contains($upperType, 'NUM')) ? 0 : '';
+            }
+        }
+        if ($insertData === []) {
+            throw new InvalidArgumentException('Provide at least one field value.');
+        }
+
+        $quotedTable = '"' . str_replace('"', '""', $table) . '"';
+        $colSql = [];
+        $placeSql = [];
+        $params = [];
+        foreach ($insertData as $k => $v) {
+            $colSql[] = '"' . str_replace('"', '""', $k) . '"';
+            $placeSql[] = '?';
+            $params[] = $v;
+        }
+        try {
+            $stmt = $pdo->prepare("INSERT INTO {$quotedTable} (" . implode(', ', $colSql) . ') VALUES (' . implode(', ', $placeSql) . ')');
+            $stmt->execute($params);
+        } catch (\PDOException $e) {
+            throw new RuntimeException('Could not save record: ' . $e->getMessage(), 422, $e);
+        }
+
+        $rowId = $pdo->lastInsertId();
+        $rowStmt = $pdo->prepare("SELECT * FROM {$quotedTable} WHERE rowid = ?");
+        $rowStmt->execute([$rowId]);
+        $row = $rowStmt->fetch(\PDO::FETCH_ASSOC);
+        return is_array($row) ? $row : $insertData;
+    }
+
+    /**
+     * Update an existing row in the visitor's live ephemeral sandbox SQLite database.
+     *
+     * @param array<string, mixed> $catalog
+     * @param array<string, mixed> $values
+     * @return array<string, mixed>
+     */
+    public function updateSandboxRecord(array $catalog, string $token, string $table, mixed $id, array $values): array
+    {
+        $session = $this->verifySession($catalog, $token);
+        $pdo = $this->openSandboxSqlite($session['dir']);
+        $this->assertValidSandboxTable($pdo, $table);
+
+        $cols = $this->sandboxTableColumns($pdo, $table);
+        $colByName = [];
+        foreach ($cols as $c) {
+            $colByName[$c['name']] = $c;
+        }
+        $pk = $this->primaryKeyColumn($cols) ?? 'rowid';
+
+        $sets = [];
+        $params = [];
+        foreach ($values as $k => $v) {
+            if (!is_string($k) || !isset($colByName[$k]) || $k === $pk) {
+                continue;
+            }
+            $sets[] = '"' . str_replace('"', '""', $k) . '" = ?';
+            if ($v === '' && !$colByName[$k]['notnull']) {
+                $params[] = null;
+            } else {
+                $params[] = is_bool($v) ? ($v ? 1 : 0) : (is_array($v) ? json_encode($v, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : $v);
+            }
+        }
+        if (isset($colByName['updated_at']) && !array_key_exists('updated_at', $values)) {
+            $sets[] = '"updated_at" = ?';
+            $params[] = gmdate('Y-m-d\TH:i:s\Z');
+        }
+        if ($sets === []) {
+            throw new InvalidArgumentException('No editable fields provided.');
+        }
+
+        $quotedTable = '"' . str_replace('"', '""', $table) . '"';
+        $quotedPk = '"' . str_replace('"', '""', $pk) . '"';
+        $params[] = $id;
+        try {
+            $stmt = $pdo->prepare("UPDATE {$quotedTable} SET " . implode(', ', $sets) . " WHERE {$quotedPk} = ?");
+            $stmt->execute($params);
+        } catch (\PDOException $e) {
+            throw new RuntimeException('Could not update record: ' . $e->getMessage(), 422, $e);
+        }
+
+        $rowStmt = $pdo->prepare("SELECT * FROM {$quotedTable} WHERE {$quotedPk} = ?");
+        $rowStmt->execute([$id]);
+        $row = $rowStmt->fetch(\PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            throw new RuntimeException('Record not found.', 404);
+        }
+        return $row;
+    }
+
+    /**
+     * Delete a row from the visitor's live ephemeral sandbox SQLite database.
+     *
+     * @param array<string, mixed> $catalog
+     * @return array{deleted: bool}
+     */
+    public function deleteSandboxRecord(array $catalog, string $token, string $table, mixed $id): array
+    {
+        $session = $this->verifySession($catalog, $token);
+        $pdo = $this->openSandboxSqlite($session['dir']);
+        $this->assertValidSandboxTable($pdo, $table);
+
+        $cols = $this->sandboxTableColumns($pdo, $table);
+        $pk = $this->primaryKeyColumn($cols) ?? 'rowid';
+        $quotedTable = '"' . str_replace('"', '""', $table) . '"';
+        $quotedPk = '"' . str_replace('"', '""', $pk) . '"';
+        try {
+            $stmt = $pdo->prepare("DELETE FROM {$quotedTable} WHERE {$quotedPk} = ?");
+            $stmt->execute([$id]);
+        } catch (\PDOException $e) {
+            throw new RuntimeException('Could not delete record (it may be referenced by related rows): ' . $e->getMessage(), 422, $e);
+        }
+        return ['deleted' => $stmt->rowCount() > 0];
+    }
+
+    private function openSandboxSqlite(string $sessionDir): \PDO
+    {
+        $dbPath = $sessionDir . '/private/data/application.sqlite';
+        if (!is_file($dbPath) || is_link($dbPath)) {
+            throw new RuntimeException('Sandbox database is not initialized yet. Wait for the app to load and try again.', 404);
+        }
+        $pdo = new \PDO('sqlite:' . $dbPath, null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
+        $pdo->exec('PRAGMA busy_timeout = 3000; PRAGMA foreign_keys = ON;');
+        return $pdo;
+    }
+
+    /** @return list<string> */
+    private function listSandboxTableNames(\PDO $pdo): array
+    {
+        $rows = $pdo->query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name ASC"
+        )->fetchAll(\PDO::FETCH_COLUMN);
+        return array_values(array_filter(array_map('strval', $rows)));
+    }
+
+    private function assertValidSandboxTable(\PDO $pdo, string $table): void
+    {
+        if (!in_array($table, $this->listSandboxTableNames($pdo), true)) {
+            throw new InvalidArgumentException("Table '{$table}' does not exist in this sandbox database.");
+        }
+    }
+
+    /** @return list<array{name: string, type: string, notnull: bool, dflt_value: mixed, pk: bool}> */
+    private function sandboxTableColumns(\PDO $pdo, string $table): array
+    {
+        $quoted = '"' . str_replace('"', '""', $table) . '"';
+        $raw = $pdo->query("PRAGMA table_info({$quoted})")->fetchAll(\PDO::FETCH_ASSOC);
+        $cols = [];
+        foreach ($raw as $c) {
+            $cols[] = [
+                'name' => (string) ($c['name'] ?? ''),
+                'type' => (string) ($c['type'] ?? 'TEXT'),
+                'notnull' => (int) ($c['notnull'] ?? 0) === 1,
+                'dflt_value' => $c['dflt_value'] ?? null,
+                'pk' => (int) ($c['pk'] ?? 0) > 0,
+            ];
+        }
+        return $cols;
+    }
+
+    /** @param list<array{name: string, type: string, notnull: bool, dflt_value: mixed, pk: bool}> $cols */
+    private function primaryKeyColumn(array $cols): ?string
+    {
+        foreach ($cols as $c) {
+            if ($c['pk']) {
+                return $c['name'];
+            }
+        }
+        foreach ($cols as $c) {
+            if ($c['name'] === 'id') {
+                return 'id';
+            }
+        }
+        return null;
+    }
+
+    /** @param list<array{name: string, type: string, notnull: bool, dflt_value: mixed, pk: bool}> $cols */
+    private function detectStatusColumn(array $cols): ?string
+    {
+        foreach (['status', 'stage', 'state', 'priority', 'category', 'type'] as $candidate) {
+            foreach ($cols as $c) {
+                if (strtolower($c['name']) === $candidate) {
+                    return $c['name'];
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Load bundled FormLogic form schemas keyed by bound SQLite table name from `resources/softn-packs/<slug>/install.json`.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function loadBundledFormSchemasByTable(string $slug): array
+    {
+        $catalog = new SoftnPackCatalog();
+        $meta = $catalog->getMeta($slug);
+        if ($meta === null || !is_string($meta['_installPath'] ?? null) || !is_file((string) $meta['_installPath'])) {
+            return [];
+        }
+        $install = json_decode((string) @file_get_contents((string) $meta['_installPath']), true);
+        if (!is_array($install) || !is_array($install['forms'] ?? null)) {
+            return [];
+        }
+        $out = [];
+        foreach ($install['forms'] as $form) {
+            if (!is_array($form)) continue;
+            $ntb = is_array($form['settings']['nativeTableBinding'] ?? null) ? $form['settings']['nativeTableBinding'] : null;
+            $tableName = is_string($ntb['table'] ?? null) ? (string) $ntb['table'] : '';
+            if ($tableName === '') continue;
+            $colMap = is_array($ntb['columns'] ?? null) ? $ntb['columns'] : [];
+            $fields = [];
+            foreach (is_array($form['fields'] ?? null) ? $form['fields'] : [] as $f) {
+                if (!is_array($f)) continue;
+                $type = (string) ($f['type'] ?? 'short_text');
+                if (in_array($type, ['welcome_screen', 'thank_you', 'statement', 'section_break'], true)) continue;
+                $fid = (string) ($f['id'] ?? '');
+                $colName = is_string($colMap[$fid] ?? null) ? (string) $colMap[$fid] : $fid;
+                if ($colName === '') continue;
+                $opts = [];
+                if (is_array($f['properties']['options'] ?? null)) {
+                    foreach ($f['properties']['options'] as $opt) {
+                        if (is_array($opt) && isset($opt['value'])) {
+                            $opts[] = [
+                                'label' => (string) ($opt['label'] ?? $opt['value']),
+                                'value' => (string) $opt['value'],
+                            ];
+                        }
+                    }
+                }
+                $fields[] = [
+                    'column' => $colName,
+                    'label' => (string) ($f['label'] ?? ucwords(str_replace('_', ' ', $colName))),
+                    'type' => $type,
+                    'required' => (bool) ($f['required'] ?? false),
+                    'options' => $opts,
+                ];
+            }
+            $out[$tableName] = [
+                'title' => (string) ($form['title'] ?? ''),
+                'icon' => is_string($form['icon'] ?? null) ? (string) $form['icon'] : 'Table2',
+                'description' => (string) ($form['description'] ?? ''),
+                'statusColumn' => is_string($ntb['statusColumn'] ?? null) ? (string) $ntb['statusColumn'] : null,
+                'fields' => $fields,
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * @param list<array{name: string, type: string, notnull: bool, dflt_value: mixed, pk: bool}> $cols
+     * @return list<array<string, mixed>>
+     */
+    private function deriveFormFieldsFromColumns(array $cols, ?string $pk): array
+    {
+        $fields = [];
+        foreach ($cols as $c) {
+            $name = $c['name'];
+            if ($name === $pk || in_array(strtolower($name), ['created_at', 'updated_at', 'is_sample'], true)) {
+                continue;
+            }
+            $upper = strtoupper($c['type']);
+            $type = 'short_text';
+            if (str_contains($upper, 'INT') || str_contains($upper, 'REAL') || str_contains($upper, 'NUM')) {
+                $type = 'number';
+            } elseif (str_contains(strtolower($name), 'notes') || str_contains(strtolower($name), 'description')) {
+                $type = 'long_text';
+            } elseif (str_contains(strtolower($name), 'email')) {
+                $type = 'email';
+            } elseif (str_ends_with(strtolower($name), '_date') || strtolower($name) === 'date') {
+                $type = 'date';
+            }
+            $fields[] = [
+                'column' => $name,
+                'label' => ucwords(str_replace('_', ' ', $name)),
+                'type' => $type,
+                'required' => $c['notnull'] && $c['dflt_value'] === null,
+                'options' => [],
+            ];
+        }
+        return $fields;
+    }
+
+    /**
+     * Populate dropdown options from referenced parent tables for any SQLite foreign-key columns,
+     * so visitors editing related tables in Management get human-readable pickers instead of raw IDs.
+     *
+     * @param list<array<string, mixed>> $fields
+     * @return list<array<string, mixed>>
+     */
+    private function enrichFieldsWithForeignKeys(\PDO $pdo, string $tableName, array $fields): array
+    {
+        $quoted = '"' . str_replace('"', '""', $tableName) . '"';
+        $fkRows = $pdo->query("PRAGMA foreign_key_list({$quoted})")->fetchAll(\PDO::FETCH_ASSOC);
+        if (!is_array($fkRows) || $fkRows === []) {
+            return $fields;
+        }
+        $fkByCol = [];
+        foreach ($fkRows as $fk) {
+            if (!is_array($fk)) continue;
+            $from = (string) ($fk['from'] ?? '');
+            $refTable = (string) ($fk['table'] ?? '');
+            $refTo = (string) ($fk['to'] ?? 'id');
+            if ($from !== '' && $refTable !== '') {
+                $fkByCol[$from] = ['table' => $refTable, 'to' => $refTo !== '' ? $refTo : 'id'];
+            }
+        }
+        if ($fkByCol === []) {
+            return $fields;
+        }
+
+        foreach ($fields as $idx => $field) {
+            $col = (string) ($field['column'] ?? '');
+            if (!isset($fkByCol[$col])) {
+                continue;
+            }
+            $refTable = $fkByCol[$col]['table'];
+            $refTo = $fkByCol[$col]['to'];
+            try {
+                $refQuoted = '"' . str_replace('"', '""', $refTable) . '"';
+                $refRows = $pdo->query("SELECT * FROM {$refQuoted} ORDER BY rowid ASC LIMIT 100")->fetchAll(\PDO::FETCH_ASSOC);
+                if (!is_array($refRows) || $refRows === []) {
+                    continue;
+                }
+                $opts = [];
+                foreach ($refRows as $r) {
+                    if (!is_array($r) || !array_key_exists($refTo, $r)) continue;
+                    $val = (string) $r[$refTo];
+                    $label = '';
+                    foreach (['name', 'title', 'full_name', 'customer_name', 'business_name', 'code', 'sku', 'label', 'email', 'subject'] as $lk) {
+                        if (isset($r[$lk]) && is_scalar($r[$lk]) && trim((string) $r[$lk]) !== '') {
+                            $label = trim((string) $r[$lk]);
+                            break;
+                        }
+                    }
+                    $opts[] = [
+                        'value' => $val,
+                        'label' => $label !== '' ? "{$label} (#{$val})" : "#{$val}",
+                    ];
+                }
+                if ($opts !== []) {
+                    $fields[$idx]['type'] = 'dropdown';
+                    $fields[$idx]['options'] = $opts;
+                }
+            } catch (\Throwable) {
+                // Keep original field type if referenced table cannot be queried
+            }
+        }
+        return $fields;
+    }
+
     private function ensureDir(string $path): void
     {
         if (is_dir($path)) {

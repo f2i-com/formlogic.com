@@ -119,10 +119,7 @@ export function FlowsWorkspace() {
   const selectedFlow = selectedId ? flowById.get(selectedId) ?? null : null;
 
   const allFlows = useMemo(() => groups.flatMap((group) => group.flows), [groups]);
-  const viewParam = searchParams.get('view');
-  const libraryVisible =
-    searchParams.get('new') !== '1' &&
-    (viewParam === 'existing' || (viewParam !== 'create' && allFlows.length > 0));
+  const libraryVisible = searchParams.get('view') === 'existing' && searchParams.get('new') !== '1';
   // The selected flow's sibling flows (same app / same workspace) feed the §9.1 outcome-trigger
   // source picker AND the flow_call child picker — the same lists the runtimes resolve against.
   const selectedAppFlows = useMemo(
@@ -424,7 +421,7 @@ export function FlowsWorkspace() {
   const openNewFlow = (template: FlowStarterTemplate | null = null) => {
     setNewFlowInitialTemplate(template);
     setRightPanel(null);
-    setSearchParams({ view: 'create' }, { replace: true });
+    setSearchParams({}, { replace: true });
   };
 
   const createFlow = async ({ name, slug, description, template, appId }: { name: string; slug: string; description: string; template: FlowStarterTemplate; appId: string | null }) => {
@@ -679,8 +676,8 @@ export function FlowsWorkspace() {
               label="Automation workspace"
               current={libraryVisible ? 'existing' : 'create'}
               items={[
+                { value: 'create', label: 'Create a flow', icon: Plus, to: { search: '' } },
                 { value: 'existing', label: 'Existing flows', icon: Workflow, to: { search: '?view=existing' }, mark: allFlows.length },
-                { value: 'create', label: 'Create a flow', icon: Plus, to: { search: '?view=create' } },
               ]}
             />
             <div className="mt-4 min-w-0">

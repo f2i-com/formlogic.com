@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = '50ae4f8f75bc1c4b358e0b2866f9f263';
+    public const SCHEMA_STAMP = 'b47ba76f7220e64e8a5c91d7743083f6';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -713,9 +713,17 @@ class MySQLConnection
                 screenshots JSON,
                 tags JSON,
                 category VARCHAR(100),
-                item_type ENUM('application_package','connector','theme','widget','quickjs_library','sdk_component','template') DEFAULT 'application_package',
+                item_type ENUM('application_package','softn_app','plugin','connector','theme','widget','quickjs_library','sdk_component','template') DEFAULT 'application_package',
                 trust_level ENUM('official','verified','community','private') DEFAULT 'community',
                 visibility ENUM('public','private','unlisted') DEFAULT 'public',
+                source_visibility ENUM('open','private') NOT NULL DEFAULT 'open',
+                price_cents INT UNSIGNED NOT NULL DEFAULT 0,
+                currency CHAR(3) NOT NULL DEFAULT 'USD',
+                billing_model ENUM('free','one_time','subscription') NOT NULL DEFAULT 'free',
+                demo_enabled TINYINT(1) NOT NULL DEFAULT 0,
+                demo_app_id VARCHAR(64) NULL,
+                compatible_with VARCHAR(100) NULL,
+                plugin_meta JSON NULL,
                 status ENUM('draft','published','archived') DEFAULT 'draft',
                 download_count INT UNSIGNED DEFAULT 0,
                 avg_rating DECIMAL(3,2) DEFAULT 0,
@@ -728,7 +736,83 @@ class MySQLConnection
                 INDEX idx_item_type (item_type),
                 INDEX idx_trust_level (trust_level),
                 INDEX idx_visibility_status (visibility, status),
-                INDEX idx_featured (featured)
+                INDEX idx_featured (featured),
+                INDEX idx_pricing (billing_model, price_cents),
+                INDEX idx_compatible_with (compatible_with)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS marketplace_licenses (
+                id VARCHAR(36) PRIMARY KEY,
+                catalog_id VARCHAR(36) NOT NULL,
+                buyer_user_id VARCHAR(36) NOT NULL,
+                seller_user_id VARCHAR(36) NOT NULL,
+                version_id VARCHAR(36) NULL,
+                license_key VARCHAR(64) NOT NULL,
+                status ENUM('active','revoked','refunded') NOT NULL DEFAULT 'active',
+                price_cents INT UNSIGNED NOT NULL DEFAULT 0,
+                currency CHAR(3) NOT NULL DEFAULT 'USD',
+                payment_provider VARCHAR(32) NOT NULL DEFAULT 'free',
+                payment_ref VARCHAR(128) NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_mkt_license_buyer (catalog_id, buyer_user_id),
+                UNIQUE KEY uq_mkt_license_key (license_key),
+                INDEX idx_mkt_license_buyer (buyer_user_id),
+                INDEX idx_mkt_license_seller (seller_user_id),
+                CONSTRAINT fk_mkt_license_catalog FOREIGN KEY (catalog_id) REFERENCES pack_catalog(id) ON DELETE CASCADE,
+                CONSTRAINT fk_mkt_license_buyer FOREIGN KEY (buyer_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                CONSTRAINT fk_mkt_license_seller FOREIGN KEY (seller_user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS member_plugins (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                catalog_id VARCHAR(36) NULL,
+                license_id VARCHAR(36) NULL,
+                plugin_slug VARCHAR(100) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                description TEXT,
+                version VARCHAR(50) NOT NULL DEFAULT '1.0.0',
+                runtime_app_id VARCHAR(64) NULL,
+                source_protected TINYINT(1) NOT NULL DEFAULT 0,
+                compatible_with VARCHAR(100) NULL,
+                manifest_json JSON NULL,
+                capabilities_json JSON NULL,
+                settings_json JSON NULL,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_member_plugins_slug (user_id, plugin_slug),
+                INDEX idx_member_plugins_user (user_id),
+                INDEX idx_member_plugins_catalog (catalog_id),
+                CONSTRAINT fk_member_plugins_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                CONSTRAINT fk_member_plugins_catalog FOREIGN KEY (catalog_id) REFERENCES pack_catalog(id) ON DELETE SET NULL,
+                CONSTRAINT fk_member_plugins_license FOREIGN KEY (license_id) REFERENCES marketplace_licenses(id) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_plugins (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                member_plugin_id VARCHAR(36) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                share_database TINYINT(1) NOT NULL DEFAULT 0,
+                mount_point VARCHAR(64) NOT NULL DEFAULT 'panel',
+                config_json JSON NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_app_plugins_pair (app_id, member_plugin_id),
+                INDEX idx_app_plugins_app (app_id),
+                INDEX idx_app_plugins_plugin (member_plugin_id),
+                CONSTRAINT fk_app_plugins_app FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                CONSTRAINT fk_app_plugins_member_plugin FOREIGN KEY (member_plugin_id) REFERENCES member_plugins(id) ON DELETE CASCADE,
+                CONSTRAINT fk_app_plugins_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
@@ -2039,9 +2123,17 @@ class MySQLConnection
                 screenshots JSON,
                 tags JSON,
                 category VARCHAR(100),
-                item_type ENUM('application_package','connector','theme','widget','quickjs_library','sdk_component','template') DEFAULT 'application_package',
+                item_type ENUM('application_package','softn_app','plugin','connector','theme','widget','quickjs_library','sdk_component','template') DEFAULT 'application_package',
                 trust_level ENUM('official','verified','community','private') DEFAULT 'community',
                 visibility ENUM('public','private','unlisted') DEFAULT 'public',
+                source_visibility ENUM('open','private') NOT NULL DEFAULT 'open',
+                price_cents INT UNSIGNED NOT NULL DEFAULT 0,
+                currency CHAR(3) NOT NULL DEFAULT 'USD',
+                billing_model ENUM('free','one_time','subscription') NOT NULL DEFAULT 'free',
+                demo_enabled TINYINT(1) NOT NULL DEFAULT 0,
+                demo_app_id VARCHAR(64) NULL,
+                compatible_with VARCHAR(100) NULL,
+                plugin_meta JSON NULL,
                 status ENUM('draft','published','archived') DEFAULT 'draft',
                 download_count INT UNSIGNED DEFAULT 0,
                 avg_rating DECIMAL(3,2) DEFAULT 0,
@@ -2054,20 +2146,136 @@ class MySQLConnection
                 INDEX idx_item_type (item_type),
                 INDEX idx_trust_level (trust_level),
                 INDEX idx_visibility_status (visibility, status),
-                INDEX idx_featured (featured)
+                INDEX idx_featured (featured),
+                INDEX idx_pricing (billing_model, price_cents),
+                INDEX idx_compatible_with (compatible_with)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
-        // Marketplace item_type + trust_level for existing pack_catalog installs (spec §30).
-        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'item_type'");
-        if ($result->rowCount() === 0) {
-            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN item_type ENUM('application_package','connector','theme','widget','quickjs_library','sdk_component','template') DEFAULT 'application_package' AFTER category");
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS marketplace_licenses (
+                id VARCHAR(36) PRIMARY KEY,
+                catalog_id VARCHAR(36) NOT NULL,
+                buyer_user_id VARCHAR(36) NOT NULL,
+                seller_user_id VARCHAR(36) NOT NULL,
+                version_id VARCHAR(36) NULL,
+                license_key VARCHAR(64) NOT NULL,
+                status ENUM('active','revoked','refunded') NOT NULL DEFAULT 'active',
+                price_cents INT UNSIGNED NOT NULL DEFAULT 0,
+                currency CHAR(3) NOT NULL DEFAULT 'USD',
+                payment_provider VARCHAR(32) NOT NULL DEFAULT 'free',
+                payment_ref VARCHAR(128) NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_mkt_license_buyer (catalog_id, buyer_user_id),
+                UNIQUE KEY uq_mkt_license_key (license_key),
+                INDEX idx_mkt_license_buyer (buyer_user_id),
+                INDEX idx_mkt_license_seller (seller_user_id),
+                CONSTRAINT fk_mkt_license_catalog FOREIGN KEY (catalog_id) REFERENCES pack_catalog(id) ON DELETE CASCADE,
+                CONSTRAINT fk_mkt_license_buyer FOREIGN KEY (buyer_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                CONSTRAINT fk_mkt_license_seller FOREIGN KEY (seller_user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS member_plugins (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                catalog_id VARCHAR(36) NULL,
+                license_id VARCHAR(36) NULL,
+                plugin_slug VARCHAR(100) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                description TEXT,
+                version VARCHAR(50) NOT NULL DEFAULT '1.0.0',
+                runtime_app_id VARCHAR(64) NULL,
+                source_protected TINYINT(1) NOT NULL DEFAULT 0,
+                compatible_with VARCHAR(100) NULL,
+                manifest_json JSON NULL,
+                capabilities_json JSON NULL,
+                settings_json JSON NULL,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_member_plugins_slug (user_id, plugin_slug),
+                INDEX idx_member_plugins_user (user_id),
+                INDEX idx_member_plugins_catalog (catalog_id),
+                CONSTRAINT fk_member_plugins_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                CONSTRAINT fk_member_plugins_catalog FOREIGN KEY (catalog_id) REFERENCES pack_catalog(id) ON DELETE SET NULL,
+                CONSTRAINT fk_member_plugins_license FOREIGN KEY (license_id) REFERENCES marketplace_licenses(id) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_plugins (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                member_plugin_id VARCHAR(36) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                share_database TINYINT(1) NOT NULL DEFAULT 0,
+                mount_point VARCHAR(64) NOT NULL DEFAULT 'panel',
+                config_json JSON NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_app_plugins_pair (app_id, member_plugin_id),
+                INDEX idx_app_plugins_app (app_id),
+                INDEX idx_app_plugins_plugin (member_plugin_id),
+                CONSTRAINT fk_app_plugins_app FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                CONSTRAINT fk_app_plugins_member_plugin FOREIGN KEY (member_plugin_id) REFERENCES member_plugins(id) ON DELETE CASCADE,
+                CONSTRAINT fk_app_plugins_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Marketplace item_type + trust_level + commerce/plugin/demo columns for existing pack_catalog installs.
+        $itemTypeCol = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'item_type'")->fetch(PDO::FETCH_ASSOC);
+        if (!$itemTypeCol) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN item_type ENUM('application_package','softn_app','plugin','connector','theme','widget','quickjs_library','sdk_component','template') DEFAULT 'application_package' AFTER category");
             $pdo->exec("ALTER TABLE pack_catalog ADD INDEX idx_item_type (item_type)");
+        } elseif (!str_contains((string) ($itemTypeCol['Type'] ?? ''), "'softn_app'") || !str_contains((string) ($itemTypeCol['Type'] ?? ''), "'plugin'")) {
+            $pdo->exec("ALTER TABLE pack_catalog MODIFY COLUMN item_type ENUM('application_package','softn_app','plugin','connector','theme','widget','quickjs_library','sdk_component','template') DEFAULT 'application_package'");
         }
         $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'trust_level'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN trust_level ENUM('official','verified','community','private') DEFAULT 'community' AFTER item_type");
             $pdo->exec("ALTER TABLE pack_catalog ADD INDEX idx_trust_level (trust_level)");
+        }
+        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'source_visibility'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN source_visibility ENUM('open','private') NOT NULL DEFAULT 'open' AFTER visibility");
+        }
+        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'price_cents'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN price_cents INT UNSIGNED NOT NULL DEFAULT 0 AFTER source_visibility");
+        }
+        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'currency'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN currency CHAR(3) NOT NULL DEFAULT 'USD' AFTER price_cents");
+        }
+        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'billing_model'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN billing_model ENUM('free','one_time','subscription') NOT NULL DEFAULT 'free' AFTER currency");
+        }
+        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'demo_enabled'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN demo_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER billing_model");
+        }
+        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'demo_app_id'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN demo_app_id VARCHAR(64) NULL AFTER demo_enabled");
+        }
+        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'compatible_with'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN compatible_with VARCHAR(100) NULL AFTER demo_app_id");
+        }
+        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'plugin_meta'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN plugin_meta JSON NULL AFTER compatible_with");
+        }
+        if ($pdo->query("SHOW INDEX FROM pack_catalog WHERE Key_name = 'idx_pricing'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD INDEX idx_pricing (billing_model, price_cents)");
+        }
+        if ($pdo->query("SHOW INDEX FROM pack_catalog WHERE Key_name = 'idx_compatible_with'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD INDEX idx_compatible_with (compatible_with)");
         }
 
         // Screenshot metadata is written by PackCatalogService during first-party

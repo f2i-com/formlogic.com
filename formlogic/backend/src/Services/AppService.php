@@ -210,7 +210,136 @@ class AppService
                 unset($settings[$mktKey]);
             }
         }
+        // settings.externalApi: per-app customization for exposing a SoftN/container backend as an external API.
+        if (array_key_exists('externalApi', $settings)) {
+            $ext = self::sanitizeExternalApi($settings['externalApi']);
+            if ($ext === null) {
+                unset($settings['externalApi']);
+            } else {
+                $settings['externalApi'] = $ext;
+            }
+        }
         return $settings;
+    }
+
+    /**
+     * Sanitize per-app external API exposure settings (`settings.externalApi`):
+     * enable/disable, auth mode (`api_key` | `both` | `public`), method allowlist,
+     * allowed/blocked path prefixes, optional default path prefix, per-app CORS origins,
+     * per-minute rate limit, and safe custom response headers.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function sanitizeExternalApi(mixed $value): ?array
+    {
+        if (!is_array($value)) {
+            return null;
+        }
+        $enabled = array_key_exists('enabled', $value) ? (bool) $value['enabled'] : true;
+        $authMode = is_string($value['authMode'] ?? null) ? strtolower(trim($value['authMode'])) : 'api_key';
+        if (!in_array($authMode, ['api_key', 'both', 'public'], true)) {
+            $authMode = 'api_key';
+        }
+        $validMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
+        $allowedMethods = [];
+        if (is_array($value['allowedMethods'] ?? null)) {
+            foreach ($value['allowedMethods'] as $m) {
+                if (!is_string($m)) continue;
+                $upper = strtoupper(trim($m));
+                if (in_array($upper, $validMethods, true) && !in_array($upper, $allowedMethods, true)) {
+                    $allowedMethods[] = $upper;
+                }
+            }
+        }
+        if ($allowedMethods === []) {
+            $allowedMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+        }
+
+        $cleanPaths = static function (mixed $raw): array {
+            if (!is_array($raw)) return [];
+            $out = [];
+            foreach ($raw as $entry) {
+                if (!is_string($entry)) continue;
+                $p = trim($entry);
+                if ($p === '') continue;
+                if (!str_starts_with($p, '/')) $p = '/' . $p;
+                if (strlen($p) > 200 || str_contains($p, '..') || preg_match('/[\x00-\x1f\x7f\s]/', $p) === 1) continue;
+                if (str_starts_with(strtolower($p), '/api/site/')) continue;
+                if (!in_array($p, $out, true)) {
+                    $out[] = $p;
+                }
+                if (count($out) >= 30) break;
+            }
+            return $out;
+        };
+        $allowedPaths = $cleanPaths($value['allowedPaths'] ?? []);
+        $blockedPaths = $cleanPaths($value['blockedPaths'] ?? []);
+
+        $defaultPrefix = '';
+        if (is_string($value['defaultPrefix'] ?? null)) {
+            $dp = trim($value['defaultPrefix']);
+            if ($dp !== '') {
+                if (!str_starts_with($dp, '/')) $dp = '/' . $dp;
+                $dp = rtrim($dp, '/');
+                if ($dp !== '' && strlen($dp) <= 64 && !str_contains($dp, '..') && preg_match('~^/[A-Za-z0-9/_-]+$~D', $dp) === 1 && !str_starts_with(strtolower($dp), '/api/site')) {
+                    $defaultPrefix = $dp;
+                }
+            }
+        }
+
+        $corsOrigins = [];
+        if (is_array($value['corsOrigins'] ?? null)) {
+            foreach ($value['corsOrigins'] as $rawOrigin) {
+                if (!is_string($rawOrigin)) continue;
+                $o = trim($rawOrigin);
+                if ($o === '*') {
+                    if (!in_array('*', $corsOrigins, true)) $corsOrigins[] = '*';
+                } elseif ($o !== '') {
+                    $norm = \FormLogic\Support\SessionOriginPolicy::normalizeOrigin(rtrim($o, '/'));
+                    if ($norm !== null && !in_array($norm, $corsOrigins, true)) {
+                        $corsOrigins[] = $norm;
+                    }
+                }
+                if (count($corsOrigins) >= 20) break;
+            }
+        }
+
+        $rateLimit = 120;
+        if (isset($value['rateLimitPerMinute']) && is_numeric($value['rateLimitPerMinute'])) {
+            $rateLimit = max(1, min(600, (int) $value['rateLimitPerMinute']));
+        }
+
+        $forbiddenHeaders = [
+            'set-cookie', 'cookie', 'host', 'location', 'transfer-encoding', 'content-length',
+            'content-security-policy', 'strict-transport-security', 'x-frame-options',
+            'x-content-type-options', 'www-authenticate', 'proxy-authenticate', 'connection', 'upgrade',
+        ];
+        $customHeaders = [];
+        if (is_array($value['customHeaders'] ?? null)) {
+            foreach ($value['customHeaders'] as $k => $v) {
+                if (!is_string($k) || !is_scalar($v)) continue;
+                $hk = trim($k);
+                $lk = strtolower($hk);
+                if ($hk === '' || strlen($hk) > 64 || preg_match('/^[A-Za-z0-9-]+$/D', $hk) !== 1) continue;
+                if (in_array($lk, $forbiddenHeaders, true) || str_starts_with($lk, 'access-control-') || str_starts_with($lk, 'x-formlogic-')) continue;
+                $hv = trim((string) $v);
+                if ($hv === '' || strlen($hv) > 256 || preg_match('/[\r\n\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/', $hv) === 1) continue;
+                $customHeaders[$hk] = $hv;
+                if (count($customHeaders) >= 12) break;
+            }
+        }
+
+        return [
+            'enabled' => $enabled,
+            'authMode' => $authMode,
+            'allowedMethods' => $allowedMethods,
+            'allowedPaths' => $allowedPaths,
+            'blockedPaths' => $blockedPaths,
+            'defaultPrefix' => $defaultPrefix,
+            'corsOrigins' => $corsOrigins,
+            'rateLimitPerMinute' => $rateLimit,
+            'customHeaders' => $customHeaders,
+        ];
     }
 
     /**
@@ -1214,7 +1343,7 @@ class AppService
 
     // Form management
 
-    public function getAppForms(string $appId): array
+    public function getAppForms(string $appId, bool $includeForms = false): array
     {
         $stmt = $this->mysql->prepare("
             SELECT af.*, f.title as form_title, f.status as form_status
@@ -1238,6 +1367,15 @@ class AppService
                 'formTitle' => $row['form_title'],
                 'formStatus' => $row['form_status'],
             ];
+        }
+        if ($includeForms && $forms !== []) {
+            $fullById = $this->formService->getFormsByIds(array_column($forms, 'formId'));
+            foreach ($forms as &$entry) {
+                if (isset($fullById[$entry['formId']])) {
+                    $entry['form'] = $fullById[$entry['formId']];
+                }
+            }
+            unset($entry);
         }
         return $forms;
     }

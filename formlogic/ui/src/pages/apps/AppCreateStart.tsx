@@ -25,7 +25,7 @@ type Build = 'web' | 'forms' | 'upload';
 const builds = [
   { type: 'web', label: 'Web app', hint: 'JavaScript, React or Vue', icon: AppWindow },
   { type: 'forms', label: 'Forms app', hint: 'Forms, CRUD & live charts', icon: ClipboardList },
-  { type: 'upload', label: 'Upload SoftN / ZIP', hint: 'SoftN, PHP, Rust, JS or static', icon: FileUp },
+  { type: 'upload', label: 'Upload ZIP / SoftN', hint: 'SoftN, PHP, Rust, JS or static', icon: FileUp },
 ] as const;
 const headings = {
   web: ['Start with a web app', 'Choose a framework and open a working starter in your editor.'],

@@ -404,7 +404,8 @@ class PackService
                 foreach ($packData['forms'] ?? [] as $packForm) {
                     $pfId = (string) ($packForm['packFormId'] ?? '');
                     $realFormId = $formIdMap[$pfId] ?? null;
-                    $ntb = is_array($packForm['settings']['nativeTableBinding'] ?? null) ? $packForm['settings']['nativeTableBinding'] : null;
+                    $packFormSettings = is_array($packForm['settings'] ?? null) ? $packForm['settings'] : [];
+                    $ntb = is_array($packFormSettings['nativeTableBinding'] ?? null) ? $packFormSettings['nativeTableBinding'] : null;
                     if ($realFormId === null || $ntb === null) continue;
                     $ref = is_string($ntb['appId'] ?? null) ? $ntb['appId'] : '';
                     if (!str_starts_with($ref, '@packApp:')) continue;

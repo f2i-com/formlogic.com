@@ -56,6 +56,7 @@ class DemoReadOnlyMiddleware implements MiddlewareInterface
             '*/demo/reset',
             '*/demo/ui-event',
             '*/demo/request',
+            '*/demo/records',
         ];
     }
 

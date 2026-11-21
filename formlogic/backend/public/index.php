@@ -1278,7 +1278,9 @@ $container->set(\FormLogic\Controllers\ExternalAppApiController::class, function
         $c->get(\FormLogic\Services\FlowService::class),
         $c->get(\FormLogic\Services\CloudFlowRunner::class),
         $c->get(\FormLogic\Services\PlanService::class),
-        $c->get(\FormLogic\Services\NativeRecordEventRouter::class)
+        $c->get(\FormLogic\Services\NativeRecordEventRouter::class),
+        $c->get(\FormLogic\Services\NativeAppCalls::class),
+        $c->get(\FormLogic\Services\RateLimiter::class)
     );
 });
 // Flow compilation (RUN-301 first slice, ADR-010): server-authoritative lowering of
@@ -1666,7 +1668,11 @@ $appAccessGate = new \FormLogic\Middleware\AppAccessGateMiddleware(
 );
 
 // Routes
-$app->options('/{routes:.+}', function ($request, $response) {
+$app->options('/{routes:.+}', function ($request, $response) use ($container) {
+    $path = $request->getUri()->getPath();
+    if (preg_match('#^/api/(?:v1|public)/apps/([^/]+)/(?:invoke|routes(?:/|$))#', $path, $m) === 1) {
+        return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->preflight($request, $response, ['appId' => rawurldecode($m[1])]);
+    }
     return $response;
 });
 
@@ -2706,6 +2712,15 @@ $app->get('/api/public/signing-key', function ($request, $response) use ($contai
     return $container->get(\FormLogic\Controllers\AppManifestController::class)->signingKey($request, $response);
 });
 
+// Public external REST API exposure for published SoftN/container apps configured with
+// `settings.externalApi.authMode` = 'public' | 'both' (per-app method/route/CORS/rate-limit rules enforced).
+$app->options('/api/public/apps/{appId}/routes/{path:.*}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->preflight($request, $response, $getArgs($request));
+});
+$app->map(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], '/api/public/apps/{appId}/routes/{path:.*}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->publicRouteApp($request, $response, $getArgs($request));
+});
+
 // ---- Custom-domain launch endpoints served at the domain ROOT (not under /api) ----------------
 // These are UNREACHABLE at the root unless the deploy's .htaccess funnels the three paths to this
 // front controller (rules added to ui/public/.htaccess + ui/dist/.htaccess). Each resolves the
@@ -2997,6 +3012,23 @@ $app->post('/api/packs/catalog/{slug}/demo/ui-event', function ($request, $respo
 
 $app->post('/api/packs/catalog/{slug}/demo/request', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\MarketplaceController::class)->demoBackendRequest($request, $response, $getArgs($request));
+})->add($mktSandboxLimiter);
+
+// Live linked Management Forms & Records CRUD on the visitor's own isolated ephemeral sandbox SQLite DB.
+$app->get('/api/packs/catalog/{slug}/demo/tables', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->demoTables($request, $response, $getArgs($request));
+})->add($mktSandboxLimiter);
+
+$app->post('/api/packs/catalog/{slug}/demo/records', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->demoCreateRecord($request, $response, $getArgs($request));
+})->add($mktSandboxLimiter);
+
+$app->put('/api/packs/catalog/{slug}/demo/records', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->demoUpdateRecord($request, $response, $getArgs($request));
+})->add($mktSandboxLimiter);
+
+$app->delete('/api/packs/catalog/{slug}/demo/records', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->demoDeleteRecord($request, $response, $getArgs($request));
 })->add($mktSandboxLimiter);
 
 // Marketplace licensing, server-side protected install & seller sales
@@ -3500,10 +3532,16 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     $group->get('/apps', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->listApps($request, $response);
     })->add($appsInvokeAuth);
+    $group->options('/apps/{appId}/invoke', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->preflight($request, $response, $getArgs($request));
+    });
     $group->post('/apps/{appId}/invoke', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->invokeApp($request, $response, $getArgs($request));
     })->add($appsInvokeAuth);
-    $group->map(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'], '/apps/{appId}/routes/{path:.*}', function ($request, $response) use ($container, $getArgs) {
+    $group->options('/apps/{appId}/routes/{path:.*}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->preflight($request, $response, $getArgs($request));
+    });
+    $group->map(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], '/apps/{appId}/routes/{path:.*}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->routeApp($request, $response, $getArgs($request));
     })->add($appsInvokeAuth);
 

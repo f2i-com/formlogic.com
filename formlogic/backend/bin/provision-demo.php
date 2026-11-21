@@ -33,6 +33,8 @@ use FormLogic\Services\AppUserService;
 use FormLogic\Services\PackService;
 use FormLogic\Services\PackCatalogService;
 use FormLogic\Services\ResponseService;
+use FormLogic\Services\NativeAppService;
+use FormLogic\Services\SoftnPackCatalog;
 
 // $_ENV first, process env second: with a variables_order lacking E, $_ENV is empty in CLI while
 // the process env (CI job env / docker -e) carries the values — and immutable Dotenv skips vars
@@ -398,6 +400,183 @@ foreach ($sources as $s) {
     }
 }
 out("seeded reports: $seededReports across demo apps");
+
+// ── Companion SoftN Apps for every Demo pack ────────────────────────────────
+// Every Demo Form App pack gets its matching full-stack SoftN App (from resources/softn-packs/<slug>-softn/)
+// provisioned, installed, seeded with sample SQLite data, published, and bidirectionally linked so Demo
+// visitors can explore BOTH the Form App (forms, records, Recharts reports) AND the matching SoftN App!
+$softnCatalog = new SoftnPackCatalog();
+$nativeService = new NativeAppService();
+$demoPackAppIds = [];
+$instMapStmt = $pdo->prepare(
+    "SELECT pc.slug, pi.app_ids
+     FROM pack_installations pi
+     JOIN pack_catalog pc ON pc.id = pi.catalog_id
+     WHERE pi.user_id = ?"
+);
+$instMapStmt->execute([$demoId]);
+foreach ($instMapStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $ids = json_decode((string) ($row['app_ids'] ?? '[]'), true);
+    if (is_array($ids) && $ids !== []) {
+        $demoPackAppIds[(string) $row['slug']] = array_values(array_filter(array_map('strval', $ids)));
+    }
+}
+$demoAppsBySlug = [];
+$demoAppsById = [];
+foreach ($apps->getAllApps($demoId) as $a) {
+    $demoAppsBySlug[(string) ($a['slug'] ?? '')] = $a;
+    $demoAppsById[(string) ($a['id'] ?? '')] = $a;
+}
+
+$softnProvisioned = 0;
+$softnInstalled = 0;
+$softnLinkedForms = 0;
+foreach ($sources as $s) {
+    $packSlug = (string) $s['slug'];
+    $softnSlug = $softnCatalog->companionSoftnSlugFor($packSlug);
+    if ($softnSlug === null) {
+        continue;
+    }
+    $meta = $softnCatalog->getMeta($softnSlug);
+    if ($meta === null || !is_string($meta['_archivePath'] ?? null) || !is_file((string) $meta['_archivePath'])) {
+        continue;
+    }
+
+    $formAppIds = $demoPackAppIds[$packSlug] ?? [];
+    $primaryFormApp = null;
+    foreach ($formAppIds as $fid) {
+        if (isset($demoAppsById[$fid])) {
+            $primaryFormApp = $demoAppsById[$fid];
+            break;
+        }
+    }
+    $shortName = trim((string) ($meta['shortName'] ?? $s['name']));
+    $softnAppName = $shortName . ' (SoftN App)';
+    $softnApp = $demoAppsBySlug[$softnSlug] ?? null;
+
+    if ($softnApp === null) {
+        try {
+            $softnApp = $apps->createApp([
+                'name' => $softnAppName,
+                'slug' => $softnSlug,
+                'description' => (string) ($meta['description'] ?? $s['description']),
+                'settings' => [
+                    'softnApp' => true,
+                    'icon' => (string) ($meta['icon'] ?? $s['icon'] ?? 'Box'),
+                    'companionSoftnPackSlug' => $softnSlug,
+                    'demoSandboxPackSlug' => $softnSlug,
+                    'companionFormPackSlug' => $packSlug,
+                    'linkedFormAppId' => $primaryFormApp ? (string) $primaryFormApp['id'] : null,
+                    'linkedFormAppSlug' => $primaryFormApp ? (string) $primaryFormApp['slug'] : null,
+                    'linkedFormAppName' => $primaryFormApp ? (string) $primaryFormApp['name'] : null,
+                ],
+            ], $demoId);
+            $pdo->prepare("UPDATE apps SET status = 'published' WHERE id = ?")->execute([$softnApp['id']]);
+            $softnApp['status'] = 'published';
+            $demoAppsBySlug[$softnSlug] = $softnApp;
+            $demoAppsById[$softnApp['id']] = $softnApp;
+            $softnProvisioned++;
+            $GLOBALS['demoDataChanged'] = true;
+        } catch (\Throwable $e) {
+            out("  softn demo: create FAILED for {$softnSlug} — " . $e->getMessage());
+            continue;
+        }
+    } else {
+        $existingSettings = is_array($softnApp['settings'] ?? null) ? $softnApp['settings'] : [];
+        $desiredSettings = array_merge($existingSettings, [
+            'softnApp' => true,
+            'icon' => (string) ($existingSettings['icon'] ?? $meta['icon'] ?? $s['icon'] ?? 'Box'),
+            'companionSoftnPackSlug' => $softnSlug,
+            'demoSandboxPackSlug' => $softnSlug,
+            'companionFormPackSlug' => $packSlug,
+            'linkedFormAppId' => $primaryFormApp ? (string) $primaryFormApp['id'] : ($existingSettings['linkedFormAppId'] ?? null),
+            'linkedFormAppSlug' => $primaryFormApp ? (string) $primaryFormApp['slug'] : ($existingSettings['linkedFormAppSlug'] ?? null),
+            'linkedFormAppName' => $primaryFormApp ? (string) $primaryFormApp['name'] : ($existingSettings['linkedFormAppName'] ?? null),
+        ]);
+        if ($desiredSettings !== $existingSettings || ($softnApp['status'] ?? '') !== 'published') {
+            $apps->updateApp((string) $softnApp['id'], ['settings' => $desiredSettings]);
+            $pdo->prepare("UPDATE apps SET status = 'published' WHERE id = ?")->execute([$softnApp['id']]);
+        }
+    }
+
+    $softnAppId = (string) $softnApp['id'];
+    if ($nativeService->summary($softnAppId) === null) {
+        try {
+            $project = NativeAppService::extractProjectFromArchive((string) $meta['_archivePath']);
+            $nativeService->install($softnAppId, $project, 0, null, [
+                'by' => $demoId,
+                'how' => 'pack',
+                'summary' => 'Demo companion SoftN app',
+            ]);
+            if (NativeAppService::hasContainerBackend($project)) {
+                $ownerIdentity = [
+                    'demo' => true,
+                    'sandbox' => true,
+                    'authenticated' => true,
+                    'userId' => $demoId,
+                    'roleId' => 'owner',
+                    'formlogic' => [
+                        'appId' => $softnAppId,
+                        'userId' => $demoId,
+                        'roleId' => 'owner',
+                    ],
+                ];
+                try {
+                    $setupPayload = json_encode([
+                        'business_name' => $shortName . ' Demo',
+                        'owner_name' => 'Demo Owner',
+                        'currency' => 'USD',
+                        'timezone' => 'UTC',
+                        'load_sample' => true,
+                    ], JSON_THROW_ON_ERROR);
+                    $nativeService->containerRequest($softnAppId, [
+                        'method' => 'POST',
+                        'path' => '/api/setup',
+                        'query' => '',
+                        'headers' => [['content-type', 'application/json']],
+                        'bodyBase64' => base64_encode($setupPayload),
+                    ], $ownerIdentity);
+                    $nativeService->containerRequest($softnAppId, [
+                        'method' => 'POST',
+                        'path' => '/api/sample/load',
+                        'query' => '',
+                        'headers' => [['content-type', 'application/json']],
+                        'bodyBase64' => base64_encode('{}'),
+                    ], $ownerIdentity);
+                } catch (\Throwable) {
+                    // Some apps seed on first GET or don't expose /api/setup — safe to ignore.
+                }
+            }
+            $softnInstalled++;
+            $GLOBALS['demoDataChanged'] = true;
+        } catch (\Throwable $e) {
+            out("  softn demo: install FAILED for {$softnSlug} — " . $e->getMessage());
+        }
+    }
+
+    // Link every Demo Form App in this pack to its companion SoftN App.
+    foreach ($formAppIds as $fid) {
+        $formApp = $demoAppsById[$fid] ?? null;
+        if ($formApp === null) {
+            continue;
+        }
+        $fSettings = is_array($formApp['settings'] ?? null) ? $formApp['settings'] : [];
+        $needsUpdate =
+            ($fSettings['linkedSoftnAppId'] ?? null) !== $softnAppId ||
+            ($fSettings['linkedSoftnAppSlug'] ?? null) !== (string) $softnApp['slug'] ||
+            ($fSettings['linkedSoftnAppName'] ?? null) !== (string) $softnApp['name'] ||
+            ($fSettings['companionSoftnPackSlug'] ?? null) !== $softnSlug;
+        if ($needsUpdate) {
+            $fSettings['linkedSoftnAppId'] = $softnAppId;
+            $fSettings['linkedSoftnAppSlug'] = (string) $softnApp['slug'];
+            $fSettings['linkedSoftnAppName'] = (string) $softnApp['name'];
+            $fSettings['companionSoftnPackSlug'] = $softnSlug;
+            $apps->updateApp($fid, ['settings' => $fSettings]);
+            $softnLinkedForms++;
+        }
+    }
+}
+out("companion SoftN demo apps: $softnProvisioned created, $softnInstalled installed, $softnLinkedForms form app(s) linked");
 
 // ── Standalone example forms (landing-page "try a form" showcase) ────────────
 // Published, owned by Demo, NOT attached to any app — the public /form/{id}

@@ -211,7 +211,7 @@ test.describe('accessibility smoke (axe)', () => {
       const option = picker.getByRole('option', { name: `${category.name} (${category.count})`, exact: true });
       await expect(option).toHaveAttribute('value', category.name);
     }
-    await expect(page.getByRole('status', { name: 'Loading templates' })).toBeHidden();
+    await expect(page.getByRole('status', { name: 'Loading marketplace' })).toBeHidden();
     await expectNoSeriousViolations(page, 'marketplace gallery');
   });
 

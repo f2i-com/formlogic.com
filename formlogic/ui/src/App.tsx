@@ -301,8 +301,7 @@ const workspacePages = <>
   <Route path="/apps/new" element={<AppCreateStart />} />
   <Route path="/apps/:appId/web/*" element={<SoftnAppWorkspace />} />
   <Route path="/apps/:appId/softn/*" element={<LegacyAppAddress />} />
-  <Route path="/apps/:appId/studio" element={<AppStudio />} />
-  <Route path="/apps/:appId/studio/:step" element={<AppStudio />} />
+  <Route path="/apps/:appId/studio/:step?" element={<AppStudio />} />
   <Route element={<AppManagementPages />}>
     <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />
     <Route path="/apps/:appId/forms" element={<AppFormManager />} />

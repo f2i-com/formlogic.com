@@ -22,6 +22,7 @@ import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { cn } from '../../lib/utils';
 import type { AppForm } from '../../types/app';
 import { NativeAppPanel } from '../../components/studio/NativeAppPanel';
+import { getCachedStudioAppForms, setCachedStudioAppForms } from '../../components/studio/useStudioData';
 
 // An action in a table row, and the same action at a finger's size in a phone's card.
 const small = 'inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-primary-300';
@@ -36,17 +37,33 @@ export function AppRecords() {
   const acting = useAdminActing();
   const { getApp, fetchApps } = useAppStore();
   const ownerForms = useFormStore((s) => s.forms);
-  const [appForms, setAppForms] = useState<AppForm[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cachedForms = getCachedStudioAppForms(appId);
+  const [appForms, setAppForms] = useState<AppForm[]>(() =>
+    cachedForms ? [...cachedForms.forms].sort((a, b) => a.sortOrder - b.sortOrder) : []
+  );
+  const [loading, setLoading] = useState<boolean>(() => !cachedForms);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [query, setQuery] = useState('');
+
+  const [loadedAppId, setLoadedAppId] = useState(appId);
+  if (loadedAppId !== appId) {
+    setLoadedAppId(appId);
+    const nextCached = getCachedStudioAppForms(appId);
+    setAppForms(nextCached ? [...nextCached.forms].sort((a, b) => a.sortOrder - b.sortOrder) : []);
+    setLoading(!nextCached);
+    setLoadError(null);
+  }
 
   const app = appId ? getApp(appId) : undefined;
   useDocumentTitle(app ? `${app.name} — Records` : 'App records');
 
   useEffect(() => {
     if (!appId) return;
+    const cached = getCachedStudioAppForms(appId);
+    if (reloadToken === 0 && cached?.fresh) {
+      return;
+    }
     let cancelled = false;
     const run = async () => {
       // The apps list may not be loaded on a hard refresh straight to this URL.
@@ -62,7 +79,9 @@ export function AppRecords() {
         return;
       }
       setLoadError(null);
-      setAppForms([...((res.data?.forms ?? []) as AppForm[])].sort((a, b) => a.sortOrder - b.sortOrder));
+      const sorted = [...((res.data?.forms ?? []) as AppForm[])].sort((a, b) => a.sortOrder - b.sortOrder);
+      setAppForms(sorted);
+      setCachedStudioAppForms(appId, sorted);
       setLoading(false);
     };
     void run();

@@ -364,7 +364,7 @@ export default function PackGalleryPage() {
               className={cn(
                 'inline-flex h-11 cursor-pointer items-center gap-2 rounded-xl px-4 text-sm font-semibold transition',
                 activeTab === key
-                  ? 'bg-primary-600 text-white shadow-sm'
+                  ? 'bg-primary-600 text-primary-foreground shadow-sm'
                   : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
               )}
             >
@@ -452,8 +452,8 @@ export default function PackGalleryPage() {
           </span>
         </label>
         <div className="grid min-w-0 grid-flow-col auto-cols-fr gap-2 @2xl/packs:max-w-[58%] @2xl/packs:flex-1">
-          <FacetPicker label="Category" value={category} facets={categories} onChange={value => filter({ category: value })} />
-          <FacetPicker label="Tag" value={tag} facets={tags} onChange={value => filter({ tag: value })} />
+          <FacetPicker label="Category" value={category} facets={categories} onChange={value => filter({ category: value, tag: '' })} />
+          <FacetPicker label="Tag" value={tag} facets={tags} onChange={value => filter({ tag: value, category: '' })} />
           <label className={labelClass}>Sort by
             <select value={sort} onChange={event => filter({ sort: event.target.value === 'popular' ? '' : event.target.value })} className={pickerClass}>
               {Object.entries(sortOptions).map(([key, name]) => <option key={key} value={key}>{name}</option>)}

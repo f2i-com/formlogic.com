@@ -250,4 +250,89 @@ final class MarketplaceSandboxAndPluginsTest extends TestCase
         $payload = json_decode((string) $res->getBody(), true);
         self::assertSame('source_private', $payload['code'] ?? null);
     }
+
+    public function testBidirectionalSandboxTableCrudSyncsWithSoftnBackend(): void
+    {
+        if (!$this->native->available()) {
+            self::markTestSkipped('Native SoftN runtime not prepared in this environment.');
+        }
+
+        $starter = NativeAppService::starterProject('Sync Inventory', 'cat-sync-1', 'javascript');
+        $installed = $this->sandbox->installPrivateBundle('cat-sync-1', $starter);
+        $catalog = [
+            'id' => 'cat-sync-1',
+            'slug' => 'sync-inventory',
+            'source_visibility' => 'private',
+            'demo_enabled' => 1,
+            'demo_app_id' => $installed['demoAppId'],
+        ];
+
+        $sessionA = $this->sandbox->createSession($catalog);
+        $sessionB = $this->sandbox->createSession($catalog);
+
+        // 1. Write via SoftN backend -> immediately visible in Management tables
+        $createdBySoftn = $this->sandbox->handleBackendRequest($catalog, $sessionA['token'], [
+            'method' => 'POST',
+            'path' => '/api/items',
+            'body' => ['title' => 'Created In SoftN'],
+        ]);
+        self::assertSame(201, $createdBySoftn['status']);
+
+        $tables1 = $this->sandbox->listSandboxTables($catalog, $sessionA['token']);
+        $itemsTable1 = null;
+        foreach ($tables1['tables'] as $t) {
+            if ($t['name'] === 'items') {
+                $itemsTable1 = $t;
+                break;
+            }
+        }
+        self::assertNotNull($itemsTable1);
+        self::assertSame(1, $itemsTable1['rowCount']);
+        self::assertSame('Created In SoftN', $itemsTable1['rows'][0]['title']);
+
+        // 2. Create via Management -> immediately visible in SoftN backend
+        $createdByMgmt = $this->sandbox->createSandboxRecord($catalog, $sessionA['token'], 'items', [
+            'title' => 'Created In Management',
+        ]);
+        self::assertSame('Created In Management', $createdByMgmt['title']);
+
+        $softnList = $this->sandbox->handleBackendRequest($catalog, $sessionA['token'], [
+            'method' => 'GET',
+            'path' => '/api/items',
+        ]);
+        self::assertSame(200, $softnList['status']);
+        $titles = array_column($softnList['body']['items'], 'title');
+        self::assertContains('Created In SoftN', $titles);
+        self::assertContains('Created In Management', $titles);
+
+        // 3. Update & Delete via Management -> immediately reflected in SoftN backend
+        $mgmtId = $createdByMgmt['id'];
+        $updated = $this->sandbox->updateSandboxRecord($catalog, $sessionA['token'], 'items', $mgmtId, [
+            'title' => 'Edited In Management',
+        ]);
+        self::assertSame('Edited In Management', $updated['title']);
+
+        $softnAfterUpdate = $this->sandbox->handleBackendRequest($catalog, $sessionA['token'], [
+            'method' => 'GET',
+            'path' => '/api/items',
+        ]);
+        self::assertContains('Edited In Management', array_column($softnAfterUpdate['body']['items'], 'title'));
+
+        $deleted = $this->sandbox->deleteSandboxRecord($catalog, $sessionA['token'], 'items', $mgmtId);
+        self::assertTrue($deleted['deleted']);
+
+        $softnAfterDelete = $this->sandbox->handleBackendRequest($catalog, $sessionA['token'], [
+            'method' => 'GET',
+            'path' => '/api/items',
+        ]);
+        self::assertCount(1, $softnAfterDelete['body']['items']);
+        self::assertSame('Created In SoftN', $softnAfterDelete['body']['items'][0]['title']);
+
+        // 4. Visitor B remains completely isolated
+        $listB = $this->sandbox->handleBackendRequest($catalog, $sessionB['token'], [
+            'method' => 'GET',
+            'path' => '/api/items',
+        ]);
+        self::assertCount(0, $listB['body']['items']);
+    }
 }

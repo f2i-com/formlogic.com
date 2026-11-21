@@ -6,19 +6,21 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Helpers\IpResolver;
-use FormLogic\Services\{AppService, CloudFlowRunner, FlowService, NativeAppService, NativeRecordEventRouter, PlanService, PluginService};
+use FormLogic\Services\{AppService, CloudFlowRunner, FlowService, NativeAppCalls, NativeAppService, NativeRecordEventRouter, PlanService, PluginService, RateLimiter};
+use FormLogic\Support\SessionOriginPolicy;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
 /**
- * External API-key (`flk_...`) & cross-app invocation controller:
- *  - GET  /api/v1/apps                          (`apps:invoke`)  list owner's invokable apps & routes
- *  - POST /api/v1/apps/{appId}/invoke           (`apps:invoke`)  invoke `.logic` or container backend route
- *  - ANY  /api/v1/apps/{appId}/routes/{path:.*} (`apps:invoke`)  direct REST passthrough to app backend
- *  - POST /api/v1/flows/{flowId}/run            (`flows:run`)    programmatically run or enqueue a flow
- *  - POST /api/v1/apps/{appId}/flows/{slug}/run (`flows:run`)    programmatically run a flow by app + slug
- *  - POST /api/flows/internal/native-app-request    (session)    browser flow runner proxy (owner-only)
- *  - POST /api/flows/internal/native-record-action  (session)    browser flow runner proxy (owner-only)
+ * External API-key (`flk_...`), customizable public REST API, & cross-app invocation controller:
+ *  - GET  /api/v1/apps                           (`apps:invoke`)  list owner's invokable apps & routes
+ *  - POST /api/v1/apps/{appId}/invoke            (`apps:invoke`)  invoke `.logic` or container backend route
+ *  - ANY  /api/v1/apps/{appId}/routes/{path:.*}  (`apps:invoke`)  direct REST passthrough to app backend
+ *  - ANY  /api/public/apps/{appId}/routes/{p:.*} (public policy)  public REST API when owner enables `public`/`both`
+ *  - POST /api/v1/flows/{flowId}/run             (`flows:run`)    programmatically run or enqueue a flow
+ *  - POST /api/v1/apps/{appId}/flows/{slug}/run  (`flows:run`)    programmatically run a flow by app + slug
+ *  - POST /api/flows/internal/native-app-request     (session)    browser flow runner proxy (owner-only)
+ *  - POST /api/flows/internal/native-record-action   (session)    browser flow runner proxy (owner-only)
  */
 class ExternalAppApiController
 {
@@ -31,7 +33,47 @@ class ExternalAppApiController
         private CloudFlowRunner $cloudRunner,
         private PlanService $plans,
         private NativeRecordEventRouter $records,
+        private ?NativeAppCalls $calls = null,
+        private ?RateLimiter $rateLimiter = null,
     ) {}
+
+    /**
+     * Effective external API policy for an app (`settings.externalApi` merged with safe defaults).
+     *
+     * @param array<string, mixed> $app
+     * @return array{
+     *   enabled: bool,
+     *   authMode: 'api_key'|'both'|'public',
+     *   allowedMethods: list<string>,
+     *   allowedPaths: list<string>,
+     *   blockedPaths: list<string>,
+     *   defaultPrefix: string,
+     *   corsOrigins: list<string>,
+     *   rateLimitPerMinute: int,
+     *   customHeaders: array<string, string>
+     * }
+     */
+    public static function externalApiPolicy(array $app): array
+    {
+        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+        $raw = is_array($settings['externalApi'] ?? null) ? $settings['externalApi'] : [];
+        $sanitized = AppService::sanitizeExternalApi($raw);
+        if ($sanitized !== null) {
+            /** @var array{enabled:bool,authMode:'api_key'|'both'|'public',allowedMethods:list<string>,allowedPaths:list<string>,blockedPaths:list<string>,defaultPrefix:string,corsOrigins:list<string>,rateLimitPerMinute:int,customHeaders:array<string,string>} $sanitized */
+            return $sanitized;
+        }
+        return [
+            'enabled' => true,
+            'authMode' => 'api_key',
+            'allowedMethods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'],
+            'allowedPaths' => [],
+            'blockedPaths' => [],
+            'defaultPrefix' => '',
+            'corsOrigins' => [],
+            'rateLimitPerMinute' => 120,
+            'customHeaders' => [],
+        ];
+    }
 
     /** GET /api/v1/apps — list the API key owner's apps that expose a hosted SoftN or container backend. */
     public function listApps(Request $request, Response $response): Response
@@ -44,6 +86,8 @@ class ExternalAppApiController
         $result = [];
         foreach ($owned as $app) {
             if (($app['ownerId'] ?? null) !== $userId) continue;
+            $policy = self::externalApiPolicy($app);
+            if (!$policy['enabled']) continue;
             $appId = (string) $app['id'];
             $summary = $this->native->summary($appId);
             if ($summary === null || !NativeAppService::hasBackend($summary)) continue;
@@ -63,18 +107,49 @@ class ExternalAppApiController
                     }
                 }
             }
+            $slug = (string) ($app['slug'] ?? $appId);
             $result[] = [
                 'id' => $appId,
                 'name' => $app['name'],
-                'slug' => $app['slug'],
+                'slug' => $slug,
                 'status' => $app['status'],
                 'backendType' => $isContainer ? (string) ($manifest['backend']['runtime'] ?? 'container') : 'softn-logic',
                 'sharedDatabaseAppId' => $app['settings']['sharedDatabaseAppId'] ?? null,
                 'databaseAppId' => $this->native->databaseAppId($appId),
                 'routes' => $routes,
+                'externalApi' => [
+                    'authMode' => $policy['authMode'],
+                    'allowedMethods' => $policy['allowedMethods'],
+                    'allowedPaths' => $policy['allowedPaths'],
+                    'blockedPaths' => $policy['blockedPaths'],
+                    'defaultPrefix' => $policy['defaultPrefix'],
+                    'rateLimitPerMinute' => $policy['rateLimitPerMinute'],
+                    'corsOrigins' => $policy['corsOrigins'],
+                    'invokePath' => '/api/v1/apps/' . $slug . '/invoke',
+                    'routesPath' => '/api/v1/apps/' . $slug . '/routes/',
+                    'publicRoutesPath' => ($app['status'] ?? '') === 'published' && in_array($policy['authMode'], ['public', 'both'], true)
+                        ? '/api/public/apps/' . $slug . '/routes/'
+                        : null,
+                ],
             ];
         }
         return $this->jsonResponse($response, ['apps' => $result]);
+    }
+
+    /** OPTIONS preflight for per-app CORS on `/api/v1/apps/{appId}/...` and `/api/public/apps/{appId}/...`. */
+    public function preflight(Request $request, Response $response, array $args): Response
+    {
+        $appRef = (string) ($args['appId'] ?? '');
+        $app = $appRef !== '' ? ($this->apps->getApp($appRef) ?? $this->apps->getAppBySlug($appRef)) : null;
+        $resp = $response->withStatus(204);
+        if (!$app) {
+            return $resp;
+        }
+        $policy = self::externalApiPolicy($app);
+        if (!$policy['enabled']) {
+            return $resp;
+        }
+        return $this->applyAppCors($request, $resp, $policy);
     }
 
     /** POST /api/v1/apps/{appId}/invoke — invoke any route on an owned SoftN or container backend. */
@@ -107,8 +182,44 @@ class ExternalAppApiController
         if ($app === null) {
             return $this->jsonError($response, 'App not found or access denied', 404);
         }
+        return $this->dispatchDirectHttpRoute($request, $response, $app, $userId, (string) ($args['path'] ?? ''), 'api_key');
+    }
+
+    /**
+     * ANY /api/public/apps/{appId}/routes/{path:.*} — public REST API passthrough for published SoftN
+     * apps whose owner enabled `settings.externalApi.authMode` = `public` or `both`.
+     */
+    public function publicRouteApp(Request $request, Response $response, array $args): Response
+    {
+        $appRef = (string) ($args['appId'] ?? '');
+        $app = $appRef !== '' ? ($this->apps->getApp($appRef) ?? $this->apps->getAppBySlug($appRef)) : null;
+        if (!$app || ($app['status'] ?? '') !== 'published') {
+            return $this->jsonError($response, 'Public API not found', 404);
+        }
+        $policy = self::externalApiPolicy($app);
+        if (!$policy['enabled'] || !in_array($policy['authMode'], ['public', 'both'], true)) {
+            return $this->applyAppCors($request, $this->jsonError($response, 'Public API access is not enabled for this app.', 403, 'public_api_disabled'), $policy);
+        }
+        $ownerId = (string) ($app['ownerId'] ?? '');
+        return $this->dispatchDirectHttpRoute($request, $response, $app, $ownerId, (string) ($args['path'] ?? ''), 'public_api');
+    }
+
+    /**
+     * Shared direct HTTP route extraction (method, path, query, JSON/raw body, sanitized headers).
+     * Forwards `X-App-Authorization` as `authorization` to the app backend without ever leaking FormLogic `flk_` keys.
+     *
+     * @param array<string, mixed> $app
+     */
+    private function dispatchDirectHttpRoute(
+        Request $request,
+        Response $response,
+        array $app,
+        string $ownerUserId,
+        string $rawRouteArg,
+        string $via,
+    ): Response {
         $method = strtoupper($request->getMethod());
-        $rawPath = '/' . ltrim((string) ($args['path'] ?? ''), '/');
+        $rawPath = '/' . ltrim($rawRouteArg, '/');
         $query = $request->getQueryParams();
         $rawBodyText = (string) $request->getBody();
         $body = null;
@@ -119,12 +230,16 @@ class ExternalAppApiController
         $headers = [];
         foreach ($request->getHeaders() as $name => $values) {
             $ln = strtolower($name);
+            if ($ln === 'x-app-authorization') {
+                $headers['authorization'] = implode(', ', $values);
+                continue;
+            }
             if (in_array($ln, ['authorization', 'host', 'cookie', 'content-length'], true) || str_starts_with($ln, 'x-formlogic-')) {
                 continue;
             }
             $headers[$ln] = implode(', ', $values);
         }
-        return $this->dispatchBackendCall($request, $response, $app, $userId, $method, $rawPath, $query, $body, $headers, 'api_key', true);
+        return $this->dispatchBackendCall($request, $response, $app, $ownerUserId, $method, $rawPath, $query, $body, $headers, $via, true);
     }
 
     /** POST /api/v1/flows/{flowId}/run — programmatically run or enqueue an owned flow via API key. */
@@ -354,19 +469,108 @@ class ExternalAppApiController
         string $via,
         bool $rawPassthrough = false,
     ): Response {
+        $started = hrtime(true);
+        $arrived = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $isExternal = ($via === 'api_key' || $via === 'public_api');
+        $policy = self::externalApiPolicy($app);
+        $appId = (string) $app['id'];
+        $clientIp = IpResolver::fromEnvironment()->getClientIp($request);
+
+        $decorate = function (Response $resp, ?int $rateRemaining = null) use ($request, $isExternal, $policy): Response {
+            if (!$isExternal) {
+                return $resp;
+            }
+            $resp = $this->applyAppCors($request, $resp, $policy);
+            foreach ($policy['customHeaders'] as $hk => $hv) {
+                $resp = $resp->withHeader($hk, $hv);
+            }
+            if ($rateRemaining !== null) {
+                $resp = $resp
+                    ->withHeader('X-RateLimit-Limit', (string) $policy['rateLimitPerMinute'])
+                    ->withHeader('X-RateLimit-Remaining', (string) max(0, $rateRemaining));
+            }
+            return $resp;
+        };
+
+        // 1. Enforce per-app External API exposure policy (`settings.externalApi`) for API-key & public calls.
+        if ($isExternal) {
+            if (!$policy['enabled']) {
+                return $decorate($this->jsonError($response, 'External API access is disabled for this app.', 403, 'external_api_disabled'));
+            }
+            if ($via === 'api_key' && $policy['authMode'] === 'public') {
+                return $decorate($this->jsonError($response, 'This app is configured for public API routes only (/api/public/apps/...). Switch Auth Mode to "API Key" or "Public + API Key" to allow API-key calls.', 403, 'api_key_disabled'));
+            }
+            if ($via === 'public_api' && !in_array($policy['authMode'], ['public', 'both'], true)) {
+                return $decorate($this->jsonError($response, 'Public API access is not enabled for this app.', 403, 'public_api_disabled'));
+            }
+            if (!in_array($method, $policy['allowedMethods'], true)) {
+                $err = $this->jsonError($response, "HTTP method {$method} is not allowed by this app's external API settings.", 405, 'method_not_allowed')
+                    ->withHeader('Allow', implode(', ', $policy['allowedMethods']));
+                return $decorate($err);
+            }
+        }
+
+        // 2. Apply optional custom default path prefix (e.g. `/api` so `/routes/items` → `/api/items`).
+        if ($isExternal && $policy['defaultPrefix'] !== '' && $path !== '') {
+            $prefix = $policy['defaultPrefix'];
+            $normalizedPath = str_starts_with($path, '/') ? $path : '/' . $path;
+            if ($normalizedPath !== $prefix && !str_starts_with($normalizedPath, $prefix . '/') && !str_starts_with($normalizedPath, '/api/')) {
+                $path = $prefix . $normalizedPath;
+            }
+        }
+
         if ($path === '' || !str_starts_with($path, '/') || strlen($path) > 2048 || str_contains($path, '..') || preg_match('/[\x00-\x1f\x7f]/', $path) === 1) {
-            return $this->jsonError($response, 'Provide a valid backend path starting with "/".', 400);
+            return $decorate($this->jsonError($response, 'Provide a valid backend path starting with "/".', 400));
         }
         if (str_starts_with(strtolower($path), PluginService::SITE_ROUTE_PREFIX)) {
-            return $this->jsonError($response, 'Not found', 404);
+            return $decorate($this->jsonError($response, 'Not found', 404));
         }
-        $appId = (string) $app['id'];
+
+        // 3. Enforce per-app blocked & allowed path prefixes.
+        if ($isExternal) {
+            foreach ($policy['blockedPaths'] as $blockedPrefix) {
+                if (self::pathMatchesPrefix($path, $blockedPrefix)) {
+                    return $decorate($this->jsonError($response, 'This route is blocked by the app’s external API rules.', 403, 'route_blocked'));
+                }
+            }
+            if ($policy['allowedPaths'] !== []) {
+                $matched = false;
+                foreach ($policy['allowedPaths'] as $allowedPrefix) {
+                    if (self::pathMatchesPrefix($path, $allowedPrefix)) {
+                        $matched = true;
+                        break;
+                    }
+                }
+                if (!$matched) {
+                    return $decorate($this->jsonError($response, 'This route is not exposed by the app’s external API allowlist.', 403, 'route_not_exposed'));
+                }
+            }
+        }
+
+        // 4. Enforce per-app customizable rate limit (`rateLimitPerMinute`).
+        $rateRemaining = null;
+        if ($isExternal && $this->rateLimiter !== null) {
+            $limit = $policy['rateLimitPerMinute'];
+            $callerKey = $via === 'api_key'
+                ? 'key:' . (string) ($request->getAttribute('apiKeyId') ?? $userId)
+                : 'ip:' . $clientIp;
+            $bucket = 'ext_app_api:' . $appId . ':' . $callerKey;
+            $count = $this->rateLimiter->hit($bucket, 60);
+            if ($count > $limit) {
+                $retryAfter = $this->rateLimiter->secondsUntilReset(60);
+                $err = $this->jsonError($response, "App API rate limit exceeded ({$limit}/min). Try again in {$retryAfter}s.", 429, 'rate_limited')
+                    ->withHeader('Retry-After', (string) $retryAfter);
+                return $decorate($err, 0);
+            }
+            $rateRemaining = max(0, $limit - $count);
+        }
+
         $project = $this->native->project($appId);
         if (!$project || !NativeAppService::hasBackend($project)) {
-            return $this->jsonError($response, 'This app has no hosted backend.', 404);
+            return $decorate($this->jsonError($response, 'This app has no hosted backend.', 404), $rateRemaining);
         }
         if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true) && $this->plans->isEnforced() && !$this->plans->isCloudActive($userId)) {
-            return $this->jsonError($response, 'Cloud access has expired. Read requests remain available.', 402);
+            return $decorate($this->jsonError($response, 'Cloud access has expired. Read requests remain available.', 402), $rateRemaining);
         }
         $headers = [];
         foreach ($headersIn as $k => $v) {
@@ -376,22 +580,42 @@ class ExternalAppApiController
             $headers[$lk] = substr((string) $v, 0, 8192);
             if (count($headers) >= 64) break;
         }
-        $identity = [
-            'appId' => $appId,
-            'userId' => $userId,
-            'roleId' => 'owner',
-            'authenticated' => true,
-            'via' => $via,
-            'formlogic' => ['appId' => $appId, 'userId' => $userId, 'roleId' => 'owner'],
-        ];
+        $identity = $via === 'public_api'
+            ? [
+                'appId' => $appId,
+                'userId' => null,
+                'roleId' => 'visitor',
+                'authenticated' => false,
+                'via' => 'public_api',
+                'formlogic' => ['appId' => $appId, 'userId' => null, 'roleId' => 'visitor'],
+            ]
+            : [
+                'appId' => $appId,
+                'userId' => $userId,
+                'roleId' => 'owner',
+                'authenticated' => true,
+                'via' => $via,
+                'formlogic' => ['appId' => $appId, 'userId' => $userId, 'roleId' => 'owner'],
+            ];
         $groupAppIds = $this->apps->sharedDatabaseGroupAppIds($appId);
         $subscriptions = $this->flows->nativeRecordSubscriptionsForApps($groupAppIds);
-        $clientIp = IpResolver::fromEnvironment()->getClientIp($request);
+
+        $recordAudit = function (int $status, ?string $errMsg = null) use ($appId, $method, $path, $via, $started, $arrived, $isExternal): void {
+            if (!$isExternal || $this->calls === null) return;
+            $ms = (int) round((hrtime(true) - $started) / 1_000_000);
+            $recMethod = match ($method) {
+                'PATCH' => 'PUT',
+                'HEAD' => 'GET',
+                default => $method,
+            };
+            $caller = $via === 'public_api' ? 'visitor' : 'owner';
+            $this->calls->record($appId, $recMethod, $path, $status, max(0, $ms), $errMsg, $caller, $arrived);
+        };
 
         try {
             if (NativeAppService::hasContainerBackend($project)) {
                 if (!in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'], true)) {
-                    return $this->jsonError($response, 'Unsupported HTTP method.', 400);
+                    return $decorate($this->jsonError($response, 'Unsupported HTTP method.', 400), $rateRemaining);
                 }
                 $queryStr = is_string($query) ? ltrim($query, '?') : (is_array($query) ? http_build_query($query) : '');
                 $bodyBase64 = '';
@@ -429,6 +653,10 @@ class ExternalAppApiController
                 if ($triggers !== []) {
                     try { $this->records->triggerBackendFlows($app, $triggers); } catch (\Throwable) {}
                 }
+                $errSnippet = $result['status'] >= 400
+                    ? (is_array($decoded) && is_string($decoded['message'] ?? $decoded['error'] ?? null) ? (string) ($decoded['message'] ?? $decoded['error']) : substr($rawText, 0, 200))
+                    : null;
+                $recordAudit((int) $result['status'], $errSnippet);
                 if ($rawPassthrough) {
                     $resp = $response->withStatus($result['status']);
                     $hasContentType = false;
@@ -441,25 +669,27 @@ class ExternalAppApiController
                     if (!$hasContentType) {
                         $resp = $resp->withHeader('Content-Type', $isJson ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8');
                     }
-                    $resp->getBody()->write($rawText);
-                    return $resp;
+                    if ($method !== 'HEAD' && $result['status'] !== 204) {
+                        $resp->getBody()->write($rawText);
+                    }
+                    return $decorate($resp, $rateRemaining);
                 }
-                return $this->jsonResponse($response, [
+                return $decorate($this->jsonResponse($response, [
                     'status' => $result['status'],
                     'ok' => $result['status'] >= 200 && $result['status'] < 300,
                     'headers' => $result['headers'],
                     'body' => $isJson ? $decoded : $rawText,
-                ]);
+                ]), $rateRemaining);
             }
 
             if (!in_array($method, ['GET', 'POST', 'PUT', 'DELETE'], true) || !preg_match('~^/api/[a-zA-Z0-9/_-]+$~D', $path)) {
-                return $this->jsonError($response, 'SoftN .logic backends support GET, POST, PUT, and DELETE under /api/....', 400);
+                return $decorate($this->jsonError($response, 'SoftN .logic backends support GET, POST, PUT, and DELETE under /api/....', 400), $rateRemaining);
             }
             $nativeBody = $body !== null ? $body : (object) [];
             if (is_string($nativeBody) && $nativeBody !== '') {
                 $decoded = json_decode($nativeBody, true);
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    return $this->jsonError($response, 'Request body must be valid JSON.', 400);
+                    return $decorate($this->jsonError($response, 'Request body must be valid JSON.', 400), $rateRemaining);
                 }
                 $nativeBody = $decoded;
             }
@@ -483,20 +713,78 @@ class ExternalAppApiController
                 try { $this->records->triggerBackendFlows($app, $extracted['triggers']); } catch (\Throwable) {}
             }
             $status = (int) ($res['status'] ?? 500);
+            $errSnippet = $status >= 400 && is_array($resBody) && is_string($resBody['message'] ?? $resBody['error'] ?? null)
+                ? (string) ($resBody['message'] ?? $resBody['error'])
+                : null;
+            $recordAudit($status, $errSnippet);
             if ($rawPassthrough) {
-                return $this->jsonResponse($response, is_array($resBody) ? $resBody : ['data' => $resBody], $status);
+                return $decorate($this->jsonResponse($response, is_array($resBody) ? $resBody : ['data' => $resBody], $status), $rateRemaining);
             }
-            return $this->jsonResponse($response, [
+            return $decorate($this->jsonResponse($response, [
                 'status' => $status,
                 'ok' => $status >= 200 && $status < 300,
                 'body' => $resBody,
-            ]);
+            ]), $rateRemaining);
         } catch (\InvalidArgumentException $e) {
-            return $this->jsonError($response, $e->getMessage(), 400);
+            $recordAudit(400, $e->getMessage());
+            return $decorate($this->jsonError($response, $e->getMessage(), 400), $rateRemaining);
         } catch (\RuntimeException $e) {
             $code = $e->getCode();
             $status = ($code >= 400 && $code < 600) ? $code : 500;
-            return $this->jsonError($response, $e->getMessage(), $status);
+            $recordAudit($status, $e->getMessage());
+            return $decorate($this->jsonError($response, $e->getMessage(), $status), $rateRemaining);
         }
+    }
+
+    /** Segment-safe prefix match: `/api/items` matches `/api/items` and `/api/items/123`, never `/api/items-secret`. */
+    private static function pathMatchesPrefix(string $path, string $prefix): bool
+    {
+        $cleanPrefix = rtrim($prefix, '/');
+        if ($cleanPrefix === '') {
+            return true;
+        }
+        return $path === $cleanPrefix || str_starts_with($path, $cleanPrefix . '/');
+    }
+
+    /**
+     * Apply per-app CORS headers from `settings.externalApi.corsOrigins`.
+     * Never sets `Access-Control-Allow-Credentials` — external APIs authenticate via Bearer token or public access.
+     *
+     * @param array<string, mixed> $policy
+     */
+    private function applyAppCors(Request $request, Response $response, array $policy): Response
+    {
+        $origins = is_array($policy['corsOrigins'] ?? null) ? $policy['corsOrigins'] : [];
+        if ($origins === []) {
+            return $response;
+        }
+        $reqOrigin = trim($request->getHeaderLine('Origin'));
+        $matched = null;
+        if (in_array('*', $origins, true)) {
+            $matched = '*';
+        } elseif ($reqOrigin !== '') {
+            $normReq = SessionOriginPolicy::normalizeOrigin($reqOrigin);
+            if ($normReq !== null) {
+                foreach ($origins as $allowed) {
+                    if (is_string($allowed) && SessionOriginPolicy::normalizeOrigin($allowed) === $normReq) {
+                        $matched = $reqOrigin;
+                        break;
+                    }
+                }
+            }
+        }
+        if ($matched === null) {
+            return $response;
+        }
+        $methods = is_array($policy['allowedMethods'] ?? null) && $policy['allowedMethods'] !== []
+            ? implode(', ', array_unique(array_merge($policy['allowedMethods'], ['OPTIONS'])))
+            : 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
+        return $response
+            ->withHeader('Access-Control-Allow-Origin', $matched)
+            ->withHeader('Access-Control-Allow-Methods', $methods)
+            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Origin, Authorization, X-App-Authorization, Idempotency-Key')
+            ->withHeader('Access-Control-Expose-Headers', 'X-RateLimit-Limit, X-RateLimit-Remaining, Retry-After')
+            ->withHeader('Access-Control-Max-Age', '3600')
+            ->withHeader('Vary', 'Origin');
     }
 }

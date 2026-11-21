@@ -3,19 +3,18 @@ import { expect, test } from '@playwright/test';
 test('the landing demo link has a useful destination when the site has no live demos', async ({ page }) => {
   await page.route('**/api/demo/apps', route => route.fulfill({ json: { apps: [] } }));
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
-  await page.getByRole('link', { name: 'Explore examples', exact: true }).click();
+  await page.goto('/#live-demo');
   const templates = page.getByRole('link', { name: 'Browse the marketplace' });
   await expect(templates).toBeInViewport();
   await templates.click();
-  await expect(page.getByRole('heading', { name: 'Featured templates' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Featured', exact: true })).toBeVisible();
 });
 
 test('landing bookmarks open their section and respect reduced motion', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route('**/api/demo/apps', route => route.fulfill({ json: { apps: [] } }));
-  for (const [fragment, heading] of [['product', 'How-to guides'], ['live-demo', 'Find a starting point.']]) {
+  for (const [fragment, heading] of [['product', 'Everything you need to run connected apps.'], ['live-demo', 'Find a starting point.']]) {
     await page.goto('about:blank');
     await page.goto('/#' + fragment);
     const target = page.getByRole('heading', { name: heading, exact: true });
@@ -78,8 +77,8 @@ test('landing navigation fits phone widths and keeps signup reachable', async ({
 
 test('the landing notebook keeps the form and records in sync without sending notes to a server', async ({ page }) => {
   await page.goto('/');
-  const example = page.getByRole('figure', { name: 'Interactive Field Notes sample' });
-  const field = example.getByLabel('Add a field note');
+  const example = page.getByRole('figure', { name: 'Interactive Field Ops app, shared database and charts sample' });
+  const field = example.getByLabel('Add a job note — updates SQLite, charts & flows live');
   const add = example.getByRole('button', { name: 'Add note' });
   const note = 'Review the front desk handover';
   const outgoing = new Set<string>();
@@ -93,10 +92,10 @@ test('the landing notebook keeps the form and records in sync without sending no
   await field.fill(note);
   await field.press('Enter');
   await expect(example.getByRole('listitem').first()).toContainText(note);
-  const notebook = example.getByRole('tab', { name: 'Notebook' });
+  const notebook = example.getByRole('tab', { name: 'App' });
   await notebook.focus();
   await page.keyboard.press('ArrowRight');
-  const records = example.getByRole('tab', { name: 'Records' });
+  const records = example.getByRole('tab', { name: 'Shared SQLite' });
   await expect(records).toBeFocused();
   await expect(records).toHaveAttribute('aria-selected', 'true');
   await expect(example.getByRole('cell', { name: note, exact: true })).toBeVisible();
@@ -104,7 +103,7 @@ test('the landing notebook keeps the form and records in sync without sending no
   await expect(field).toBeEmpty();
 
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await expect(example.getByRole('listitem')).toHaveCount(2);
+  await expect(example.getByRole('listitem')).toHaveCount(3);
   await expect(example.getByText(note)).toHaveCount(0);
   expect([...outgoing]).toEqual([]);
 });

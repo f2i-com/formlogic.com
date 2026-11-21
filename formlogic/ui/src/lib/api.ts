@@ -1331,7 +1331,7 @@ class ApiClient {
   }
 
   /** Public list of demoable apps (published apps owned by the Demo account). */
-  async getDemoApps(): Promise<ApiResponse<{ apps: Array<{ slug: string; name: string; description: string; logoUrl: string | null; icon?: string | null; accent?: string | null; packName?: string; catalogSlug?: string; tags?: string[] }> }>> {
+  async getDemoApps(): Promise<ApiResponse<{ apps: Array<{ slug: string; name: string; description: string; logoUrl: string | null; icon?: string | null; accent?: string | null; packName?: string; catalogSlug?: string; tags?: string[]; softnAppId?: string | null; softnAppSlug?: string | null; softnAppName?: string | null; companionSoftnPackSlug?: string | null }> }>> {
     return this.request('/demo/apps');
   }
 
@@ -2321,7 +2321,7 @@ class ApiClient {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  async getNativeEntry(slug: string): Promise<ApiResponse<{ home: boolean; access: 'application' | 'members'; native?: boolean }>> {
+  async getNativeEntry(slug: string): Promise<ApiResponse<{ home: boolean; access: 'application' | 'members'; native?: boolean; demoSandboxSlug?: string | null; appId?: string | null; appName?: string | null; linkedFormAppSlug?: string | null; linkedFormAppName?: string | null }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/entry`);
   }
   /**
@@ -2957,14 +2957,15 @@ class ApiClient {
   }
 
   // App Form management
-  async getAppForms(appId: string): Promise<ApiResponse<{ forms: AppForm[] }>> {
+  async getAppForms(appId: string, options?: { includeForms?: boolean }): Promise<ApiResponse<{ forms: (AppForm & { form?: Form })[] }>> {
     if (this._demoMode && isDemoLocalId(appId)) {
       const stored = await getDemoApp(appId);
       return stored
         ? { data: { forms: stored.forms } }
         : { error: 'This browser-only demo app was not found.', status: 404 };
     }
-    return this.request(`/apps/${seg(appId)}/forms`);
+    const qs = options?.includeForms ? '?includeForms=1' : '';
+    return this.request(`/apps/${seg(appId)}/forms${qs}`);
   }
 
   /**
@@ -5162,6 +5163,47 @@ class ApiClient {
     });
   }
 
+  async getMarketplaceDemoTables(slug: string, token: string): Promise<ApiResponse<MarketplaceDemoTablesResult>> {
+    return this.request(`/packs/catalog/${seg(slug)}/demo/tables?token=${encodeURIComponent(token)}`);
+  }
+
+  async createMarketplaceDemoRecord(
+    slug: string,
+    token: string,
+    table: string,
+    values: Record<string, unknown>,
+  ): Promise<ApiResponse<{ record: Record<string, unknown> }>> {
+    return this.request(`/packs/catalog/${seg(slug)}/demo/records`, {
+      method: 'POST',
+      body: JSON.stringify({ token, table, values }),
+    });
+  }
+
+  async updateMarketplaceDemoRecord(
+    slug: string,
+    token: string,
+    table: string,
+    id: string | number,
+    values: Record<string, unknown>,
+  ): Promise<ApiResponse<{ record: Record<string, unknown> }>> {
+    return this.request(`/packs/catalog/${seg(slug)}/demo/records`, {
+      method: 'PUT',
+      body: JSON.stringify({ token, table, id, values }),
+    });
+  }
+
+  async deleteMarketplaceDemoRecord(
+    slug: string,
+    token: string,
+    table: string,
+    id: string | number,
+  ): Promise<ApiResponse<{ deleted: boolean }>> {
+    return this.request(`/packs/catalog/${seg(slug)}/demo/records`, {
+      method: 'DELETE',
+      body: JSON.stringify({ token, table, id }),
+    });
+  }
+
   async purchaseMarketplaceItem(slug: string, options?: { provider?: string; paymentRef?: string }): Promise<ApiResponse<{ success: boolean; license: MarketplaceLicense }>> {
     return this.request(`/packs/catalog/${seg(slug)}/purchase`, {
       method: 'POST',
@@ -7072,6 +7114,46 @@ interface MarketplaceDemoSession {
   slug: string;
 }
 
+interface MarketplaceDemoFieldOption {
+  label: string;
+  value: string;
+}
+
+interface MarketplaceDemoField {
+  column: string;
+  label: string;
+  type: string;
+  required: boolean;
+  options: MarketplaceDemoFieldOption[];
+}
+
+interface MarketplaceDemoColumn {
+  name: string;
+  type: string;
+  notnull: boolean;
+  dflt_value: unknown;
+  pk: boolean;
+}
+
+interface MarketplaceDemoTable {
+  name: string;
+  title: string;
+  icon: string;
+  description: string;
+  primaryKey: string | null;
+  statusColumn: string | null;
+  columns: MarketplaceDemoColumn[];
+  fields: MarketplaceDemoField[];
+  rowCount: number;
+  rows: Record<string, unknown>[];
+  isFormTable: boolean;
+}
+
+interface MarketplaceDemoTablesResult {
+  slug: string;
+  tables: MarketplaceDemoTable[];
+}
+
 interface MarketplaceLicense {
   id: string;
   catalogId: string;
@@ -7179,4 +7261,4 @@ interface AppPluginAttachment {
 }
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, PackDescribeResult, PackCapabilitySummary, ApplicationPackageImportResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection, AppDatabaseState, CatalogPack, PackScreenshot, PackVersionInfo, PackCatalogBrowseResult, PackFacet, PackFacets, PackRatingEntry, PackRatingsResult, UploadedFileMetadata, MarketplaceDemoSession, MarketplaceLicense, MarketplaceSellerStats, MemberPlugin, AppPluginAttachment };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, PackDescribeResult, PackCapabilitySummary, ApplicationPackageImportResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection, AppDatabaseState, CatalogPack, PackScreenshot, PackVersionInfo, PackCatalogBrowseResult, PackFacet, PackFacets, PackRatingEntry, PackRatingsResult, UploadedFileMetadata, MarketplaceDemoSession, MarketplaceDemoField, MarketplaceDemoFieldOption, MarketplaceDemoColumn, MarketplaceDemoTable, MarketplaceDemoTablesResult, MarketplaceLicense, MarketplaceSellerStats, MemberPlugin, AppPluginAttachment };

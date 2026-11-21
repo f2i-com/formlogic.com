@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation, useSearchParams } from 'react-rout
 import { forwardReturnTo, useReturnTo, type ReturnToState } from '../../hooks/useReturnTo';
 import { Save, Check, ChevronRight, ExternalLink, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2, Layers, Table, PencilRuler, Globe, Image as ImageIcon, LogIn, UserPlus, Lock, Power } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
+import { getCachedStudioAppForms, getCachedStudioRoles } from '../../components/studio/useStudioData';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { Header } from '../../components/layout/Header';
@@ -87,22 +88,47 @@ export function AppSettings() {
   const backTo = useReturnTo(paths.appsHome());
   const [searchParams, setSearchParams] = useSearchParams();
   const { updateApp, deleteApp, fetchApps, fetchRoles, fetchAppForms } = useAppStore();
-  const [app, setApp] = useState<App | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const initialStoreApp = (() => {
+    if (!appId) return null;
+    const found = useAppStore.getState().getApp(appId);
+    if (!found) return null;
+    const appData = found as App;
+    return { ...appData, theme: { ...DEFAULT_APP_THEME, ...appData.theme } };
+  })();
+  const [app, setApp] = useState<App | null>(initialStoreApp);
+  const [loaded, setLoaded] = useState<boolean>(!!initialStoreApp);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [slugError, setSlugError] = useState<string | null>(null);
   const invalidField = useRef<string | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [roles, setRoles] = useState<AppRole[]>([]);
-  const [appForms, setAppForms] = useState<AppForm[]>([]);
+  const [roles, setRoles] = useState<AppRole[]>(() => getCachedStudioRoles(appId)?.roles ?? []);
+  const [appForms, setAppForms] = useState<AppForm[]>(() => getCachedStudioAppForms(appId)?.forms ?? []);
   // Snapshot of the persisted state; anything diverging from it is unsaved.
-  const [initialSnapshot, setInitialSnapshot] = useState('');
+  const [initialSnapshot, setInitialSnapshot] = useState(() => (initialStoreApp ? JSON.stringify(initialStoreApp) : ''));
   const [pendingNav, setPendingNav] = useState<{ to: string; state: ReturnToState | undefined } | null>(null);
   const [showMcp, setShowMcp] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  const [loadedAppId, setLoadedAppId] = useState(appId);
+  if (loadedAppId !== appId) {
+    setLoadedAppId(appId);
+    const nextFound = appId ? useAppStore.getState().getApp(appId) : undefined;
+    if (nextFound) {
+      const nextApp = { ...(nextFound as App), theme: { ...DEFAULT_APP_THEME, ...nextFound.theme } };
+      setApp(nextApp);
+      setInitialSnapshot(JSON.stringify(nextApp));
+      setLoaded(true);
+    } else {
+      setApp(null);
+      setInitialSnapshot('');
+      setLoaded(false);
+    }
+    setRoles(getCachedStudioRoles(appId)?.roles ?? []);
+    setAppForms(getCachedStudioAppForms(appId)?.forms ?? []);
+  }
 
   // The open section lives in ?tab= so refresh and Back (e.g. from the Manage sub-pages)
   // return to the same section. `replace` keeps section flips out of the history stack.
@@ -141,18 +167,25 @@ export function AppSettings() {
   };
 
   useEffect(() => {
+    if (!appId) return;
+    const cached = useAppStore.getState().getApp(appId);
+    if (cached) {
+      // Already in memory: keep the settings panel instant and skip blocking on a full apps refetch.
+      return;
+    }
+    let cancelled = false;
     fetchApps().then(() => {
-      if (appId) {
-        const found = useAppStore.getState().getApp(appId);
-        if (found) {
-          const appData = found as App;
-          // Ensure theme has defaults to prevent undefined spread
-          const merged = { ...appData, theme: { ...DEFAULT_APP_THEME, ...appData.theme } };
-          setApp(merged);
-          setInitialSnapshot(JSON.stringify(merged));
-        }
+      if (cancelled) return;
+      const found = useAppStore.getState().getApp(appId);
+      if (found) {
+        const appData = found as App;
+        // Ensure theme has defaults to prevent undefined spread
+        const merged = { ...appData, theme: { ...DEFAULT_APP_THEME, ...appData.theme } };
+        setApp(merged);
+        setInitialSnapshot(JSON.stringify(merged));
       }
-    }).finally(() => setLoaded(true));
+    }).finally(() => { if (!cancelled) setLoaded(true); });
+    return () => { cancelled = true; };
   }, [appId, fetchApps]);
 
   const dirty = !!app && JSON.stringify(app) !== initialSnapshot;
@@ -179,8 +212,10 @@ export function AppSettings() {
   // Roles + forms power the membership defaults (default role, landing page).
   useEffect(() => {
     if (!appId) return;
-    fetchRoles(appId).then(setRoles).catch(() => {});
-    fetchAppForms(appId).then(setAppForms).catch(() => {});
+    const cachedRoles = getCachedStudioRoles(appId);
+    const cachedForms = getCachedStudioAppForms(appId);
+    if (!cachedRoles?.fresh) fetchRoles(appId).then(setRoles).catch(() => {});
+    if (!cachedForms?.fresh) fetchAppForms(appId).then(setAppForms).catch(() => {});
   }, [appId, fetchRoles, fetchAppForms]);
 
   const updateSetting = (key: string, value: unknown) =>

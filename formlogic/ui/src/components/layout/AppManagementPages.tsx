@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { Suspense, useEffect, useRef } from 'react';
 import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '../../stores/appStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -44,6 +44,14 @@ export function AppManagementPages() {
   ) : null;
 
   return <AppNavigationGuard.Provider value={guard}>
-    <AppManagementHeader.Provider value={bar}><Outlet /></AppManagementHeader.Provider>
+    <AppManagementHeader.Provider value={bar}>
+      <Suspense fallback={
+        <div className="flex items-center justify-center py-32" role="status" aria-label="Loading">
+          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary-600" />
+        </div>
+      }>
+        <Outlet />
+      </Suspense>
+    </AppManagementHeader.Provider>
   </AppNavigationGuard.Provider>;
 }

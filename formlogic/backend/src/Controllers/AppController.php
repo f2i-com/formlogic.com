@@ -530,7 +530,8 @@ class AppController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
         }
 
-        $forms = $this->appService->getAppForms($args['id']);
+        $includeForms = ($request->getQueryParams()['includeForms'] ?? '') === '1';
+        $forms = $this->appService->getAppForms($args['id'], $includeForms);
 
         // Cross-app visibility: the same form can back multiple apps (shared
         // response data), so tell the UI which OTHER apps of this owner each form

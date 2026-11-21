@@ -5,11 +5,12 @@
 // page does) and shows what came back; and the app's latest calls, as the server recorded them
 // (NativeAppCalls), asked for again every ten seconds while the section is open.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Check, Code2, Copy, Database, KeyRound, Plus, RefreshCw, Route, Send, Server } from 'lucide-react';
+import { Activity, Check, Code2, Copy, Database, Globe, KeyRound, Lock, Plus, RefreshCw, Route, Save, Send, Server, Shield, SlidersHorizontal } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { LoadFailure } from '../ui/LoadFailure';
 import { Panel } from '../ui/Panel';
+import { Switch } from '../ui/Switch';
 import { HELP, LIST_BODY, LIST_BOX, LIST_CELL, LIST_HEAD, LIST_LABEL, LIST_ROW, LIST_TABLE, LIST_TH, ROW_BOX } from '../ui/listLook';
 import { formatAbsoluteTimeTitle, formatRelativeTime } from '../flows/relativeTime';
 import { api } from '../../lib/api';
@@ -22,7 +23,7 @@ import { softnWorkspacePath } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
 import { useAppStore } from '../../stores/appStore';
 import { toast } from '../../stores/toastStore';
-import type { App } from '../../types/app';
+import type { App, ExternalApiSettings } from '../../types/app';
 
 /** How many seconds apart the latest calls are asked for while the section is open and the tab is in view. */
 export const CALLS_EVERY_SECONDS = 10;
@@ -166,7 +167,7 @@ export function SoftnApi({ app, access, manifest, version, dirty, readOnly, onNa
         </div>
 
         <div className="mt-4">
-          <ExternalApiAccessPanel app={app} firstRoute={served[0]} onOpenApiKeys={() => goTo('/settings#api-keys')} />
+          <ExternalApiAccessPanel app={app} firstRoute={served[0]} readOnly={readOnly} onOpenApiKeys={() => goTo('/settings#api-keys')} />
         </div>
 
         <div className="mt-4 grid items-start gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
@@ -442,81 +443,475 @@ function TryIt({ app, routes, containerRuntime, chosen, onChoose, onSent }: { ap
   </div>;
 }
 
+const ALL_HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
+
+const DEFAULT_EXTERNAL_API: ExternalApiSettings = {
+  enabled: true,
+  authMode: 'api_key',
+  allowedMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  allowedPaths: [],
+  blockedPaths: [],
+  defaultPrefix: '',
+  corsOrigins: [],
+  rateLimitPerMinute: 120,
+  customHeaders: {},
+};
+
+function parseLines(raw: string): string[] {
+  return raw
+    .split(/[\n,]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function parseHeadersText(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of raw.split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx <= 0) continue;
+    const k = line.slice(0, idx).trim();
+    const v = line.slice(idx + 1).trim();
+    if (k && v) out[k] = v;
+  }
+  return out;
+}
+
+function formatHeadersText(headers: Record<string, string> | undefined): string {
+  if (!headers) return '';
+  return Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join('\n');
+}
+
 function ExternalApiAccessPanel({
   app,
   firstRoute,
+  readOnly = false,
   onOpenApiKeys,
 }: {
   app: App;
   firstRoute?: ApiRoute;
+  readOnly?: boolean;
   onOpenApiKeys: () => void;
 }) {
-  const [tab, setTab] = useState<'invoke' | 'direct' | 'js'>('invoke');
-  const [copied, setCopied] = useState(false);
+  const updateApp = useAppStore((s) => s.updateApp);
+  const saved: ExternalApiSettings = useMemo(() => ({
+    ...DEFAULT_EXTERNAL_API,
+    ...(app.settings?.externalApi ?? {}),
+    allowedMethods: app.settings?.externalApi?.allowedMethods?.length
+      ? app.settings.externalApi.allowedMethods
+      : DEFAULT_EXTERNAL_API.allowedMethods,
+    allowedPaths: app.settings?.externalApi?.allowedPaths ?? [],
+    blockedPaths: app.settings?.externalApi?.blockedPaths ?? [],
+    corsOrigins: app.settings?.externalApi?.corsOrigins ?? [],
+    customHeaders: app.settings?.externalApi?.customHeaders ?? {},
+  }), [app.settings?.externalApi]);
+
+  const [enabled, setEnabled] = useState(saved.enabled);
+  const [authMode, setAuthMode] = useState<'api_key' | 'both' | 'public'>(saved.authMode);
+  const [allowedMethods, setAllowedMethods] = useState<string[]>(saved.allowedMethods);
+  const [allowedPathsText, setAllowedPathsText] = useState(saved.allowedPaths.join('\n'));
+  const [blockedPathsText, setBlockedPathsText] = useState(saved.blockedPaths.join('\n'));
+  const [defaultPrefix, setDefaultPrefix] = useState(saved.defaultPrefix);
+  const [corsOriginsText, setCorsOriginsText] = useState(saved.corsOrigins.join('\n'));
+  const [rateLimit, setRateLimit] = useState(String(saved.rateLimitPerMinute));
+  const [customHeadersText, setCustomHeadersText] = useState(formatHeadersText(saved.customHeaders));
+  const [showCustomize, setShowCustomize] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [tab, setTab] = useState<'direct' | 'invoke' | 'js' | 'python'>('direct');
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://formlogic.com';
+  const appRef = app.slug || app.id;
   const samplePath = firstRoute?.path || '/api/status';
   const sampleMethod = firstRoute?.method && firstRoute.method !== 'ANY' ? firstRoute.method : 'GET';
   const trimmedPath = samplePath.replace(/^\/+/, '');
+  const publicActive = enabled && (authMode === 'public' || authMode === 'both') && app.status === 'published';
+  const usePublicSnippet = authMode === 'public';
+
+  const directRestBase = `${origin}/api/v1/apps/${appRef}/routes/`;
+  const publicRestBase = `${origin}/api/public/apps/${appRef}/routes/`;
+  const invokeUrl = `${origin}/api/v1/apps/${appRef}/invoke`;
 
   const snippets = {
-    invoke: `curl -X POST "${origin}/api/v1/apps/${app.id}/invoke" \\\n  -H "Authorization: Bearer flk_YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"method": "${sampleMethod}", "path": "${samplePath}", "query": {}, "body": {}}'`,
-    direct: `curl -X ${sampleMethod} "${origin}/api/v1/apps/${app.id}/routes/${trimmedPath}" \\\n  -H "Authorization: Bearer flk_YOUR_API_KEY"`,
-    js: `const res = await fetch("${origin}/api/v1/apps/${app.id}/invoke", {\n  method: "POST",\n  headers: {\n    "Authorization": "Bearer flk_YOUR_API_KEY",\n    "Content-Type": "application/json",\n  },\n  body: JSON.stringify({ method: "${sampleMethod}", path: "${samplePath}" }),\n});\nconst data = await res.json();`,
+    direct: usePublicSnippet
+      ? `curl -X ${sampleMethod} "${publicRestBase}${trimmedPath}"`
+      : `curl -X ${sampleMethod} "${directRestBase}${trimmedPath}" \\\n  -H "Authorization: Bearer flk_YOUR_API_KEY"`,
+    invoke: `curl -X POST "${invokeUrl}" \\\n  -H "Authorization: Bearer flk_YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"method": "${sampleMethod}", "path": "${samplePath}", "query": {}, "body": {}}'`,
+    js: usePublicSnippet
+      ? `const res = await fetch("${publicRestBase}${trimmedPath}");\nconst data = await res.json();`
+      : `const res = await fetch("${directRestBase}${trimmedPath}", {\n  method: "${sampleMethod}",\n  headers: {\n    "Authorization": "Bearer flk_YOUR_API_KEY",\n    "Content-Type": "application/json",\n  },\n});\nconst data = await res.json();`,
+    python: usePublicSnippet
+      ? `import requests\n\nres = requests.${sampleMethod.toLowerCase()}("${publicRestBase}${trimmedPath}")\nprint(res.json())`
+      : `import requests\n\nres = requests.${sampleMethod.toLowerCase()}(\n    "${directRestBase}${trimmedPath}",\n    headers={"Authorization": "Bearer flk_YOUR_API_KEY"},\n)\nprint(res.json())`,
   };
 
-  const copyCode = () => {
-    void navigator.clipboard?.writeText(snippets[tab]).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+  const copyText = (key: string, value: string) => {
+    void navigator.clipboard?.writeText(value).then(() => {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey((prev) => (prev === key ? null : prev)), 1800);
     }).catch(() => undefined);
   };
 
+  const toggleMethod = (m: string) => {
+    setAllowedMethods((prev) => {
+      if (prev.includes(m)) {
+        return prev.length > 1 ? prev.filter((x) => x !== m) : prev;
+      }
+      return [...prev, m];
+    });
+  };
+
+  const handleSave = async () => {
+    if (readOnly) return;
+    setSaving(true);
+    try {
+      const nextPolicy: ExternalApiSettings = {
+        enabled,
+        authMode,
+        allowedMethods: allowedMethods.length > 0 ? allowedMethods : ['GET'],
+        allowedPaths: parseLines(allowedPathsText),
+        blockedPaths: parseLines(blockedPathsText),
+        defaultPrefix: defaultPrefix.trim(),
+        corsOrigins: parseLines(corsOriginsText),
+        rateLimitPerMinute: Math.max(1, Math.min(600, Number(rateLimit) || 120)),
+        customHeaders: parseHeadersText(customHeadersText),
+      };
+      const updated = await updateApp(app.id, {
+        settings: {
+          ...(app.settings ?? {}),
+          externalApi: nextPolicy,
+        },
+      });
+      if (!updated) {
+        toast.error('Could not save External API settings');
+        return;
+      }
+      toast.success(
+        'External API settings saved',
+        enabled
+          ? authMode === 'api_key'
+            ? 'API-key access rules updated.'
+            : 'Public & external REST rules are now live.'
+          : 'External API access is now turned off for this app.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <Panel title="External API Access (API Key)" icon={<KeyRound className="h-4 w-4" />}>
+    <Panel
+      title="External API Access & Customization"
+      icon={<KeyRound className="h-4 w-4" />}
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={cn(
+            'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold',
+            !enabled
+              ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+              : authMode === 'api_key'
+                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+                : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
+          )}>
+            {!enabled ? <Lock className="h-3 w-3" /> : authMode === 'api_key' ? <Shield className="h-3 w-3" /> : <Globe className="h-3 w-3" />}
+            {!enabled ? 'Disabled' : authMode === 'api_key' ? 'API Key' : authMode === 'both' ? 'Public + API Key' : 'Public Only'}
+          </span>
+          {!readOnly && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowCustomize((v) => !v)}
+              leftIcon={<SlidersHorizontal className="h-3.5 w-3.5" />}
+            >
+              {showCustomize ? 'Hide Settings' : 'Customize API'}
+            </Button>
+          )}
+        </div>
+      }
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
-          Call this backend from external apps, scripts, or webhooks using a FormLogic API key with the{' '}
-          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] dark:bg-slate-800">apps:invoke</code> scope.
+          Use this SoftN app as a live external REST API from websites, mobile apps, scripts, or webhooks — with customizable auth mode, allowed routes &amp; methods, CORS origins, rate limits, and custom headers.
         </p>
-        <Button size="sm" variant="outline" onClick={onOpenApiKeys} leftIcon={<KeyRound className="h-3.5 w-3.5" />}>
-          Create / Manage API Keys
-        </Button>
+        {!readOnly && (
+          <Button size="sm" variant="outline" onClick={onOpenApiKeys} leftIcon={<KeyRound className="h-3.5 w-3.5" />}>
+            Create / Manage API Keys
+          </Button>
+        )}
       </div>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="inline-flex rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800">
-          {([
-            ['invoke', 'Invoke API (cURL)'],
-            ['direct', 'Direct Route (cURL)'],
-            ['js', 'JavaScript fetch'],
-          ] as const).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setTab(id)}
-              className={cn(
-                'inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-                tab === id
-                  ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white'
-                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white',
-              )}
-            >
-              <Code2 className="h-3 w-3" />
-              {label}
-            </button>
-          ))}
+
+      {/* Live Endpoint Base URLs */}
+      {enabled && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {authMode !== 'public' && (
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/50">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">API Key REST Base (flk_ · apps:invoke)</p>
+                <p className="truncate font-mono text-xs text-slate-900 dark:text-white">{directRestBase}</p>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => copyText('directUrl', directRestBase)} aria-label="Copy API key REST URL">
+                {copiedKey === 'directUrl' ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+              </Button>
+            </div>
+          )}
+          {(authMode === 'public' || authMode === 'both') && (
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2 dark:border-indigo-500/30 dark:bg-indigo-500/10">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">
+                  Public REST Base {app.status !== 'published' ? '(Publish app to activate)' : '(No API key needed)'}
+                </p>
+                <p className="truncate font-mono text-xs text-slate-900 dark:text-white">{publicRestBase}</p>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => copyText('publicUrl', publicRestBase)} aria-label="Copy public REST URL">
+                {copiedKey === 'publicUrl' ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+              </Button>
+            </div>
+          )}
         </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={copyCode}
-          leftIcon={copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-        >
-          {copied ? 'Copied' : 'Copy snippet'}
-        </Button>
-      </div>
-      <pre className="mt-2.5 overflow-x-auto rounded-lg bg-slate-900 p-3 font-mono text-xs leading-relaxed text-slate-100 dark:bg-slate-950">
-        {snippets[tab]}
-      </pre>
+      )}
+
+      {/* Customizable Gateway Policy Form */}
+      {showCustomize && !readOnly && (
+        <div className="mt-4 space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4 dark:border-slate-700 dark:bg-slate-800/40">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Switch
+              label="Expose this SoftN app as an external API"
+              checked={enabled}
+              onChange={setEnabled}
+            />
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              Supports <code className="font-mono">X-App-Authorization</code> header forwarding
+            </span>
+          </div>
+
+          {enabled && (
+            <>
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">Authentication Mode</p>
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    ['api_key', 'API Key Only (flk_)', Shield],
+                    ['both', 'Public + API Key', Globe],
+                    ['public', 'Public Routes Only', Globe],
+                  ] as const).map(([mode, label, Icon]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setAuthMode(mode)}
+                      className={cn(
+                        'inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition',
+                        authMode === mode
+                          ? 'border-primary-500 bg-primary-600 text-primary-foreground shadow-xs'
+                          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {(authMode === 'public' || authMode === 'both') && (
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    Public mode serves published apps on <code className="font-mono">/api/public/apps/{appRef}/routes/…</code> without a FormLogic API key. Restrict Allowed Methods and Allowed Route Prefixes below to expose only what you intend.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">Allowed HTTP Methods</p>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setAllowedMethods(['GET'])}
+                      className="cursor-pointer rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                    >
+                      Read-only (GET)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAllowedMethods([...ALL_HTTP_METHODS])}
+                      className="cursor-pointer rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                    >
+                      Full CRUD
+                    </button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {ALL_HTTP_METHODS.map((m) => {
+                    const active = allowedMethods.includes(m);
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => toggleMethod(m)}
+                        className={cn(
+                          'h-8 cursor-pointer rounded-lg border px-3 font-mono text-xs font-semibold transition',
+                          active
+                            ? 'border-emerald-500 bg-emerald-50 text-emerald-800 dark:border-emerald-500/50 dark:bg-emerald-500/15 dark:text-emerald-200'
+                            : 'border-slate-200 bg-white text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400'
+                        )}
+                      >
+                        {m}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label htmlFor="ext-api-allowed-paths" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Allowed Route Prefixes <span className="font-normal text-slate-500">(blank = all routes)</span>
+                  </label>
+                  <textarea
+                    id="ext-api-allowed-paths"
+                    rows={3}
+                    value={allowedPathsText}
+                    onChange={(e) => setAllowedPathsText(e.target.value)}
+                    placeholder={'/api/products\n/api/orders'}
+                    className={cn(field, 'mt-1 py-2')}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="ext-api-blocked-paths" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Blocked Route Prefixes <span className="font-normal text-slate-500">(always denied)</span>
+                  </label>
+                  <textarea
+                    id="ext-api-blocked-paths"
+                    rows={3}
+                    value={blockedPathsText}
+                    onChange={(e) => setBlockedPathsText(e.target.value)}
+                    placeholder={'/api/admin\n/api/setup'}
+                    className={cn(field, 'mt-1 py-2')}
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <label htmlFor="ext-api-cors" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      Allowed Browser CORS Origins
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setCorsOriginsText('*')}
+                      className="cursor-pointer text-[11px] font-medium text-primary-600 hover:underline dark:text-primary-400"
+                    >
+                      Allow any (*)
+                    </button>
+                  </div>
+                  <textarea
+                    id="ext-api-cors"
+                    rows={2}
+                    value={corsOriginsText}
+                    onChange={(e) => setCorsOriginsText(e.target.value)}
+                    placeholder={'https://myapp.com\nhttps://staging.myapp.com'}
+                    className={cn(field, 'mt-1 py-2')}
+                  />
+                </div>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label htmlFor="ext-api-prefix" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                        Default Path Prefix
+                      </label>
+                      <input
+                        id="ext-api-prefix"
+                        type="text"
+                        value={defaultPrefix}
+                        onChange={(e) => setDefaultPrefix(e.target.value)}
+                        placeholder="/api"
+                        className={cn(field, 'mt-1 h-9')}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="ext-api-rate" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                        Rate Limit (req / min)
+                      </label>
+                      <input
+                        id="ext-api-rate"
+                        type="number"
+                        min={1}
+                        max={600}
+                        value={rateLimit}
+                        onChange={(e) => setRateLimit(e.target.value)}
+                        className={cn(field, 'mt-1 h-9')}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label htmlFor="ext-api-headers" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      Custom Response Headers <span className="font-normal text-slate-500">(Header: Value per line)</span>
+                    </label>
+                    <textarea
+                      id="ext-api-headers"
+                      rows={2}
+                      value={customHeadersText}
+                      onChange={(e) => setCustomHeadersText(e.target.value)}
+                      placeholder={'Cache-Control: public, max-age=60\nX-API-Version: 1.0'}
+                      className={cn(field, 'mt-1 py-2')}
+                    />
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {publicActive ? 'Public routes and API-key rules take effect immediately upon saving.' : 'Changes apply immediately to every external request.'}
+            </p>
+            <Button size="sm" variant="primary" isLoading={saving} onClick={() => void handleSave()} leftIcon={<Save className="h-3.5 w-3.5" />}>
+              Save External API Settings
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Ready-to-copy client snippets */}
+      {enabled && (
+        <>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex flex-wrap rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800">
+              {([
+                ['direct', 'Direct REST (cURL)'],
+                ['invoke', 'Invoke JSON (cURL)'],
+                ['js', 'JavaScript fetch'],
+                ['python', 'Python requests'],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setTab(id)}
+                  className={cn(
+                    'inline-flex cursor-pointer items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                    tab === id
+                      ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white',
+                  )}
+                >
+                  <Code2 className="h-3 w-3" />
+                  {label}
+                </button>
+              ))}
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => copyText('snippet', snippets[tab])}
+              leftIcon={copiedKey === 'snippet' ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+            >
+              {copiedKey === 'snippet' ? 'Copied' : 'Copy snippet'}
+            </Button>
+          </div>
+          <pre className="mt-2.5 overflow-x-auto rounded-lg bg-slate-900 p-3 font-mono text-xs leading-relaxed text-slate-100 dark:bg-slate-950">
+            {snippets[tab]}
+          </pre>
+        </>
+      )}
     </Panel>
   );
 }

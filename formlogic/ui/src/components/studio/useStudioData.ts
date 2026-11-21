@@ -1,6 +1,8 @@
 import { deferEffect } from '../../lib/deferredEffect';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
+import { currentSessionGeneration, isSessionGenerationCurrent, subscribeSessionGeneration } from '../../lib/sessionGeneration';
+import { useAppStore } from '../../stores/appStore';
 import type { App, AppForm, AppRole, AppVersion } from '../../types/app';
 import type { AppDomain } from '../../lib/api';
 import type { Form } from '../../types/form';
@@ -9,6 +11,78 @@ import type { Blueprint } from '../../types/blueprints';
 
 /** Stable empties so consumers never see a fresh array identity per render. */
 const NO_FORM_IDS: string[] = [];
+
+interface StudioCacheEntry {
+  generation: number;
+  updatedAt: number;
+  app: App | null;
+  appForms: AppForm[];
+  formsById: Record<string, Form>;
+  unreadableFormIds: string[];
+  flows: FlowDefinition[];
+  bindings: FlowBinding[];
+  roles: AppRole[];
+  blueprint: Blueprint | null;
+  versions: AppVersion[];
+  domains: AppDomain[];
+  memberCount: number;
+}
+
+const STUDIO_CACHE_FRESH_MS = 30_000;
+const STUDIO_CACHE_MAX = 16;
+const studioCache = new Map<string, StudioCacheEntry>();
+subscribeSessionGeneration(() => studioCache.clear());
+
+function readStudioCache(appId: string | undefined): StudioCacheEntry | null {
+  if (!appId) return null;
+  const entry = studioCache.get(appId);
+  if (!entry || entry.generation !== currentSessionGeneration()) return null;
+  return entry;
+}
+
+function patchStudioCache(appId: string | undefined, patch: Partial<StudioCacheEntry>): void {
+  if (!appId) return;
+  const gen = currentSessionGeneration();
+  const prev = readStudioCache(appId);
+  const next: StudioCacheEntry = {
+    generation: gen,
+    updatedAt: Date.now(),
+    app: prev?.app ?? null,
+    appForms: prev?.appForms ?? [],
+    formsById: prev?.formsById ?? {},
+    unreadableFormIds: prev?.unreadableFormIds ?? NO_FORM_IDS,
+    flows: prev?.flows ?? [],
+    bindings: prev?.bindings ?? [],
+    roles: prev?.roles ?? [],
+    blueprint: prev?.blueprint ?? null,
+    versions: prev?.versions ?? [],
+    domains: prev?.domains ?? [],
+    memberCount: prev?.memberCount ?? 0,
+    ...patch,
+  };
+  studioCache.delete(appId);
+  studioCache.set(appId, next);
+  if (studioCache.size > STUDIO_CACHE_MAX) {
+    const oldestKey = studioCache.keys().next().value;
+    if (oldestKey) studioCache.delete(oldestKey);
+  }
+}
+
+export function getCachedStudioAppForms(appId: string | undefined): { forms: AppForm[]; fresh: boolean } | null {
+  const entry = readStudioCache(appId);
+  if (!entry || entry.appForms.length === 0) return null;
+  return { forms: entry.appForms, fresh: Date.now() - entry.updatedAt < STUDIO_CACHE_FRESH_MS };
+}
+
+export function setCachedStudioAppForms(appId: string | undefined, forms: AppForm[]): void {
+  patchStudioCache(appId, { appForms: forms });
+}
+
+export function getCachedStudioRoles(appId: string | undefined): { roles: AppRole[]; fresh: boolean } | null {
+  const entry = readStudioCache(appId);
+  if (!entry || entry.roles.length === 0) return null;
+  return { roles: entry.roles, fresh: Date.now() - entry.updatedAt < STUDIO_CACHE_FRESH_MS };
+}
 
 export interface StudioData {
   app: App | null;
@@ -75,33 +149,36 @@ export function useStudioData(appId: string | undefined): StudioData {
   // token has moved on. Without it, a slow fan-out for app A lands on top of app B's
   // state after the user switches apps, and B then shows A's forms under B's name.
   const loadToken = useRef(0);
-  const [app, setApp] = useState<App | null>(null);
-  const [appLoaded, setAppLoaded] = useState(false);
+  const initialCache = readStudioCache(appId);
+  const storeApp = appId ? useAppStore.getState().apps.find((a) => a.id === appId) ?? null : null;
+  const [app, setApp] = useState<App | null>(() => initialCache?.app ?? storeApp);
+  const [appLoaded, setAppLoaded] = useState<boolean>(() => !!(initialCache?.app));
   const [appError, setAppError] = useState<{ kind: 'notFound' | 'error'; message: string } | null>(null);
-  const [appForms, setAppForms] = useState<AppForm[]>([]);
-  const [formsById, setFormsById] = useState<Record<string, Form>>({});
-  const [unreadableFormIds, setUnreadableFormIds] = useState<string[]>(NO_FORM_IDS);
-  const [formsResolving, setFormsResolving] = useState(true);
+  const [appForms, setAppForms] = useState<AppForm[]>(() => initialCache?.appForms ?? []);
+  const [formsById, setFormsById] = useState<Record<string, Form>>(() => initialCache?.formsById ?? {});
+  const [unreadableFormIds, setUnreadableFormIds] = useState<string[]>(() => initialCache?.unreadableFormIds ?? NO_FORM_IDS);
+  const [formsResolving, setFormsResolving] = useState<boolean>(() => !initialCache?.app);
   const [formsFailed, setFormsFailed] = useState(false);
-  const [flows, setFlows] = useState<FlowDefinition[]>([]);
-  const [bindings, setBindings] = useState<FlowBinding[]>([]);
-  const [roles, setRoles] = useState<AppRole[]>([]);
-  const [blueprint, setBlueprint] = useState<Blueprint | null>(null);
-  const [versions, setVersions] = useState<AppVersion[]>([]);
-  const [domains, setDomains] = useState<AppDomain[]>([]);
-  const [memberCount, setMemberCount] = useState(0);
+  const [flows, setFlows] = useState<FlowDefinition[]>(() => initialCache?.flows ?? []);
+  const [bindings, setBindings] = useState<FlowBinding[]>(() => initialCache?.bindings ?? []);
+  const [roles, setRoles] = useState<AppRole[]>(() => initialCache?.roles ?? []);
+  const [blueprint, setBlueprint] = useState<Blueprint | null>(() => initialCache?.blueprint ?? null);
+  const [versions, setVersions] = useState<AppVersion[]>(() => initialCache?.versions ?? []);
+  const [domains, setDomains] = useState<AppDomain[]>(() => initialCache?.domains ?? []);
+  const [memberCount, setMemberCount] = useState<number>(() => initialCache?.memberCount ?? 0);
   const [auxFailed, setAuxFailed] = useState(false);
   const [versionsFailed, setVersionsFailed] = useState(false);
   const [domainsFailed, setDomainsFailed] = useState(false);
   const [membersFailed, setMembersFailed] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [initialLoading, setInitialLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(() => !initialCache?.app);
+  const [initialLoading, setInitialLoading] = useState<boolean>(() => !initialCache?.app);
 
   const reloadApp = useCallback(async () => {
     if (!appId) return;
     const token = loadToken.current;
+    const gen = currentSessionGeneration();
     const res = await api.getApp(appId);
-    if (token !== loadToken.current) return;
+    if (token !== loadToken.current || !isSessionGenerationCurrent(gen)) return;
     if (res.error || !res.data?.app) {
       const message = typeof res.error === 'string' ? res.error : 'Could not load this app.';
       // Only a definitive 404/403 from the server may claim the app is gone; `status` is
@@ -111,18 +188,21 @@ export function useStudioData(appId: string | undefined): StudioData {
       setAppLoaded(true);
       return;
     }
+    const nextApp = res.data.app as App;
     setAppError(null);
-    setApp(res.data.app as App);
+    setApp(nextApp);
     setAppLoaded(true);
+    patchStudioCache(appId, { app: nextApp });
   }, [appId]);
 
   const reloadForms = useCallback(async () => {
     if (!appId) return;
     const token = loadToken.current;
+    const gen = currentSessionGeneration();
     setFormsResolving(true);
     try {
-      const res = await api.getAppForms(appId);
-      if (token !== loadToken.current) return;
+      const res = await api.getAppForms(appId, { includeForms: true });
+      if (token !== loadToken.current || !isSessionGenerationCurrent(gen)) return;
       if (res.error || !res.data) {
         // Unknown, not zero: committing [] here made the studio claim the app was
         // empty and disabled Publish behind a "No data types yet" blocking check.
@@ -130,31 +210,50 @@ export function useStudioData(appId: string | undefined): StudioData {
         return;
       }
       setFormsFailed(false);
-      const attachments = (res.data.forms ?? []) as AppForm[];
-      setAppForms(attachments);
-      // Full form records for field lists — fetched individually (the owner forms list may be
-      // stale or lack this form when it came from a pack install). One failure must not take
-      // the others down, and must not masquerade as "this app has no data types".
-      const full = await Promise.all(
-        attachments.map(async (af) => {
-          try {
-            const one = await api.getForm(af.formId);
-            return one.data?.form ?? null;
-          } catch {
-            return null;
-          }
-        })
-      );
-      if (token !== loadToken.current) return;
-      const map: Record<string, Form> = {};
-      const unreadable: string[] = [];
-      attachments.forEach((af, index) => {
-        const form = full[index];
-        if (form) map[form.id] = form;
-        else unreadable.push(af.formId);
+      const rawAttachments = (res.data.forms ?? []) as (AppForm & { form?: Form })[];
+      const attachments: AppForm[] = rawAttachments.map((item) => {
+        if ('form' in item) {
+          const rest = { ...item };
+          delete rest.form;
+          return rest;
+        }
+        return item;
       });
+      setAppForms(attachments);
+      // Prefer full form records batched inline by GET /api/apps/{id}/forms?includeForms=1,
+      // falling back to per-form api.getForm() only when a server/mock omits inline forms.
+      const map: Record<string, Form> = {};
+      const missingIds: AppForm[] = [];
+      for (const item of rawAttachments) {
+        if (item.form && typeof item.form === 'object' && 'id' in item.form) {
+          map[item.form.id] = item.form;
+        } else {
+          missingIds.push(item);
+        }
+      }
+      const unreadable: string[] = [];
+      if (missingIds.length > 0) {
+        const full = await Promise.all(
+          missingIds.map(async (af) => {
+            try {
+              const one = await api.getForm(af.formId);
+              return one.data?.form ?? null;
+            } catch {
+              return null;
+            }
+          })
+        );
+        if (token !== loadToken.current || !isSessionGenerationCurrent(gen)) return;
+        missingIds.forEach((af, index) => {
+          const form = full[index];
+          if (form) map[form.id] = form;
+          else unreadable.push(af.formId);
+        });
+      }
+      const nextUnreadable = unreadable.length > 0 ? unreadable : NO_FORM_IDS;
       setFormsById(map);
-      setUnreadableFormIds(unreadable.length > 0 ? unreadable : NO_FORM_IDS);
+      setUnreadableFormIds(nextUnreadable);
+      patchStudioCache(appId, { appForms: attachments, formsById: map, unreadableFormIds: nextUnreadable });
     } finally {
       if (token === loadToken.current) setFormsResolving(false);
     }
@@ -163,13 +262,22 @@ export function useStudioData(appId: string | undefined): StudioData {
   const reloadFlows = useCallback(async () => {
     if (!appId) return;
     const token = loadToken.current;
+    const gen = currentSessionGeneration();
     const [flowsRes, bindingsRes] = await Promise.all([
       api.listFlows(appId),
       api.listFlowBindings(appId),
     ]);
-    if (token !== loadToken.current) return;
-    if (!flowsRes.error) setFlows((flowsRes.data?.flows ?? []) as FlowDefinition[]);
-    if (!bindingsRes.error) setBindings((bindingsRes.data?.bindings ?? []) as FlowBinding[]);
+    if (token !== loadToken.current || !isSessionGenerationCurrent(gen)) return;
+    const nextFlows = !flowsRes.error ? ((flowsRes.data?.flows ?? []) as FlowDefinition[]) : undefined;
+    const nextBindings = !bindingsRes.error ? ((bindingsRes.data?.bindings ?? []) as FlowBinding[]) : undefined;
+    if (nextFlows) setFlows(nextFlows);
+    if (nextBindings) setBindings(nextBindings);
+    if (nextFlows || nextBindings) {
+      patchStudioCache(appId, {
+        ...(nextFlows ? { flows: nextFlows } : {}),
+        ...(nextBindings ? { bindings: nextBindings } : {}),
+      });
+    }
   }, [appId]);
 
   /**
@@ -188,13 +296,18 @@ export function useStudioData(appId: string | undefined): StudioData {
     const token = loadToken.current;
     const next = await readRoles();
     if (token !== loadToken.current) return;
-    if (next) setRoles(next);
-    else setAuxFailed(true);
-  }, [readRoles]);
+    if (next) {
+      setRoles(next);
+      patchStudioCache(appId, { roles: next });
+    } else {
+      setAuxFailed(true);
+    }
+  }, [appId, readRoles]);
 
   const reloadAux = useCallback(async () => {
     if (!appId) return;
     const token = loadToken.current;
+    const gen = currentSessionGeneration();
     const [rolesList, blueprintsRes, versionsRes, domainsRes, usersRes] = await Promise.all([
       readRoles(),
       api.listBlueprints(),
@@ -202,15 +315,22 @@ export function useStudioData(appId: string | undefined): StudioData {
       api.getAppDomains(appId),
       api.getAppUsers(appId),
     ]);
-    if (token !== loadToken.current) return;
+    if (token !== loadToken.current || !isSessionGenerationCurrent(gen)) return;
 
     // A failed supporting fetch keeps the previous value and raises auxFailed — writing 0 here
     // is what makes a twenty-member app advertise "Invite your first member".
     let failed = false;
-    if (rolesList) setRoles(rolesList);
-    else failed = true;
+    const patch: Partial<StudioCacheEntry> = {};
+    if (rolesList) {
+      setRoles(rolesList);
+      patch.roles = rolesList;
+    } else {
+      failed = true;
+    }
     if (!blueprintsRes.error) {
-      setBlueprint((blueprintsRes.data?.blueprints ?? []).find((b) => b.appId === appId) ?? null);
+      const bp = (blueprintsRes.data?.blueprints ?? []).find((b) => b.appId === appId) ?? null;
+      setBlueprint(bp);
+      patch.blueprint = bp;
     }
     // Tracked separately: one coarse flag meant a dropped VERSIONS request surfaced
     // to the user as "Members not loaded", and an empty release log looked like a
@@ -219,23 +339,39 @@ export function useStudioData(appId: string | undefined): StudioData {
     setDomainsFailed(!!domainsRes.error);
     setMembersFailed(!!usersRes.error);
     if (versionsRes.error) failed = true;
-    else setVersions(versionsRes.data?.versions ?? []);
+    else {
+      const v = versionsRes.data?.versions ?? [];
+      setVersions(v);
+      patch.versions = v;
+    }
     if (domainsRes.error) failed = true;
-    else setDomains(domainsRes.data?.domains ?? []);
+    else {
+      const d = domainsRes.data?.domains ?? [];
+      setDomains(d);
+      patch.domains = d;
+    }
     if (usersRes.error) {
       failed = true;
     } else {
       const users = (usersRes.data?.users ?? []) as Array<{ status?: string }>;
-      setMemberCount(users.filter((u) => u.status !== 'suspended').length);
+      const count = users.filter((u) => u.status !== 'suspended').length;
+      setMemberCount(count);
+      patch.memberCount = count;
     }
     setAuxFailed(failed);
+    if (Object.keys(patch).length > 0) patchStudioCache(appId, patch);
   }, [appId, readRoles]);
 
   const reload = useCallback(async () => {
     const token = loadToken.current;
     setLoading(true);
     try {
-      await Promise.all([reloadApp(), reloadForms(), reloadFlows(), reloadAux()]);
+      const primary = Promise.all([reloadApp(), reloadForms()]).then(() => {
+        if (token === loadToken.current) {
+          setInitialLoading(false);
+        }
+      });
+      await Promise.all([primary, reloadFlows(), reloadAux()]);
     } finally {
       if (token === loadToken.current) {
         setLoading(false);
@@ -248,36 +384,42 @@ export function useStudioData(appId: string | undefined): StudioData {
   const [loadedAppId, setLoadedAppId] = useState(appId);
   if (loadedAppId !== appId) {
     setLoadedAppId(appId);
-    setApp(null);
-    setAppLoaded(false);
+    const cached = readStudioCache(appId);
+    const fallbackApp = appId ? useAppStore.getState().apps.find((a) => a.id === appId) ?? null : null;
+    setApp(cached?.app ?? fallbackApp);
+    setAppLoaded(!!(cached?.app));
     setAppError(null);
-    setAppForms([]);
-    setFormsById({});
-    setUnreadableFormIds(NO_FORM_IDS);
-    setFormsResolving(true);
+    setAppForms(cached?.appForms ?? []);
+    setFormsById(cached?.formsById ?? {});
+    setUnreadableFormIds(cached?.unreadableFormIds ?? NO_FORM_IDS);
+    setFormsResolving(!cached?.app);
     setFormsFailed(false);
-    setFlows([]);
-    setBindings([]);
-    setRoles([]);
-    setBlueprint(null);
-    setVersions([]);
-    setDomains([]);
-    setMemberCount(0);
+    setFlows(cached?.flows ?? []);
+    setBindings(cached?.bindings ?? []);
+    setRoles(cached?.roles ?? []);
+    setBlueprint(cached?.blueprint ?? null);
+    setVersions(cached?.versions ?? []);
+    setDomains(cached?.domains ?? []);
+    setMemberCount(cached?.memberCount ?? 0);
     setAuxFailed(false);
     setVersionsFailed(false);
     setDomainsFailed(false);
     setMembersFailed(false);
-    setLoading(true);
-    setInitialLoading(true);
+    setLoading(!cached?.app);
+    setInitialLoading(!cached?.app);
   }
   useEffect(() => {
     loadToken.current += 1;
+    const cached = readStudioCache(appId);
+    if (cached?.app && Date.now() - cached.updatedAt < STUDIO_CACHE_FRESH_MS) {
+      return () => { loadToken.current += 1; };
+    }
     const cancelStart = deferEffect(() => { void reload(); });
     return () => {
       cancelStart();
       loadToken.current += 1;
     };
-  }, [reload]);
+  }, [appId, reload]);
 
   return useMemo(
     () => ({

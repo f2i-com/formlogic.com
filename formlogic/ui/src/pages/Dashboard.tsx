@@ -1308,7 +1308,7 @@ export function Dashboard() {
                 Automations
               </Button>
               <Button size="md" variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />} className="min-h-10 font-semibold">
-                Templates
+                Start from a template
               </Button>
               <Button size="md" variant="outline" onClick={() => navigate('/settings#api-keys')} leftIcon={<KeyRound className="h-4 w-4" />} className="min-h-10 font-semibold">
                 API Keys

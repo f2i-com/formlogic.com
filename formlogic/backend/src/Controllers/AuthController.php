@@ -363,6 +363,12 @@ class AuthController
             }
             $info = $packInfo[$app['id'] ?? ''] ?? ['packName' => '', 'catalogSlug' => '', 'tags' => []];
             $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+            // Companion SoftN apps are surfaced alongside their paired Form Apps (and inside the Demo
+            // workspace /apps list), so the landing demo grid stays 1 card per business pack and every
+            // entry in GET /api/demo/apps exposes forms + its linked SoftN app slug.
+            if (!empty($settings['softnApp']) && !empty($settings['demoSandboxPackSlug'])) {
+                continue;
+            }
             $theme = is_array($app['theme'] ?? null) ? $app['theme'] : [];
             $out[] = [
                 'slug' => $app['slug'] ?? null,
@@ -374,6 +380,10 @@ class AuthController
                 'packName' => $info['packName'],
                 'catalogSlug' => $info['catalogSlug'] ?? '',
                 'tags' => $info['tags'],
+                'softnAppId' => is_string($settings['linkedSoftnAppId'] ?? null) ? $settings['linkedSoftnAppId'] : null,
+                'softnAppSlug' => is_string($settings['linkedSoftnAppSlug'] ?? null) ? $settings['linkedSoftnAppSlug'] : null,
+                'softnAppName' => is_string($settings['linkedSoftnAppName'] ?? null) ? $settings['linkedSoftnAppName'] : null,
+                'companionSoftnPackSlug' => is_string($settings['companionSoftnPackSlug'] ?? null) ? $settings['companionSoftnPackSlug'] : null,
             ];
         }
 

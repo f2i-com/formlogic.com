@@ -30,6 +30,7 @@ import { AccessStep } from '../../components/studio/steps/AccessStep';
 import { PublishStep } from '../../components/studio/steps/PublishStep';
 import { useUIStore } from '../../stores/uiStore';
 import { useAuthStore } from '../../stores/authStore';
+import { useAppStore } from '../../stores/appStore';
 import { viewerOwnsApp } from '../../types/app';
 import { returnToState } from '../../hooks/useReturnTo';
 import { getAiReadiness } from '../../client-runtime/flows/aiDefault';
@@ -75,14 +76,16 @@ export function AppStudio() {
 
   const activeStep: StudioStepId = isStudioStep(stepParam) ? stepParam : stepParam ? 'data' : 'plan';
   const acting = useAdminActing();
-  const canManage = viewerOwnsApp(data.app ?? undefined, userId);
-  const hasWebApp = !!data.app && isSoftnApp(data.app);
+  const storeApp = useAppStore(state => state.apps.find(item => item.id === appId));
+  const sidebarApp = data.app ?? storeApp ?? null;
+  const canManage = viewerOwnsApp(sidebarApp ?? undefined, userId);
+  const hasWebApp = !!sidebarApp && isSoftnApp(sidebarApp);
   const addingFirstForm = stepParam === 'data' && searchParams.get('new') === 'form';
-  const goToWeb = hasWebApp && !data.formsFailed && data.appForms.length === 0 && !addingFirstForm;
-  const navigation = useFormsWorkspaceNavigation(appId, { hasWebApp, canManage });
+  const goToWeb = !!data.app && isSoftnApp(data.app) && !data.formsResolving && !data.formsFailed && data.appForms.length === 0 && !addingFirstForm;
+  const navigation = useFormsWorkspaceNavigation(appId, { hasWebApp, canManage, hasForms: sidebarApp?.formCount !== 0 });
   const section = sectionForAppItems(navigation, location.pathname) || activeStep;
-  const visible = canManage && !data.initialLoading && !goToWeb && isStudioStep(stepParam);
-  const hasSidebar = useAppSectionSidebar(data.app, visible ? navigation : null, navigate);
+  const visible = canManage && !goToWeb && (isStudioStep(stepParam) || (!stepParam && !hasWebApp));
+  const hasSidebar = useAppSectionSidebar(sidebarApp, visible ? navigation : null, navigate);
   const nativeDatabase = useNativeTables(appId && canManage && !goToWeb && !isDemoLocalId(appId) && !acting ? appId : undefined, activeStep);
 
   // A new section opens at its heading even when the previous section was scrolled.

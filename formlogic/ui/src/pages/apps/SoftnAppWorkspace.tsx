@@ -50,6 +50,7 @@ import { usesWebContainer } from '../../lib/formlogic/frameEngine';
 import { AppTorchSwitch } from '../../components/studio/AppTorchSwitch';
 import { NativeEditorView } from '../../components/studio/NativeAppPanel';
 import { NativeAppView } from '../../components/studio/NativeAppView';
+import { MarketplaceDemoFrame } from '../../components/marketplace/MarketplaceDemoFrame';
 import type { SiteProblem } from '../../components/studio/SiteAppFrame';
 import { importSiteBuild, siteBuildWarnings, siteOf, siteOutsideOf, withNewBuild, withOutsideSites } from '../../lib/siteApps';
 import { SiteOutsidePanel } from '../../components/apps/SiteOutsidePanel';
@@ -505,10 +506,34 @@ function Workspace({ app }: { app: App }) {
           status={section !== 'overview' && <div className={cn(section === 'data' && !dirty && 'max-sm:hidden')}>{statusLine}</div>} />
         </div>
 
-        {section === 'overview' && <SoftnOverview app={app} project={project} version={version} published={published} dirty={dirty} readOnly={readOnly} installedApi={installedApi}
-          isOwner={app.ownerId === userId} liveUrl={liveUrl} busy={publishing || busy} canPublish={ready}
-          installedAccess={draft.installedAccess ?? project.access} draftStatus={dirty && draft.keeping ? DRAFT_KEEPING[draft.keeping][0] : undefined}
-          formCount={formCount} onLeave={leave} onPublish={() => void publish()} />}
+        {section === 'overview' && <>
+          {readOnly && (app.settings?.demoSandboxPackSlug || app.settings?.companionSoftnPackSlug) && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary-200 bg-primary-50/70 p-4 dark:border-primary-500/30 dark:bg-primary-500/10">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                  Interactive Demo SoftN App · Live Isolated PHP + SQLite Sandbox
+                </p>
+                <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
+                  Launch this full-stack SoftN app in its own private temporary sandbox, or jump to its paired Forms &amp; Charts management app.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" variant="primary" onClick={() => navigate(`/app/${encodeURIComponent(app.slug)}`)} leftIcon={<ExternalLink className="h-3.5 w-3.5" />}>
+                  Open Live SoftN App
+                </Button>
+                {app.settings?.linkedFormAppSlug && (
+                  <Button size="sm" variant="outline" onClick={() => navigate(`/app/${encodeURIComponent(app.settings!.linkedFormAppSlug!)}`)} leftIcon={<ClipboardList className="h-3.5 w-3.5" />}>
+                    {app.settings.linkedFormAppName ? `${app.settings.linkedFormAppName} (Forms)` : 'Forms & Charts App'}
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+          <SoftnOverview app={app} project={project} version={version} published={published} dirty={dirty} readOnly={readOnly} installedApi={installedApi}
+            isOwner={app.ownerId === userId} liveUrl={liveUrl} busy={publishing || busy} canPublish={ready}
+            installedAccess={draft.installedAccess ?? project.access} draftStatus={dirty && draft.keeping ? DRAFT_KEEPING[draft.keeping][0] : undefined}
+            formCount={formCount} onLeave={leave} onPublish={() => void publish()} />
+        </>}
 
         {section === 'members' && (managesMembers
           ? <SoftnMembers app={app} project={project} onReloadApp={fetchApps} />
@@ -569,7 +594,20 @@ function Workspace({ app }: { app: App }) {
                   On a phone it is shorter, so the ways to change the app under it are a short scroll away. */}
               <div key={`${previewKey}:${version}`} data-testid="softn-app-preview"
                 className={cn('h-[70vh] min-h-[28rem] overflow-hidden rounded-xl max-sm:h-[55vh] max-sm:min-h-[20rem]', device === 'mobile' ? 'w-[390px] max-w-full' : 'w-full')}>
-                <NativeAppView slug={app.slug} onSiteProblem={isSite ? onSiteProblem : undefined} />
+                {readOnly && (app.settings?.demoSandboxPackSlug || app.settings?.companionSoftnPackSlug) ? (
+                  <MarketplaceDemoFrame
+                    slug={(app.settings?.demoSandboxPackSlug || app.settings?.companionSoftnPackSlug)!}
+                    name={app.name}
+                    sourceProtected={false}
+                    hasBackend
+                    backendRuntime="PHP + SQLite"
+                    autoLaunch
+                    fullHeight
+                    compact
+                  />
+                ) : (
+                  <NativeAppView slug={app.slug} onSiteProblem={isSite ? onSiteProblem : undefined} />
+                )}
               </div>
             </div>
             {/* For a JavaScript app's owner: what was left out of the build, what in it will not

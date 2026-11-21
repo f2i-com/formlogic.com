@@ -31,8 +31,8 @@ export function AppPluginsPanel({ appId, hasNativeDatabase = false, readOnly = f
     try {
       const res = await api.listAppPlugins(appId);
       if (res.data) {
-        setAttached(res.data.plugins ?? []);
-        setInstalled(res.data.installedPlugins ?? []);
+        setAttached(Array.isArray(res.data.plugins) ? res.data.plugins : []);
+        setInstalled(Array.isArray(res.data.installedPlugins) ? res.data.installedPlugins : []);
       }
     } finally {
       setLoading(false);

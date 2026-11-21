@@ -28,17 +28,17 @@ for (const mode of ['public', 'signed-in', 'demo']) {
       const workspaceNavigation = width >= 768 ? page.getByRole('navigation', { name: 'Workspace', exact: true }) : page.getByRole('navigation').filter({ has: page.getByRole('link', { name: 'Home', exact: true }) });
       await page.goto('/packs');
       if (mode === 'public') {
-        await expect(page.getByRole('heading', { name: 'Template library' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'SoftN Apps, Plugins & Templates' })).toBeVisible();
         await expect(page.getByRole('navigation', { name: 'Workspace', exact: true })).toHaveCount(0);
       } else {
         // Inside the workspace the catalogue is a workspace page: the Header names it.
-        await expect(page.getByRole('heading', { name: 'Templates', exact: true })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Marketplace', exact: true })).toBeVisible();
         await expect(workspaceNavigation).toHaveCount(1);
         await expect(page.locator('footer')).toHaveCount(0);
       }
-      const search = page.getByRole('searchbox', { name: 'Search templates' });
+      const search = page.getByRole('searchbox', { name: 'Search marketplace' });
       await search.fill('no-match');
-      await expect(page.getByText('No matching templates', { exact: true })).toBeVisible();
+      await expect(page.getByText('No matching listings', { exact: true })).toBeVisible();
       await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
       await search.fill('aokie');
       await page.getByRole('combobox', { name: 'Sort by' }).selectOption('name');
@@ -51,7 +51,7 @@ for (const mode of ['public', 'signed-in', 'demo']) {
       expect([...resultsUrl.searchParams]).toEqual([['q', 'aokie'], ['sort', 'name'], ['tag', 'calls'], ['page', '2']]);
       const card = page.getByRole('link', { name: pack.name, exact: true });
       await expect(card).toBeVisible();
-      await expect(page.locator('[aria-label="Loading templates"]')).toHaveCount(0);
+      await expect(page.locator('[aria-label="Loading marketplace"]')).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath('gallery.png'), fullPage: true });
       await card.click();

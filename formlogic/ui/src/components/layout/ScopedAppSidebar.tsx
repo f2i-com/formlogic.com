@@ -67,10 +67,14 @@ export function ScopedAppSidebar({ navigation: { app, items, leave }, section, c
               aria-label="Switch app"
               value={app.id}
               onChange={(e) => switchToApp(e.target.value)}
-              className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-slate-50 pl-2.5 pr-8 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-white focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:border-slate-600"
+              className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-slate-50 pl-2.5 pr-8 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-white focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white"
             >
               {switchableApps.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
+                <option
+                  key={candidate.id}
+                  value={candidate.id}
+                  className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100"
+                >
                   {candidate.name}{candidate.settings?.softnApp ? ' (SoftN)' : ''}
                 </option>
               ))}

@@ -49,11 +49,18 @@ class CorsMiddleware implements MiddlewareInterface
 
         // Handle preflight requests
         if ($request->getMethod() === 'OPTIONS') {
+            $path = $request->getUri()->getPath();
+            if ($allowedOrigin === null && preg_match('#^/api/(?:v1|public)/apps/[^/]+/(?:invoke|routes(?:/|$))#', $path) === 1) {
+                return $handler->handle($request);
+            }
             $response = new SlimResponse();
             return $this->addCorsHeaders($response, $allowedOrigin);
         }
 
         $response = $handler->handle($request);
+        if ($response->hasHeader('Access-Control-Allow-Origin')) {
+            return $response;
+        }
         return $this->addCorsHeaders($response, $allowedOrigin);
     }
 
@@ -201,7 +208,7 @@ class CorsMiddleware implements MiddlewareInterface
             ->withHeader('Access-Control-Allow-Origin', $allowedOrigin)
             // X-FormLogic-Client-Engine: what a hosted app frame's actions claim (HostedAppFrame); on
             // a split-origin deployment every such action preflights, and the preflight must list it.
-            ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization, X-CSRF-Token, X-Admin-Confirmation, X-FormLogic-Client-Engine, X-FormLogic-Hosted-Actor, X-FormLogic-Visitor')
+            ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization, X-App-Authorization, Idempotency-Key, X-CSRF-Token, X-Admin-Confirmation, X-FormLogic-Client-Engine, X-FormLogic-Hosted-Actor, X-FormLogic-Visitor')
             ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
             // A page can read only the headers named here on a reply from another origin, so on a
             // split-domain site it would never learn that the release changed, or that a chat ran

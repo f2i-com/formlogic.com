@@ -404,4 +404,48 @@ describe('Sidebar (app-first)', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(container.querySelector('a[href="/diagrams"]')?.getAttribute('aria-current')).toBe('page');
   });
+
+  it('keeps the scoped app menu persistent across intra-app sub-menu transitions without flashing the workspace menu', async () => {
+    const app = makeApp({ id: 'forms-persist', name: 'Workshop Persist' });
+    h.apps = [app];
+    const items = softnNavigationItems(app.id, { isOwner: true, managesMembers: true, backend: false, liveBackend: false, hasForms: true });
+    function NavTest() {
+      const navigate = useNavigate();
+      useAppSectionSidebar(app, items, navigate);
+      return null;
+    }
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={['/apps/forms-persist/web/edit']}>
+          <AppNavigationProvider>
+            <PathProbe />
+            <Sidebar />
+            <Routes>
+              <Route path="/apps/:appId/web/*" element={<NavTest />} />
+              {/* Simulate a lazy/loading destination route that has not mounted or re-registered yet */}
+              <Route path="/apps/:appId/studio/:step?" element={<div data-loading="true" />} />
+              <Route path="*" element={<></>} />
+            </Routes>
+          </AppNavigationProvider>
+        </MemoryRouter>
+      );
+    });
+    expect(container.querySelector('nav[aria-label="App sections"]')).not.toBeNull();
+    expect(container.querySelector('nav[aria-label="Workspace"]')).toBeNull();
+
+    const formsLink = container.querySelector<HTMLAnchorElement>('a[href="/apps/forms-persist/studio/data"]')!;
+    await act(async () => { formsLink.click(); });
+    expect(pathRef.current).toBe('/apps/forms-persist/studio/data');
+    // Even though NavTest unmounted and the studio route hasn't registered yet, the scoped app menu stays mounted!
+    const persistentMenu = container.querySelector('nav[aria-label="App sections"]');
+    expect(persistentMenu).not.toBeNull();
+    expect(persistentMenu?.querySelector('[aria-current="page"]')?.textContent).toBe('Forms');
+    expect(container.querySelector('nav[aria-label="Workspace"]')).toBeNull();
+
+    // Leaving the app back to /apps cleanly restores the Workspace menu
+    await act(async () => { container.querySelector<HTMLAnchorElement>('a[aria-label="All apps"]')!.click(); });
+    expect(pathRef.current).toBe('/apps');
+    expect(container.querySelector('nav[aria-label="App sections"]')).toBeNull();
+    expect(container.querySelector('nav[aria-label="Workspace"]')).not.toBeNull();
+  });
 });

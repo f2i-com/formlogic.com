@@ -45,6 +45,18 @@ export interface SignInPageSettings {
   appFont?: boolean;
 }
 
+export interface ExternalApiSettings {
+  enabled: boolean;
+  authMode: 'api_key' | 'both' | 'public';
+  allowedMethods: string[];
+  allowedPaths: string[];
+  blockedPaths: string[];
+  defaultPrefix: string;
+  corsOrigins: string[];
+  rateLimitPerMinute: number;
+  customHeaders: Record<string, string>;
+}
+
 export interface AppSettings {
   /** How the sign-in and sign-up pages greet people coming to use the app. */
   signInPage?: SignInPageSettings;
@@ -114,8 +126,20 @@ export interface AppSettings {
   unifiedSqlite?: boolean;
   /** Optional linked SoftN app / backend ID paired with a Form App's SQLite database. */
   linkedSoftnAppId?: string;
+  /** Optional slug/name of the linked companion SoftN app (for 1-click switching). */
+  linkedSoftnAppSlug?: string;
+  linkedSoftnAppName?: string;
+  /** Bundled SoftN marketplace pack slug paired with this app (enables live Demo sandboxes). */
+  companionSoftnPackSlug?: string;
+  demoSandboxPackSlug?: string;
+  /** Optional linked Form App paired with a companion SoftN app. */
+  linkedFormAppId?: string;
+  linkedFormAppSlug?: string;
+  linkedFormAppName?: string;
   /** Storage mode hint (`sqlite` when Unified SQLite is active). */
   databaseMode?: string;
+  /** Optional per-app customization for exposing a SoftN/container backend as an external REST API. */
+  externalApi?: ExternalApiSettings;
   /** True when this app was installed from a private, source-hidden Marketplace listing. */
   sourceProtected?: boolean;
   /** Marketplace catalog listing ID if installed from the Marketplace. */

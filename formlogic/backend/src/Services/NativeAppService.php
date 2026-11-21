@@ -358,17 +358,20 @@ class NativeAppService
         $dbRoot = $sharedDbAppId !== null ? $this->root($sharedDbAppId) : $root;
         $manifest = json_decode((string) ($project['files']['manifest.json'] ?? ''), true);
         $capabilities = is_array($manifest['server']['requires']['capabilities'] ?? null) ? array_values(array_map('strval', $manifest['server']['requires']['capabilities'])) : [];
-        return [
+        $described = [
             'manifestId' => (string) ($manifest['id'] ?? ''),
             'version' => (int) ($project['version'] ?? 0),
             'home' => (bool) ($project['home'] ?? false),
             'access' => (string) ($project['access'] ?? 'application'),
             'capabilities' => $capabilities,
             'hasDatabase' => is_file($dbRoot . '/private/data/application.sqlite'),
-            'sharedDatabaseAppId' => $sharedDbAppId,
             'recoveryRequired' => is_file($root . '/private/recovery-required') || ($this->readJournal($root)['phase'] ?? null) === 'recovery',
             'updateUnfinished' => is_file($root . self::JOURNAL),
         ];
+        if ($sharedDbAppId !== null) {
+            $described['sharedDatabaseAppId'] = $sharedDbAppId;
+        }
+        return $described;
     }
 
     /**

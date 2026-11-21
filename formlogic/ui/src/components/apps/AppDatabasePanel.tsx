@@ -35,6 +35,7 @@ export function AppDatabasePanel({
 }) {
   const navigate = useNavigate();
   const fetchApps = useAppStore((s) => s.fetchApps);
+  const currentApp = useAppStore((s) => s.apps.find((a) => a.id === appId));
   const [state, setState] = useState<AppDatabaseState | null>(null);
   const [loading, setLoading] = useState(true);
   const [enabling, setEnabling] = useState(false);
@@ -44,6 +45,18 @@ export function AppDatabasePanel({
   const [savingLink, setSavingLink] = useState(false);
   const [attachingForms, setAttachingForms] = useState(false);
 
+  const normalizeDatabaseState = (raw: AppDatabaseState | null | undefined): AppDatabaseState | null => {
+    if (!raw || typeof raw.unifiedSqlite !== 'boolean') return null;
+    return {
+      ...raw,
+      tables: Array.isArray(raw.tables) ? raw.tables : [],
+      appForms: Array.isArray(raw.appForms) ? raw.appForms : [],
+      linkedForms: Array.isArray(raw.linkedForms) ? raw.linkedForms : [],
+      connectedApps: Array.isArray(raw.connectedApps) ? raw.connectedApps : [],
+      eligibleTargets: Array.isArray(raw.eligibleTargets) ? raw.eligibleTargets : [],
+    };
+  };
+
   const load = useCallback(async () => {
     if (typeof api.getAppDatabase !== 'function') {
       setLoading(false);
@@ -52,9 +65,10 @@ export function AppDatabasePanel({
     setLoading(true);
     try {
       const res = await api.getAppDatabase(appId);
-      if (res.data) {
-        setState(res.data);
-        setLinkingTarget(res.data.sharedDatabaseAppId ?? '');
+      const next = normalizeDatabaseState(res.data);
+      if (next) {
+        setState(next);
+        setLinkingTarget(next.sharedDatabaseAppId ?? '');
       }
     } finally {
       setLoading(false);
@@ -63,7 +77,47 @@ export function AppDatabasePanel({
 
   useEffect(() => deferEffect(() => { void load(); }), [load]);
 
-  if (readOnly || typeof api.getAppDatabase !== 'function') return null;
+  if (readOnly) {
+    const linkedSlug = currentApp?.settings?.linkedSoftnAppSlug;
+    const linkedId = currentApp?.settings?.linkedSoftnAppId;
+    const linkedName = currentApp?.settings?.linkedSoftnAppName;
+    if (!linkedSlug && !linkedId) return null;
+    return (
+      <section
+        id="settings-database"
+        className="rounded-2xl border border-primary-200/80 bg-primary-50/50 p-5 shadow-sm dark:border-primary-500/30 dark:bg-primary-500/10"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300">
+              <Box className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-slate-900 dark:text-white">
+                Paired SoftN App {linkedName ? `· ${linkedName}` : ''}
+              </h3>
+              <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
+                This demo Form App is paired with its matching full-stack SoftN App (PHP + SQLite). Try it live in an isolated sandbox or inspect its workspace.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {linkedSlug && (
+              <Button variant="primary" size="md" onClick={() => navigate(`/app/${encodeURIComponent(linkedSlug)}`)} leftIcon={<Box className="h-4 w-4" />}>
+                Open Live SoftN App
+              </Button>
+            )}
+            {linkedId && (
+              <Button variant="outline" size="md" onClick={() => navigate(softnWorkspacePath(linkedId, 'overview'))} leftIcon={<ArrowRight className="h-4 w-4" />}>
+                Inspect SoftN Workspace
+              </Button>
+            )}
+          </div>
+        </div>
+      </section>
+    );
+  }
+  if (typeof api.getAppDatabase !== 'function') return null;
 
   const handleEnable = async () => {
     setEnabling(true);

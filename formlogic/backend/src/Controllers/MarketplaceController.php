@@ -502,6 +502,109 @@ class MarketplaceController
         }
     }
 
+    /** GET /api/packs/catalog/{slug}/demo/tables?token=... — live SQLite tables + matched form schemas for the visitor's sandbox. */
+    public function demoTables(Request $request, Response $response, array $args): Response
+    {
+        $slug = (string) ($args['slug'] ?? '');
+        $catalog = $this->resolveCatalogForDemo($slug, null, false);
+        if (!$catalog) {
+            return $this->jsonError($response, 'Marketplace listing not found', 404);
+        }
+        $token = trim((string) ($request->getQueryParams()['token'] ?? ''));
+        if ($token === '') {
+            return $this->jsonError($response, 'Sandbox token is required.', 400);
+        }
+        try {
+            $data = $this->sandbox->listSandboxTables($catalog, $token);
+            return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), $data);
+        } catch (InvalidArgumentException $e) {
+            return $this->jsonError($response, $e->getMessage(), 400);
+        } catch (RuntimeException $e) {
+            $status = in_array($e->getCode(), [400, 403, 404, 410, 422], true) ? $e->getCode() : 500;
+            return $this->jsonError($response, $e->getMessage(), $status);
+        }
+    }
+
+    /** POST /api/packs/catalog/{slug}/demo/records — create a row in the visitor's live sandbox SQLite DB. */
+    public function demoCreateRecord(Request $request, Response $response, array $args): Response
+    {
+        $slug = (string) ($args['slug'] ?? '');
+        $catalog = $this->resolveCatalogForDemo($slug, null, false);
+        if (!$catalog) {
+            return $this->jsonError($response, 'Marketplace listing not found', 404);
+        }
+        $body = $this->readJsonBody($request);
+        $token = is_string($body['token'] ?? null) ? trim($body['token']) : '';
+        $table = is_string($body['table'] ?? null) ? trim($body['table']) : '';
+        $values = is_array($body['values'] ?? null) ? $body['values'] : [];
+        if ($token === '' || $table === '') {
+            return $this->jsonError($response, 'token and table are required.', 400);
+        }
+        try {
+            $record = $this->sandbox->createSandboxRecord($catalog, $token, $table, $values);
+            return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), ['record' => $record], 201);
+        } catch (InvalidArgumentException $e) {
+            return $this->jsonError($response, $e->getMessage(), 400);
+        } catch (RuntimeException $e) {
+            $status = in_array($e->getCode(), [400, 403, 404, 410, 422], true) ? $e->getCode() : 500;
+            return $this->jsonError($response, $e->getMessage(), $status);
+        }
+    }
+
+    /** PUT /api/packs/catalog/{slug}/demo/records — update a row in the visitor's live sandbox SQLite DB. */
+    public function demoUpdateRecord(Request $request, Response $response, array $args): Response
+    {
+        $slug = (string) ($args['slug'] ?? '');
+        $catalog = $this->resolveCatalogForDemo($slug, null, false);
+        if (!$catalog) {
+            return $this->jsonError($response, 'Marketplace listing not found', 404);
+        }
+        $body = $this->readJsonBody($request);
+        $token = is_string($body['token'] ?? null) ? trim($body['token']) : '';
+        $table = is_string($body['table'] ?? null) ? trim($body['table']) : '';
+        $id = $body['id'] ?? null;
+        $values = is_array($body['values'] ?? null) ? $body['values'] : [];
+        if ($token === '' || $table === '' || $id === null || $id === '') {
+            return $this->jsonError($response, 'token, table, and id are required.', 400);
+        }
+        try {
+            $record = $this->sandbox->updateSandboxRecord($catalog, $token, $table, $id, $values);
+            return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), ['record' => $record]);
+        } catch (InvalidArgumentException $e) {
+            return $this->jsonError($response, $e->getMessage(), 400);
+        } catch (RuntimeException $e) {
+            $status = in_array($e->getCode(), [400, 403, 404, 410, 422], true) ? $e->getCode() : 500;
+            return $this->jsonError($response, $e->getMessage(), $status);
+        }
+    }
+
+    /** DELETE /api/packs/catalog/{slug}/demo/records — delete a row in the visitor's live sandbox SQLite DB. */
+    public function demoDeleteRecord(Request $request, Response $response, array $args): Response
+    {
+        $slug = (string) ($args['slug'] ?? '');
+        $catalog = $this->resolveCatalogForDemo($slug, null, false);
+        if (!$catalog) {
+            return $this->jsonError($response, 'Marketplace listing not found', 404);
+        }
+        $body = $this->readJsonBody($request);
+        $qp = $request->getQueryParams();
+        $token = is_string($body['token'] ?? null) ? trim($body['token']) : trim((string) ($qp['token'] ?? ''));
+        $table = is_string($body['table'] ?? null) ? trim($body['table']) : trim((string) ($qp['table'] ?? ''));
+        $id = $body['id'] ?? ($qp['id'] ?? null);
+        if ($token === '' || $table === '' || $id === null || $id === '') {
+            return $this->jsonError($response, 'token, table, and id are required.', 400);
+        }
+        try {
+            $result = $this->sandbox->deleteSandboxRecord($catalog, $token, $table, $id);
+            return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), $result);
+        } catch (InvalidArgumentException $e) {
+            return $this->jsonError($response, $e->getMessage(), 400);
+        } catch (RuntimeException $e) {
+            $status = in_array($e->getCode(), [400, 403, 404, 410, 422], true) ? $e->getCode() : 500;
+            return $this->jsonError($response, $e->getMessage(), $status);
+        }
+    }
+
     /**
      * POST /api/packs/catalog/{slug}/purchase
      * Purchase or claim a license for a Marketplace SoftN app or plugin.
