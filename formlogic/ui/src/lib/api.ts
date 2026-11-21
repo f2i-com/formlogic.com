@@ -988,8 +988,10 @@ class ApiClient {
   // Callbacks invoked when a 401 response invalidates the session (Set prevents duplicates)
   private _onSessionExpiredCallbacks: Set<() => void> = new Set();
   // When true (the shared public Demo account), app-runtime writes stay in this browser's IndexedDB
-  // instead of hitting the server, so the demo can't be polluted for other visitors.
+  // instead of hitting the server, EXCEPT when a Demo Form App is linked to a companion SoftN App
+  // via an HMAC-verified ephemeral sandbox SQLite copy (`_demoSandboxTokens`).
   private _demoMode: boolean = false;
+  private _demoSandboxTokens = new Map<string, string>();
   // Platform-admin ACTING mode: while an admin manages ANOTHER user's account under the
   // /admin/... routes (AdminActingBoundary sets this), owner-scoped endpoints are rewritten
   // onto the server's acting-as mirror (/admin/users/{ownerId}/...), and record-data
@@ -1006,9 +1008,29 @@ class ApiClient {
     this._demoMode = on;
   }
 
-  /** Whether the shared Demo account is active (writes should stay in the browser). */
+  /** Whether the shared Demo account is active (writes should stay in the browser unless linked to a live sandbox). */
   isDemoMode(): boolean {
     return this._demoMode;
+  }
+
+  /** Bind a verified per-visitor Demo sandbox SQLite token for an app slug so the real Form App reads/writes live SQLite. */
+  setDemoSandboxToken(appSlug: string, token: string | null): void {
+    if (!appSlug) return;
+    if (token) this._demoSandboxTokens.set(appSlug, token);
+    else this._demoSandboxTokens.delete(appSlug);
+  }
+
+  hasDemoSandboxToken(appSlug: string | null | undefined): boolean {
+    return !!appSlug && this._demoSandboxTokens.has(appSlug);
+  }
+
+  private demoSandboxHeaderFor(endpoint: string): Record<string, string> {
+    if (this._demoSandboxTokens.size === 0) return {};
+    const m = endpoint.match(/^\/app\/([^/?#]+)(?:\/|\?|$)/);
+    if (!m) return {};
+    const slug = decodeURIComponent(m[1]);
+    const token = this._demoSandboxTokens.get(slug);
+    return token ? { 'X-Demo-Sandbox-Token': token } : {};
   }
 
   /** Enter/leave platform-admin acting mode (AdminActingBoundary mounts/unmounts). */
@@ -1102,6 +1124,7 @@ class ApiClient {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(routed.endpoint.startsWith('/admin/') ? adminConfirmationHeaders() : {}),
+      ...this.demoSandboxHeaderFor(routed.endpoint),
       ...(options.headers as Record<string, string>),
     };
 
@@ -1189,6 +1212,7 @@ class ApiClient {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(routed.endpoint.startsWith('/admin/') ? adminConfirmationHeaders() : {}),
+      ...this.demoSandboxHeaderFor(routed.endpoint),
       ...(options.headers as Record<string, string>),
     };
     const method = (options.method || 'GET').toUpperCase();
@@ -1389,7 +1413,11 @@ class ApiClient {
     const generation = currentSessionGeneration();
     // Raw fetch bypasses request() — enforce the acting-mode boundary explicitly.
     if (this.isAdminActing()) throw new Error(ApiClient.ACTING_BLOCKED_MESSAGE);
-    const response = await fetch(`${this.baseUrl}/app/${encodeURIComponent(appSlug)}/forms/${encodeURIComponent(formId)}/export`, { credentials: 'include' });
+    const exportEndpoint = `/app/${encodeURIComponent(appSlug)}/forms/${encodeURIComponent(formId)}/export`;
+    const response = await fetch(`${this.baseUrl}${exportEndpoint}`, {
+      credentials: 'include',
+      headers: this.demoSandboxHeaderFor(exportEndpoint),
+    });
     if (!response.ok) {
       if (response.status === 401) this.handleUnauthorized(generation);
       throw new Error(response.status === 403 ? 'You do not have permission to export responses.' : 'Failed to export responses');
@@ -2957,6 +2985,23 @@ class ApiClient {
   }
 
   // App Form management
+  async getAppStudioBundle(appId: string): Promise<ApiResponse<{
+    app: App;
+    forms: (AppForm & { form?: Form })[];
+    flows: FlowDefinition[];
+    bindings: FlowBinding[];
+    roles: import('../types/app').AppRole[];
+    blueprint: import('../types/blueprints').Blueprint | null;
+    versions: import('../types/app').AppVersion[];
+    domains: AppDomain[];
+    memberCount: number;
+  }>> {
+    if (this._demoMode && isDemoLocalId(appId)) {
+      return { error: 'Local demo app', status: 404 };
+    }
+    return this.request(`/apps/${seg(appId)}/studio-bundle`);
+  }
+
   async getAppForms(appId: string, options?: { includeForms?: boolean }): Promise<ApiResponse<{ forms: (AppForm & { form?: Form })[] }>> {
     if (this._demoMode && isDemoLocalId(appId)) {
       const stored = await getDemoApp(appId);
@@ -3727,7 +3772,7 @@ class ApiClient {
   }
 
   async createAppResponse(slug: string, formId: string, data: Record<string, unknown>): Promise<ApiResponse<{ response: unknown }>> {
-    if (this._demoMode) {
+    if (this._demoMode && !this._demoSandboxTokens.has(slug)) {
       // Keep demo submissions in this browser only — never touch the shared demo on the server.
       const answers = (data.answers as Record<string, unknown>) ?? {};
       const response = await addDemoRecord(formId, answers);
@@ -3749,7 +3794,7 @@ class ApiClient {
    * a terminal conflict from a retryable in-flight race. Same demo-mode + idempotency-key behaviour.
    */
   async createAppResponseResult(slug: string, formId: string, data: Record<string, unknown>): Promise<AppSubmitResult> {
-    if (this._demoMode) {
+    if (this._demoMode && !this._demoSandboxTokens.has(slug)) {
       const answers = (data.answers as Record<string, unknown>) ?? {};
       const response = await addDemoRecord(formId, answers);
       return { ok: true, response, status: 200 };
@@ -3859,7 +3904,7 @@ class ApiClient {
     }
     const query = params.toString();
     const res = await this.request<{ responses: unknown[]; count: number; scope: string }>(`/app/${seg(slug)}/forms/${seg(formId)}/responses${query ? `?${query}` : ''}`);
-    return this._demoMode ? this._mergeDemoResponses(res, formId) : res;
+    return this._demoMode && !this._demoSandboxTokens.has(slug) ? this._mergeDemoResponses(res, formId) : res;
   }
 
   /**
@@ -3908,7 +3953,7 @@ class ApiClient {
   }
 
   async updateAppResponse(slug: string, formId: string, responseId: string, data: Record<string, unknown>): Promise<ApiResponse<{ response: unknown }>> {
-    if (this._demoMode) {
+    if (this._demoMode && !this._demoSandboxTokens.has(slug)) {
       if (isDemoLocalId(responseId)) {
         const response = await updateDemoRecord(formId, responseId, (data.answers as Record<string, unknown>) ?? {});
         return response ? { data: { response } } : { error: 'Record not found' };
@@ -3922,7 +3967,7 @@ class ApiClient {
   }
 
   async deleteAppResponse(slug: string, formId: string, responseId: string): Promise<ApiResponse<{ success: boolean }>> {
-    if (this._demoMode) {
+    if (this._demoMode && !this._demoSandboxTokens.has(slug)) {
       if (isDemoLocalId(responseId)) {
         await deleteDemoRecord(formId, responseId);
         return { data: { success: true } };
@@ -3954,7 +3999,7 @@ class ApiClient {
       : await this.request<{ records: LinkedRecord[]; count: number }>(`/app/${seg(slug)}/forms/${seg(formId)}/lookup?${params.toString()}`);
     // Demo: records created in this browser live only in the IndexedDB overlay — merge them into
     // the picker so a locally-added client is selectable on a new appointment (local first).
-    if (this._demoMode) {
+    if (this._demoMode && !this._demoSandboxTokens.has(slug)) {
       try {
         const local = await getDemoRecords(options.targetFormId);
         const q = (options.q || '').toLowerCase();
@@ -4670,7 +4715,7 @@ class ApiClient {
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.offset) params.set('offset', String(options.offset));
     const res = await this.request<{ responses: unknown[]; count: number; scope: string }>(`/app/${seg(slug)}/forms/${seg(formId)}/responses?${params.toString()}`);
-    return this._demoMode ? this._mergeDemoResponses(res, formId) : res;
+    return this._demoMode && !this._demoSandboxTokens.has(slug) ? this._mergeDemoResponses(res, formId) : res;
   }
 
   // Get single app response with resolve

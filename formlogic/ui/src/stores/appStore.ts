@@ -20,7 +20,7 @@ interface AppState {
   error: string | null;
 
   // App CRUD
-  fetchApps: () => Promise<void>;
+  fetchApps: (force?: boolean) => Promise<void>;
   /** Optional `formIds` attach forms ATOMICALLY with the create (one request, one server
    *  transaction) — an invalid form fails the whole create; no partially-built app. */
   createApp: (data: CreateAppInput) => Promise<App | null>;
@@ -56,9 +56,6 @@ export const useAppStore = create<AppState>()(
         return { _loadingCount: next, isLoading: next > 0 };
       });
       let inFlightApps: { gen: number; promise: Promise<void> } | null = null;
-      let lastAppsFetchedAt = 0;
-      let lastAppsFetchedGen = -1;
-      const APPS_FRESH_MS = 10_000;
 
       return ({
       apps: [],
@@ -67,24 +64,19 @@ export const useAppStore = create<AppState>()(
       _loadingCount: 0,
       error: null,
 
-      fetchApps: async () => {
+      fetchApps: async (force = false) => {
         // Session-generation guard (audit FL-11): a response authorized for the user
         // who STARTED this request must never repopulate state (and, via persist,
         // localStorage) after a logout/account switch resolved it stale.
         const gen = currentSessionGeneration();
-        if (inFlightApps && inFlightApps.gen === gen) {
+        if (!force && inFlightApps && inFlightApps.gen === gen) {
           return inFlightApps.promise;
         }
-        if (
-          lastAppsFetchedGen === gen &&
-          get().apps.length > 0 &&
-          Date.now() - lastAppsFetchedAt < APPS_FRESH_MS
-        ) {
-          return;
-        }
+        const showSpinner = get().apps.length === 0;
         let promise: Promise<void> | null = null;
         promise = (async () => {
-          startLoading(); set({ error: null });
+          if (showSpinner) startLoading();
+          set({ error: null });
           try {
             const result = await api.getApps();
             if (!isSessionGenerationCurrent(gen)) return;
@@ -92,15 +84,13 @@ export const useAppStore = create<AppState>()(
               set({ error: result.error });
             } else {
               set({ apps: result.data?.apps ?? [] });
-              lastAppsFetchedAt = Date.now();
-              lastAppsFetchedGen = gen;
             }
           } catch (e) {
             if (!isSessionGenerationCurrent(gen)) return;
             set({ error: e instanceof Error ? e.message : 'Failed to fetch apps' });
           } finally {
             if (inFlightApps?.promise === promise) inFlightApps = null;
-            stopLoading();
+            if (showSpinner) stopLoading();
           }
         })();
         inFlightApps = { gen, promise };

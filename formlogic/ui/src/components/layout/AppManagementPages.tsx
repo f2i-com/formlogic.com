@@ -7,6 +7,7 @@ import { AppSectionBar } from '../apps/AppSectionBar';
 import { appSectionAt, sectionForAppItems } from './appSectionNavigation';
 import { useFormsWorkspaceNavigation } from './useFormsWorkspaceNavigation';
 import { AppManagementHeader, AppNavigationGuard, useAppSectionSidebar } from './useAppSectionSidebar';
+import { ErrorBoundary } from '../ErrorBoundary';
 
 /** Standalone management tools share the app dock and the section picker underneath their header. */
 export function AppManagementPages() {
@@ -45,13 +46,15 @@ export function AppManagementPages() {
 
   return <AppNavigationGuard.Provider value={guard}>
     <AppManagementHeader.Provider value={bar}>
-      <Suspense fallback={
-        <div className="flex items-center justify-center py-32" role="status" aria-label="Loading">
-          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary-600" />
-        </div>
-      }>
-        <Outlet />
-      </Suspense>
+      <ErrorBoundary key={pathname}>
+        <Suspense fallback={
+          <div className="flex items-center justify-center py-32" role="status" aria-label="Loading">
+            <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary-600" />
+          </div>
+        }>
+          <Outlet />
+        </Suspense>
+      </ErrorBoundary>
     </AppManagementHeader.Provider>
   </AppNavigationGuard.Provider>;
 }

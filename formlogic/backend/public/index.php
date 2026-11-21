@@ -1520,12 +1520,70 @@ $app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', $cookieName, $csr
 ));
 
 // Make the shared public "Demo" account read-only on the server (its visitors' data lives in their
-// browser via the client overlay). Self-contained token check, so global placement is fine.
+// browser via the client overlay, or inside an HMAC-verified ephemeral SoftN sandbox SQLite copy).
 $app->add(new \FormLogic\Middleware\DemoReadOnlyMiddleware(
     $container->get(AuthService::class),
     \FormLogic\Support\Environment::get('DEMO_EMAIL', 'demo@formlogic.local'),
     $cookieName
 ));
+
+// Live Demo Sandbox SQLite bridge (runs BEFORE DemoReadOnlyMiddleware in Slim's LIFO stack):
+// when a visitor opens a Demo Form App linked to a companion SoftN App and sends their HMAC-signed
+// X-Demo-Sandbox-Token, route NativeAppService reads/writes/reports for that request straight into
+// the visitor's own isolated ephemeral sandbox SQLite copy so both apps share live data!
+$app->add(function (\Psr\Http\Message\ServerRequestInterface $request, \Psr\Http\Server\RequestHandlerInterface $handler) use ($container) {
+    \FormLogic\Services\NativeAppService::clearSandboxRootOverrides();
+    $token = trim($request->getHeaderLine('X-Demo-Sandbox-Token'));
+    $path = $request->getUri()->getPath();
+    try {
+        if ($token !== '' && preg_match('#^/api/app/([^/]+)(?:/|$)#', $path, $m) === 1) {
+            $slug = rawurldecode($m[1]);
+            try {
+                $appService = $container->get(AppService::class);
+                $appRow = $appService->getAppBySlug($slug);
+                if (is_array($appRow)) {
+                    $appSettings = is_array($appRow['settings'] ?? null) ? $appRow['settings'] : [];
+                    $packSlug = is_string($appSettings['companionSoftnPackSlug'] ?? null)
+                        ? trim((string) $appSettings['companionSoftnPackSlug'])
+                        : '';
+                    $linkedSoftnId = is_string($appSettings['linkedSoftnAppId'] ?? null)
+                        ? trim((string) $appSettings['linkedSoftnAppId'])
+                        : '';
+                    if ($packSlug !== '' && $linkedSoftnId !== '') {
+                        $sandbox = $container->get(\FormLogic\Services\MarketplaceSandboxService::class);
+                        $catalogRow = $container->get(PackCatalogService::class)->getCatalogBySlug($packSlug);
+                        if (!is_array($catalogRow) || empty($catalogRow['demo_app_id'])) {
+                            $softnCat = new \FormLogic\Services\SoftnPackCatalog();
+                            $meta = $softnCat->getMeta($packSlug);
+                            if (is_array($meta) && is_string($meta['_archivePath'] ?? null) && is_file((string) $meta['_archivePath'])) {
+                                $demoAppId = $sandbox->ensureBundledDemoInstalled($packSlug, (string) $meta['_archivePath'], (string) ($meta['shortName'] ?? $packSlug));
+                                $catalogRow = [
+                                    'slug' => $packSlug,
+                                    'demo_enabled' => 1,
+                                    'demo_app_id' => $demoAppId,
+                                ];
+                            }
+                        }
+                        if (is_array($catalogRow)) {
+                            $sandboxDir = $sandbox->resolveVerifiedSandboxDir($catalogRow, $token);
+                            if ($sandboxDir !== null) {
+                                \FormLogic\Services\NativeAppService::setSandboxRootOverride($linkedSoftnId, $sandboxDir);
+                                $request = $request
+                                    ->withAttribute('demoSandboxVerified', true)
+                                    ->withAttribute('demoSandboxAppId', $linkedSoftnId);
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable) {
+                // Invalid/expired token falls back gracefully to normal read-only demo behavior
+            }
+        }
+        return $handler->handle($request);
+    } finally {
+        \FormLogic\Services\NativeAppService::clearSandboxRootOverrides();
+    }
+});
 
 // Maintenance mode (admin panel): while the FILE flag (storage/maintenance.json)
 // is on, every API route 503s except the health/auth/admin allowlist and any
@@ -4086,6 +4144,84 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     });
     $group->get('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppController::class)->show($request, $response, $getArgs($request));
+    });
+    // Batched App Studio / Management bootstrap: returns app + full forms + flows + bindings +
+    // roles + blueprint + versions + domains + active member count in ONE HTTP round trip
+    // instead of 9 separate requests.
+    $group->get('/{id}/studio-bundle', function ($request, $response) use ($container, $getArgs) {
+        $args = $getArgs($request);
+        $appId = (string) ($args['id'] ?? '');
+        $userId = (string) ($request->getAttribute('userId') ?? '');
+        if ($appId === '' || $userId === '') {
+            $response->getBody()->write((string) json_encode(['error' => true, 'message' => 'Authentication required']));
+            return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+        }
+        $appService = $container->get(AppService::class);
+        $appUserService = $container->get(AppUserService::class);
+        $appRow = $appService->getApp($appId);
+        if (!$appRow) {
+            $response->getBody()->write((string) json_encode(['error' => true, 'message' => 'App not found']));
+            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+        }
+        $isOwner = ($appRow['ownerId'] ?? null) === $userId;
+        if (!$isOwner && !$appService->isAppMember($appId, $userId)) {
+            $response->getBody()->write((string) json_encode(['error' => true, 'message' => 'App not found']));
+            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+        }
+        $appPayload = $isOwner
+            ? $appRow
+            : \FormLogic\Helpers\AppMemberView::forMember($appRow, $userId, $appService, $appUserService);
+        if (!is_array($appPayload)) {
+            $response->getBody()->write((string) json_encode(['error' => true, 'message' => 'App not found']));
+            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+        }
+        $appPayload['canManage'] = $isOwner;
+        $appPayload['canCreateCompanion'] = $isOwner;
+        if (!empty($appRow['settings']['softnApp'])) {
+            $icon = $container->get(\FormLogic\Services\AppLookService::class)->listIcon($appRow);
+            if ($icon !== null) {
+                $appPayload['lookIcon'] = $icon;
+            }
+        }
+        $forms = $appService->getAppFormsWithFullForms($appId);
+        $roles = $appUserService->getRoles($appId);
+        $versions = $appService->listAppVersions($appId);
+        $flows = [];
+        $bindings = [];
+        $blueprint = null;
+        $domains = [];
+        $memberCount = 0;
+        if ($isOwner) {
+            $flowService = $container->get(\FormLogic\Services\FlowService::class);
+            $flows = $flowService->listFlows($appId);
+            $bindings = $flowService->listBindings($appId);
+            $domains = $container->get(\FormLogic\Services\AppDomainService::class)->getDomainsForApp($appId, $userId);
+            $users = $appUserService->getAppUsers($appId);
+            foreach ($users as $u) {
+                if (($u['status'] ?? '') !== 'suspended') {
+                    $memberCount++;
+                }
+            }
+            $blueprints = $container->get(\FormLogic\Services\BlueprintService::class)->listBlueprints($userId);
+            foreach ($blueprints as $bp) {
+                if (($bp['appId'] ?? null) === $appId) {
+                    $blueprint = $bp;
+                    break;
+                }
+            }
+        }
+        $response->getBody()->write((string) json_encode([
+            'app' => $appPayload,
+            'forms' => $forms,
+            'flows' => $flows,
+            'bindings' => $bindings,
+            'roles' => $roles,
+            'blueprint' => $blueprint,
+            'versions' => $versions,
+            'domains' => $domains,
+            'memberCount' => $memberCount,
+        ]));
+        return $response->withHeader('Content-Type', 'application/json');
     });
     $group->put('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppController::class)->update($request, $response, $getArgs($request));

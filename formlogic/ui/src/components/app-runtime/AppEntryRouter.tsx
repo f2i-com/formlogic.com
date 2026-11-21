@@ -1,18 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
-import { ArrowLeft, Box, ClipboardList, Layers } from 'lucide-react';
-import { api, type MarketplaceDemoSession } from '../../lib/api';
+import { useCallback, useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Box, ClipboardList, Database, Layers, Loader2 } from 'lucide-react';
+import { api } from '../../lib/api';
 import { useAuthStore } from '../../stores/authStore';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import NativeAppPage from '../../pages/apps/NativeAppPage';
 import { MarketplaceDemoFrame } from '../marketplace/MarketplaceDemoFrame';
-import { DemoManagementView } from '../marketplace/DemoManagementView';
 import { AppSplash } from '../studio/AppSplash';
 import { rememberedLook } from '../../lib/appLook';
 import { AppRuntimeRoot } from './AppRuntimeRoot';
 import { AppRuntimeAuthGuard } from './AppRuntimeAuthGuard';
 import { startFlowDispatcher } from '../../client-runtime/flows/flowDispatcher';
-import { cn } from '../../lib/utils';
 
 interface NativeEntryInfo {
   home: boolean;
@@ -27,44 +25,34 @@ interface NativeEntryInfo {
 function DemoSoftnSandboxPage({ entry, slug }: { entry: NativeEntryInfo; slug: string }) {
   const signedIn = useAuthStore((s) => !!s.user);
   const location = useLocation();
-  const initialTab = new URLSearchParams(location.search).get('view') === 'management' ? 'management' : 'softn';
-  const [activeTab, setActiveTab] = useState<'softn' | 'management'>(initialTab);
-  const [mgmtMounted, setMgmtMounted] = useState<boolean>(initialTab === 'management');
-  const [sandboxSession, setSandboxSession] = useState<MarketplaceDemoSession | null>(null);
-  const [softnRefreshSignal, setSoftnRefreshSignal] = useState(0);
-  const [resetSignal, setResetSignal] = useState(0);
-  const [mgmtRefreshTrigger, setMgmtRefreshTrigger] = useState(0);
-  const [hasMgmtChanges, setHasMgmtChanges] = useState(false);
-  const dirtyForSoftnRef = useRef(false);
+  const navigate = useNavigate();
+  const [openingManagement, setOpeningManagement] = useState(false);
 
   const rawTitle = entry.appName || slug;
   const cleanTitle = rawTitle.replace(/\s*\(SoftN App\)\s*$/i, '').trim() || rawTitle;
 
-  const handleSelectSoftn = useCallback(() => {
-    setActiveTab('softn');
-    if (dirtyForSoftnRef.current) {
-      dirtyForSoftnRef.current = false;
-      setHasMgmtChanges(false);
-      setSoftnRefreshSignal((n) => n + 1);
+  const openManagementApp = useCallback(async () => {
+    if (!entry.linkedFormAppSlug || openingManagement) return;
+    setOpeningManagement(true);
+    try {
+      // Visitors opening a Demo SoftN App from the landing page aren't signed in yet.
+      // Start the read-only Demo session seamlessly (never touching a real signed-in account)
+      // so the real FormLogic Form App loads immediately without a login screen, wired to
+      // the exact same visitor SQLite sandbox via sessionStorage.
+      if (!useAuthStore.getState().user) {
+        await useAuthStore.getState().startDemo();
+      }
+      navigate(`/app/${encodeURIComponent(entry.linkedFormAppSlug)}`);
+    } finally {
+      setOpeningManagement(false);
     }
-  }, []);
+  }, [entry.linkedFormAppSlug, navigate, openingManagement]);
 
-  const handleSelectManagement = useCallback(() => {
-    setMgmtMounted(true);
-    setActiveTab('management');
-    setMgmtRefreshTrigger((n) => n + 1);
-  }, []);
-
-  const handleManagementDataMutated = useCallback(() => {
-    dirtyForSoftnRef.current = true;
-    setHasMgmtChanges(true);
-  }, []);
-
-  const handleSessionReset = useCallback(() => {
-    dirtyForSoftnRef.current = false;
-    setHasMgmtChanges(false);
-    setMgmtRefreshTrigger((n) => n + 1);
-  }, []);
+  useEffect(() => {
+    if (entry.linkedFormAppSlug && new URLSearchParams(location.search).get('view') === 'management') {
+      void Promise.resolve().then(() => openManagementApp());
+    }
+  }, [entry.linkedFormAppSlug, location.search, openManagementApp]);
 
   return (
     <div className="flex h-dvh flex-col bg-slate-50 dark:bg-slate-950">
@@ -83,52 +71,44 @@ function DemoSoftnSandboxPage({ entry, slug }: { entry: NativeEntryInfo; slug: s
             <Box className="h-4 w-4" aria-hidden="true" />
           </span>
           <div className="min-w-0">
-            <h1 className="truncate text-sm font-semibold text-slate-900 dark:text-white">{cleanTitle}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="truncate text-sm font-semibold text-slate-900 dark:text-white">{cleanTitle}</h1>
+              <span className="hidden items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300 sm:inline-flex">
+                <Database className="h-3 w-3" aria-hidden="true" />
+                Live Shared SQLite
+              </span>
+            </div>
             <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">
-              Live Demo · Shared SQLite between SoftN App &amp; Management
+              Live Demo · Changes sync instantly with the Form App
             </p>
           </div>
         </div>
 
-        {/* Unified live-linked 2-section switcher: SoftN App ↔ Management (Forms & Charts) */}
+        {/* Unified live-linked 2-section switcher: SoftN App ↔ Real FormLogic Form App */}
         <nav
           aria-label="App mode switcher"
           className="inline-flex items-center rounded-xl border border-slate-200 bg-slate-100/90 p-0.5 dark:border-slate-700 dark:bg-slate-800/80"
         >
-          <button
-            type="button"
-            onClick={handleSelectSoftn}
-            aria-pressed={activeTab === 'softn'}
-            className={cn(
-              'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition',
-              activeTab === 'softn'
-                ? 'bg-primary-600 text-primary-foreground shadow-xs'
-                : 'text-slate-700 hover:bg-white hover:text-slate-950 dark:text-slate-200 dark:hover:bg-slate-700 dark:hover:text-white',
-            )}
+          <span
+            aria-current="page"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-xs font-semibold text-primary-foreground shadow-xs"
           >
             <Box className="h-3.5 w-3.5" aria-hidden="true" />
             SoftN App
-            {hasMgmtChanges && activeTab === 'management' && (
-              <span
-                className="ml-0.5 inline-block h-2 w-2 rounded-full bg-emerald-500"
-                title="Updated in Management — click to view live changes in SoftN App"
-              />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={handleSelectManagement}
-            aria-pressed={activeTab === 'management'}
-            className={cn(
-              'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition',
-              activeTab === 'management'
-                ? 'bg-primary-600 text-primary-foreground shadow-xs'
-                : 'text-slate-700 hover:bg-white hover:text-slate-950 dark:text-slate-200 dark:hover:bg-slate-700 dark:hover:text-white',
-            )}
-          >
-            <ClipboardList className="h-3.5 w-3.5" aria-hidden="true" />
-            Management (Forms &amp; Charts)
-          </button>
+          </span>
+          {entry.linkedFormAppSlug && (
+            <button
+              type="button"
+              onClick={() => void openManagementApp()}
+              disabled={openingManagement}
+              className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold text-slate-700 transition hover:bg-white hover:text-slate-950 disabled:opacity-60 dark:text-slate-200 dark:hover:bg-slate-700 dark:hover:text-white"
+            >
+              {openingManagement
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                : <ClipboardList className="h-3.5 w-3.5" aria-hidden="true" />}
+              Management (Forms &amp; Charts)
+            </button>
+          )}
         </nav>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -144,35 +124,15 @@ function DemoSoftnSandboxPage({ entry, slug }: { entry: NativeEntryInfo; slug: s
         </div>
       </header>
       <main className="relative min-h-0 flex-1">
-        <div className={cn('h-full w-full', activeTab !== 'softn' && 'hidden')}>
-          <MarketplaceDemoFrame
-            slug={entry.demoSandboxSlug!}
-            name={cleanTitle}
-            sourceProtected={false}
-            hasBackend
-            backendRuntime="PHP + SQLite"
-            autoLaunch
-            fullHeight
-            refreshSignal={softnRefreshSignal}
-            resetSignal={resetSignal}
-            onSessionReady={setSandboxSession}
-            onSessionReset={handleSessionReset}
-          />
-        </div>
-        {mgmtMounted && (
-          <div className={cn('h-full w-full', activeTab !== 'management' && 'hidden')}>
-            <DemoManagementView
-              slug={entry.demoSandboxSlug!}
-              appName={cleanTitle}
-              session={sandboxSession}
-              active={activeTab === 'management'}
-              refreshTrigger={mgmtRefreshTrigger}
-              legacyFormAppSlug={entry.linkedFormAppSlug}
-              onDataMutated={handleManagementDataMutated}
-              onRequestReset={() => setResetSignal((n) => n + 1)}
-            />
-          </div>
-        )}
+        <MarketplaceDemoFrame
+          slug={entry.demoSandboxSlug!}
+          name={cleanTitle}
+          sourceProtected={false}
+          hasBackend
+          backendRuntime="PHP + SQLite"
+          autoLaunch
+          fullHeight
+        />
       </main>
     </div>
   );
@@ -196,19 +156,21 @@ export function DomainNativeApp({ slug, access }: { slug: string; access: 'appli
   return access === 'members' ? <MemberNativeApp slug={slug} signInTo="/" onDomain /> : <NativeAppPage slug={slug} signInTo="/" onDomain />;
 }
 
-const nativeEntryCache = new Map<string, NativeEntryInfo>();
+const NATIVE_ENTRY_FRESH_MS = 30_000;
+const nativeEntryCache = new Map<string, { entry: NativeEntryInfo; at: number }>();
 
 function AppEntryContent({ slug, isHome }: { slug: string; isHome: boolean }) {
   const userId = useAuthStore(state => state.user?.id);
   const cacheKey = `${slug}:${userId ?? 'anon'}`;
-  const cached = nativeEntryCache.get(cacheKey) ?? null;
+  const cachedRecord = nativeEntryCache.get(cacheKey) ?? null;
+  const cached = cachedRecord?.entry ?? null;
   const [loaded, setLoaded] = useState<{ key: string; entry: NativeEntryInfo } | null>(null);
   const [error, setError] = useState('');
 
   const entry = cached ?? (loaded?.key === cacheKey ? loaded.entry : null);
 
   useEffect(() => {
-    if (!isHome && entry) return;
+    if (entry && (!isHome || (cachedRecord && Date.now() - cachedRecord.at < NATIVE_ENTRY_FRESH_MS))) return;
     let cancelled = false;
     void api.getNativeEntry(slug).then(result => {
       if (cancelled) return;
@@ -216,12 +178,12 @@ function AppEntryContent({ slug, isHome }: { slug: string; isHome: boolean }) {
         if (isHome) setError(result.error);
       } else {
         const resolved = result.data ?? { home: false };
-        nativeEntryCache.set(cacheKey, resolved);
+        nativeEntryCache.set(cacheKey, { entry: resolved, at: Date.now() });
         setLoaded({ key: cacheKey, entry: resolved });
       }
     });
     return () => { cancelled = true; };
-  }, [slug, cacheKey, isHome, entry]);
+  }, [slug, cacheKey, isHome, entry, cachedRecord]);
 
   if (isHome && error) return <p role="alert" className="p-6 text-slate-800 dark:text-slate-200">{error}</p>;
   // Only block on the splash while the server says whether the root URL is a native/demo SoftN app.

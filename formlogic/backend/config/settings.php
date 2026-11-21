@@ -94,7 +94,11 @@ return [
         ],
 
         'mysql' => [
-            'host' => $envOr('DB_HOST', 'localhost'),
+            // On Windows, PDO MySQL resolves 'localhost' to IPv6 ::1 first and waits ~310ms
+            // for connection-refused before falling back to 127.0.0.1 on every HTTP request.
+            'host' => (static function (string $h): string {
+                return (PHP_OS_FAMILY === 'Windows' && strtolower($h) === 'localhost') ? '127.0.0.1' : $h;
+            })($envOr('DB_HOST', 'localhost')),
             'port' => $envOr('DB_PORT', '3306'),
             'database' => $envOr('DB_DATABASE', 'formlogic'),
             'username' => $envOr('DB_USERNAME', 'formlogic'),

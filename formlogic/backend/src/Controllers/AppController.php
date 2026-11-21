@@ -531,7 +531,9 @@ class AppController
         }
 
         $includeForms = ($request->getQueryParams()['includeForms'] ?? '') === '1';
-        $forms = $this->appService->getAppForms($args['id'], $includeForms);
+        $forms = $includeForms
+            ? $this->appService->getAppFormsWithFullForms($args['id'])
+            : $this->appService->getAppForms($args['id']);
 
         // Cross-app visibility: the same form can back multiple apps (shared
         // response data), so tell the UI which OTHER apps of this owner each form

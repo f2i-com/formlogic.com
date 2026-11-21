@@ -364,8 +364,84 @@ export function useStudioData(appId: string | undefined): StudioData {
 
   const reload = useCallback(async () => {
     const token = loadToken.current;
+    const gen = currentSessionGeneration();
     setLoading(true);
     try {
+      // Fast path: ONE HTTP round trip for all Studio / Management data instead of 9 parallel requests.
+      if (appId && typeof api.getAppStudioBundle === 'function') {
+        const bundle = await api.getAppStudioBundle(appId);
+        if (token !== loadToken.current || !isSessionGenerationCurrent(gen)) return;
+        if (!bundle.error && bundle.data?.app) {
+          const d = bundle.data;
+          const rawAttachments = (d.forms ?? []) as (AppForm & { form?: Form })[];
+          const attachments: AppForm[] = rawAttachments.map((item) => {
+            if ('form' in item) {
+              const rest = { ...item };
+              delete rest.form;
+              return rest;
+            }
+            return item;
+          });
+          const map: Record<string, Form> = {};
+          for (const item of rawAttachments) {
+            if (item.form && typeof item.form === 'object' && 'id' in item.form) {
+              map[item.form.id] = item.form;
+            }
+          }
+          const nextFlows = (d.flows ?? []) as FlowDefinition[];
+          const nextBindings = (d.bindings ?? []) as FlowBinding[];
+          const nextRoles = (d.roles ?? []) as AppRole[];
+          const nextBlueprint = (d.blueprint ?? null) as Blueprint | null;
+          const nextVersions = (d.versions ?? []) as AppVersion[];
+          const nextDomains = (d.domains ?? []) as AppDomain[];
+          const nextMemberCount = typeof d.memberCount === 'number' ? d.memberCount : 0;
+
+          setAppError(null);
+          setApp(d.app as App);
+          setAppLoaded(true);
+          setFormsFailed(false);
+          setAppForms(attachments);
+          setFormsById(map);
+          setUnreadableFormIds(NO_FORM_IDS);
+          setFormsResolving(false);
+          setFlows(nextFlows);
+          setBindings(nextBindings);
+          setRoles(nextRoles);
+          setBlueprint(nextBlueprint);
+          setVersions(nextVersions);
+          setDomains(nextDomains);
+          setMemberCount(nextMemberCount);
+          setAuxFailed(false);
+          setVersionsFailed(false);
+          setDomainsFailed(false);
+          setMembersFailed(false);
+          patchStudioCache(appId, {
+            app: d.app as App,
+            appForms: attachments,
+            formsById: map,
+            unreadableFormIds: NO_FORM_IDS,
+            flows: nextFlows,
+            bindings: nextBindings,
+            roles: nextRoles,
+            blueprint: nextBlueprint,
+            versions: nextVersions,
+            domains: nextDomains,
+            memberCount: nextMemberCount,
+          });
+          return;
+        }
+        // Definitive 404/403 from server for a non-local app: report cleanly without extra fan-out.
+        if ((bundle.status === 404 || bundle.status === 403) && !appId.startsWith('demo-local-')) {
+          // Only short-circuit if the server genuinely said "App not found" (not a missing bundle route).
+          const msg = typeof bundle.error === 'string' ? bundle.error : '';
+          if (/app not found/i.test(msg)) {
+            setAppError({ kind: 'notFound', message: msg || 'Could not load this app.' });
+            setAppLoaded(true);
+            setFormsResolving(false);
+            return;
+          }
+        }
+      }
       const primary = Promise.all([reloadApp(), reloadForms()]).then(() => {
         if (token === loadToken.current) {
           setInitialLoading(false);
@@ -378,7 +454,7 @@ export function useStudioData(appId: string | undefined): StudioData {
         setInitialLoading(false);
       }
     }
-  }, [reloadApp, reloadForms, reloadFlows, reloadAux]);
+  }, [appId, reloadApp, reloadForms, reloadFlows, reloadAux]);
 
   // Reset before the new app renders; old requests are invalidated by effect cleanup.
   const [loadedAppId, setLoadedAppId] = useState(appId);

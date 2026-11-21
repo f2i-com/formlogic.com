@@ -335,4 +335,99 @@ final class MarketplaceSandboxAndPluginsTest extends TestCase
         ]);
         self::assertCount(0, $listB['body']['items']);
     }
+
+    public function testNativeTableFormBridgeSandboxOverrideSyncsWithSoftnBackend(): void
+    {
+        if (!$this->native->available()) {
+            self::markTestSkipped('Native SoftN runtime not prepared in this environment.');
+        }
+
+        $starter = NativeAppService::starterProject('Bridge Sync', 'cat-bridge-1', 'javascript');
+        $installed = $this->sandbox->installPrivateBundle('cat-bridge-1', $starter);
+        $catalog = [
+            'id' => 'cat-bridge-1',
+            'slug' => 'bridge-sync',
+            'source_visibility' => 'private',
+            'demo_enabled' => 1,
+            'demo_app_id' => $installed['demoAppId'],
+        ];
+
+        $sessionA = $this->sandbox->createSession($catalog);
+        $sessionB = $this->sandbox->createSession($catalog);
+
+        $sandboxDirA = $this->sandbox->resolveVerifiedSandboxDir($catalog, $sessionA['token']);
+        self::assertNotNull($sandboxDirA);
+        self::assertNull($this->sandbox->resolveVerifiedSandboxDir($catalog, 'invalid-token'));
+
+        $bridge = new \FormLogic\Services\NativeTableFormBridge(new \PDO('sqlite::memory:'), $this->native);
+        $fakeLinkedAppId = 'demo-softn-app-bridge-1';
+        $binding = [
+            'formId' => 'form-items-1',
+            'ownerId' => 'owner-1',
+            'appId' => $fakeLinkedAppId,
+            'databaseAppId' => $fakeLinkedAppId,
+            'table' => 'items',
+            'primaryKey' => ['id'],
+            'columns' => ['title' => 'title'],
+            'reverseColumns' => ['title' => 'title'],
+            'fieldsById' => [
+                'title' => ['id' => 'title', 'type' => 'short_text', 'label' => 'Title', 'required' => true],
+            ],
+            'createdAtColumn' => 'created_at',
+            'statusColumn' => null,
+        ];
+
+        // 1. Seed via SoftN backend in Visitor A's sandbox
+        $this->sandbox->handleBackendRequest($catalog, $sessionA['token'], [
+            'method' => 'POST',
+            'path' => '/api/items',
+            'body' => ['title' => 'Seeded Via SoftN'],
+        ]);
+
+        // 2. Route FormLogic's NativeTableFormBridge into Visitor A's sandbox override
+        NativeAppService::setSandboxRootOverride($fakeLinkedAppId, $sandboxDirA);
+        try {
+            $listed = $bridge->listResponses($binding, ['limit' => 25, 'offset' => 0]);
+            self::assertCount(1, $listed);
+            self::assertSame('Seeded Via SoftN', $listed[0]['answers']['title']);
+
+            // Create via real FormLogic Form App bridge
+            $created = $bridge->createResponse($binding, ['answers' => ['title' => 'Created Via Form App']]);
+            self::assertSame('Created Via Form App', $created['answers']['title']);
+            self::assertSame(2, $bridge->countResponses($binding));
+
+            // Update via real FormLogic Form App bridge
+            $updated = $bridge->updateResponse($binding, (string) $created['id'], ['answers' => ['title' => 'Edited Via Form App']]);
+            self::assertNotNull($updated);
+            self::assertSame('Edited Via Form App', $updated['answers']['title']);
+
+            // Verify SoftN backend immediately sees the Form App's write + edit
+            $softnAfterEdit = $this->sandbox->handleBackendRequest($catalog, $sessionA['token'], [
+                'method' => 'GET',
+                'path' => '/api/items',
+            ]);
+            $titles = array_column($softnAfterEdit['body']['items'], 'title');
+            self::assertContains('Seeded Via SoftN', $titles);
+            self::assertContains('Edited Via Form App', $titles);
+
+            // Delete via real FormLogic Form App bridge
+            self::assertTrue($bridge->deleteResponse($binding, (string) $created['id']));
+            self::assertSame(1, $bridge->countResponses($binding));
+        } finally {
+            NativeAppService::clearSandboxRootOverrides();
+        }
+
+        // Verify SoftN backend reflects the deletion and Visitor B stays isolated
+        $softnFinalA = $this->sandbox->handleBackendRequest($catalog, $sessionA['token'], [
+            'method' => 'GET',
+            'path' => '/api/items',
+        ]);
+        self::assertCount(1, $softnFinalA['body']['items']);
+
+        $softnFinalB = $this->sandbox->handleBackendRequest($catalog, $sessionB['token'], [
+            'method' => 'GET',
+            'path' => '/api/items',
+        ]);
+        self::assertCount(0, $softnFinalB['body']['items']);
+    }
 }

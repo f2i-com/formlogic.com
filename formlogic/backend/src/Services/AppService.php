@@ -1343,7 +1343,7 @@ class AppService
 
     // Form management
 
-    public function getAppForms(string $appId, bool $includeForms = false): array
+    public function getAppForms(string $appId): array
     {
         $stmt = $this->mysql->prepare("
             SELECT af.*, f.title as form_title, f.status as form_status
@@ -1368,7 +1368,19 @@ class AppService
                 'formStatus' => $row['form_status'],
             ];
         }
-        if ($includeForms && $forms !== []) {
+        return $forms;
+    }
+
+    /**
+     * Same as getAppForms(), plus full Form definitions batched in ONE SQL query
+     * (`form` key on each attachment) to eliminate N+1 form fetches in App Studio.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getAppFormsWithFullForms(string $appId): array
+    {
+        $forms = $this->getAppForms($appId);
+        if ($forms !== []) {
             $fullById = $this->formService->getFormsByIds(array_column($forms, 'formId'));
             foreach ($forms as &$entry) {
                 if (isset($fullById[$entry['formId']])) {

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api, newIdempotencyKey } from '../lib/api';
+import { ensureSandboxSession, resetSandboxSession } from '../lib/demoSandboxSession';
 import { setOnScreenApp } from '../client-runtime/appLocalAccess';
 import { setConnectorCapabilityContext } from '../client-runtime/desktop/desktopClient';
 import { enqueueSubmission } from '../client-runtime/offlineQueue';
@@ -52,12 +53,19 @@ interface AppRuntimeState {
   /** The viewing member's own account timezone (IANA), from the bootstrap
    *  payload. Overrides the app timezone when displaying record times. */
   memberTimezone: string | null;
+  /** Companion SoftN pack slug when this Demo Form App is live-linked to a visitor's ephemeral SQLite sandbox. */
+  demoSandboxPackSlug: string | null;
+  /** True when the Demo Form App has an active HMAC-verified live SQLite sandbox shared with its SoftN App. */
+  hasLiveDemoSandbox: boolean;
+  /** Incremented after a sandbox reset so runtime views re-query fresh seeded data without remounting the sidebar. */
+  sandboxRevision: number;
 
   // Actions
   initialize: (appSlug: string) => Promise<void>;
   setActiveForm: (formId: string | null) => void;
   toggleSidebar: () => void;
   reset: () => void;
+  resetDemoSandbox: () => Promise<boolean>;
 
   // Response CRUD
   fetchResponses: (formId: string, options?: { limit?: number; offset?: number; resolve?: boolean; answersEq?: Record<string, string>; answersPhoneEq?: Record<string, string>; answersGte?: Record<string, string>; answersLte?: Record<string, string> }) => Promise<unknown[]>;
@@ -129,6 +137,9 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       permissions: null,
       roleName: null,
       memberTimezone: null,
+      demoSandboxPackSlug: null,
+      hasLiveDemoSandbox: false,
+      sandboxRevision: 0,
 
       initialize: async (appSlug: string) => {
         // Register cleanup callback (replace previous to avoid stale closures on HMR)
@@ -140,9 +151,25 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         };
         api.onSessionExpired(_appRuntimeSessionCallback);
 
+        const prevSlug = get().appSlug;
+        if (prevSlug && prevSlug !== appSlug) {
+          api.setDemoSandboxToken?.(prevSlug, null);
+        }
+
         currentLoad += 1;
         const load = currentLoad;
-        set({ isLoading: true, error: null, appSlug, config: null, permissions: null, roleName: null, memberTimezone: null, activeFormId: null });
+        set({
+          isLoading: true,
+          error: null,
+          appSlug,
+          config: null,
+          permissions: null,
+          roleName: null,
+          memberTimezone: null,
+          activeFormId: null,
+          demoSandboxPackSlug: null,
+          hasLiveDemoSandbox: false,
+        });
         // SEC-001: connector capabilities are minted for the CURRENT app —
         // the desktop enforces the member's role-derived grants per command.
         setConnectorCapabilityContext(appSlug);
@@ -173,6 +200,23 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
                 }
               } catch { /* ignore */ }
             }
+            // Live-link Demo Form Apps to the visitor's shared SoftN App SQLite sandbox BEFORE
+            // releasing the runtime config so dashboard reports, tables, and form submissions
+            // all hit the exact same live SQLite database as the companion SoftN App.
+            let demoSandboxPackSlug: string | null = null;
+            let hasLiveDemoSandbox = false;
+            const packSlug = typeof app?.settings?.companionSoftnPackSlug === 'string'
+              ? app.settings.companionSoftnPackSlug.trim()
+              : '';
+            if (api.isDemoMode() && packSlug) {
+              const session = await ensureSandboxSession(packSlug);
+              if (load !== currentLoad) return;
+              if (session?.token) {
+                api.setDemoSandboxToken?.(appSlug, session.token);
+                demoSandboxPackSlug = packSlug;
+                hasLiveDemoSandbox = true;
+              }
+            }
             const config: AppRuntimeConfig = {
               app,
               forms,
@@ -184,6 +228,8 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
               permissions: perms ?? null,
               roleName: (appUser?.roleName as string) ?? null,
               memberTimezone: (appUser?.timezone as string) || null,
+              demoSandboxPackSlug,
+              hasLiveDemoSandbox,
               isLoading: false,
               activeFormId: null,
             });
@@ -205,7 +251,21 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
 
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
+      resetDemoSandbox: async () => {
+        const { appSlug, demoSandboxPackSlug } = get();
+        if (!appSlug || !demoSandboxPackSlug) return false;
+        const session = await resetSandboxSession(demoSandboxPackSlug);
+        if (!session?.token) return false;
+        api.setDemoSandboxToken?.(appSlug, session.token);
+        set((s) => ({ hasLiveDemoSandbox: true, sandboxRevision: s.sandboxRevision + 1 }));
+        return true;
+      },
+
       reset: () => {
+        const prevSlug = get().appSlug;
+        if (prevSlug) {
+          api.setDemoSandboxToken?.(prevSlug, null);
+        }
         currentLoad += 1;
         // Leaving the app tears its pack connectors down with it.
         syncPackConnectors(null);
@@ -222,6 +282,8 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
           permissions: null,
           roleName: null,
           memberTimezone: null,
+          demoSandboxPackSlug: null,
+          hasLiveDemoSandbox: false,
         });
       },
 
@@ -252,7 +314,8 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         // Let a 403/404/network failure THROW (matches fetchResponses/fetchResponsePage) instead of
         // swallowing it to [] — callers (dashboard list/activity widgets, the SDK's useResponses) need
         // to tell "form deleted or no permission" apart from a genuinely empty form.
-        if (!api.isDemoMode()) {
+        const slug = get().appSlug;
+        if (!api.isDemoMode() || (slug && api.hasDemoSandboxToken?.(slug))) {
           const { rows } = await get().fetchResponsePage(formId, { limit, offset: 0 });
           return (rows as Record<string, unknown>[]).map(toRecentRow);
         }

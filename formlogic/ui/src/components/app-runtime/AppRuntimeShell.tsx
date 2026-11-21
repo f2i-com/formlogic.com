@@ -1,11 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { ArrowLeft, Box, ClipboardList, Home, Layers, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff, Database, Eye, FileBarChart, Link2, PencilRuler, Rocket } from 'lucide-react';
+import { ArrowLeft, Box, ClipboardList, Home, Layers, RefreshCw, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff, Database, Eye, FileBarChart, Link2, PencilRuler, Rocket } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { interleaveMenu, menuForms, menuLinks } from './appMenu';
 import { ThemeToggle } from '../ui/ThemeToggle';
 import { QueuedSubmissionsNotice } from './QueuedSubmissionsNotice';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { toast } from '../../stores/toastStore';
+import { ErrorBoundary } from '../ErrorBoundary';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { cn } from '../../lib/utils';
@@ -31,8 +33,19 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const { appSlug } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { config, activeFormId, setActiveForm, sidebarCollapsed, toggleSidebar, isOwner } = useAppRuntimeStore();
+  const {
+    config,
+    activeFormId,
+    setActiveForm,
+    sidebarCollapsed,
+    toggleSidebar,
+    isOwner,
+    hasLiveDemoSandbox,
+    resetDemoSandbox,
+    sandboxRevision,
+  } = useAppRuntimeStore();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [resettingSandbox, setResettingSandbox] = useState(false);
   // Where the runtime was ENTERED from (e.g. the studio's "Use app" passes its
   // step in router state). Remembered per-slug in sessionStorage because this
   // shell (and its stores) can be torn down by internal navigation — the entry
@@ -109,6 +122,20 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const hideNav = (config.app?.settings as { hideNav?: boolean } | undefined)?.hideNav === true;
   const linkedSoftnSlug = config.app?.settings?.linkedSoftnAppSlug;
   const linkedSoftnId = config.app?.settings?.linkedSoftnAppId;
+  const handleResetSandbox = async () => {
+    if (resettingSandbox || !hasLiveDemoSandbox) return;
+    setResettingSandbox(true);
+    try {
+      const ok = await resetDemoSandbox();
+      if (ok) {
+        toast.success('Sandbox reset', 'Sample data restored across both this Form App and the SoftN App.');
+      } else {
+        toast.error('Reset failed', 'Could not reset the demo sandbox. Please try again.');
+      }
+    } finally {
+      setResettingSandbox(false);
+    }
+  };
   const unifiedCompanionBar = linkedSoftnSlug ? (
     <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 shadow-xs dark:border-slate-800 dark:bg-slate-900 sm:px-4">
       <div className="flex min-w-0 items-center gap-2.5">
@@ -126,8 +153,20 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
           <ClipboardList className="h-4 w-4" aria-hidden="true" />
         </span>
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">{config.app.name}</p>
-          <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">Management · Forms, Records &amp; Charts</p>
+          <div className="flex items-center gap-2">
+            <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">{config.app.name}</p>
+            {hasLiveDemoSandbox && (
+              <span className="hidden items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300 sm:inline-flex">
+                <Database className="h-3 w-3" aria-hidden="true" />
+                Live Shared SQLite
+              </span>
+            )}
+          </div>
+          <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">
+            {hasLiveDemoSandbox
+              ? 'Live Demo · Changes sync instantly with the SoftN App'
+              : 'Management · Forms, Records & Charts'}
+          </p>
         </div>
       </div>
 
@@ -150,6 +189,17 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
       </nav>
 
       <div className="flex flex-wrap items-center gap-2">
+        {hasLiveDemoSandbox && (
+          <button
+            type="button"
+            onClick={() => void handleResetSandbox()}
+            disabled={resettingSandbox}
+            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', resettingSandbox && 'animate-spin')} aria-hidden="true" />
+            {resettingSandbox ? 'Resetting…' : 'Reset sandbox'}
+          </button>
+        )}
         {isOwner() && (
           <button
             type="button"
@@ -174,7 +224,9 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
         <main id="app-main-content" ref={mainRef} tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto bg-gray-50 dark:bg-slate-950 outline-none">
         {/* No offline banner here, so the notice also names what waits while offline. */}
         <QueuedSubmissionsNotice offlineBannerShown={false} />
-        {children}
+        <ErrorBoundary key={`${location.pathname}:${sandboxRevision}`}>
+          <div className="contents">{children}</div>
+        </ErrorBoundary>
         {/* Chromeless draft preview: same owner-only publish reminder as the full shell,
             as a floating pill cluster so it never rearranges the custom screen. */}
         {config.app.status === 'draft' && isOwner() && (
@@ -547,7 +599,9 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
 
         {/* Page content */}
         <main id="app-main-content" ref={mainRef} tabIndex={-1} className="flex-1 p-4 md:p-6 overflow-y-auto overflow-x-clip bg-gray-50 dark:bg-slate-950 outline-none">
-          {children}
+          <ErrorBoundary key={`${location.pathname}:${sandboxRevision}`}>
+            <div className="contents">{children}</div>
+          </ErrorBoundary>
         </main>
 
         {/* Mobile bottom nav */}

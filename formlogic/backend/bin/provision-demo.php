@@ -214,9 +214,14 @@ foreach ($sources as $s) {
     if ($catalogOnly) continue;
 
     if ($packs->isCatalogPackInstalled($catalogId, $demoId)) {
-        // Already installed — just refresh the demo apps' custom screens to the latest pack (e.g. after
-        // re-authoring dashboards) without wiping the seeded response data. Also heal any form whose
-        // SQLite file was lost or emptied so opening it in the Form Builder always shows its fields.
+        // Already installed — if this pack is synced to a companion SoftN SQLite schema, leave
+        // its SoftN-bound forms & dashboard intact (managed by the companion SoftN sync loop below).
+        $hasSoftnCompanion = (new SoftnPackCatalog())->companionSoftnSlugFor((string) $s['slug']) !== null;
+        if ($hasSoftnCompanion) {
+            out("  demo: already installed (SoftN SQLite schema-linked)");
+            continue;
+        }
+        // Otherwise refresh legacy pack custom screens & missing fields.
         $repaired = repairMissingDemoFormFields($pdo, $sqlite, $forms, $demoId, $catalogId, $s['pack']);
         $updated = refreshDemoScreens($pdo, $packs, $demoId, $s['pack']);
         $updatedForms = refreshDemoFormScreens($pdo, $packs, $demoId, $catalogId, $s['pack']);
@@ -373,7 +378,11 @@ out("screenshot manifest: " . count($manifest) . " app(s); linked images: $linke
 $seededReports = 0;
 $appIdByName = [];
 foreach ($apps->getAllApps($demoId) as $a) { $appIdByName[$a['name']] = $a['id']; }
+$softnCatalogCheck = new SoftnPackCatalog();
 foreach ($sources as $s) {
+    if ($softnCatalogCheck->companionSoftnSlugFor((string) $s['slug']) !== null) {
+        continue;
+    }
     // packFormId => form title (from the pack's top-level forms).
     $titleByPackForm = [];
     foreach ($s['pack']['forms'] ?? [] as $pf) {
@@ -554,13 +563,222 @@ foreach ($sources as $s) {
         }
     }
 
-    // Link every Demo Form App in this pack to its companion SoftN App.
+    // Sync & link every Demo Form App in this pack to its companion SoftN App's live SQLite schema.
+    $installPath = is_string($meta['_installPath'] ?? null) ? (string) $meta['_installPath'] : '';
+    $installPack = ($installPath !== '' && is_file($installPath))
+        ? json_decode((string) @file_get_contents($installPath), true)
+        : null;
+    $installForms = is_array($installPack['forms'] ?? null) ? $installPack['forms'] : [];
+    $installAppDef = null;
+    if (is_array($installPack['apps'] ?? null)) {
+        foreach ($installPack['apps'] as $candApp) {
+            if (!is_array($candApp)) continue;
+            $candSettings = is_array($candApp['settings'] ?? null) ? $candApp['settings'] : [];
+            if (empty($candSettings['softnApp']) && (!empty($candApp['forms']) || is_array($candApp['customScreen'] ?? null) || !empty($candApp['reports']))) {
+                $installAppDef = $candApp;
+                break;
+            }
+        }
+        if ($installAppDef === null && is_array($installPack['apps'][0] ?? null)) {
+            $installAppDef = $installPack['apps'][0];
+        }
+    }
+
     foreach ($formAppIds as $fid) {
         $formApp = $demoAppsById[$fid] ?? null;
         if ($formApp === null) {
             continue;
         }
         $fSettings = is_array($formApp['settings'] ?? null) ? $formApp['settings'] : [];
+        $schemaSyncVersion = 'v4-live-sqlite';
+        $needsSchemaSync = $installForms !== []
+            && (
+                ($fSettings['softnSchemaSyncedVersion'] ?? null) !== $schemaSyncVersion
+                || ($fSettings['softnSchemaSyncedAppId'] ?? null) !== $softnAppId
+            );
+
+        if ($needsSchemaSync) {
+            // Find any existing Demo forms already bound to this SoftN app by table name so re-runs stay idempotent.
+            $existingBoundByTable = [];
+            $existingStmt = $pdo->prepare('SELECT id, title, settings FROM forms WHERE user_id = ?');
+            $existingStmt->execute([$demoId]);
+            foreach ($existingStmt->fetchAll(PDO::FETCH_ASSOC) as $efRow) {
+                $efSettings = is_string($efRow['settings'] ?? null) ? json_decode($efRow['settings'], true) : null;
+                $ntb = is_array($efSettings['nativeTableBinding'] ?? null) ? $efSettings['nativeTableBinding'] : null;
+                if (is_array($ntb) && ($ntb['appId'] ?? null) === $softnAppId && is_string($ntb['table'] ?? null) && $ntb['table'] !== '') {
+                    $existingBoundByTable[(string) $ntb['table']] = (string) $efRow['id'];
+                }
+            }
+
+            $packFormIdMap = [];
+            $syncedFormMeta = [];
+            foreach ($installForms as $pf) {
+                if (!is_array($pf)) continue;
+                $pfKey = is_string($pf['packFormId'] ?? null) ? trim((string) $pf['packFormId']) : '';
+                $pfSettings = is_array($pf['settings'] ?? null) ? $pf['settings'] : [];
+                $ntb = is_array($pfSettings['nativeTableBinding'] ?? null) ? $pfSettings['nativeTableBinding'] : null;
+                if ($ntb === null || !is_string($ntb['table'] ?? null) || $ntb['table'] === '') {
+                    continue;
+                }
+                $table = (string) $ntb['table'];
+                $ntb['appId'] = $softnAppId;
+                $pfSettings['nativeTableBinding'] = $ntb;
+                $title = is_string($pf['title'] ?? null) && trim((string) $pf['title']) !== '' ? trim((string) $pf['title']) : ucwords(str_replace('_', ' ', $table));
+                $icon = is_string($pf['icon'] ?? null) ? (string) $pf['icon'] : null;
+                $description = is_string($pf['description'] ?? null) ? (string) $pf['description'] : '';
+                $theme = is_array($pf['theme'] ?? null) ? $pf['theme'] : [];
+
+                if (isset($existingBoundByTable[$table])) {
+                    $realFormId = $existingBoundByTable[$table];
+                } else {
+                    $createdForm = $forms->createForm([
+                        'userId' => $demoId,
+                        'title' => $title,
+                        'description' => $description,
+                        'icon' => $icon,
+                        'settings' => $pfSettings,
+                        'theme' => $theme,
+                        'fields' => [],
+                    ]);
+                    $realFormId = (string) $createdForm['id'];
+                    $existingBoundByTable[$table] = $realFormId;
+                }
+                if ($pfKey !== '') {
+                    $packFormIdMap[$pfKey] = $realFormId;
+                }
+                $syncedFormMeta[$realFormId] = [
+                    'formId' => $realFormId,
+                    'packFormId' => $pfKey,
+                    'title' => $title,
+                    'description' => $description,
+                    'icon' => $icon,
+                    'settings' => $pfSettings,
+                    'theme' => $theme,
+                    'fields' => is_array($pf['fields'] ?? null) ? $pf['fields'] : [],
+                    'customScreen' => is_array($pf['customScreen'] ?? null) ? $pf['customScreen'] : null,
+                ];
+            }
+
+            $resolvePackRefs = static function (mixed $node) use (&$resolvePackRefs, $packFormIdMap): mixed {
+                if (is_string($node) && str_starts_with($node, '@pack:')) {
+                    $refKey = substr($node, 6);
+                    return $packFormIdMap[$refKey] ?? $node;
+                }
+                if (is_array($node)) {
+                    $out = [];
+                    foreach ($node as $k => $v) {
+                        $out[$k] = $resolvePackRefs($v);
+                    }
+                    return $out;
+                }
+                return $node;
+            };
+
+            foreach ($syncedFormMeta as $rfId => $metaItem) {
+                $resolvedFields = $resolvePackRefs($metaItem['fields']);
+                $resolvedCs = is_array($metaItem['customScreen']) ? $resolvePackRefs($metaItem['customScreen']) : null;
+                if (is_array($resolvedCs)) {
+                    $resolvedCs['enabled'] = true;
+                    $resolvedCs['kind'] = 'dashboard';
+                }
+                $updatePayload = [
+                    'title' => $metaItem['title'],
+                    'description' => $metaItem['description'],
+                    'icon' => $metaItem['icon'],
+                    'settings' => $metaItem['settings'],
+                    'theme' => $metaItem['theme'],
+                    'fields' => is_array($resolvedFields) ? $resolvedFields : [],
+                    'status' => 'published',
+                ];
+                if (is_array($resolvedCs)) {
+                    $updatePayload['customScreen'] = $resolvedCs;
+                }
+                $forms->updateForm($rfId, $updatePayload);
+                $pdo->prepare("UPDATE forms SET status = 'published' WHERE id = ?")->execute([$rfId]);
+            }
+
+            // Replace app_forms attachments with the exact schema-matched SoftN forms.
+            if ($syncedFormMeta !== []) {
+                $pdo->prepare('DELETE FROM app_forms WHERE app_id = ?')->execute([$fid]);
+                $orderedAttachments = [];
+                if (is_array($installAppDef['forms'] ?? null)) {
+                    foreach ($installAppDef['forms'] as $afDef) {
+                        if (!is_array($afDef)) continue;
+                        $pfKey = is_string($afDef['packFormId'] ?? null) ? (string) $afDef['packFormId'] : '';
+                        if ($pfKey !== '' && isset($packFormIdMap[$pfKey])) {
+                            $rfId = $packFormIdMap[$pfKey];
+                            $orderedAttachments[$rfId] = [
+                                'displayName' => is_string($afDef['displayName'] ?? null) ? (string) $afDef['displayName'] : $syncedFormMeta[$rfId]['title'],
+                                'sortOrder' => (int) ($afDef['sortOrder'] ?? count($orderedAttachments)),
+                                'isVisible' => array_key_exists('isVisible', $afDef) ? (bool) $afDef['isVisible'] : true,
+                                'icon' => $syncedFormMeta[$rfId]['icon'],
+                            ];
+                        }
+                    }
+                }
+                foreach ($syncedFormMeta as $rfId => $metaItem) {
+                    if (!isset($orderedAttachments[$rfId])) {
+                        $orderedAttachments[$rfId] = [
+                            'displayName' => $metaItem['title'],
+                            'sortOrder' => count($orderedAttachments),
+                            'isVisible' => true,
+                            'icon' => $metaItem['icon'],
+                        ];
+                    }
+                }
+                foreach ($orderedAttachments as $rfId => $att) {
+                    $apps->addFormToApp($fid, $rfId, $att['displayName']);
+                    $apps->updateAppForm($fid, $rfId, [
+                        'displayName' => $att['displayName'],
+                        'sortOrder' => $att['sortOrder'],
+                        'isVisible' => $att['isVisible'],
+                        'settings' => $att['icon'] ? ['icon' => $att['icon']] : [],
+                    ]);
+                }
+
+                // Apply schema-matched Recharts reports & dashboard widgets onto the Demo Form App!
+                $appPatch = [];
+                if (is_array($installAppDef['reports'] ?? null) && $installAppDef['reports'] !== []) {
+                    $resolvedReports = [];
+                    foreach ($installAppDef['reports'] as $repIdx => $repDef) {
+                        if (!is_array($repDef)) continue;
+                        $resolvedRep = $resolvePackRefs($repDef);
+                        if (!is_array($resolvedRep)) continue;
+                        $specFormId = is_string($resolvedRep['spec']['formId'] ?? null) ? (string) $resolvedRep['spec']['formId'] : '';
+                        if ($specFormId === '' || str_starts_with($specFormId, '@pack:')) {
+                            continue;
+                        }
+                        $rawRid = is_string($resolvedRep['id'] ?? null) && $resolvedRep['id'] !== '' ? (string) $resolvedRep['id'] : ('r' . $repIdx);
+                        $resolvedRep['id'] = 'softn-' . substr(md5($fid . $rawRid), 0, 12);
+                        $resolvedReports[] = $resolvedRep;
+                    }
+                    if ($resolvedReports !== []) {
+                        $appPatch['reports'] = $resolvedReports;
+                    }
+                }
+                if (is_array($installAppDef['customScreen'] ?? null)) {
+                    $resolvedAppCs = $resolvePackRefs($installAppDef['customScreen']);
+                    if (is_array($resolvedAppCs)) {
+                        $resolvedAppCs['enabled'] = true;
+                        $resolvedAppCs['kind'] = 'dashboard';
+                        $appPatch['customScreen'] = $resolvedAppCs;
+                    }
+                }
+                $fSettings['softnSchemaSyncedVersion'] = $schemaSyncVersion;
+                $fSettings['softnSchemaSyncedAppId'] = $softnAppId;
+                $fSettings['linkedSoftnAppId'] = $softnAppId;
+                $fSettings['linkedSoftnAppSlug'] = (string) $softnApp['slug'];
+                $fSettings['linkedSoftnAppName'] = (string) $softnApp['name'];
+                $fSettings['companionSoftnPackSlug'] = $softnSlug;
+                unset($fSettings['hostedDashboard']);
+                $appPatch['settings'] = $fSettings;
+                $apps->updateApp($fid, $appPatch);
+                $softnLinkedForms++;
+                $GLOBALS['demoDataChanged'] = true;
+                continue;
+            }
+        }
+
         $needsUpdate =
             ($fSettings['linkedSoftnAppId'] ?? null) !== $softnAppId ||
             ($fSettings['linkedSoftnAppSlug'] ?? null) !== (string) $softnApp['slug'] ||

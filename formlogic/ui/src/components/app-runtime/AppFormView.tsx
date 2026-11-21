@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, cloneElement, isValidElement, type ReactElement } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck, Clock, Plus } from 'lucide-react';
+import { ArrowLeft, Box, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck, Clock, Plus } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { handleRovingKeys } from '../../lib/a11y';
 import { readableForegroundColor } from '../../lib/color';
@@ -1326,7 +1326,12 @@ function FormVisit() {
               )}
             </>
           ) : (
-            <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed whitespace-pre-line">{thankYouField?.description?.trim() || 'Your response has been submitted successfully.'}</p>
+            <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed whitespace-pre-line">
+              {thankYouField?.description?.trim()
+                || (config?.app?.settings?.linkedSoftnAppSlug
+                  ? 'Saved to your shared SQLite database — visible right away in both this Form App and the SoftN App.'
+                  : 'Your response has been submitted successfully.')}
+            </p>
           )}
           <div className="flex flex-wrap gap-3 justify-center">
             {showFormView && (
@@ -1349,6 +1354,15 @@ function FormVisit() {
                 className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${showFormView ? 'border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800' : 'app-btn-primary'}`}
               >
                 View records
+              </button>
+            )}
+            {config?.app?.settings?.linkedSoftnAppSlug && (
+              <button
+                onClick={() => navigate(`/app/${encodeURIComponent(config.app.settings!.linkedSoftnAppSlug!)}`)}
+                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-lg text-sm font-medium border border-primary-300 dark:border-primary-500/40 bg-primary-50/70 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors cursor-pointer"
+              >
+                <Box className="h-4 w-4" aria-hidden="true" />
+                View live in SoftN App
               </button>
             )}
           </div>

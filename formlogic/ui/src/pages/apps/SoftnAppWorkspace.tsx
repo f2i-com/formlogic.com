@@ -287,7 +287,7 @@ function Workspace({ app }: { app: App }) {
       if (!published) {
         const result = await api.publishApp(app.id);
         if (result.error) { draft.setError(result.error); return; }
-        await fetchApps();
+        await fetchApps(true);
         toast.success('Your app is live', liveUrl);
       } else {
         toast.success('Live app updated', 'Visitors now get the latest version.');

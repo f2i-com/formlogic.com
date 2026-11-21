@@ -1014,6 +1014,30 @@ JS;
     }
 
     /**
+     * Verify a visitor sandbox token against `$catalog` and return the ephemeral sandbox root
+     * directory (`storage/marketplace-sandboxes/sbx...`) when valid and its SQLite DB exists.
+     *
+     * @param array<string, mixed> $catalog
+     */
+    public function resolveVerifiedSandboxDir(array $catalog, string $token): ?string
+    {
+        if ($token === '') {
+            return null;
+        }
+        try {
+            $session = $this->verifySession($catalog, $token);
+        } catch (\Throwable) {
+            return null;
+        }
+        $dir = $session['dir'];
+        $dbPath = $dir . '/private/data/application.sqlite';
+        if (!is_dir($dir) || is_link($dir) || !is_file($dbPath) || is_link($dbPath)) {
+            return null;
+        }
+        return $dir;
+    }
+
+    /**
      * List all user SQLite tables, rows, column definitions, and schema-matched FormLogic form
      * definitions for the visitor's live ephemeral sandbox database.
      *

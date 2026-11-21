@@ -496,6 +496,10 @@ class AppPublicController
         }
 
         $data = $request->getParsedBody() ?? [];
+        if ($request->getAttribute('demoSandboxVerified') === true) {
+            // Visitor sandbox writes live solely in their ephemeral SQLite copy; never write MySQL ledger rows.
+            unset($data['idempotencyKey']);
+        }
         $data['ipAddress'] = IpResolver::fromEnvironment()->getClientIp($request);
         $data['userAgent'] = $request->getHeaderLine('User-Agent');
         $data['language'] = substr($request->getHeaderLine('Accept-Language'), 0, 120) ?: null;

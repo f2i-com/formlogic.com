@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { Trash2, Columns3, Download, Inbox, Lock, Plus, X } from 'lucide-react';
+import { Pencil, Trash2, Columns3, Download, Inbox, Lock, Plus, X } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { DataTable, type Column } from '../ui/DataTable';
 import { PageHeader } from '../ui/PageHeader';
@@ -54,11 +54,11 @@ export function AppDataTable() {
   const { appSlug, formId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { config, fetchResponses, fetchResponsePage, deleteResponse, canSubmit, canDelete, canViewOwn, canViewAll, canExport } = useAppRuntimeStore();
+  const { config, hasLiveDemoSandbox, fetchResponses, fetchResponsePage, deleteResponse, canSubmit, canEdit, canDelete, canViewOwn, canViewAll, canExport } = useAppRuntimeStore();
   const tz = useDisplayTimezone();
-  // Demo keeps a browser-local overlay of records, so it fetches everything and searches/paginates
-  // client-side. Real apps use fast server-side pagination + search (limited rows per query).
-  const serverMode = !api.isDemoMode();
+  // Demo keeps a browser-local overlay of records unless live-linked to a visitor SQLite sandbox.
+  // Real apps and live-linked demo sandboxes use fast server-side pagination + search.
+  const serverMode = !api.isDemoMode() || hasLiveDemoSandbox;
   // Drill-down from a dashboard chart click. The responses endpoint has no field-scoped filter, so
   // server mode seeds the existing SERVER-side search with the clicked value (choice labels resolve
   // to stored option values server-side; date-bucket labels substring-match their dates). Demo mode
@@ -98,21 +98,26 @@ export function AppDataTable() {
     [runtimeForm?.fields]
   );
 
-  // Column visibility: default to first 6 fields
-  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(() => {
+  // Default visible columns: keep the table scannable by showing concise fields + status/stage/priority
+  // pills first and leaving verbose long_text paragraphs unchecked by default (still toggleable via Columns).
+  const defaultVisibleColumns = useMemo(() => {
     const initial = new Set<string>(['__submittedAt']);
     if (!fields.some(f => f.id === 'status')) initial.add('__responseStatus');
-    fields.slice(0, 6).forEach((f) => initial.add(f.id));
+    const concise = fields.filter((f) => f.type !== 'long_text');
+    const chosen = concise.length > 0 ? concise : fields;
+    chosen.slice(0, 5).forEach((f) => initial.add(f.id));
+    for (const f of fields) {
+      if (/(status|state|stage|priority)/i.test(f.id)) initial.add(f.id);
+    }
     return initial;
-  });
+  }, [fields]);
+
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(() => new Set(defaultVisibleColumns));
 
   // Re-initialize visible columns when fields change (different form)
   useEffect(() => {
-    const initial = new Set<string>(['__submittedAt']);
-    if (!fields.some(f => f.id === 'status')) initial.add('__responseStatus');
-    fields.slice(0, 6).forEach((f) => initial.add(f.id));
     // eslint-disable-next-line react-hooks/set-state-in-effect -- prop->local-state sync: reset column visibility when the viewed form (formId) changes externally
-    setVisibleColumns(initial);
+    setVisibleColumns(new Set(defaultVisibleColumns));
     // Reset paging + search + sort when switching forms.
     setPage(0);
     setSearchInput('');
@@ -371,7 +376,23 @@ export function AppDataTable() {
         const opts = (field.properties?.options ?? []) as Array<{ value: string; label?: string }>;
         const labelFor = (v: unknown) => opts.find((o) => o.value === v)?.label ?? String(v);
         const out = Array.isArray(val) ? val.map(labelFor).join(', ') : labelFor(val);
-        return out.length > 50 ? out.substring(0, 50) + '\u2026' : out;
+        const trimmed = out.length > 50 ? out.substring(0, 50) + '\u2026' : out;
+        if (!Array.isArray(val) && /(status|state|stage|priority|severity|condition|result)/i.test(`${field.id} ${field.label}`)) {
+          const low = String(val).toLowerCase();
+          const tone = /(complete|done|paid|active|approved|operational|ready|pass|ok|closed|resolved|healthy|confirmed)/.test(low)
+            ? 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/15 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/20'
+            : /(overdue|cancel|fail|reject|urgent|critical|high|out_of_service|blocked|issue|fault)/.test(low)
+              ? 'bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-600/15 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/20'
+              : /(pending|schedule|progress|open|medium|draft|waiting|maintenance|review|due|low)/.test(low)
+                ? 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-600/15 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/20'
+                : 'bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-500/15 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-600/30';
+          return (
+            <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap', tone)}>
+              {trimmed}
+            </span>
+          );
+        }
+        return trimmed;
       }
       if (Array.isArray(val)) {
         const joined = val.map((v: unknown) => typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)).join(', ');
@@ -622,14 +643,29 @@ export function AppDataTable() {
           }) : undefined}
           searchBarExtra={<>{exportButton}{columnVisibilityDropdown}</>}
           onRowClick={(r) => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
-          actions={formId && canDelete(formId) ? (r) => (
-            <button
-              onClick={(e) => { e.stopPropagation(); setDeleteId(String(r.id)); }}
-              aria-label="Delete response"
-              className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+          actions={formId && (canEdit(formId) || canDelete(formId)) ? (r) => (
+            <div className="inline-flex items-center gap-0.5">
+              {canEdit(formId) && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}?edit=1`); }}
+                  aria-label="Edit response"
+                  className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+              )}
+              {canDelete(formId) && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setDeleteId(String(r.id)); }}
+                  aria-label="Delete response"
+                  className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           ) : undefined}
         />
       )}

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Lock, Monitor, Play, RefreshCw, ShieldCheck, Smartphone, Sparkles, Database } from 'lucide-react';
 import { Button } from '../ui/Button';
-import { api, resolveFileUrl, type MarketplaceDemoSession } from '../../lib/api';
+import { resolveFileUrl, type MarketplaceDemoSession } from '../../lib/api';
+import { ensureSandboxSession, resetSandboxSession, writeStoredSandboxSession } from '../../lib/demoSandboxSession';
 import { cn } from '../../lib/utils';
 
 interface MarketplaceDemoFrameProps {
@@ -18,39 +19,6 @@ interface MarketplaceDemoFrameProps {
   resetSignal?: number;
   onSessionReady?: (session: MarketplaceDemoSession | null) => void;
   onSessionReset?: () => void;
-}
-
-const SESSION_STORAGE_PREFIX = 'fl-demo-sbx:v1:';
-
-function readStoredSandboxSession(slug: string): MarketplaceDemoSession | null {
-  try {
-    const raw = window.sessionStorage.getItem(SESSION_STORAGE_PREFIX + slug);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as MarketplaceDemoSession;
-    if (!parsed || typeof parsed.token !== 'string' || typeof parsed.framePath !== 'string' || parsed.slug !== slug) {
-      return null;
-    }
-    const exp = Date.parse(parsed.expiresAt);
-    if (!Number.isFinite(exp) || exp < Date.now() + 60_000) {
-      window.sessionStorage.removeItem(SESSION_STORAGE_PREFIX + slug);
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function writeStoredSandboxSession(slug: string, session: MarketplaceDemoSession | null): void {
-  try {
-    if (!session) {
-      window.sessionStorage.removeItem(SESSION_STORAGE_PREFIX + slug);
-    } else {
-      window.sessionStorage.setItem(SESSION_STORAGE_PREFIX + slug, JSON.stringify(session));
-    }
-  } catch {
-    // Ignore storage quota or private-mode errors
-  }
 }
 
 export function MarketplaceDemoFrame({
@@ -94,25 +62,12 @@ export function MarketplaceDemoFrame({
     setLoading(true);
     setError(null);
     try {
-      if (!forceNew) {
-        const cached = readStoredSandboxSession(slug);
-        if (cached && cached.hasBackend) {
-          // Verify cached session still exists on server before reusing it
-          const probe = await api.getMarketplaceDemoTables(slug, cached.token);
-          if (!probe.error && probe.data) {
-            commitSession(cached);
-            setFrameKey((k) => k + 1);
-            return;
-          }
-          writeStoredSandboxSession(slug, null);
-        }
-      }
-      const res = await api.startMarketplaceDemo(slug);
-      if (res.error || !res.data) {
-        setError(res.error || 'Could not start the live sandbox demo.');
+      const next = await ensureSandboxSession(slug, forceNew);
+      if (!next) {
+        setError('Could not start the live sandbox demo.');
         return;
       }
-      commitSession(res.data);
+      commitSession(next);
       setFrameKey((k) => k + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start the live sandbox demo.');
@@ -132,14 +87,13 @@ export function MarketplaceDemoFrame({
     setResetting(true);
     setError(null);
     try {
-      const res = await api.resetMarketplaceDemo(slug, session.token);
-      if (res.error) {
-        // Session expired — spin up a fresh one automatically
+      const next = await resetSandboxSession(slug);
+      if (next) {
+        commitSession(next);
+        setFrameKey((k) => k + 1);
+      } else {
         await launch(true);
-        onSessionResetRef.current?.();
-        return;
       }
-      setFrameKey((k) => k + 1);
       onSessionResetRef.current?.();
     } catch {
       await launch(true);
@@ -147,7 +101,7 @@ export function MarketplaceDemoFrame({
     } finally {
       setResetting(false);
     }
-  }, [slug, session, resetting, launch]);
+  }, [slug, session, resetting, commitSession, launch]);
 
   useEffect(() => {
     if (resetSignal !== lastResetSignalRef.current) {

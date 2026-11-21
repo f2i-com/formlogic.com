@@ -3647,6 +3647,29 @@ JS;
         return $declared === [] ? 5600100 : min(5600100, ...$declared);
     }
 
+    /** @var array<string, string> Request-scoped verified ephemeral sandbox directories keyed by databaseAppId. */
+    private static array $sandboxRootOverrides = [];
+
+    /** Bind a verified per-visitor Demo sandbox root directory for `$appId` during the current HTTP request. */
+    public static function setSandboxRootOverride(string $appId, string $sandboxDir): void
+    {
+        if ($appId !== '' && $sandboxDir !== '' && is_dir($sandboxDir) && !is_link($sandboxDir)) {
+            self::$sandboxRootOverrides[$appId] = $sandboxDir;
+        }
+    }
+
+    /** Clear all request-scoped Demo sandbox overrides. */
+    public static function clearSandboxRootOverrides(): void
+    {
+        self::$sandboxRootOverrides = [];
+    }
+
+    /** Return the active verified Demo sandbox root for `$appId`, if any. */
+    public static function sandboxRootOverride(string $appId): ?string
+    {
+        return self::$sandboxRootOverrides[$appId] ?? null;
+    }
+
     /**
      * Run $use with a connection to the app's database, under the shared management lock, as the
      * runner works on it: for the host's own steps around a request (NativePhoneVerification).
@@ -3658,6 +3681,14 @@ JS;
     public function withDatabase(string $appId, callable $use): mixed
     {
         $dbAppId = $this->databaseAppId($appId);
+        if (($sandboxRoot = self::sandboxRootOverride($dbAppId)) !== null) {
+            $path = $sandboxRoot . '/private/data/application.sqlite';
+            if (!is_file($path)) throw new RuntimeException('This demo sandbox has no database yet', 409);
+            self::assertOwnDatabase($path);
+            $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $db->exec('PRAGMA busy_timeout=5000');
+            try { return $use($db); } finally { $db = null; }
+        }
         [$root, $lock] = $this->openShared($dbAppId, null, false);
         if ($lock === null) throw new RuntimeException('Native app not found', 404);
         try {
@@ -3679,6 +3710,20 @@ JS;
     public function tableSchemas(string $appId): array
     {
         $dbAppId = $this->databaseAppId($appId);
+        if (($sandboxRoot = self::sandboxRootOverride($dbAppId)) !== null) {
+            $path = $sandboxRoot . '/private/data/application.sqlite';
+            if (!is_file($path) || self::linkedDatabase($path)) return [];
+            $store = NativeRecordStore::open($path, readSnapshot: true, busyTimeout: 1500);
+            try {
+                $out = [];
+                foreach ($store->tables() as $table) {
+                    $out[$table] = $store->schema($table);
+                }
+                return $out;
+            } finally {
+                $store->close();
+            }
+        }
         try {
             [$root, $lock] = $this->openShared($dbAppId, null, false);
         } catch (RuntimeException) {
@@ -4189,6 +4234,14 @@ JS;
     public function records(string $appId, ?string $table = null, int $offset = 0, ?int $generation = null, ?array $options = null): array
     {
         $dbAppId = $this->databaseAppId($appId);
+        if (($sandboxRoot = self::sandboxRootOverride($dbAppId)) !== null) {
+            if (!is_file($sandboxRoot . '/private/data/application.sqlite')) {
+                if ($table !== null) throw new RuntimeException('Demo sandbox database not found', 404);
+                return ['installed' => true, 'tables' => [], 'backend' => true];
+            }
+            $answer = $this->readRecords($sandboxRoot, $table, $offset, $options ?? []);
+            return $options === null ? array_diff_key($answer, ['total' => 0, 'matching' => 0, 'stamps' => 0, 'cut' => 0, 'sort' => 0, 'hiddenColumns' => 0]) : $answer;
+        }
         if ($dbAppId === $appId) {
             $isFormDb = $this->isFormAppDatabase($appId);
             [$root, $lock, $project] = $this->openShared($appId, $isFormDb ? null : $generation, !$isFormDb);
@@ -4478,6 +4531,14 @@ JS;
     public function manageRecord(string $appId, array $input, array $subscriptions = [], ?int $generation = null): array
     {
         $dbAppId = $this->databaseAppId($appId);
+        if (($sandboxRoot = self::sandboxRootOverride($dbAppId)) !== null) {
+            $path = $sandboxRoot . '/private/data/application.sqlite';
+            if (!is_file($path)) throw new RuntimeException('Demo sandbox database not found', 404);
+            self::assertOwnDatabase($path);
+            $store = NativeRecordStore::open($path, hash('sha256', 'demo-sandbox-rev|' . $path));
+            try { return $store->operate($input, $subscriptions); }
+            finally { $store->close(); }
+        }
         $isFormDb = $this->isFormAppDatabase($dbAppId);
         [$root, $lock] = $this->openShared($dbAppId, ($dbAppId === $appId && !$isFormDb) ? $generation : null, ($dbAppId === $appId) && !$isFormDb);
         if ($lock === null) throw new RuntimeException('App database not found', 404);
